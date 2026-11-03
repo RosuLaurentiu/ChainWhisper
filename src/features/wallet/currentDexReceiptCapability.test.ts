@@ -8,7 +8,7 @@ import { buildCurrentDexQuoteReview, CURRENT_DEX_ACCEPT_ABI, prepareCurrentDexAc
 import type { BrowserWalletSignerLease } from './hooks/useWalletOnboarding';
 
 const mocks = vi.hoisted(() => ({ issue: vi.fn(), read: vi.fn() }));
-vi.mock('./ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: mocks.issue }));
+vi.mock('./ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: mocks.issue }));
 vi.mock('../../lib/appChain', () => ({ readCurrentDexPrincipalReceipt: mocks.read }));
 
 const key = '000102030405060708090a0b0c0d0e0f';

@@ -232,7 +232,7 @@ export function TradeTerminalHistoryContent({
   config,
   renderActionNotice
 }: TradeTerminalHistoryContentProps) {
-  const eventCountLabel = `${config.count} ${config.count === 1 ? 'event' : 'events'}`;
+  const eventCountLabel = `${config.count} ${config.count === 1 ? 'event' : 'events'}${config.complete === false ? ' loaded' : ''}`;
 
   return (
     <>
@@ -251,6 +251,11 @@ export function TradeTerminalHistoryContent({
           <p>{config.emptyCopy}</p>
         </div>
       )}
+      {config.onLoadOlder ? (
+        <button type="button" className="connect-btn" onClick={config.onLoadOlder} disabled={config.loading}>
+          Load older history
+        </button>
+      ) : null}
     </>
   );
 }

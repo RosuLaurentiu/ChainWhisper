@@ -5,18 +5,12 @@ import {
   type TradeDeskSortMode,
   type TradeDeskTypeFilter
 } from '../../../lib/p2pTradeView';
-import {
-  PRIVATE_LIQUIDITY_LABEL,
-  PUBLIC_LIQUIDITY_LABEL,
-  UNLISTED_ORDER_LABEL,
-  type TradeCreateMode
-} from '../components/P2PTradingPage.helpers';
+import { UNLISTED_ORDER_LABEL } from '../components/P2PTradingPage.helpers';
 
 type RouteSurfaceView = 'swap' | 'agent' | 'public' | 'create' | 'recurring' | 'trade' | 'counter' | 'mine' | 'pools' | null;
 
 type UseTradeDeskViewModelArgs = {
   counterParentTrade: TradeSnapshot | null;
-  editingRecurringOrder: TradeSnapshot | null;
   editingTrade: TradeSnapshot | null;
   filteredPublicTradeCount: number;
   myTrades: TradeSnapshot[];
@@ -26,7 +20,6 @@ type UseTradeDeskViewModelArgs = {
   routeSurfaceView: RouteSurfaceView;
   selectedMyTradeGroupLabel: string;
   selectedMyTradeGroupTradeCount: number;
-  tradeCreateMode: TradeCreateMode;
   tradePairFilter: string;
   tradeSearchInput: string;
   tradeSortMode: TradeDeskSortMode;
@@ -36,7 +29,6 @@ type UseTradeDeskViewModelArgs = {
 
 export default function useTradeDeskViewModel({
   counterParentTrade,
-  editingRecurringOrder,
   editingTrade,
   filteredPublicTradeCount,
   myTrades,
@@ -46,7 +38,6 @@ export default function useTradeDeskViewModel({
   routeSurfaceView,
   selectedMyTradeGroupLabel,
   selectedMyTradeGroupTradeCount,
-  tradeCreateMode,
   tradePairFilter,
   tradeSearchInput,
   tradeSortMode,
@@ -86,21 +77,17 @@ export default function useTradeDeskViewModel({
   const tradeTypeFilterOptions: Array<{ value: TradeDeskTypeFilter; label: string }> =
     routeSurfaceView === 'mine'
       ? [
-          { value: 'all', label: 'All types' },
-          { value: 'one-off', label: 'One-off' },
-          { value: 'recurring', label: 'Recurring' },
-          { value: 'private-liquidity', label: PRIVATE_LIQUIDITY_LABEL },
+          { value: 'all', label: 'All offers' },
+          { value: 'private-liquidity', label: 'Hidden budget' },
           { value: 'private-link', label: UNLISTED_ORDER_LABEL },
-          { value: 'direct', label: 'Direct links' },
-          { value: 'counter', label: 'Counters' },
-          { value: 'visible', label: PUBLIC_LIQUIDITY_LABEL }
+          { value: 'direct', label: 'Direct offers' },
+          { value: 'counter', label: 'Counteroffers' },
+          { value: 'visible', label: 'Public terms' }
         ]
       : [
-          { value: 'all', label: 'All types' },
-          { value: 'one-off', label: 'One-off' },
-          { value: 'recurring', label: 'Recurring' },
-          { value: 'private', label: PRIVATE_LIQUIDITY_LABEL },
-          { value: 'visible', label: PUBLIC_LIQUIDITY_LABEL }
+          { value: 'all', label: 'All offers' },
+          { value: 'private', label: 'Private terms' },
+          { value: 'visible', label: 'Public terms' }
         ];
 
   const tradeDeskIdentity =
@@ -116,8 +103,8 @@ export default function useTradeDeskViewModel({
           }
         : routeSurfaceView === 'pools'
           ? {
-              title: 'Recurring Limit Strategies',
-              copy: 'Manage fixed bid/ask Position NFTs and hidden private limit intents.'
+          title: 'Private Liquidity',
+          copy: 'Manage private liquidity positions and hidden intents.'
             }
         : routeSurfaceView === 'agent'
           ? {
@@ -134,19 +121,14 @@ export default function useTradeDeskViewModel({
         title: 'Counter Offer',
         copy: 'Reply with a direct P2P quote.'
       }
-    : editingTrade || editingRecurringOrder
+    : editingTrade
       ? {
           title: 'Edit Order',
           copy: 'Adjust terms while preserving desk context.'
         }
-      : tradeCreateMode === 'recurring'
-        ? {
+      : {
             title: 'Create',
-            copy: 'Create reusable two-sided P2P liquidity.'
-          }
-        : {
-            title: 'Create',
-            copy: 'Create a one-off or recurring P2P offer.'
+            copy: 'Create a fixed-term P2P offer.'
           };
 
   return {

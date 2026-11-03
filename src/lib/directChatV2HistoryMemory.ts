@@ -90,6 +90,7 @@ const hasContiguousMemoryBackingForCheckpoint = ({
   walletAddress: string;
 }): boolean => {
   const lastMessageId = BigInt(checkpoint.lastMessageId);
+  const firstMessageId = BigInt(checkpoint.firstMessageId ?? '1');
   const messageIds = new Set<string>();
 
   for (const messages of Object.values(messagesByContact)) {
@@ -112,7 +113,7 @@ const hasContiguousMemoryBackingForCheckpoint = ({
 
       const messageId = BigInt(identity.messageId);
       if (
-        messageId <= 0n ||
+        messageId < firstMessageId ||
         messageId > lastMessageId ||
         BigInt(identity.blockNumber) > checkpointBlock
       ) {
@@ -136,7 +137,7 @@ const hasContiguousMemoryBackingForCheckpoint = ({
     }
   }
 
-  return BigInt(messageIds.size) === lastMessageId;
+  return BigInt(messageIds.size) === lastMessageId - firstMessageId + 1n;
 };
 
 /**
@@ -247,11 +248,11 @@ export const reduceDirectChatV2HistoryMemorySync = ({
     const currentCheckpointMessageId = previous.checkpointsByScope[scopeKey]?.lastMessageId ?? '0';
     if (
       !result.reorged &&
-      result.page.expectedPreviousMessageId.toString() !== currentCheckpointMessageId
+      (result.page.previousCheckpointLastMessageId ?? result.page.expectedPreviousMessageId).toString() !== currentCheckpointMessageId
     ) {
       throw new Error('Direct-chat V2 page was produced from a stale history checkpoint.');
     }
-    if (result.page.lastMessageId.toString() !== result.checkpoint.lastMessageId) {
+    if (result.page.direction !== 'older' && result.page.lastMessageId.toString() !== result.checkpoint.lastMessageId) {
       throw new Error('Direct-chat V2 page and checkpoint message IDs do not match.');
     }
   }

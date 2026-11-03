@@ -1,13 +1,13 @@
 import { useRef, useState } from 'react';
 import { COTI_ECOSYSTEM_LINKS } from '../../lib/ecosystemLinks';
 import { CONFIGURED_COTI_NETWORK } from '../../lib/chainWhisperNetworks';
-import type { AppPage } from '../../shell/routing';
+import { getSessionTradingPage, type AppPage } from '../../shell/routing';
 import useMobileHeaderLinks from '../hooks/useMobileHeaderLinks';
 import {
   preloadChatPage,
   preloadPrivateTvlPage,
   preloadSwapPage,
-  preloadTradesPage
+  preloadTradingPage
 } from '../lazyRoutes';
 import AppHeader from './AppHeader';
 import { AppHeaderNavigation } from './AppHeaderNavigation';
@@ -51,10 +51,10 @@ export default function InitialHomeApp({ onNavigate, onOpenHelp }: InitialHomeAp
         onLaunchChat={() => navigate('chat')}
         onOpenSwap={() => navigate('swap')}
         onOpenPrivateTvl={() => navigate('treasury')}
-        onOpenTrades={() => navigate('trades')}
+        onOpenTrades={() => navigate(getSessionTradingPage())}
         onPrefetchChat={preloadChatPage}
         onPrefetchSwap={preloadSwapPage}
-        onPrefetchTrades={preloadTradesPage}
+        onPrefetchTrades={preloadTradingPage}
         onPrefetchPrivateTvl={preloadPrivateTvlPage}
       />
     </div>

@@ -204,7 +204,8 @@ export const mergeDirectChatV2ReadCursors = async ({
   cursors: readonly DirectChatV2ReadCursor[];
   canonicalMessageCount: bigint;
   readCanonicalMessageAnchor: (
-    messageId: bigint
+    messageId: bigint,
+    candidateAnchor?: DirectChatV2ReadCursorAnchor
   ) => Promise<DirectChatV2ReadCursorAnchor | null>;
 }): Promise<DirectChatV2ReadCursor> => {
   const scope = normalizeScope(rawScope);
@@ -234,10 +235,12 @@ export const mergeDirectChatV2ReadCursors = async ({
       continue;
     }
     const blockNumber = BigInt(cursor.lastReadBlockNumber);
-    const messageKey = candidateMessageId.toString();
+    const messageKey = `${candidateMessageId}:${blockNumber}:${cursor.lastReadBlockHash.toLowerCase()}`;
     let canonicalAnchorPromise = canonicalAnchorPromises.get(messageKey);
     if (!canonicalAnchorPromise) {
-      canonicalAnchorPromise = readCanonicalMessageAnchor(candidateMessageId).then((anchor) => {
+      canonicalAnchorPromise = readCanonicalMessageAnchor(candidateMessageId, {
+        messageId: candidateMessageId, blockNumber, blockHash: cursor.lastReadBlockHash
+      }).then((anchor) => {
         if (anchor === null) return null;
         const canonicalMessageId = BigInt(anchor.messageId);
         const canonicalBlockNumber = BigInt(anchor.blockNumber);
@@ -317,25 +320,32 @@ export const advanceDirectChatV2ReadCursorToVisibleMessage = ({
   return createDirectChatV2ReadCursor(scope, cursor.generation, visibleIdentity);
 };
 
+/** Positive values are a lower bound until cursor+1..N is loaded. Zero requires
+ * complete coverage of that interval; null means no unread incoming is proven. */
 export const countDirectChatV2UnreadMessages = ({
   cursor: rawCursor,
   scope: rawScope,
-  messages
+  messages,
+  canonicalMessageCount
 }: {
   cursor: DirectChatV2ReadCursor;
   scope: DirectChatV2ReadCursorScope;
   messages: readonly ChatMessage[];
-}): number => {
+  canonicalMessageCount: bigint;
+}): number | null => {
   const scope = normalizeScope(rawScope);
   const cursor = parseDirectChatV2ReadCursor(rawCursor, scope);
   const lastReadMessageId = BigInt(cursor.lastReadMessageId);
+  if (canonicalMessageCount < 0n || canonicalMessageCount > UINT64_MAX) throw new Error('Canonical message count must be a uint64 value.');
+  if (lastReadMessageId > canonicalMessageCount) return null;
   const unreadIds = new Set<string>();
+  const loadedIds = new Set<string>();
   for (const message of messages) {
-    if (message.direction !== 'incoming') continue;
     const identity = messageIdentityInScope(message, scope);
-    if (identity !== null && identity.messageId > lastReadMessageId) {
-      unreadIds.add(identity.messageId.toString());
+    if (identity !== null && identity.messageId > lastReadMessageId && identity.messageId <= canonicalMessageCount) {
+      loadedIds.add(identity.messageId.toString());
+      if (message.direction === 'incoming') unreadIds.add(identity.messageId.toString());
     }
   }
-  return unreadIds.size;
+  return unreadIds.size > 0 || BigInt(loadedIds.size) === canonicalMessageCount - lastReadMessageId ? unreadIds.size : null;
 };

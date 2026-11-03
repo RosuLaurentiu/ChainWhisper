@@ -7,6 +7,9 @@ import {
   type JsonRpcSigner
 } from '@coti-io/coti-ethers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CotiEventHintSubscription } from './appShared/cotiEventHints';
+import * as walletFlow from './walletTransactionFlow';
+import reviewedRuntime from './__fixtures__/reviewed-direct-chat-v2-runtime.json';
 
 const coreMocks = vi.hoisted(() => ({
   loadCotiEthersModule: vi.fn()
@@ -87,6 +90,8 @@ const MANIFEST = {
   deploymentBlock: DEPLOYMENT_BLOCK,
   runtimeBytecodeHash: RUNTIME_BYTECODE_HASH
 } satisfies DirectChatV2DeploymentManifest;
+const REVIEWED_MANIFEST = { ...MANIFEST, deploymentBlock: 8_981_982n,
+  runtimeBytecodeHash: '0x7ba5b1b9cfd675905cd70dc62ad81c841daf6f1ba95dab0738254a36256ca970' };
 const REQUIRED_FEATURE_HASHES = new Set(
   DIRECT_CHAT_V2_REQUIRED_FEATURES.map((feature) => keccak256(toUtf8Bytes(feature)).toLowerCase())
 );
@@ -227,6 +232,71 @@ describe('directChatV2Chain', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('admits the exact reviewed runtime with fresh code reads and no constant getters', async () => {
+    expect(keccak256(reviewedRuntime)).toBe(REVIEWED_MANIFEST.runtimeBytecodeHash);
+    const provider = makeBrowserProvider();
+    vi.mocked(provider.getCode).mockResolvedValue(reviewedRuntime);
+    const capability = await bindSigner(makeSigner({ browserProvider: provider }));
+    const surface = verifierSurface();
+    installContract(surface);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const deployment = await verifyDirectChatV2Contract({ capability, manifest: REVIEWED_MANIFEST });
+      expect(deployment).toEqual({ ...REVIEWED_MANIFEST, contractAddress: CHAT.toLowerCase() });
+      expect(supportsDirectChatV2ProfileSync(deployment)).toBe(true);
+    }
+    expect(provider.getCode).toHaveBeenCalledTimes(2);
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+    for (const read of Object.values(surface)) expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each(['0x', RUNTIME_BYTECODE])('rejects missing or changed reviewed code %s before getters', async runtime => {
+    const provider = makeBrowserProvider();
+    vi.mocked(provider.getCode).mockResolvedValue(runtime);
+    const capability = await bindSigner(makeSigner({ browserProvider: provider }));
+    installContract(verifierSurface());
+    await expect(verifyDirectChatV2Contract({ capability, manifest: REVIEWED_MANIFEST })).rejects.toThrow(
+      runtime === '0x' ? 'no deployed contract' : 'runtime bytecode');
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+  });
+
+  it('rejects a different manifest chain or deployment block for reviewed code', async () => {
+    const provider = makeBrowserProvider();
+    vi.mocked(provider.getCode).mockResolvedValue(reviewedRuntime);
+    const capability = await bindSigner(makeSigner({ browserProvider: provider }));
+    installContract(verifierSurface());
+    await expect(verifyDirectChatV2Contract({ capability,
+      manifest: { ...REVIEWED_MANIFEST, chainId: CHAIN_ID + 1n } })).rejects.toThrow('chain');
+    await expect(verifyDirectChatV2Contract({ capability,
+      manifest: { ...REVIEWED_MANIFEST, deploymentBlock: 8_981_983n } })).rejects.toThrow('deployment block');
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+  });
+
+  it.each(['before', 'during'] as const)('rejects a stale capability %s the reviewed code read', async when => {
+    let current = true;
+    const snapshot = () => { if (!current) throw new Error('reviewed owner lease changed'); };
+    const provider = makeBrowserProvider();
+    const capability = await bindSigner(makeSigner({ browserProvider: provider }), vi.fn(async () => {}), provider, snapshot);
+    installContract({ ...verifierSurface(), deploymentBlock: vi.fn(async () => REVIEWED_MANIFEST.deploymentBlock) });
+    vi.mocked(provider.getCode).mockImplementation(async () => { current = false; return reviewedRuntime; });
+    if (when === 'before') current = false;
+    await expect(verifyDirectChatV2Contract({ capability, manifest: REVIEWED_MANIFEST }))
+      .rejects.toThrow('reviewed owner lease changed');
+    if (when === 'before') expect(provider.getCode).not.toHaveBeenCalled();
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the owner lease after generic getter verification', async () => {
+    let current = true;
+    const provider = makeBrowserProvider();
+    const capability = await bindSigner(makeSigner({ browserProvider: provider }), vi.fn(async () => {}), provider,
+      () => { if (!current) throw new Error('generic owner lease changed'); });
+    installContract({ ...verifierSurface(), supportsFeature: vi.fn(async (feature: string) => {
+      current = false;
+      return REQUIRED_FEATURE_HASHES.has(String(feature).toLowerCase());
+    }) });
+    await expect(verifyDirectChatV2Contract({ capability, manifest: MANIFEST })).rejects.toThrow('generic owner lease changed');
   });
 
   it('freezes the zero-private-input setup and rotation selectors', () => {
@@ -394,6 +464,129 @@ describe('directChatV2Chain', () => {
       peer: BOB,
       blockNumber: DEPLOYMENT_BLOCK - 1n
     })).rejects.toThrow('verified deployment history');
+  });
+
+  it('uses an injected exact-conversation socket hint and stops redundant HTTP polls while healthy', async () => {
+    vi.useFakeTimers();
+    const readProvider = makeBrowserProvider();
+    readProvider.getBlockNumber = vi.fn(async () => 100) as never;
+    readProvider.getLogs = vi.fn(async () => []) as never;
+    const { capability, deployment } = await installVerifiedContract({
+      conversationIdFor: vi.fn(async () => CONVERSATION_ID), isParticipant: vi.fn(async () => true),
+      getConversation: vi.fn(async () => existingConversation)
+    }, makeSigner(), readProvider);
+    const stopSocket = vi.fn();
+    let request!: CotiEventHintSubscription;
+    const subscribeEventHints = vi.fn(async (input: CotiEventHintSubscription) => {
+      request = input; input.onStatus?.('connected'); return stopSocket;
+    });
+    const onHint = vi.fn();
+    const stop = await watchDirectChatV2MessageHints({ capability, deployment, peer: BOB, onHint, subscribeEventHints });
+    expect(subscribeEventHints).toHaveBeenCalledOnce();
+    expect(request.address).toBe(CHAT);
+    expect(request.topics).toEqual([DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, CONVERSATION_ID]);
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(readProvider.getLogs).not.toHaveBeenCalled();
+    request.onHint({ address: CHAT, topics: [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, CONVERSATION_ID] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onHint).toHaveBeenCalledOnce();
+    await stop?.();
+    request.onHint({ address: CHAT, topics: [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, CONVERSATION_ID] });
+    expect(onHint).toHaveBeenCalledOnce(); expect(stopSocket).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it('uses injected owner-topic socket hints for peers and keeps an HTTP fallback on disconnect', async () => {
+    vi.useFakeTimers();
+    const readProvider = makeBrowserProvider();
+    readProvider.getBlockNumber = vi.fn(async () => 100) as never;
+    readProvider.getLogs = vi.fn(async () => []) as never;
+    const { capability, deployment } = await installVerifiedContract({}, makeSigner(), readProvider);
+    const requests: CotiEventHintSubscription[] = [], stopSocket = vi.fn();
+    const subscribeEventHints = vi.fn(async (input: CotiEventHintSubscription) => {
+      requests.push(input); input.onStatus?.('connected'); return stopSocket;
+    });
+    const onHint = vi.fn();
+    let paused = false;
+    const stop = await watchDirectChatV2IncomingMessageHints({ capability, deployment, onHint, subscribeEventHints, shouldPause: () => paused });
+    expect(requests).toHaveLength(2);
+    const ownerTopic = `0x${'0'.repeat(24)}${ALICE.slice(2)}`;
+    expect(requests.map(request => request.topics)).toEqual([
+      [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, null, ownerTopic],
+      [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, null, null, ownerTopic]
+    ]);
+    await vi.advanceTimersByTimeAsync(12_000); expect(readProvider.getLogs).not.toHaveBeenCalled();
+    paused = true;
+    requests[0].onHint({ address: CHAT, topics: [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, CONVERSATION_ID,
+      ownerTopic, `0x${'0'.repeat(24)}${BOB.slice(2)}`] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onHint).toHaveBeenCalledExactlyOnceWith(BOB);
+    requests[0].onStatus?.('reconnecting'); requests[1].onStatus?.('reconnecting');
+    vi.mocked(readProvider.getBlockNumber).mockResolvedValue(101);
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(readProvider.getLogs).not.toHaveBeenCalled();
+    paused = false;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(readProvider.getLogs).toHaveBeenCalled();
+    expect(onHint).toHaveBeenCalledExactlyOnceWith(BOB);
+    await stop(); expect(stopSocket).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it('holds socket-driven reads for wallet operations and hidden views and rejects a released capability', async () => {
+    vi.useFakeTimers();
+    const operationActive = vi.spyOn(walletFlow, 'isWalletTransactionFlowActive').mockReturnValue(true);
+    vi.stubGlobal('document', { hidden: false });
+    const readProvider = makeBrowserProvider();
+    readProvider.getBlockNumber = vi.fn(async () => 100) as never;
+    const { capability, deployment } = await installVerifiedContract({
+      conversationIdFor: vi.fn(async () => CONVERSATION_ID), isParticipant: vi.fn(async () => true),
+      getConversation: vi.fn(async () => existingConversation)
+    }, makeSigner(), readProvider);
+    let request!: CotiEventHintSubscription;
+    const onHint = vi.fn();
+    const stop = await watchDirectChatV2MessageHints({ capability, deployment, peer: BOB, onHint,
+      subscribeEventHints: async input => { request = input; input.onStatus?.('connected'); return () => {}; } });
+    vi.mocked(readProvider.getBlockNumber).mockClear();
+    const log = { address: CHAT, topics: [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, CONVERSATION_ID] };
+    try {
+      request.onHint(log); await vi.advanceTimersByTimeAsync(8_000);
+      expect(onHint).not.toHaveBeenCalled(); expect(readProvider.getBlockNumber).not.toHaveBeenCalled();
+      operationActive.mockReturnValue(false);
+      (document as unknown as { hidden: boolean }).hidden = true;
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(readProvider.getBlockNumber).not.toHaveBeenCalled();
+      (document as unknown as { hidden: boolean }).hidden = false;
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(readProvider.getBlockNumber).toHaveBeenCalledOnce();
+      request.onHint(log); await Promise.resolve(); expect(onHint).toHaveBeenCalledOnce();
+      await Promise.resolve(); releaseDirectChatV2MetaMaskCapability(capability);
+      request.onHint(log); await Promise.resolve(); expect(onHint).toHaveBeenCalledOnce();
+    } finally {
+      await stop?.(); operationActive.mockRestore(); vi.unstubAllGlobals(); vi.useRealTimers();
+    }
+  });
+
+  it('catches up all bounded owner-log pages after a socket reconnect', async () => {
+    vi.useFakeTimers();
+    const readProvider = makeBrowserProvider();
+    readProvider.getBlockNumber = vi.fn(async () => 100) as never;
+    readProvider.getLogs = vi.fn(async () => []) as never;
+    const { capability, deployment } = await installVerifiedContract({}, makeSigner(), readProvider);
+    const requests: CotiEventHintSubscription[] = [];
+    const stop = await watchDirectChatV2IncomingMessageHints({ capability, deployment, onHint: vi.fn(),
+      subscribeEventHints: async input => { requests.push(input); input.onStatus?.('connected'); return () => {}; } });
+    await vi.advanceTimersByTimeAsync(4_000);
+    requests.forEach(request => request.onStatus?.('reconnecting'));
+    vi.mocked(readProvider.getBlockNumber).mockResolvedValue(100 + Number(DIRECT_CHAT_V2_MAX_LOG_BLOCK_SPAN) + 1);
+    requests.forEach(request => request.onStatus?.('connected'));
+    await vi.advanceTimersByTimeAsync(12_000);
+    // Each bounded canonical owner page reads separate sender and recipient filters.
+    expect(readProvider.getLogs).toHaveBeenCalledTimes(4);
+    const before = vi.mocked(readProvider.getBlockNumber).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(readProvider.getBlockNumber).toHaveBeenCalledTimes(before);
+    await stop(); vi.useRealTimers();
   });
 
   it('uses conversation-filtered events only as current-session replay hints', async () => {

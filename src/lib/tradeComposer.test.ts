@@ -7,7 +7,20 @@ import {
   VERIFIED_ECOSYSTEM_TOKENS,
   buildTradeCustomTokenInfoKey
 } from './appHelpers';
-import { deriveTradeComposerModel } from './tradeComposer';
+import { deriveTradeComposerModel, resolveTradeBudgetPrivacyForPairChange } from './tradeComposer';
+
+describe('trade budget preference on pair changes', () => {
+  it.each([
+    [true, ['pwisp', 'coti'], ['wisp', 'coti'], false],
+    [false, ['wisp', 'coti'], ['pwisp', 'coti'], true],
+    [false, ['pwisp', 'coti'], ['pwisp', 'wisp'], false],
+    [true, ['pwisp', 'coti'], ['pwisp', 'wisp'], true],
+    [false, ['wisp', 'coti'], ['custom-public', 'wisp'], false],
+    [false, ['custom-public', 'wisp'], ['custom-private', 'wisp'], true]
+  ] as const)('keeps budget preference %s from %j to %j as %s', (hidden, previous, next, expected) => {
+    expect(resolveTradeBudgetPrivacyForPairChange(hidden, previous, next)).toBe(expected);
+  });
+});
 
 const baseParams = {
   activeContact: null,

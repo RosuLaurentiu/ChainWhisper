@@ -1,3 +1,4 @@
+const browserContexts = vi.hoisted(() => new WeakMap<object,{owner:string;guard:()=>void}>());
 import { afterEach, describe, expect, it, vi } from 'vitest';
 const ownerBeta = vi.hoisted(() => ({ active: false, activation: { activatedAt: 2_000_000_000n, startingNonce: 220, legacyReservationHash:'' } }));
 vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
@@ -9,6 +10,8 @@ vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
       actual.checkCurrentOwnerBetaWindow(ownerBeta.activation,now,nonce,recovery,cap,price);
     } };
 });
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability',()=>({hasCurrentDexBrowserSigner:(signer:object|undefined,owner:string)=>{const row=signer&&browserContexts.get(signer);if(!row||row.owner!==owner.toLowerCase())return false;row.guard();return true;}}));
+const bindCurrentDexBrowserSigner=(signer:object,owner:string,_chain:bigint,guard:()=>void)=>{browserContexts.set(signer,{owner:owner.toLowerCase(),guard});};
 afterEach(() => { ownerBeta.active=false; });
 import { STAGED_NATIVE_DEX_CANDIDATE as native, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
 import { assertCurrentSwapCandidate, assertCurrentNativeSwapIntent, currentNativeSigningBudget, completeCurrentNativeSwapScope, completeCurrentNativePoolScope, recordCurrentNativePoolOutcome, CURRENT_NATIVE_SWAP_LIMITS as limits } from './currentDexNativeSwapPolicy';
@@ -26,6 +29,45 @@ import { readCurrentDexNativeReload, writeCurrentDexNativeReload } from './curre
 import { currentOwnerBetaLegacyReservationHash } from './currentDexNativeSwapPolicy';
 
 describe('finite native swap identity and budget', () => {
+  it('keeps engineering bounds for the same address without actual browser context and admits a new browser wallet at nonce zero',()=>{
+    ownerBeta.active=true;
+    const scope=`quote:0x${'af'.repeat(32)}`,wallet=`0x${'cd'.repeat(20)}`;
+    expect(()=>currentNativeSigningBudget({},CURRENT_APP_SWAP_OWNER,()=>ownerBeta.activation.activatedAt,history).check('quote',scope,110_000_000n)).toThrow();
+    expect(currentNativeSigningBudget({},wallet,()=>ownerBeta.activation.activatedAt,history).snapshot().normalExpiresAt).not.toBeNull();
+    expect(()=>assertCurrentSwapCandidate(history,{principal:wallet,destination:wallet,inputToken:history.pairs[0].tokens[0],outputToken:history.pairs[0].tokens[1],profile:'fast-pool',maximumInput:100_000_000n})).toThrow();
+    const signer={};let live=true;bindCurrentDexBrowserSigner(signer,wallet,7082400n,()=>{if(!live)throw new Error('lease ended');});
+    const budget=currentNativeSigningBudget(signer,wallet,()=>ownerBeta.activation.activatedAt,history);
+    budget.commit('quote',scope,110_000_000n,scope,0);
+    const record=currentNativeSwapCheckpoint(signer);
+    expect(record.version).toBe(2);expect(record.charges[0].nonce).toBe(0);
+    expect(()=>validateCurrentNativeSwapCheckpoint(record,wallet,history,signer)).not.toThrow();
+    expect(()=>restoreCurrentNativeSwapCheckpoint({},wallet,history,record)).toThrow();
+    expect(()=>budget.commit('quote',scope,110_000_000n,scope,0)).toThrow();
+    live=false;expect(()=>budget.check('cancel',`cancel:${scope}`,30_000_000n,scope)).toThrow('lease ended');
+  });
+  it('starts a distinct normal owner record without closed-trial charges and retains exact fees and no-resend', () => {
+    ownerBeta.active=true;
+    const signer={}, scope=`quote:0x${'ce'.repeat(32)}`;
+    const record={version:2 as const,owner:CURRENT_APP_SWAP_OWNER,candidateGraph:history.graph,
+      start:String(ownerBeta.activation.activatedAt),activeSwap:null,committedWei:'0',charges:[]};
+    expect(()=>validateCurrentNativeSwapCheckpoint(record,CURRENT_APP_SWAP_OWNER,history)).not.toThrow();
+    if(ownerBeta.active)bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
+    restoreCurrentNativeSwapCheckpoint(signer,CURRENT_APP_SWAP_OWNER,history,record);
+    const budget=currentNativeSigningBudget(signer,CURRENT_APP_SWAP_OWNER,()=>ownerBeta.activation.activatedAt+604800n,history);
+    budget.commit('quote',scope,110_000_000n,scope,220);
+    recordCurrentNativeSwapHash(signer,220,scope.slice(6),`0x${'ab'.repeat(32)}`);
+    budget.commit('accept',`accept:${scope}`,110_000_000n,scope,221);
+    recordCurrentNativeSwapHash(signer,221,scope.slice(6),`0x${'ac'.repeat(32)}`);
+    completeCurrentNativeSwapScope(signer,scope);
+    const saved=currentNativeSwapCheckpoint(signer);
+    expect(saved).toMatchObject({version:2,committedWei:'11000000000000000',activeSwap:null});
+    expect(()=>validateCurrentNativeSwapCheckpoint(saved,CURRENT_APP_SWAP_OWNER,history)).not.toThrow();
+    expect(()=>restoreCurrentNativeSwapCheckpoint({},`0x${'ff'.repeat(20)}`,history,saved)).toThrow();
+    const restored={};bindCurrentDexBrowserSigner(restored,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});restoreCurrentNativeSwapCheckpoint(restored,CURRENT_APP_SWAP_OWNER,history,saved);
+    expect(()=>currentNativeSigningBudget(restored,CURRENT_APP_SWAP_OWNER,()=>ownerBeta.activation.activatedAt,history).commit('quote',scope,110_000_000n,scope,222)).toThrow();
+    for(const change of [{owner:`0x${'ee'.repeat(20)}`},{start:'bad'},{committedWei:'0'},{windowStart:'2000000000'}])
+      expect(()=>validateCurrentNativeSwapCheckpoint({...saved,...change},CURRENT_APP_SWAP_OWNER,history)).toThrow();
+  });
   it.each(['delivered','expired-replacement'] as const)('continues completed owner delivery into a %s Fast trial while retaining all prior charges', outcome => {
     const signer={},first=`quote:0x${'11'.repeat(32)}`,second=`quote:0x${'33'.repeat(32)}`,third=`quote:0x${'66'.repeat(32)}`;
     const phases=['token-funding','quote','accept','recover','token-funding','quote','accept'] as const;
@@ -226,7 +268,7 @@ describe('finite native swap identity and budget', () => {
     const renewed=currentNativeSwapCheckpoint(signer);
     expect(renewed).toEqual({...original,windowStart:String(now)});
     expect(renewCurrentNativeSwapClosedWindow(signer,CURRENT_APP_SWAP_OWNER,current,scope,now+1n)).toBe(false);
-    const restored={};restoreCurrentNativeSwapCheckpoint(restored,CURRENT_APP_SWAP_OWNER,current,renewed);
+    const restored={};bindCurrentDexBrowserSigner(restored,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});restoreCurrentNativeSwapCheckpoint(restored,CURRENT_APP_SWAP_OWNER,current,renewed);
     expect(renewCurrentNativeSwapClosedWindow(restored,CURRENT_APP_SWAP_OWNER,current,scope,now+limits.normalSeconds-1n)).toBe(false);
     expect(renewCurrentNativeSwapClosedWindow(restored,CURRENT_APP_SWAP_OWNER,current,scope,now+limits.normalSeconds)).toBe(true);
     expect(currentNativeSwapCheckpoint(restored)).toEqual({...original,windowStart:String(now+limits.normalSeconds)});
@@ -250,7 +292,7 @@ describe('finite native swap identity and budget', () => {
     const renewed=currentNativeSwapCheckpoint(signer);
     expect(renewed).toEqual({...original,activeSwap:scope,windowStart:'1950'});
     expect(()=>renewCurrentNativeSwapFundingWindow(signer,owner,current,`quote:0x${'88'.repeat(32)}`,2850n)).toThrow('renew');
-    const restored={};restoreCurrentNativeSwapCheckpoint(restored,owner,current,renewed);
+    const restored={};bindCurrentDexBrowserSigner(restored,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});restoreCurrentNativeSwapCheckpoint(restored,owner,current,renewed);
     const next=currentNativeSigningBudget(restored,owner,()=>1951n,current);
     expect(next.snapshot()).toMatchObject({signingStarts:1,committedWei:260_000_000_000_000n,normalExpiresAt:2850n,recoveryExpiresAt:3750n});
     expect(()=>next.check('token-faucet',original.charges[0].key,5_000_000n,oldScope)).toThrow();
@@ -305,7 +347,7 @@ describe('finite native swap identity and budget', () => {
     recordCurrentNativeSwapHash(signer,4,`0x${'22'.repeat(32)}`,`0x${'33'.repeat(32)}`);
     const saved=currentNativeSwapCheckpoint(signer);
     expect(saved.committedWei).toBe('520000000000000');
-    const restored={};restoreCurrentNativeSwapCheckpoint(restored,owner,current,saved);
+    const restored={};bindCurrentDexBrowserSigner(restored,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});restoreCurrentNativeSwapCheckpoint(restored,owner,current,saved);
     const next=currentNativeSigningBudget(restored,owner,()=>101n,current);
     expect(()=>next.check('token-funding',key,5_000_000n,scope)).toThrow();
     expect(()=>next.check('quote',`quote:0x${'44'.repeat(32)}`,110_000_000n)).toThrow();
@@ -591,6 +633,7 @@ describe('approved tiny partial-refund trial', () => {
   it('appends owner-beta swaps without resetting or repricing the14 legacy charges, then restores the same active scope', () => {
     ownerBeta.active=true;
     const legacy=completedLegacy(), signer={}, s=scope('6');
+    if(ownerBeta.active)bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
     restoreCurrentNativeSwapCheckpoint(signer,CURRENT_APP_SWAP_OWNER,history,legacy);
     let now=ownerBeta.activation.activatedAt;
     const budget=currentNativeSigningBudget(signer,CURRENT_APP_SWAP_OWNER,()=>now,history);
@@ -601,7 +644,7 @@ describe('approved tiny partial-refund trial', () => {
     const saved=currentNativeSwapCheckpoint(signer),reloaded={};
     expect(saved.charges.slice(0,14)).toEqual(legacy.charges);
     expect(BigInt(saved.committedWei)-BigInt(legacy.committedWei)).toBe(11_000_000_000_000_000n);
-    restoreCurrentNativeSwapCheckpoint(reloaded,CURRENT_APP_SWAP_OWNER,history,saved);
+    bindCurrentDexBrowserSigner(reloaded,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});restoreCurrentNativeSwapCheckpoint(reloaded,CURRENT_APP_SWAP_OWNER,history,saved);
     expect(currentNativeSwapCheckpoint(reloaded)).toEqual(saved);
     expect(()=>budget.check('quote',scope('7'),110_000_000n)).toThrow('scope');
     completeCurrentNativeSwapScope(signer,s);
@@ -626,9 +669,11 @@ describe('approved tiny partial-refund trial', () => {
   it('requires complete old records and rejects changed suffix nonce, fee, hash and scope on reload', () => {
     ownerBeta.active=true;
     const legacy=completedLegacy(),signer={},s=scope('6');
-    expect(()=>currentNativeSigningBudget({},CURRENT_APP_SWAP_OWNER,()=>ownerBeta.activation.activatedAt,history).check('quote',s,110_000_000n)).toThrow();
+    const fresh={};bindCurrentDexBrowserSigner(fresh,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
+    expect(()=>currentNativeSigningBudget(fresh,CURRENT_APP_SWAP_OWNER,()=>ownerBeta.activation.activatedAt,history).check('quote',s,110_000_000n)).not.toThrow();
     for(const change of [{charges:legacy.charges.slice(1)},{committedWei:'0'},{charges:legacy.charges.map((row,i)=>i===13?{...row,hash:`0x${'f'.repeat(64)}`}:row)}])
       expect(()=>restoreCurrentNativeSwapCheckpoint({},CURRENT_APP_SWAP_OWNER,history,{...legacy,...change})).toThrow();
+    if(ownerBeta.active)bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
     restoreCurrentNativeSwapCheckpoint(signer,CURRENT_APP_SWAP_OWNER,history,legacy);
     const budget=currentNativeSigningBudget(signer,CURRENT_APP_SWAP_OWNER,()=>ownerBeta.activation.activatedAt,history);
     expect(()=>budget.commit('quote',s,110_000_000n,s,219)).toThrow();
@@ -641,10 +686,11 @@ describe('approved tiny partial-refund trial', () => {
   });
   it('removes the consumed three-atom mode restriction without widening custom protection', () => {
     ownerBeta.active=true;
+    const signer={};bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
     for(const profile of ['fast-pool','cheap-async']) {
       const intent={candidate:history,principal:CURRENT_APP_SWAP_OWNER,destination:CURRENT_APP_SWAP_OWNER,inputToken:history.tokenMetadata[3].address,outputToken:history.tokenMetadata[2].address,
         profile,quoteProtocol:'quote-slippage',maximumInput:20_000_000n,minimumInput:1n,minimumOutput:2n,rateNumerator:1n,rateDenominator:2n,toleranceBps:50,deadline:ownerBeta.activation.activatedAt+900n};
-      const check=(change:object={})=>assertCurrentNativeSwapIntent({intent:{...intent,...change}} as unknown as CurrentCheapDexPreparedQuote,ownerBeta.activation.activatedAt);
+      const check=(change:object={})=>assertCurrentNativeSwapIntent({intent:{...intent,...change}} as unknown as CurrentCheapDexPreparedQuote,ownerBeta.activation.activatedAt,false,false,signer);
       expect(()=>check()).not.toThrow();
       expect(()=>check({toleranceBps:51})).toThrow();
       expect(()=>check({maximumInput:100_000_000n})).not.toThrow();

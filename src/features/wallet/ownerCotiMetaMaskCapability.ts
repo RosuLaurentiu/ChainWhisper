@@ -24,6 +24,15 @@ type PooledOwnerSigner = {
   signer: JsonRpcSigner;
 };
 
+const DEX_BROWSER_SIGNERS = new WeakMap<object, Readonly<{ owner: string; chainId: bigint; assertCurrent: () => void }>>();
+// This read-only boundary cannot promote an address or a caller-created signer.
+export const hasCurrentDexBrowserSigner = (signer: object | undefined, owner: string, chainId: bigint) => {
+  const context = signer && DEX_BROWSER_SIGNERS.get(signer);
+  if (!context || context.owner !== owner.toLowerCase() || context.chainId !== chainId) return false;
+  context.assertCurrent();
+  return true;
+};
+
 const OWNER_SIGNER_POOLS = new WeakMap<object, Map<string, Promise<PooledOwnerSigner>>>();
 const DESTROYED_OWNER_SIGNER_PROVIDERS = new WeakSet<object>();
 
@@ -55,6 +64,7 @@ export type OwnerCotiMetaMaskOnboardInfoCommitter = (input: Readonly<{
 }>) => void;
 
 export type IssueOwnerCotiMetaMaskCapabilityArgs<TCapability> = Readonly<{
+  assertCapabilityCurrent?: () => void;
   assertLeaseCurrent: (lease: BrowserWalletSignerLease) => Promise<void>;
   assertLeaseSnapshotCurrent: (lease: BrowserWalletSignerLease) => void;
   bindCapability: (input: Readonly<{
@@ -137,6 +147,7 @@ const assertExactLease = <TCapability>({
 
 /** Composes one opaque owner capability from the exact selected MetaMask or CipherTrade lease. */
 export const issueOwnerCotiMetaMaskCapability = async <TCapability>({
+  assertCapabilityCurrent,
   assertLeaseCurrent,
   assertLeaseSnapshotCurrent,
   bindCapability,
@@ -159,8 +170,18 @@ export const issueOwnerCotiMetaMaskCapability = async <TCapability>({
     expectedOwnerAddress,
     lease: capturedLease
   });
-  const assertCurrent = (): Promise<void> => assertLeaseCurrent(capturedLease);
-  const assertSnapshotCurrent = (): void => assertLeaseSnapshotCurrent(capturedLease);
+  const assertPooledLeaseCurrent = (): Promise<void> => assertLeaseCurrent(capturedLease);
+  const assertPooledLeaseSnapshotCurrent = (): void => assertLeaseSnapshotCurrent(capturedLease);
+  const assertCurrent = async (): Promise<void> => {
+    assertCapabilityCurrent?.();
+    await assertPooledLeaseCurrent();
+    assertCapabilityCurrent?.();
+  };
+  const assertSnapshotCurrent = (): void => {
+    assertCapabilityCurrent?.();
+    assertPooledLeaseSnapshotCurrent();
+    assertCapabilityCurrent?.();
+  };
 
   await assertCurrent();
   assertSnapshotCurrent();
@@ -181,8 +202,8 @@ export const issueOwnerCotiMetaMaskCapability = async <TCapability>({
     pooledPromise = (async (): Promise<PooledOwnerSigner> => {
       const guardedProvider = createLeaseGuardedEip1193Provider(
         capturedLease.sessionProvider,
-        assertCurrent,
-        assertSnapshotCurrent
+        assertPooledLeaseCurrent,
+        assertPooledLeaseSnapshotCurrent
       );
       const browserProvider = await createCotiBrowserProvider(guardedProvider);
       try {
@@ -191,6 +212,12 @@ export const issueOwnerCotiMetaMaskCapability = async <TCapability>({
         // extension whenever a capability is issued.
         const signer = new JsonRpcSigner(browserProvider, expected.ownerAddress);
         signer.disableAutoOnboard();
+        if (expected.chainId === 7082400n) DEX_BROWSER_SIGNERS.set(signer, Object.freeze({
+          owner: expected.ownerAddress.toLowerCase(), chainId: expected.chainId, assertCurrent: () => {
+            if (DESTROYED_OWNER_SIGNER_PROVIDERS.has(browserProvider)) throw new Error('Browser wallet signer lease ended.');
+            assertPooledLeaseSnapshotCurrent();
+          }
+        }));
         return { browserProvider, guardedProvider, privacyUnlock: null, signer };
       } catch (error) {
         destroyOwnerSignerProviderOnce(browserProvider);
@@ -203,9 +230,15 @@ export const issueOwnerCotiMetaMaskCapability = async <TCapability>({
     });
   }
   const pooled = await pooledPromise;
+  assertSnapshotCurrent();
   const { browserProvider, guardedProvider, signer } = pooled;
   const readProvider = await loadCotiReadProvider(true);
   assertSnapshotCurrent();
+  // The shared signer/provider belongs to the wallet lease. Only this issuance's
+  // privacy helper requests carry its additional capability-generation guard.
+  const privacyProvider = assertCapabilityCurrent
+    ? createLeaseGuardedEip1193Provider(guardedProvider, assertCurrent, assertSnapshotCurrent)
+    : guardedProvider;
 
   const snapAesResult = { current: null as CotiSnapOwnerAesResult | null };
   let privacyUnlocked = false;
@@ -214,18 +247,21 @@ export const issueOwnerCotiMetaMaskCapability = async <TCapability>({
     const cachedOnboardInfo = refreshPrivacy
       ? undefined
       : sessionOnboardInfo?.[expected.ownerAddress.toLowerCase()];
-    if (requirePrivacy && cachedOnboardInfo?.aesKey?.trim() && !signer.getUserOnboardInfo()?.aesKey?.trim()) {
+    // Reuse an owner-unlocked session even when this capability must not prompt for privacy.
+    if (cachedOnboardInfo?.aesKey?.trim() && !signer.getUserOnboardInfo()?.aesKey?.trim()) {
       signer.setUserOnboardInfo(mergeOnboardInfo(signer.getUserOnboardInfo(), cachedOnboardInfo));
     }
     if (requirePrivacy && !signer.getUserOnboardInfo()?.aesKey?.trim()) {
       if (!pooled.privacyUnlock) {
         pooled.privacyUnlock = (async () => {
+          assertSnapshotCurrent();
           if (expected.walletRequiresSnap) {
             snapAesResult.current = await getCotiSnapOwnerAesKeyResult(
-              guardedProvider,
+              privacyProvider,
               expected.ownerAddress,
               { expectedChainId: COTI_NETWORK.chainIdDecimal }
             );
+            assertSnapshotCurrent();
             if (snapAesResult.current.status !== 'ready') {
               throw new Error(getCotiSnapOwnerAesStatusMessage(snapAesResult.current.status));
             }
@@ -237,10 +273,11 @@ export const issueOwnerCotiMetaMaskCapability = async <TCapability>({
               allowLegacyFallback: true,
               assertCurrent,
               probeSnapAes: false,
-              provider: guardedProvider,
+              provider: privacyProvider,
               signer,
               walletAddress: expected.ownerAddress
             });
+            assertSnapshotCurrent();
             if (unlock.status !== 'ready') {
               throw new Error(`CipherTrade did not return the owner privacy key for ${capabilityLabel}.`);
             }

@@ -1,5 +1,5 @@
 import { SlidersHorizontal } from 'lucide-react';
-import { useMemo, useState, type KeyboardEventHandler, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
 import { moveFocusWithin } from '../../../shared/components/a11y';
 import {
@@ -29,6 +29,11 @@ type TradeMyTradesSectionProps = TradeOrderCardProps & {
   myTradesCount: number;
   myTradesError: string;
   privateTradesLocked?: boolean;
+  historyHasMore?: boolean;
+  historyComplete?: boolean;
+  historyLoading?: boolean;
+  historyError?: string;
+  onLoadOlderHistory?: () => void;
   myTradeGroupOptions: MyTradeGroupOption[];
   selectedMyTradeGroup: MyTradeGroupOption;
   selectedTradeKey: string;
@@ -56,6 +61,7 @@ type TradeMyTradesSectionProps = TradeOrderCardProps & {
   onSortModeChange: (value: string) => void;
   onCreateOffer: () => void;
   additionalActiveCount?: number; additionalReceivedCount?: number; additionalHistoryCount?: number; additionalPending?: boolean;
+  additionalIncomplete?: boolean;
   renderAdditionalTrades?: (lifecycle: 'active' | 'history', filter: 'all' | 'received' | 'active') => ReactNode;
 };
 
@@ -87,6 +93,11 @@ export default function TradeMyTradesSection({
   myTradesCount,
   myTradesError,
   privateTradesLocked = false,
+  historyHasMore = false,
+  historyComplete = false,
+  historyLoading = false,
+  historyError = '',
+  onLoadOlderHistory,
   myTradeGroupOptions,
   selectedMyTradeGroup,
   selectedTradeKey,
@@ -113,7 +124,7 @@ export default function TradeMyTradesSection({
   onTypeFilterChange,
   onSortModeChange,
   onCreateOffer,
-  additionalActiveCount = 0, additionalReceivedCount = 0, additionalHistoryCount = 0, additionalPending = false, renderAdditionalTrades,
+  additionalActiveCount = 0, additionalReceivedCount = 0, additionalHistoryCount = 0, additionalPending = false, additionalIncomplete = false, renderAdditionalTrades,
   ...tradeOrderCardProps
 }: TradeMyTradesSectionProps) {
   const [activeFilter, setActiveFilter] = useState<'all' | 'received' | 'active'>('all');
@@ -122,7 +133,29 @@ export default function TradeMyTradesSection({
   const historyGroup = myTradeGroupOptions.find((group) => group.id === 'history');
   const activeCount = (receivedGroup?.count ?? 0) + (activeGroup?.count ?? 0) + additionalActiveCount;
   const lifecycleView = selectedMyTradeGroup.id === 'history' ? 'history' : 'active';
-  const totalsUnavailable = privateTradesLocked || loadingMyTrades || Boolean(myTradesError) || additionalPending;
+  const olderButtonRef = useRef<HTMLButtonElement | null>(null), olderRequestedRef = useRef(false);
+  const historyReadRef = useRef({ canLoad: false, error: '', load: onLoadOlderHistory });
+  historyReadRef.current = { canLoad: Boolean(walletAddress && !privateTradesLocked && lifecycleView === 'history' &&
+    historyHasMore && !historyLoading && onLoadOlderHistory), error: historyError, load: onLoadOlderHistory };
+  const loadOlder = () => {
+    const current = historyReadRef.current;
+    if (!current.canLoad || olderRequestedRef.current) return;
+    olderRequestedRef.current = true;
+    current.load?.();
+  };
+  useEffect(() => { olderRequestedRef.current = false; }, [historyLoading, historyHasMore, historyError, onLoadOlderHistory]);
+  useEffect(() => {
+    if (!walletAddress || privateTradesLocked || lifecycleView !== 'history') return;
+    const onScroll = () => {
+      const bounds = olderButtonRef.current?.getBoundingClientRect();
+      if (bounds && bounds.bottom > 0 && bounds.top <= window.innerHeight + 160 && !historyReadRef.current.error) loadOlder();
+    };
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener('scroll', onScroll, true);
+  }, [walletAddress, privateTradesLocked, lifecycleView]);
+  const loading = loadingMyTrades || additionalPending;
+  const totalsUnavailable = privateTradesLocked || loading || additionalIncomplete || Boolean(myTradesError) ||
+    lifecycleView === 'history' && (historyHasMore || historyLoading || Boolean(historyError));
   const displayCount = (count: number) => totalsUnavailable ? '—' : count;
   const showConsolidatedActiveEmpty =
     lifecycleView === 'active' && activeFilter === 'all' && activeCount === 0 && !hasActiveDeskFilters && !totalsUnavailable;
@@ -240,9 +273,9 @@ export default function TradeMyTradesSection({
               type="button"
               className="standalone-trade-secondary-btn p2p-my-trades-refresh-btn"
               onClick={onRefreshMyTrades}
-              aria-busy={loadingMyTrades}
+              aria-busy={loading}
             >
-              {loadingMyTrades ? 'Refreshing...' : 'Refresh'}
+              {loading ? 'Refreshing...' : 'Refresh'}
             </button>
           ) : null}
         </div>
@@ -325,7 +358,7 @@ export default function TradeMyTradesSection({
             'error'
           )
         : null}
-      {walletAddress && loadingMyTrades && myTradesCount === 0
+      {walletAddress && (loadingMyTrades || additionalPending && !renderAdditionalTrades) && myTradesCount === 0
         ? renderP2PEmptyState(
             'Loading your trades',
             'Checking received offers, active offers, counters, and history.',
@@ -397,6 +430,11 @@ export default function TradeMyTradesSection({
             </div>
           ) : null}
           <section className="p2p-wallet-trade-group" role="tabpanel" aria-label={`${lifecycleView === 'active' ? 'Active' : 'History'} trades`}>
+            {lifecycleView === 'history' && onLoadOlderHistory && !privateTradesLocked ? <>
+              <p role="status">{historyLoading ? 'Checking trade history…' : historyError ? 'History is incomplete. Verified trades remain available.' :
+                historyHasMore ? 'Recent history loaded. Older trades are not loaded.' : historyComplete ? 'Book and Direct history is complete.' : 'Book and Direct history is unavailable.'}</p>
+              {historyError ? <p role="alert">{historyError}</p> : null}
+            </> : null}
             {lifecycleView === 'history'
               ? historyGroup ? historyGroup.count > 0 || !additionalHistoryCount && !totalsUnavailable ? renderTradeGroup(historyGroup) : null : totalsUnavailable ? null : emptyState
               : showConsolidatedActiveEmpty
@@ -409,6 +447,10 @@ export default function TradeMyTradesSection({
                 )
                 : visibleActiveGroups.filter(group => group.count > 0 || !renderAdditionalTrades && !totalsUnavailable).map(renderTradeGroup)}
             {renderAdditionalTrades?.(lifecycleView, activeFilter)}
+            {lifecycleView === 'history' && historyHasMore && !privateTradesLocked && onLoadOlderHistory ?
+              <button ref={olderButtonRef} type="button" disabled={historyLoading} onClick={loadOlder}>
+                {historyLoading ? 'Loading older history…' : historyError ? 'Retry older history' : 'Load older history'}
+              </button> : null}
           </section>
         </div>
       ) : null}

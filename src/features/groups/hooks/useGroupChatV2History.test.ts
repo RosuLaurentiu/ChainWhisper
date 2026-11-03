@@ -43,17 +43,18 @@ const deferred = <T,>() => {
   return { promise, resolve };
 };
 const page = (nextBlock = 111n, groupId = 4n): GroupChatV2HistorySyncResult => ({
-  groupId, entries: [], resetConversation: false, safeHead: 110n,
+  groupId, entries: [], resetConversation: false, safeHead: 110n, hasOlder: false,
   checkpoint: { groupId, nextBlock, lastMessageId: 0n, boundaryBlockNumber: nextBlock - 1n,
     boundaryBlockHash: `0x${'11'.repeat(32)}` }
 });
 const flush = async () => { await vi.advanceTimersByTimeAsync(0); };
 function fixture() {
-  const sync = vi.fn(async (groupId: bigint, accept?: (value: GroupChatV2HistorySyncResult) => boolean) => {
+  const sync = vi.fn(async (groupId: bigint, accept?: (value: GroupChatV2HistorySyncResult) => boolean,
+    _shouldContinue?: () => boolean) => {
     const result = page(111n, groupId); accept?.(result); return result;
   });
   const current = { value: true };
-  const runtime = { enabled: true, isCurrent: () => current.value, history: { sync } } as unknown as Extract<GroupChatV2Runtime, { enabled: true }>;
+  const runtime = { enabled: true, isCurrent: () => current.value, history: { sync, loadOlder: sync } } as unknown as Extract<GroupChatV2Runtime, { enabled: true }>;
   const onLoadStart = vi.fn(), onLoadEnd = vi.fn();
   const args = { runtime, activeGroupId: 4 as number | null, activeGroupIdRef: { current: 4 as number | null },
     hasAesReady: true, refreshNonce: 0, setMessagesByGroup: vi.fn(), setEpochSyncRequest: vi.fn(),
@@ -77,6 +78,21 @@ beforeEach(async () => {
 afterEach(() => { hooks.slots.forEach(slot => slot.cleanup?.()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('Group V2 history loading and availability', () => {
+  it('passes the live view guard to the history runtime and invalidates it before the next effect', async () => {
+    const f = fixture(), old = deferred<GroupChatV2HistorySyncResult>();
+    f.sync.mockImplementationOnce(() => old.promise);
+    f.render(); await flush();
+    const shouldContinue = f.sync.mock.calls[0]?.[2];
+    expect(shouldContinue).toBeTypeOf('function');
+    expect(shouldContinue?.()).toBe(true);
+    f.args.activeGroupId = 5; f.args.activeGroupIdRef.current = 5;
+    f.render(false);
+    expect(shouldContinue?.()).toBe(false);
+    f.render(); await flush();
+    old.resolve(page()); await flush();
+    expect(f.args.setMessagesByGroup).toHaveBeenCalledTimes(1);
+  });
+
   it('brackets a deferred initial read once and does not flash loading on background polls', async () => {
     const f = fixture(), waiting = deferred<GroupChatV2HistorySyncResult>();
     f.sync.mockImplementationOnce(async (_id, accept) => { const result = await waiting.promise; accept?.(result); return result; });
@@ -92,26 +108,36 @@ describe('Group V2 history loading and availability', () => {
     expect(f.onLoadEnd).toHaveBeenCalledOnce();
   });
 
-  it('retains loading while more pages remain', async () => {
-    const f = fixture(), waiting = deferred<GroupChatV2HistorySyncResult>();
-    f.sync.mockResolvedValueOnce(page(100n)).mockImplementationOnce(() => waiting.promise);
+  it('ends initial loading after one page and loads older history only on request', async () => {
+    const f = fixture();
+    f.sync.mockImplementationOnce(async (_id, accept) => {
+      const result = { ...page(), hasOlder: true }; accept?.(result); return result;
+    });
     f.render(); await flush();
-    expect(f.sync).toHaveBeenCalledTimes(2);
-    expect(f.onLoadStart).toHaveBeenCalledOnce();
-    expect(f.onLoadEnd).not.toHaveBeenCalled();
-    waiting.resolve(page()); await flush();
+    expect(f.sync).toHaveBeenCalledOnce();
     expect(f.onLoadEnd).toHaveBeenCalledExactlyOnceWith(4);
+    const recent = f.render();
+    expect(recent.hasOlderHistory).toBe(true);
+    await recent.loadOlderHistory();
+    expect(f.sync).toHaveBeenCalledTimes(2);
+    expect(f.render().hasOlderHistory).toBe(false);
+    expect(f.onLoadStart).toHaveBeenCalledTimes(2);
   });
 
-  it('returns only scoped unavailable state for failure and clears it after a successful retry', async () => {
+  it('stops after failure and retries only on an explicit refresh', async () => {
     const f = fixture();
     f.sync.mockRejectedValueOnce(new Error('provider payload must stay private'));
     f.render(); await flush();
-    expect(f.render()).toEqual({ historyUnavailable: true });
+    expect(f.render().historyUnavailable).toBe(true);
     expect(f.onLoadEnd).toHaveBeenCalledExactlyOnceWith(4);
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.sync).toHaveBeenCalledOnce();
+    expect(f.render().historyUnavailable).toBe(true);
+    f.args.refreshNonce++;
+    f.render(); await flush();
     expect(f.render().historyUnavailable).toBe(false);
-    expect(f.onLoadStart).toHaveBeenCalledOnce();
+    expect(f.sync).toHaveBeenCalledTimes(2);
+    expect(f.onLoadStart).toHaveBeenCalledTimes(2);
   });
 
   it('ends loading and retains the exact key-sync-required path without a retry timer', async () => {

@@ -42,6 +42,7 @@ import {
   attestTradeHistoryV2Deployment,
   bindTradeHistoryV2ReadCapability
 } from './tradeHistoryV2Chain';
+import type { CotiReadProvider } from './appShared/core';
 
 const address = (pair: string): string => `0x${pair.repeat(20)}`;
 const hash = (pair: string): string => `0x${pair.repeat(32)}`;
@@ -135,12 +136,14 @@ const setup = async ({
   assertCurrent = vi.fn(async () => undefined),
   assertSnapshotCurrent = vi.fn(() => undefined),
   privateTrade = false,
-  malformedPrivateTerms = false
+  malformedPrivateTerms = false,
+  independentReadProvider
 }: {
   assertCurrent?: () => void | Promise<void>;
   assertSnapshotCurrent?: () => void;
   privateTrade?: boolean;
   malformedPrivateTerms?: boolean;
+  independentReadProvider?: CotiReadProvider;
 } = {}) => {
   const readProvider = new AttestationProvider(privateTrade, malformedPrivateTerms);
   const readCapability = await bindTradeHistoryV2ReadCapability({
@@ -164,6 +167,7 @@ const setup = async ({
   const capability = await bindDirectTradeV2MetaMaskCapability({
     signer: ownerSigner,
     browserProvider: provider,
+    readProvider: independentReadProvider,
     ownerAddress: OWNER,
     chainId: CHAIN_ID,
     assertCurrent,
@@ -267,6 +271,41 @@ const installAction = ({
 };
 
 describe('directTradeV2Actions', () => {
+  it('waits for the selected Direct finality depth through the independent provider', async () => {
+    const send = vi.fn(async (method: string): Promise<unknown> => method === 'eth_blockNumber'
+      ? '0x7d' : { number: '0x78', hash: blockHash(120n) });
+    const getTransactionReceipt = vi.fn();
+    const context = await setup({ independentReadProvider: {
+      send, getTransactionReceipt, getNetwork: async () => ({ chainId: CHAIN_ID })
+    } as unknown as CotiReadProvider });
+    const call = installAction({ method: 'createPublicTrade', eventName: 'DirectTradeOpened',
+      eventArgs: [7n, OWNER, TAKER, ZERO, 0n, 7n, 0n, 0n, ZERO, 1n, TOKEN_B, 0n, 10n, 25n, 1_700_000_000n, 0n], value: 10n });
+    const submission = await submitDirectTradeV2Action({ ...context, action: {
+      kind: 'create-public', offerAsset: { assetType: 'native' }, requestAsset: { assetType: 'erc20', token: TOKEN_B },
+      offerAmount: 10n, requestAmount: 25n, taker: TAKER, expiresAt: 0n
+    } });
+    const transaction = await call.mock.results[0].value;
+    const receipt = await transaction.wait();
+    transaction.wait.mockClear();
+    getTransactionReceipt.mockResolvedValue({ ...receipt, blockNumber: 120 });
+    send.mockResolvedValueOnce('0x7c');
+    vi.useFakeTimers();
+    try {
+      const confirmed = confirmDirectTradeV2Action(submission);
+      const done = vi.fn();
+      void confirmed.then(done);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(done).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(confirmed).resolves.toMatchObject({ tradeId: '7', blockNumber: '120' });
+      expect(send).toHaveBeenLastCalledWith('eth_getBlockByNumber', ['0x78', false]);
+      expect(transaction.wait).not.toHaveBeenCalled();
+      expect(getTransactionReceipt).toHaveBeenCalledExactlyOnceWith(TX_HASH);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('checks candidate admission before allowance, encryption or submission', async () => {
     const { capability, deployment } = await setup();
     const action = { kind: 'create-private' as const, offerToken: TOKEN_A, requestToken: TOKEN_B,

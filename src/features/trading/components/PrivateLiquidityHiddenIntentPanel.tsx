@@ -2,6 +2,10 @@ import { useMemo, useState } from 'react';
 import { formatTokenAmount, sanitizeTokenAmountInput } from '../../../lib/appShared/core';
 import type { PrivateLiquidityHiddenIntentOwnerPage } from '../../../lib/privateLiquidityActions';
 import {
+  getPrivateLiquidityHiddenIntentSettlementLimit,
+  PRIVATE_LIQUIDITY_HIDDEN_V2_MAX_INTENTS_PER_SETTLEMENT
+} from '../../../lib/privateLiquidityHiddenIntents';
+import {
   derivePrivateLiquidityHiddenIntentLimitOrderFields,
   type PrivateLiquidityHiddenIntentDraft
 } from '../../../lib/privateLiquidityHiddenIntentFlow';
@@ -11,6 +15,8 @@ import {
 } from '../../../lib/privateLiquidityPositionFlow';
 
 export default function PrivateLiquidityHiddenIntentPanel({
+  mode = 'create',
+  recoveryOnly = false,
   tokens,
   deploymentReady,
   walletReady,
@@ -27,6 +33,8 @@ export default function PrivateLiquidityHiddenIntentPanel({
   onSettle,
   onRevealOwnerData
 }: {
+  mode?: 'create' | 'manage';
+  recoveryOnly?: boolean;
   tokens: readonly PrivateLiquidityPositionToken[];
   deploymentReady: boolean;
   walletReady: boolean;
@@ -56,6 +64,7 @@ export default function PrivateLiquidityHiddenIntentPanel({
   const [minimumFillBps, setMinimumFillBps] = useState(0);
   const [cooldownBlocks, setCooldownBlocks] = useState(0);
   const [expiryDays, setExpiryDays] = useState(7);
+  const [settlementPairKey, setSettlementPairKey] = useState('');
   const firstValue = firstSelection || tokens[0]?.selection || '';
   const secondValue = secondSelection || tokens.find((token) => token.selection !== firstValue)?.selection || '';
   const firstToken = tokens.find((token) => token.selection === firstValue);
@@ -95,12 +104,10 @@ export default function PrivateLiquidityHiddenIntentPanel({
     }
   };
   const disabled = !deploymentReady || !walletReady || busy || !ordered || !limitOrder;
-  const settlementPair = ordered
-    ? settlementPairs.find((pair) =>
-        pair.baseToken.toLowerCase() === ordered.baseToken.address.toLowerCase() &&
-        pair.quoteToken.toLowerCase() === ordered.quoteToken.address.toLowerCase()
-      )
-    : undefined;
+  const settlementPair = settlementPairs.find(pair => pair.pairKey === settlementPairKey) ?? settlementPairs[0];
+  const settlementLimit = settlementPair
+    ? getPrivateLiquidityHiddenIntentSettlementLimit(settlementPair.activePositionCount)
+    : PRIVATE_LIQUIDITY_HIDDEN_V2_MAX_INTENTS_PER_SETTLEMENT;
   const tokenFor = (address: string) => tokens.find(
     (token) => token.address.toLowerCase() === address.toLowerCase()
   );
@@ -109,23 +116,7 @@ export default function PrivateLiquidityHiddenIntentPanel({
 
   return (
     <div className="p2p-private-liquidity-position-form p2p-private-liquidity-hidden-intent-form">
-      <div className="p2p-private-liquidity-create-grid">
-        <div>
-          <span>1. Market</span>
-          <strong>Choose a private-token pair</strong>
-          <small>The contract derives the canonical base and quote order.</small>
-        </div>
-        <div>
-          <span>2. Limit order</span>
-          <strong>Buy or sell at your price</strong>
-          <small>Two packed COTI confirmations keep the amount, side, and price private.</small>
-        </div>
-        <div>
-          <span>3. Execution</span>
-          <strong>Fill from the best eligible positions</strong>
-          <small>Unused budget remains available until filled, cancelled, or expired.</small>
-        </div>
-      </div>
+      {!recoveryOnly && mode === 'create' ? <>
 
       <div className="p2p-private-liquidity-token-pair">
         <label>
@@ -279,16 +270,27 @@ export default function PrivateLiquidityHiddenIntentPanel({
               : `Review ${side === 'buy-base' ? 'buy' : 'sell'} limit order`}
       </button>
 
-      <div className="p2p-private-liquidity-settlement-control">
+      </> : null}
+      {(recoveryOnly || mode === 'manage') ? <>
+      {!recoveryOnly ? <div className="p2p-private-liquidity-settlement-control">
         <div>
+          <label>
+            Market
+            <select value={settlementPair?.pairKey ?? ''} disabled={busy || settlementPairs.length === 0}
+              onChange={event => setSettlementPairKey(event.currentTarget.value)}>
+              {settlementPairs.map(pair => <option key={pair.pairKey} value={pair.pairKey}>
+                {tokenFor(pair.baseToken)?.symbol ?? pair.baseToken} / {tokenFor(pair.quoteToken)?.symbol ?? pair.quoteToken}
+              </option>)}
+            </select>
+          </label>
           <strong>Process the next pair queue entries</strong>
           <p>
-            Anyone can submit both complete price routes. The contract chooses up to four queued intents and
+            Anyone can submit both complete price routes. The contract chooses up to {settlementLimit} queued intent{settlementLimit === 1 ? '' : 's'} and
             privately decides whether each can execute; this transaction never names an intent.
           </p>
           <small>
             {settlementPair
-              ? `${settlementPair.activePositionCount} active position${settlementPair.activePositionCount === 1 ? '' : 's'} in the complete ${ordered?.baseToken.symbol}/${ordered?.quoteToken.symbol} route.`
+              ? `${settlementPair.activePositionCount} active position${settlementPair.activePositionCount === 1 ? '' : 's'} in the complete ${tokenFor(settlementPair.baseToken)?.symbol ?? 'base'}/${tokenFor(settlementPair.quoteToken)?.symbol ?? 'quote'} route.`
               : 'This selected pair has no complete active position route at the finalized block.'}
           </small>
         </div>
@@ -300,7 +302,7 @@ export default function PrivateLiquidityHiddenIntentPanel({
         >
           {busy ? 'Settlement in progress…' : 'Settle ready intents'}
         </button>
-      </div>
+      </div> : null}
 
       <section className="p2p-private-liquidity-hidden-intents" aria-label="My hidden intents">
         <div className="p2p-private-liquidity-activity-head">
@@ -339,7 +341,7 @@ export default function PrivateLiquidityHiddenIntentPanel({
         {ownerDataStatus === 'available' && ownerPage?.items.length === 0 ? (
           <div className="p2p-swap-order-empty">
             <strong>No hidden intents yet</strong>
-            <p>Create one above to automate bounded fills against the complete private-liquidity position set.</p>
+            <p>Create a hidden limit from Create → Order type.</p>
           </div>
         ) : null}
 
@@ -423,6 +425,7 @@ export default function PrivateLiquidityHiddenIntentPanel({
           </div>
         ) : null}
       </section>
+      </> : null}
     </div>
   );
 }

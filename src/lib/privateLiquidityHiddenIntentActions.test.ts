@@ -366,14 +366,14 @@ describe('privateLiquidityHiddenIntentActions', () => {
     expect(fallback).toHaveBeenCalled();
   });
 
-  it('settles only a complete branded pair route after a block-pinned nonempty-queue preflight', async () => {
+  it.each([[1, 3], [3, 2], [8, 1]])('settles a complete %i-position route with a public work bound', async (candidateCount, processedCount) => {
     const pairKey = buildPrivateLiquidityPairKey(BASE, QUOTE);
     const snapshot = Object.freeze({
       scope: Object.freeze({ chainId: CHAIN_ID.toString(), contractAddress: BOOK, deploymentBlock: '100' }),
       atBlock: Object.freeze({ number: '130', hash: BLOCK_HASH }),
-      positionCount: '1',
-      positions: Object.freeze([Object.freeze({
-        identity: Object.freeze({ chainId: CHAIN_ID.toString(), contractAddress: BOOK, positionId: '7' }),
+      positionCount: String(candidateCount),
+      positions: Object.freeze(Array.from({ length: candidateCount }, (_, index) => Object.freeze({
+        identity: Object.freeze({ chainId: CHAIN_ID.toString(), contractAddress: BOOK, positionId: String(7 + index) }),
         owner: OWNER,
         pairKey,
         baseToken: BASE,
@@ -387,7 +387,7 @@ describe('privateLiquidityHiddenIntentActions', () => {
         privacyOwner: OWNER,
         createdAt: '1000',
         lastActivityBlock: '129'
-      })])
+      })))
     }) as unknown as CompleteCanonicalPrivateLiquidityPositionSnapshot;
     const routes = buildPrivateLiquidityHiddenIntentSettlementRoutes({
       snapshot,
@@ -408,11 +408,15 @@ describe('privateLiquidityHiddenIntentActions', () => {
       throw new Error(`Unexpected getter ${parsed.name}`);
     });
     const { capability } = await setupCapability(fallback);
+    let replaceMarker: () => void = () => { throw new Error('Settlement marker not prepared'); };
     const settleHiddenIntents = vi.fn(async (...args: unknown[]) => {
       const data = ABI.encodeFunctionData('settleHiddenIntents', args.slice(0, -1)).toLowerCase();
       const event = ABI.getEvent('PrivateLiquidityHiddenIntentSettlementProcessed');
       if (!event) throw new Error('Missing event.');
-      const encoded = ABI.encodeEventLog(event, [12n, pairKey, OWNER, 3n, 1n]);
+      let encoded = ABI.encodeEventLog(event, [12n, pairKey, OWNER, BigInt(processedCount), BigInt(candidateCount)]);
+      replaceMarker = () => {
+        encoded = ABI.encodeEventLog(event, [12n, pairKey, OWNER, 4n, BigInt(candidateCount)]);
+      };
       return {
         hash: TX_HASH,
         chainId: CHAIN_ID,
@@ -463,20 +467,20 @@ describe('privateLiquidityHiddenIntentActions', () => {
     expect(pairStatus).toMatchObject({ openIntentCount: '3', cursor: '1', atBlock: snapshot.atBlock });
     expect(settleHiddenIntents).toHaveBeenCalledWith(
       pairKey,
-      [7n],
-      [4n],
-      [7n],
-      [4n],
+      Array.from({ length: candidateCount }, (_, index) => BigInt(7 + index)),
+      Array.from({ length: candidateCount }, () => 4n),
+      Array.from({ length: candidateCount }, (_, index) => BigInt(7 + index)),
+      Array.from({ length: candidateCount }, () => 4n),
       2_000n,
-      { gasLimit: PRIVATE_LIQUIDITY_ACTION_GAS_LIMIT }
+      { gasLimit: 100_000_000n }
     );
     expect(mocks.encryptPrivateUint256Input).not.toHaveBeenCalled();
     expect(confirmed).toMatchObject({
       settlementId: '12',
       pairKey,
       caller: OWNER,
-      processedIntentCount: 3,
-      candidateCount: 1,
+      processedIntentCount: processedCount,
+      candidateCount,
       transactionHash: TX_HASH,
       blockNumber: '131',
       logIndex: 4
@@ -487,5 +491,10 @@ describe('privateLiquidityHiddenIntentActions', () => {
       routes: { ...routes } as never,
       deadline: 2_000n
     })).rejects.toThrow(/exact routes derived from a complete canonical snapshot/);
+    if (candidateCount > 1) {
+      replaceMarker();
+      await expect(confirmPrivateLiquidityHiddenIntentSettlement({ capability, deployment, submission }))
+        .rejects.toThrow(/processed hidden-intent count/i);
+    }
   });
 });

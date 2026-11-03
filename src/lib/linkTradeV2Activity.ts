@@ -1,4 +1,4 @@
-import { Interface, getAddress, zeroPadValue, toBeHex } from '@coti-io/coti-ethers';
+import { Interface, getAddress } from '@coti-io/coti-ethers';
 import { LINK_TRADE_V2_ABI } from './linkTradeV2Abi';
 import type { LinkTradeV2Deployment } from './linkTradeV2';
 import type { LinkTradeV2Reference } from './linkTradeV2Terms';
@@ -21,7 +21,7 @@ export type LinkTradeV2ActivityRow = Meta & Readonly<{ key: string; chainId: str
   kind: 'created' | 'filled' | 'cancelled' | 'expired' | 'link-updated' | 'counter-settled'; role: 'maker' | 'filler';
   offer?: string; payment?: string; refund?: string }>;
 export type LinkTradeV2ActivitySnapshot = Readonly<{ orders: readonly LinkTradeV2ActivityOrder[]; history: readonly LinkTradeV2ActivityRow[];
-  complete: boolean; throughBlock?: string; safeHead: string; phase: 'scan' | 'orders' | 'details' }>;
+  complete: boolean; fromBlock?: string; throughBlock?: string; safeHead: string; phase: 'scan' | 'orders' | 'details' }>;
 export const mergeLinkTradeV2ActivitySnapshots = (snapshots: readonly LinkTradeV2ActivitySnapshot[]): LinkTradeV2ActivitySnapshot => {
   const minimum = (values: readonly string[]) => values.reduce((a, b) => BigInt(a) < BigInt(b) ? a : b);
   const through = snapshots.map(snapshot => snapshot.throughBlock).filter((value): value is string => value !== undefined);
@@ -60,24 +60,27 @@ export const createLinkTradeV2ActivityReader = ({ capability, deployment, ownerA
   if (typeof pageRangeBlocks !== 'bigint' || pageRangeBlocks <= 0n || pageRangeBlocks > TRADE_HISTORY_V2_MAX_PARTICIPANT_LOG_RANGE_BLOCKS) {
     throw new Error('Link activity page range is invalid.');
   }
-  let pageBlocks = pageRangeBlocks, fellBack = false;
+  let pageBlocks = pageRangeBlocks;
   const owner = getAddress(ownerAddress).toLowerCase();
-  let alive = true, head = '0', cursor: { number: string; hash: string } | undefined;
+  let alive = true, head = '0', cursor: { number: string; hash: string } | undefined, from: string | undefined;
   let events = new Map<string, TradeHistoryV2RawLog>(), receipts: Record<string, readonly TradeHistoryV2RawLog[]> = {}, metadata = new Map<string, Meta>();
+  let identities = new Map<string, LinkTradeV2ActivityOrder>();
   let pending: { page: RawPage; events: Map<string, TradeHistoryV2RawLog>; receipts: typeof receipts; metadata: Map<string, Meta>;
-    orders: string[]; orderOffset: number; details: string[]; detailOffset: number } | undefined;
+    identities: typeof identities; mode: 'latest' | 'older'; details: string[]; detailOffset: number } | undefined;
   const project = (binding: ReturnType<typeof getOwnerTradeV2CapabilityBinding>): LinkTradeV2ActivitySnapshot => {
     const ordered = [...events.values()].sort(chronological), parsed = ordered.map(log => ({ log, event: decode(log) }));
-    const orders = new Map<string, LinkTradeV2ActivityOrder>(), history: LinkTradeV2ActivityRow[] = [];
+    const orders = new Map(identities), history: LinkTradeV2ActivityRow[] = [];
     for (const { log, event } of parsed) {
       const args = event.args, id = args.id.toString(), meta = metadata.get(id);
       if (!meta) throw new Error('Link activity token identity is unavailable.');
+      if (meta.maker !== owner && !(event.name === 'LinkFilled' && args.filler.toLowerCase() === owner) &&
+          !(event.name === 'PrivateLinkReceipt' && args.recipient.toLowerCase() === owner)) continue;
       if (event.name === 'LinkOpened') {
         if (args.maker.toLowerCase() !== owner) continue;
-        orders.set(id, Object.freeze({ ...meta, reference: { chainId: deployment.chainId, escrow: deployment.contractAddress, id, revision: '1', credentialEpoch: '1' }, status: 'Open', enabled: true }));
+        if (!identities.has(id)) orders.set(id, Object.freeze({ ...meta, reference: { chainId: deployment.chainId, escrow: deployment.contractAddress, id, revision: '1', credentialEpoch: '1' }, status: 'Open', enabled: true }));
       } else if (event.name === 'PrivateLinkReceipt') continue;
       const current = orders.get(id);
-      if (current && event.name !== 'LinkOpened') {
+      if (current && event.name !== 'LinkOpened' && !identities.has(id)) {
         const status = event.name === 'LinkClosed' ? args.status === 2n ? 'Cancelled' : args.status === 3n ? 'Expired' : undefined : current.status;
         if (!status) throw new Error('Invalid Link activity closed status.');
         orders.set(id, Object.freeze({ ...current, status, enabled: event.name === 'LinkCredentialChanged' ? Boolean(args.enabled) : event.name === 'LinkClosed' ? false : current.enabled,
@@ -114,8 +117,8 @@ export const createLinkTradeV2ActivityReader = ({ capability, deployment, ownerA
         orderId: id, transactionHash: log.transactionHash, blockNumber: BigInt(log.blockNumber).toString(), kind, role, offer, payment, refund }));
     }
     return Object.freeze({ orders: Object.freeze([...orders.values()].reverse()), history: Object.freeze(history.reverse()),
-      complete: !pending && cursor !== undefined && BigInt(cursor.number) >= BigInt(head), throughBlock: cursor?.number, safeHead: head,
-      phase: pending ? pending.orderOffset < pending.orders.length ? 'orders' : 'details' : 'scan' });
+      complete: !pending && from === deployment.deploymentBlock && cursor !== undefined && BigInt(cursor.number) >= BigInt(head), fromBlock: from, throughBlock: cursor?.number, safeHead: head,
+      phase: pending ? 'details' : 'scan' });
   };
   const merge = (page: RawPage) => {
     if (!pending || page.range.fromBlock !== pending.page.range.fromBlock || page.range.toBlock !== pending.page.range.toBlock ||
@@ -131,7 +134,7 @@ export const createLinkTradeV2ActivityReader = ({ capability, deployment, ownerA
     Object.assign(pending.receipts, page.receiptLogs);
   };
   return Object.freeze({
-    sync: async (ownerCapability: OwnerTradeV2MetaMaskCapability): Promise<LinkTradeV2ActivitySnapshot> => {
+    sync: async (ownerCapability: OwnerTradeV2MetaMaskCapability, mode: 'latest' | 'older' = 'latest'): Promise<LinkTradeV2ActivitySnapshot> => {
       const binding = getOwnerTradeV2CapabilityBinding(ownerCapability);
       const current = async () => {
         await assertOwnerTradeV2CapabilityCurrent(binding);
@@ -142,44 +145,42 @@ export const createLinkTradeV2ActivityReader = ({ capability, deployment, ownerA
       await current();
       if (cursor) {
         const block = await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(cursor.number) });
-        if (!block || block.hash !== cursor.hash) { cursor = undefined; pending = undefined; events.clear(); metadata.clear(); receipts = {}; }
+        if (!block || block.hash !== cursor.hash) { cursor = undefined; from = undefined; pending = undefined; events.clear(); metadata.clear(); identities.clear(); receipts = {}; }
       }
       if (pending) {
         const block = await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(pending.page.range.toBlock) });
         if (!block || block.hash !== pending.page.range.toBlockHash) pending = undefined;
       }
+      if (pending?.mode === 'older' && mode === 'latest') pending = undefined;
       if (!pending) {
         const latest = BigInt(await readTradeHistoryV2LatestBlockNumber(capability)), lag = BigInt(deployment.finalityLagBlocks);
         if (latest < lag) throw new Error('Link activity finality head is unavailable.');
-        head = (latest - lag).toString();
-        if (cursor && BigInt(cursor.number) > BigInt(head)) { cursor = undefined; events.clear(); metadata.clear(); receipts = {}; }
-        const fromBlock = cursor ? BigInt(cursor.number) + 1n : BigInt(deployment.deploymentBlock);
-        if (fromBlock > BigInt(head)) return project(binding);
-        const toBlock = fromBlock + pageBlocks - 1n < BigInt(head) ? fromBlock + pageBlocks - 1n : BigInt(head);
+        const safeHead = latest - lag;
+        if (cursor && BigInt(cursor.number) > safeHead) { cursor = undefined; from = undefined; events.clear(); metadata.clear(); identities.clear(); receipts = {}; }
+        head = mode === 'older' && cursor ? cursor.number : safeHead.toString();
+        const deploymentBlock = BigInt(deployment.deploymentBlock);
+        if (mode === 'older' && from === deployment.deploymentBlock || mode === 'latest' && cursor?.number === head) return project(binding);
+        const toBlock = mode === 'older' && from ? BigInt(from) - 1n : BigInt(head);
+        if (toBlock < deploymentBlock) return project(binding);
+        const start = mode === 'latest' && cursor && BigInt(head) - BigInt(cursor.number) < pageBlocks ? BigInt(cursor.number) + 1n : toBlock - pageBlocks + 1n;
+        const fromBlock = start < deploymentBlock ? deploymentBlock : start;
         attemptedSpan = toBlock - fromBlock + 1n;
         const page = await readCanonicalTradeV2RawLogRange({ capability, deployment, fromBlock, toBlock,
-          topics: [OWNER_EVENTS.map(name => ABI.getEvent(name)!.topicHash), null, zeroPadValue(owner, 32)], participantRange: true });
+          topics: [[...new Set([...OWNER_EVENTS, ...ORDER_EVENTS])].map(name => ABI.getEvent(name)!.topicHash)], participantRange: true });
         await current();
-        pending = { page, events: new Map(events), metadata: new Map(metadata), receipts: { ...receipts }, orders: [], orderOffset: 0, details: [], detailOffset: 0 };
+        pending = { page, events: new Map(events), metadata: new Map(metadata), identities: new Map(identities), receipts: { ...receipts }, mode, details: [], detailOffset: 0 };
         merge(page);
         for (const log of pending.events.values()) {
           const event = decode(log);
           if (event.name === 'LinkOpened' && event.args.maker.toLowerCase() === owner) {
             if (event.args.privatePair && (event.args.publicBudget !== 0n || event.args.publicPrice.offer !== 0n || event.args.publicPrice.request !== 0n)) throw new Error('Private Link discovery exposes public amounts.');
-            const id = event.args.id.toString(); pending.orders.push(id);
+            const id = event.args.id.toString();
             pending.metadata.set(id, Object.freeze({ maker: owner, offerToken: event.args.offerToken.toLowerCase(), requestToken: event.args.requestToken.toLowerCase(), privatePair: Boolean(event.args.privatePair), expiresAt: event.args.expiresAt.toString() }));
           }
         }
       }
-      if (pending.orderOffset < pending.orders.length) {
-        const ids = pending.orders.slice(pending.orderOffset, pending.orderOffset + 64);
-        const page = await readCanonicalTradeV2RawLogRange({ capability, deployment, fromBlock: BigInt(pending.page.range.fromBlock), toBlock: BigInt(pending.page.range.toBlock),
-          topics: [ORDER_EVENTS.map(name => ABI.getEvent(name)!.topicHash), ids.map(id => toBeHex(BigInt(id), 32))], participantRange: true });
-        await current();
-        merge(page); pending.orderOffset += ids.length;
-        if (pending.orderOffset < pending.orders.length) { await current(); return project(binding); }
-      }
-      if (!pending.details.length) pending.details = [...new Set([...pending.events.values()].map(log => decode(log).args.id.toString()))].filter(id => !pending!.metadata.has(id));
+      if (!pending.details.length) pending.details = [...new Set(pending.page.logs.map(log => decode(log).args.id.toString()))]
+        .filter(id => !pending!.metadata.has(id) || pending!.identities.has(id) || cursor && BigInt(pending!.page.range.fromBlock) > BigInt(cursor.number) + 1n);
       for (const id of pending.details.slice(pending.detailOffset, pending.detailOffset + 8)) {
         const raw = await readAttestedTradeHistoryV2View({ capability, deployment, data: ABI.encodeFunctionData('getOrderView', [id]) });
         await current();
@@ -187,30 +188,40 @@ export const createLinkTradeV2ActivityReader = ({ capability, deployment, ownerA
         if (ABI.encodeFunctionResult('getOrderView', result).toLowerCase() !== raw.toLowerCase() || BigInt(order.maker) === 0n ||
             order.offerToken === order.requestToken || order.privatePair && (view.publicPrice.offer !== 0n || view.publicPrice.request !== 0n || view.publicBudget !== 0n || view.publicRemaining !== 0n)) throw new Error('Link history identity is invalid.');
         pending.metadata.set(id, Object.freeze({ maker: order.maker.toLowerCase(), offerToken: order.offerToken.toLowerCase(), requestToken: order.requestToken.toLowerCase(), privatePair: Boolean(order.privatePair), expiresAt: order.expiresAt.toString() }));
+        if (order.maker.toLowerCase() === owner) {
+          if (![1n, 2n, 3n].includes(order.status) || order.revision < 1n || order.credentialEpoch < 1n) throw new Error('Link history state is invalid.');
+          pending.identities.set(id, Object.freeze({ ...pending.metadata.get(id)!, reference: { chainId: deployment.chainId, escrow: deployment.contractAddress,
+            id, revision: order.revision.toString(), credentialEpoch: order.credentialEpoch.toString() }, status: order.status === 1n ? 'Open' : order.status === 2n ? 'Cancelled' : 'Expired', enabled: order.linkEnabled as boolean }));
+        }
         pending.detailOffset++;
       }
       await current();
       if (pending.detailOffset < pending.details.length) return project(binding);
       const last = await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(pending.page.range.toBlock) });
       if (!last || last.hash !== pending.page.range.toBlockHash) { pending = undefined; throw new Error('Link activity was reorganized before commit.'); }
+      if (cursor && (await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(cursor.number) }))?.hash !== cursor.hash) { pending = undefined; throw new Error('Link activity was reorganized before commit.'); }
       await current();
-      const previous = { events, metadata, receipts, cursor };
-      events = pending.events; metadata = pending.metadata; receipts = pending.receipts; cursor = last; pending = undefined;
+      const previous = { events, metadata, identities, receipts, cursor, from };
+      const pageFrom = pending.page.range.fromBlock;
+      from = from && cursor && BigInt(pageFrom) <= BigInt(cursor.number) + 1n && BigInt(last.number) >= BigInt(from) - 1n
+        ? BigInt(pageFrom) < BigInt(from) ? pageFrom : from : pageFrom;
+      events = pending.events; metadata = pending.metadata; identities = pending.identities; receipts = pending.receipts;
+      if (!cursor || BigInt(last.number) > BigInt(cursor.number)) cursor = last;
+      pending = undefined;
       try { return project(binding); }
       catch (error) {
         // An invalid amount/event must not advance the saved history checkpoint.
-        ({ events, metadata, receipts, cursor } = previous);
+        ({ events, metadata, identities, receipts, cursor, from } = previous);
         throw error;
       }
       } catch (error) {
-        if (!(error instanceof TradeHistoryV2RangeLimitError) || fellBack || attemptedSpan <= TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS) throw error;
+        if (!(error instanceof TradeHistoryV2RangeLimitError) || attemptedSpan <= 1n) throw error;
         pending = undefined;
-        pageBlocks = TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS;
-        fellBack = true;
+        pageBlocks = attemptedSpan > TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS ? TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS : attemptedSpan / 2n;
         await current();
         return Object.freeze({ ...project(binding), complete: false });
       }
     },
-    close: () => { alive = false; events.clear(); metadata.clear(); receipts = {}; pending = undefined; cursor = undefined; }
+    close: () => { alive = false; events.clear(); metadata.clear(); identities.clear(); receipts = {}; pending = undefined; cursor = undefined; from = undefined; }
   });
 };

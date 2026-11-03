@@ -23,6 +23,7 @@ import {
   buildTradeCustomTokenInfoKey,
   getVerifiedEcosystemToken,
   isCustomTradeTokenSelection,
+  resolveTradePresetKind,
   resolveTradeTokenDisplaySymbol,
   sortTradeTokenOptionsBySymbol,
   type ResolvedTradeToken,
@@ -30,6 +31,16 @@ import {
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from './appHelpers';
+
+export const resolveTradeBudgetPrivacyForPairChange = (
+  hidden: boolean,
+  previous: readonly [TradeTokenPresetKey, TradeTokenPresetKey],
+  next: readonly [TradeTokenPresetKey, TradeTokenPresetKey]
+): boolean => {
+  const wasPrivate = previous.some(selection => resolveTradePresetKind(selection) === 'private-erc20');
+  const isPrivate = next.some(selection => resolveTradePresetKind(selection) === 'private-erc20');
+  return wasPrivate === isPrivate ? hidden : isPrivate;
+};
 
 type DeriveTradeComposerModelParams = {
   activeContact: string | null;

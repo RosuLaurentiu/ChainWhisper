@@ -97,7 +97,7 @@ export const assertOwnerTradeV2CapabilitySnapshotCurrent = async (
 export const waitForOwnerTradeV2Receipt = async (
   bindingOrCapability: OwnerTradeV2CapabilityBinding | OwnerTradeV2MetaMaskCapability,
   transactionHash: string,
-  options: Readonly<{ pollIntervalMs?: number; timeoutMs?: number }> = {}
+  options: Readonly<{ pollIntervalMs?: number; timeoutMs?: number; finalityLagBlocks?: bigint }> = {}
 ): Promise<unknown> => {
   const binding = CAPABILITIES.has(bindingOrCapability as object)
     ? getOwnerTradeV2CapabilityBinding(bindingOrCapability as OwnerTradeV2MetaMaskCapability)
@@ -107,14 +107,39 @@ export const waitForOwnerTradeV2Receipt = async (
   if (!binding.readProvider) throw new Error('OTC V2 independent receipt confirmation is unavailable.');
   const pollIntervalMs = options.pollIntervalMs ?? RECEIPT_POLL_INTERVAL_MS;
   const timeoutMs = options.timeoutMs ?? RECEIPT_TIMEOUT_MS;
+  const finalityLagBlocks = options.finalityLagBlocks === undefined ? 0n : options.finalityLagBlocks;
+  if (typeof finalityLagBlocks !== 'bigint' || finalityLagBlocks < 0n || finalityLagBlocks >= (1n << 64n)) {
+    throw new Error('OTC V2 receipt finality lag is invalid.');
+  }
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 0 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new Error('OTC V2 receipt polling configuration is invalid.');
   }
   const startedAt = Date.now();
+  let receipt: Awaited<ReturnType<CotiReadProvider['getTransactionReceipt']>> = null;
   while (Date.now() - startedAt < timeoutMs) {
-    const receipt = await binding.readProvider.getTransactionReceipt(hash);
-    if (receipt) return receipt;
+    receipt ??= await binding.readProvider.getTransactionReceipt(hash);
+    if (receipt) {
+      if (finalityLagBlocks === 0n) return receipt;
+      if (!Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0 ||
+          !/^0x[0-9a-fA-F]{64}$/.test(receipt.blockHash)) {
+        throw new Error('OTC V2 receipt finality block is invalid.');
+      }
+      const blockNumber = BigInt(receipt.blockNumber);
+      const latest: unknown = await binding.readProvider.send('eth_blockNumber', []);
+      if (typeof latest !== 'string' || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(latest) || BigInt(latest) >= (1n << 64n)) {
+        throw new Error('OTC V2 receipt finality head is invalid.');
+      }
+      if (BigInt(latest) >= blockNumber + finalityLagBlocks) {
+        const block: unknown = await binding.readProvider.send('eth_getBlockByNumber', [`0x${blockNumber.toString(16)}`, false]);
+        const canonical = block as { number?: unknown; hash?: unknown } | null;
+        if (!canonical || canonical.number !== `0x${blockNumber.toString(16)}` ||
+            typeof canonical.hash !== 'string' || canonical.hash.toLowerCase() !== receipt.blockHash.toLowerCase()) {
+          throw new Error('OTC V2 receipt block was reorganized or is unavailable.');
+        }
+        return receipt;
+      }
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
   }
   throw new Error('The transaction was submitted, but COTI confirmation timed out. Check wallet activity before retrying.');

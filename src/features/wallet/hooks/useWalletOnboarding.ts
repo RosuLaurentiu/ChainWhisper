@@ -2090,6 +2090,8 @@ export function useWalletOnboarding({
       }
       forgetCipherTradeWalletConnectProvider(provider);
       const operationEpoch = beginWalletLifecycleOperation();
+      setConnectingMethod(null);
+      setConnectingWalletLabel('');
       const ownerSession = browserWalletSessionRef.current;
       const ownerAddress = ownerSession?.address ??
         (activeSignerSourceRef.current === 'metamask' ? currentWalletKeyRef.current : '');

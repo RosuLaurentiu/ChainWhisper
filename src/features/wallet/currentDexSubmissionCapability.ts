@@ -1,4 +1,7 @@
-import { Interface, toBeHex, getBytes, hexlify, type TransactionRequest } from '@coti-io/coti-ethers';
+import { Interface, Network, toBeHex, toQuantity, getBytes, hexlify, type TransactionRequest, type TransactionResponseParams,
+  type TransactionReceiptParams, type LogParams } from '@coti-io/coti-ethers';
+import { loadCotiStartupReadProvider, sendCotiScopedRead } from '../../lib/appShared/core';
+import { createBrowserWalletRuntimeReadGuard } from '../../lib/browserWalletRuntimeScope';
 import {
   createCurrentDexSubmissionAdapter,
   createCurrentSharedPoolSubmissionAdapter,
@@ -33,7 +36,7 @@ import { verifyCurrentDexOwnerTokenMovements, type CurrentDexOwnerTokenReceipt }
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, encodeCurrentCheapDexOperationRead, decodeCurrentCheapDexOperation } from '../../lib/currentDexOperation';
 import { currentCheapDexStages } from '../../lib/dexV2Deployment';
 import { CURRENT_EXIT_SWAP_GAS_CAPS } from '../../lib/currentDexExitSwapPolicy';
-import { readCurrentDexActivityDiscoveryPage, readCurrentDexAsyncTerminalPage, currentDexAsyncTerminalResumeHashes,
+import { readCurrentDexActivityDiscoveryPage, readCurrentDexAsyncTerminalPage, currentDexAsyncTerminalResumeHashes, CurrentDexActivitySourceError,
   type CurrentDexActivityCursor } from '../../lib/currentDexActivityDiscovery';
 import { readCurrentDexActivityReceipt, type CurrentDexActivityRow } from '../../lib/currentDexActivityReceipt';
 import { CURRENT_LIMIT_FILL_HISTORY_GRAPHS, readCurrentLimitFillHistoryPage, type CurrentDexLimitFill } from '../../lib/currentDexLimitFillHistory';
@@ -58,6 +61,9 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         hash: string; chainId: bigint; from: string; to: string | null; value: bigint; data: string;
         nonce: number; gasLimit: bigint; blockNumber: number | null; blockHash: string | null } | null> } = {
       assertCurrent: async () => { await assertCurrent(); assertSnapshotCurrent(); },
+      admitOwnerRecord: async (swapScope, gasCap) => {
+        await admitOwnerRecord(swapScope, gasCap);
+      },
       verifyCanonicalInclusion: (transaction, receipt) => verifyCurrentDexCanonicalInclusion({
         rpc: (method, params) => readProvider.send(method, params),
         assertCurrent: async () => { await assertCurrent(); assertSnapshotCurrent(); }
@@ -265,7 +271,8 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         const aesKey=signer.getUserOnboardInfo()?.aesKey?.trim();
         if(!aesKey||!crypto.subtle)throw new Error('Unlock owner privacy before saving or restoring the native budget.');
         const key=await crypto.subtle.importKey('raw',Uint8Array.from(getBytes(aesKey.startsWith('0x')?aesKey:`0x${aesKey}`)),{name:'HMAC',hash:'SHA-256'},false,['sign']);
-        const bytes=new TextEncoder().encode(`ChainWhisper:b2aa:reload:v1:${chainId}:${ownerAddress.toLowerCase()}:`+JSON.stringify(record));
+        const domain=record.version===2?'7b67:owner-normal-use:v2':'b2aa:reload:v1';
+        const bytes=new TextEncoder().encode(`ChainWhisper:${domain}:${chainId}:${ownerAddress.toLowerCase()}:`+JSON.stringify(record));
         const authentication=hexlify(new Uint8Array(await crypto.subtle.sign('HMAC',key,bytes)));
         await assertCurrent();assertSnapshotCurrent();
         if(signer.getUserOnboardInfo()?.aesKey?.trim()!==aesKey)throw new Error('Owner privacy changed while authenticating the native budget.');
@@ -427,6 +434,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           input, output,
           readReceipt: () => readCheapReceipt(issued), confirm });
       } });
+    const admitOwnerRecord=cheap.admitCurrentOwnerNormalRecord;
     const poolTokens = [...cheapCandidate.tokens].sort((a, b) => BigInt(a[0]) < BigInt(b[0]) ? -1 : 1);
     const pool = createCurrentPoolSubmissionAdapter({ candidate, nativePoolProfile, signer, ownerAddress, chainId, transport, attest: attestCheap,
       requireFunding: async (prepared, head) => {
@@ -512,11 +520,11 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         return Object.freeze({ number: BigInt(block.number), hash: block.hash, timestamp: BigInt(block.timestamp), gasLimit: BigInt(block.gasLimit) });
       } });
     const sharedFunding = createCurrentSharedDexTokenFundingAdapter({ candidate: sharedCandidate, signer, ownerAddress, chainId, transport,
-      assertAdmission: (action,token) => assertCurrentSharedTokenFundingAppAuthority({candidate,owner:ownerAddress,token,action}),
+      assertAdmission: (action,token) => assertCurrentSharedTokenFundingAppAuthority({candidate,owner:ownerAddress,token,action},signer),
       authorizeInitialClaimSigning: candidate === 'cheap-exit' ? cheap.authorizeCurrentCheapInitialClaim : undefined,
       assertSwapApprovalAdmission: (review, preparedQuote) => {
         if (!preparedQuote) throw new Error('Original branded swap approval scope is absent.');
-        assertCurrentCheapDexPreparedQuote(preparedQuote,signer);assertCurrentNativeSwapIntent(preparedQuote,BigInt(Math.floor(Date.now()/1000)));
+        assertCurrentCheapDexPreparedQuote(preparedQuote,signer);assertCurrentNativeSwapIntent(preparedQuote,BigInt(Math.floor(Date.now()/1000)),false,false,signer);
         if(review.owner.toLowerCase()!==ownerAddress.toLowerCase()||review.graph!==cheapCandidate.graph||review.packageSha256!==cheapCandidate.packageSha256||review.core.toLowerCase()!==cheapCandidate.core||review.spender.toLowerCase()!==cheapCandidate.core||review.token.toLowerCase()!==preparedQuote.intent.inputToken.toLowerCase()||review.amount!==preparedQuote.intent.maximumInput)throw new Error('Exact swap approval differs from the branded Quote.');
       },
       authorizeSwapApprovalSigning: cheap.authorizeCurrentCheapSwapApproval,
@@ -543,46 +551,114 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         return Object.freeze({ number: BigInt(block.number), hash: block.hash, timestamp: BigInt(block.timestamp), gasLimit: BigInt(block.gasLimit) });
       } });
     return Object.freeze({ ...legacy, ...current, ...cheap, ...pool, ...positions, ...limit, ...funding, ...refill, ...sharedFunding,
-      readCurrentDexActivityPage: async ({ cursor, head: savedHead, onProgress }: { cursor: CurrentDexActivityCursor;
-        head?: { number: bigint; hash: string }; onProgress?: (checked: number, total: number) => void }) => {
+      readCurrentDexActivityPage: async ({ cursor, head: savedHead, onProgress, assertCurrent: assertCallerCurrent = () => {} }: { cursor: CurrentDexActivityCursor;
+        head?: { number: bigint; hash: string }; onProgress?: (checked: number, total: number, phase?: string) => void; assertCurrent?: () => void }) => {
         if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new Error('History requires a supported DEX deployment.');
         const key = signer.getUserOnboardInfo()?.aesKey?.trim();
-        const guard = async () => { await transport.assertCurrent();
+        const readScope = createBrowserWalletRuntimeReadGuard(() => { assertCallerCurrent(); assertSnapshotCurrent(); });
+        const guard = async () => { readScope.assertCurrent(); await transport.assertCurrent(); readScope.assertCurrent();
           if (!key || signer.getUserOnboardInfo()?.aesKey?.trim() !== key) throw new Error('History owner privacy changed.'); };
-        await guard(); const latest = await transport.readHead(); await attestCheap(latest);
+        try {
+        await guard(); const pageProvider = await loadCotiStartupReadProvider(); await guard();
+        const rpc = async (method: string, params: readonly unknown[] = []) => {
+          await guard();
+          let value: unknown;
+          try { value = await sendCotiScopedRead(pageProvider, readScope, method, params); }
+          catch (error) {
+            await guard();
+            const fault = error as { code?: unknown; response?: { statusCode?: unknown } } | null;
+            const status = fault?.response?.statusCode;
+            if (fault?.code === 'TIMEOUT' || fault?.code === 'SERVER_ERROR' && typeof status === 'number' && status >= 500 && status <= 599)
+              throw new CurrentDexActivitySourceError('RPC');
+            throw error;
+          }
+          await guard(); return value;
+        };
+        const pageReadCapability = createDexV2ReadCapability({ chainId, assertCurrent: guard,
+          provider: { request: ({ method, params }) => rpc(method, (params ?? []) as unknown[]) } });
+        let pendingNetwork: Promise<Network> | undefined;
+        const network = () => {
+          // Match the SDK: share concurrent chain checks without caching a settled result.
+          return pendingNetwork ??= (async () => {
+            if (BigInt(await rpc('eth_chainId') as string) !== chainId) throw new Error('History RPC chain changed.');
+            return Network.from(chainId);
+          })().finally(() => { pendingNetwork = undefined; });
+        };
+        const readTransaction = async (hash: string) => {
+          const [currentNetwork, value] = await Promise.all([network(), rpc('eth_getTransactionByHash', [hash])]);
+          return value === null ? null : pageProvider._wrapTransactionResponse(value as TransactionResponseParams, currentNetwork);
+        };
+        const waitForReceipt = async (hash: string) => {
+          const [currentNetwork, value] = await Promise.all([network(), rpc('eth_getTransactionReceipt', [hash])]);
+          if (value === null) return null;
+          const raw = value as TransactionReceiptParams & { effectiveGasPrice?: unknown };
+          if (raw.gasPrice == null && raw.effectiveGasPrice == null) {
+            const transaction = await rpc('eth_getTransactionByHash', [hash]) as TransactionResponseParams | null;
+            if (!transaction) throw new Error('History receipt gas price is unavailable.');
+            raw.effectiveGasPrice = transaction.gasPrice;
+          }
+          return pageProvider._wrapTransactionReceipt(raw, currentNetwork);
+        };
+        const readBlockHash = async (number: bigint) => {
+          const block = await rpc('eth_getBlockByNumber', [toQuantity(number), false]) as { number: string; hash: string } | null;
+          return block && BigInt(block.number) === number && /^0x[0-9a-f]{64}$/i.test(block.hash) ? block.hash : null;
+        };
+        const attestedHeads = new Set<string>();
+        const attestPage = async (head: { number: bigint; hash: string }) => {
+          await guard();
+          const identity = `${head.number}:${head.hash.toLowerCase()}`;
+          if (attestedHeads.has(identity)) return;
+          const graph = await readCurrentSharedPoolDexGraph({ capability: pageReadCapability, candidate, blockNumber: head.number, blockHash: head.hash });
+          if (graph.graph !== cheapCandidate.graph || graph.packageSha256 !== cheapCandidate.packageSha256 ||
+              graph.core.toLowerCase() !== cheapCandidate.core) throw new Error('Current-mode graph changed.');
+          await guard();
+          attestedHeads.add(identity);
+        };
+        await guard(); onProgress?.(0, 0, 'validation');
+        const rawHead = await rpc('eth_getBlockByNumber', ['latest', false]) as Record<string, string> | null;
+        if (!rawHead || !/^0x[0-9a-f]{64}$/i.test(rawHead.hash)) throw new Error('Current DEX head is unavailable.');
+        const latest = { number: BigInt(rawHead.number), hash: rawHead.hash, timestamp: BigInt(rawHead.timestamp), gasLimit: BigInt(rawHead.gasLimit) };
+        await attestPage(latest);
         const head = savedHead ?? { number: latest.number, hash: latest.hash };
-        if (head.number > latest.number || await transport.readBlockHash(Number(head.number)) !== head.hash) throw new Error('History chain head changed. Refresh history.');
+        if (head.number > latest.number || await readBlockHash(head.number) !== head.hash) throw new Error('History chain head changed. Refresh history.');
+        onProgress?.(0, 0, 'discovery');
         const page = await readCurrentDexActivityDiscoveryPage({ owner: ownerAddress, candidate, headNumber: head.number, cursor, assertCurrent: guard });
         const rows: CurrentDexActivityRow[] = [], unavailable: string[] = [], seen = new Set<string>();
         const read = async (hash: string, ownerOperation?: CurrentDexActivityRow) => {
           if (seen.has(hash.toLowerCase())) return; seen.add(hash.toLowerCase());
           try {
             await guard();
-            const [transaction,receipt] = await Promise.all([transport.readTransaction(hash),transport.waitForReceipt(hash)]);
+            const [transaction,receipt] = await Promise.all([readTransaction(hash),waitForReceipt(hash)]);
             await guard();
             if(!transaction||!receipt||receipt.blockNumber===undefined||BigInt(receipt.blockNumber)>head.number)throw new Error('History receipt is unavailable.');
-            const block = await readProvider.send('eth_getBlockByNumber',[toBeHex(receipt.blockNumber),false]);
+            const block = await rpc('eth_getBlockByNumber',[toBeHex(receipt.blockNumber),false]) as Record<string,string> | null;
             if (!block || BigInt(block.number) !== BigInt(receipt.blockNumber) || block.hash?.toLowerCase() !== receipt.blockHash?.toLowerCase() || !/^0x[0-9a-f]+$/i.test(block.timestamp)) throw new Error('History receipt time changed.');
             const row = await readCurrentDexActivityReceipt({ candidate,owner:ownerAddress,transaction,receipt,timestamp:BigInt(block.timestamp),ownerOperation,
-              assertCurrent:guard,verifyCanonical:()=>transport.verifyCanonicalInclusion!(transaction,receipt),decrypt:value=>decryptPrivateUint256Output(signer,value) });
+              assertCurrent:guard,verifyCanonical:()=>verifyCurrentDexCanonicalInclusion({rpc:(method,params)=>rpc(method,params),assertCurrent:guard},transaction,receipt),decrypt:value=>decryptPrivateUint256Output(signer,value) });
             if(row)rows.push(row);
-          } catch { await guard(); unavailable.push(hash); }
+          } catch (error) { await guard(); if (error instanceof CurrentDexActivitySourceError) throw error; unavailable.push(hash); }
         };
         const hashes = [...new Set([...currentDexAsyncTerminalResumeHashes(cursor.asyncTerminals, head.number), ...page.hashes])];
-        for(let i=0;i<hashes.length;i+=2){await Promise.all(hashes.slice(i,i+2).map(hash=>read(hash)));await guard();onProgress?.(Math.min(i+2,hashes.length),hashes.length);}
+        onProgress?.(0, hashes.length, 'receipts');
+        for(let i=0;i<hashes.length;i+=2){await Promise.all(hashes.slice(i,i+2).map(hash=>read(hash)));await guard();onProgress?.(Math.min(i+2,hashes.length),hashes.length,'receipts');}
         // Public terminal events add keeper delivery to the owner's Quote history.
+        onProgress?.(0, 0, 'terminals');
         const terminals = await readCurrentDexAsyncTerminalPage({ candidate, headNumber: head.number,
           quotes: rows.filter(row => row.kind === 'async-quote' && row.operationId !== undefined),
-          cursor: cursor.asyncTerminals, readLogs: filter => readProvider.getLogs(filter), assertCurrent: guard });
+          cursor: cursor.asyncTerminals, readLogs: async filter => {
+            const [currentNetwork, rows] = await Promise.all([network(), rpc('eth_getLogs', [{ ...filter, fromBlock: toQuantity(filter.fromBlock), toBlock: toQuantity(filter.toBlock) }])]);
+            return (rows as LogParams[]).map(row => pageProvider._wrapLog(row, currentNetwork));
+          }, assertCurrent: guard });
         for (const terminal of terminals.terminals) await read(terminal.hash, terminal.quote);
         const fills: CurrentDexLimitFill[] = [], fillCursors: Record<string, bigint | null> = {};
         const limitFillsState = CURRENT_LIMIT_FILL_HISTORY_GRAPHS.includes(cheapCandidate.graph) ? 'available' as const : 'not-recorded' as const;
         const unresolvedQuotes=rows.filter(row=>['async-quote','fast-quote'].includes(row.kind)&&row.status!=='Failed'&&row.operationId!==undefined&&
           !rows.some(other=>other.core===row.core&&other.operationId===row.operationId&&other.status!=='Failed'&&['fast-delivery','async-delivery','cancel','recover'].includes(other.kind)));
+        onProgress?.(0, 0, 'statuses');
         let headTimestamp: bigint | undefined;
         if (unresolvedQuotes.length || limitFillsState === 'available') {
           await guard();
-          const block = await readProvider.send('eth_getBlockByNumber', [toBeHex(head.number), false]);
+          const block = await rpc('eth_getBlockByNumber', [toBeHex(head.number), false]) as Record<string,string> | null;
           await guard();
           if (!block || BigInt(block.number) !== head.number || block.hash?.toLowerCase() !== head.hash.toLowerCase() ||
               !/^0x[0-9a-f]+$/i.test(block.timestamp)) throw new Error('History chain head changed. Refresh history.');
@@ -592,34 +668,38 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           let currentStatus='Quote status unavailable';
           try{
             await guard();const profile=row.kind==='fast-quote'?'fast-pool':'cheap-async';
-            const raw=await readProvider.send('eth_call',[{to:cheapCandidate.core,data:encodeCurrentCheapDexOperationRead(row.operationId!,profile)},toBeHex(head.number)]);
-            await guard();const operation=decodeCurrentCheapDexOperation(raw,headTimestamp!,profile,cheapCandidate);
+            const raw=await rpc('eth_call',[{to:cheapCandidate.core,data:encodeCurrentCheapDexOperationRead(row.operationId!,profile)},toBeHex(head.number)]);
+            await guard();if(typeof raw!=='string')throw new Error('History operation state is unavailable.');
+            const operation=decodeCurrentCheapDexOperation(raw,headTimestamp!,profile,cheapCandidate);
             currentStatus=({'not-found':'Quote status unavailable','preparing-quote':'Preparing Quote','quote-prepared':'Quote ready',
               settling:'Funded; awaiting delivery',settled:'Confirmed; private result pending',released:'Release confirmed; amounts unavailable',
               'expired-unrecovered':'Expired','consumed-unverified':'Quote unavailable; settlement unverified'} as const)[operation.phase];
             if(operation.phase==='expired-unrecovered'&&operation.stage===currentCheapDexStages(cheapCandidate).funded)currentStatus='Expired; recovery required';
-          }catch{await guard();}
+          }catch(error){await guard();if(error instanceof CurrentDexActivitySourceError)throw error;}
           rows[rows.indexOf(row)]=Object.freeze({...row,currentStatus});
         }
+        onProgress?.(0, 0, 'fills');
         if (limitFillsState === 'available') {
           const fillHead = { ...head, timestamp: headTimestamp! };
           for (const pair of resolvePreparedDexScope(candidate).candidate.pairs) {
             const engine = pair.engine.toLowerCase(), before = cursor.limitFills?.[engine];
             if (before === null) { fillCursors[engine] = null; continue; }
             const fillPage = await readCurrentLimitFillHistoryPage({ graph: cheapCandidate.graph, owner: ownerAddress,
-              engine, poolTokens: pair.tokens, head: fillHead, before, assertCurrent: guard, attest: attestCheap,
-              rpc: async (method, params) => { await guard(); const value = await readProvider.send(method, params); await guard(); return value; },
+              engine, poolTokens: pair.tokens, head: fillHead, before, assertCurrent: guard, attest: attestPage,
+              rpc: (method, params) => rpc(method, params),
               decrypt: cipher => decryptPrivateUint256Output(signer, cipher),
               decryptBool: cipher => decryptPrivateBoolOutput(signer, cipher) });
             fills.push(...fillPage.fills); fillCursors[engine] = fillPage.complete ? null : fillPage.nextBefore;
           }
         }
-        await guard();if(await transport.readBlockHash(Number(head.number))!==head.hash)throw new Error('History chain head changed. Refresh history.');
+        await guard();onProgress?.(0, 0, 'finalizing');
+        if(await readBlockHash(head.number)!==head.hash)throw new Error('History chain head changed. Refresh history.');
         return Object.freeze({head:Object.freeze(head),rows:Object.freeze(rows.sort((a,b)=>b.blockNumber-a.blockNumber||a.hash.localeCompare(b.hash))),
           fills:Object.freeze(fills),limitFillsState,unavailable:Object.freeze(unavailable),
           nextCursor: Object.freeze({ ...page.nextCursor, asyncTerminals: terminals.nextCursor,
             ...(limitFillsState === 'available' ? { limitFills: Object.freeze(fillCursors) } : {}) }),
           complete:page.complete && terminals.complete && Object.values(fillCursors).every(value=>value===null),readyToSign:false as const,nativeAdmission:false as const});
+        } finally { readScope.close(); }
       },
       recoverPendingCurrentCheapAttempt: async (transactionHash?: string) => {
         const pending = readCurrentDexPendingAttempt(currentDexPendingStorage());

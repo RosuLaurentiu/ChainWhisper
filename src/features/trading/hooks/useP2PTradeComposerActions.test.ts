@@ -168,7 +168,7 @@ describe('private book composer hook; React hooks and runtime admission mocked',
       offerAsset: { assetType: offerKind, token: offer.tokenAddress, amount: 100n },
       requestAsset: { assetType: requestKind, token: request.tokenAddress }, priceTerms: { offerAmount: 1n, requestAmount: 2n } }));
     expect(f.input.ensureTradeFunding).toHaveBeenCalledWith(expect.objectContaining({ tradeSummary: expect.arrayContaining([{ label: 'Public price', value: '1 A for 2 B' }]) }));
-    expect(f.standard).not.toHaveBeenCalled(); expect(f.runtime.privateTrade).not.toHaveBeenCalled();
+    expect(f.standard).not.toHaveBeenCalled();
   });
   it.each([['private-erc20', 'private-erc20'], ['private-erc20', 'erc20'], ['erc20', 'private-erc20']] as const)('uses the current create API without fabricated capacity for %s / %s', async (offerKind, requestKind) => {
     const f = fixture();
@@ -177,7 +177,7 @@ describe('private book composer hook; React hooks and runtime admission mocked',
     f.read.mockResolvedValue({ ...view, mode: offerKind === 'erc20' ? 'public-offer-private-request' : requestKind === 'erc20' ? 'private-offer-public-request' : 'private-pair',
       offerAsset: { ...view.offerAsset, assetType: offerKind, publicAmount: offerKind === 'erc20' ? '100' : '0' }, requestAsset: { ...view.requestAsset, assetType: requestKind } });
     await useP2PTradeComposerActions(f.input).createTrade();
-    expect(f.execute).toHaveBeenCalledOnce(); expect(f.runtime.privateTrade).not.toHaveBeenCalled();
+    expect(f.execute).toHaveBeenCalledOnce();
     expect(f.input.ensureTradeFunding).toHaveBeenCalledWith(expect.objectContaining({ confirmationPolicy: 'always', tradeSummary: expect.arrayContaining([{ label: 'Public price', value: '1 A for 2 B' }]) }));
     expect(f.input.mergeTradeSnapshot).toHaveBeenCalledWith(expect.objectContaining({ offer: expect.objectContaining({ amount: '1' }) }));
     const snapshot = vi.mocked(f.input.mergeTradeSnapshot).mock.calls[0][0];
@@ -221,7 +221,7 @@ describe('private book composer hook; React hooks and runtime admission mocked',
     f.input.editingTrade = projectPrivateBookV2Snapshot({ view, deployment: f.runtime.deployments['private-v2'], viewer: owner, resolveTokenMetadata: () => ({ symbol: 'A', decimals: 0 }) });
     f.input.otcV2ActionRuntime = { ...f.runtime, deployments: { ...f.runtime.deployments, 'private-v2': { ...f.runtime.deployments['private-v2'], runtimeBytecodeHash: `0x${'88'.repeat(32)}` } } };
     await useP2PTradeComposerActions(f.input).createTrade();
-    expect(f.input.ensureTradeFunding).not.toHaveBeenCalled(); expect(f.execute).not.toHaveBeenCalled(); expect(f.runtime.privateTrade).not.toHaveBeenCalled();
+    expect(f.input.ensureTradeFunding).not.toHaveBeenCalled(); expect(f.execute).not.toHaveBeenCalled();
   });
   it('requires a maker-only budget before prefilling a current-book edit', () => {
     const f = fixture();

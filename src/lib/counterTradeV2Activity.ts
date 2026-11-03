@@ -1,7 +1,7 @@
-import { Interface, getAddress, toBeHex, zeroPadValue } from '@coti-io/coti-ethers';
+import { Interface, getAddress } from '@coti-io/coti-ethers';
 import { COUNTER_TRADE_V2_ABI } from './counterTradeV2Abi';
 import type { CounterTradeV2Deployment, CounterTradeV2ParentDeployment } from './counterTradeV2';
-import { assertAttestedTradeHistoryV2Deployment, readCanonicalTradeV2RawLogRange, readTradeHistoryV2CanonicalBlock,
+import { assertAttestedTradeHistoryV2Deployment, readCanonicalTradeV2RawLogRange, readAttestedTradeHistoryV2View, readTradeHistoryV2CanonicalBlock,
   readTradeHistoryV2LatestBlockNumber, TradeHistoryV2RangeLimitError, TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS,
   TRADE_HISTORY_V2_MAX_PARTICIPANT_LOG_RANGE_BLOCKS, type TradeHistoryV2ReadCapability, type CanonicalTradeV2RawLogRange } from './tradeHistoryV2Chain';
 import type { TradeHistoryV2RawLog } from './tradeHistoryV2Events';
@@ -15,7 +15,7 @@ export type CounterTradeV2ActivityOrder = Readonly<{ chainId: string; escrow: st
 export type CounterTradeV2ActivityRow = CounterTradeV2ActivityOrder & Readonly<{ key: string; transactionHash: string; blockNumber: string;
   role: 'maker' | 'taker'; payment?: string; received?: string; refund?: string }>;
 export type CounterTradeV2ActivitySnapshot = Readonly<{ orders: readonly CounterTradeV2ActivityOrder[]; history: readonly CounterTradeV2ActivityRow[];
-  complete: boolean; throughBlock?: string; safeHead: string }>;
+  complete: boolean; fromBlock?: string; throughBlock?: string; safeHead: string }>;
 /** Combines independently committed deployment scans without widening their coverage. */
 export const mergeCounterTradeV2ActivitySnapshots = (snapshots: readonly CounterTradeV2ActivitySnapshot[]): CounterTradeV2ActivitySnapshot => {
   const minimum = (values: readonly string[]) => values.reduce((a, b) => BigInt(a) < BigInt(b) ? a : b);
@@ -63,7 +63,7 @@ export const createCounterTradeV2ActivityReader = ({ capability, deployment, par
   if (typeof pageRangeBlocks !== 'bigint' || pageRangeBlocks <= 0n || pageRangeBlocks > TRADE_HISTORY_V2_MAX_PARTICIPANT_LOG_RANGE_BLOCKS) {
     throw new Error('Counter activity page range is invalid.');
   }
-  let pageBlocks = pageRangeBlocks, fellBack = false;
+  let pageBlocks = pageRangeBlocks;
   const parents = [parentDeployment, ...parentDeployments];
   parents.forEach(parent => {
     if (!['link-v2', 'private-v2', 'standard-v2'].includes(parent.protocol)) throw new Error('Counter activity parent protocol is unavailable.');
@@ -73,18 +73,34 @@ export const createCounterTradeV2ActivityReader = ({ capability, deployment, par
   const refundSources = new Set([deployment.contractAddress, ...parents.map(parent => parent.contractAddress)].map(address => address.toLowerCase()));
   const owner = getAddress(ownerAddress).toLowerCase(), escrow = getAddress(deployment.contractAddress).toLowerCase(), chainId = BigInt(deployment.chainId).toString();
   const opened = ABI.getEvent('CounterOpened')!.topicHash, closed = ABI.getEvent('CounterClosed')!.topicHash, terms = ABI.getEvent('CounterPrivateTerms')!.topicHash;
-  let alive = true, head = '0', cursor: { number: string; hash: string } | undefined;
+  let alive = true, head = '0', cursor: { number: string; hash: string } | undefined, from: string | undefined;
   let events = new Map<string, TradeHistoryV2RawLog>(), receipts: Record<string, readonly TradeHistoryV2RawLog[]> = {};
-  let pending: { page: Page; events: typeof events; receipts: typeof receipts; stage: 'taker' | 'closed'; ids: string[]; offset: number } | undefined;
+  let identities = new Map<string, CounterTradeV2ActivityOrder & Readonly<{ encryptedTerms?: string }>>();
+  let pending: { page: Page; events: typeof events; receipts: typeof receipts; identities: typeof identities; ids: string[]; offset: number; mode: 'latest' | 'older' } | undefined;
   const project = (binding: ReturnType<typeof getOwnerTradeV2CapabilityBinding>, data = events, logsByHash = receipts,
-    progress?: { throughBlock: string; complete: boolean }): CounterTradeV2ActivitySnapshot => {
+    progress?: { fromBlock: string; throughBlock: string; complete: boolean }, known = identities): CounterTradeV2ActivitySnapshot => {
+    const openings = new Set([...data.values()].filter(log => log.topics[0] === opened).map(log => parse(ABI, 'CounterOpened', log).id.toString()));
+    const foreign = new Set([...data.values()].filter(log => log.topics[0] === opened).filter(log => {
+      const event = parse(ABI, 'CounterOpened', log); return ![event.maker.toLowerCase(), event.taker.toLowerCase()].includes(owner);
+    }).map(log => parse(ABI, 'CounterOpened', log).id.toString()));
     const orders = new Map<string, CounterTradeV2ActivityOrder>(), history: CounterTradeV2ActivityRow[] = [];
+    for (const [id, identity] of known) {
+      if (openings.has(id) || ![identity.maker, identity.taker].includes(owner)) continue;
+      const { encryptedTerms, ...order } = identity;
+      let { offer, request } = order;
+      if (order.privatePair && encryptedTerms !== undefined) {
+        const [terms] = ABI.decodeFunctionResult('getTermsForAccount', encryptedTerms);
+        [offer, request] = [terms.offer, terms.request].map(value => decryptPrivateUint256Output(binding.signer, value.userCiphertext).toString());
+        if ([offer, request].some(value => value !== undefined && (BigInt(value) <= 0n || BigInt(value) >= (1n << 128n)))) throw new Error('Counter activity amount is invalid.');
+      }
+      orders.set(id, Object.freeze({ ...order, offer, request }));
+    }
     for (const log of [...data.values()].sort(ordered)) {
       const name = log.topics[0] === opened ? 'CounterOpened' : 'CounterClosed', e = parse(ABI, name, log), id = e.id.toString();
       const receipt = logsByHash[log.transactionHash] ?? [];
       if (name === 'CounterOpened') {
         const maker = e.maker.toLowerCase(), taker = e.taker.toLowerCase();
-        if (![maker, taker].includes(owner)) throw new Error('Counter discovery returned a foreign participant.');
+        if (![maker, taker].includes(owner)) continue;
         if (e.id === 0n || maker === taker || BigInt(maker) === 0n || BigInt(taker) === 0n || e.offerToken === e.requestToken ||
             BigInt(e.rootKey) === 0n || e.depth < 1n || e.depth > 16n || (e.parentProposal === 0n) !== (e.depth === 1n)) throw new Error('Invalid counter discovery identity.');
         let offer: string | undefined, request: string | undefined;
@@ -101,6 +117,7 @@ export const createCounterTradeV2ActivityReader = ({ capability, deployment, par
           expiresAt: e.expiresAt.toString(), status: 1, offer, request }));
       } else {
         const order = orders.get(id);
+        if (!order && (foreign.has(id) || known.has(id) && ![known.get(id)!.maker, known.get(id)!.taker].includes(owner))) continue;
         if (!order || order.status !== 1 || e.status < 2n || e.status > 6n) throw new Error('Counter activity closure is invalid.');
         orders.set(id, Object.freeze({ ...order, status: Number(e.status) }));
       }
@@ -132,7 +149,8 @@ export const createCounterTradeV2ActivityReader = ({ capability, deployment, par
       history.push(Object.freeze({ ...order, key: physical(log), transactionHash: log.transactionHash, blockNumber: BigInt(log.blockNumber).toString(), role, payment, received, refund }));
     }
     return Object.freeze({ orders: Object.freeze([...orders.values()].reverse()), history: Object.freeze(history.reverse()),
-      complete: progress?.complete ?? Boolean(!pending && cursor && BigInt(cursor.number) >= BigInt(head)), throughBlock: progress?.throughBlock ?? cursor?.number, safeHead: head });
+      complete: progress?.complete ?? Boolean(!pending && from === deployment.deploymentBlock && cursor && BigInt(cursor.number) >= BigInt(head)),
+      fromBlock: progress?.fromBlock ?? from, throughBlock: progress?.throughBlock ?? cursor?.number, safeHead: head });
   };
   const merge = (page: Page) => {
     if (!pending || JSON.stringify(page.range) !== JSON.stringify(pending.page.range)) throw new Error('Counter discovery page changed.');
@@ -147,52 +165,82 @@ export const createCounterTradeV2ActivityReader = ({ capability, deployment, par
       pending.receipts[hash] = logs;
     }
   };
-  return Object.freeze({ sync: async (ownerCapability: OwnerTradeV2MetaMaskCapability) => {
+  return Object.freeze({ sync: async (ownerCapability: OwnerTradeV2MetaMaskCapability, mode: 'latest' | 'older' = 'latest') => {
     const binding = getOwnerTradeV2CapabilityBinding(ownerCapability);
     const current = async () => { await assertOwnerTradeV2CapabilityCurrent(binding);
       if (!alive || binding.ownerAddress.toLowerCase() !== owner || binding.chainId.toString() !== deployment.chainId) throw new Error('Counter activity wallet session changed.'); };
     let attemptedSpan = pending ? BigInt(pending.page.range.toBlock) - BigInt(pending.page.range.fromBlock) + 1n : 0n;
     try {
     await current();
-    if (cursor && (await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(cursor.number) }))?.hash !== cursor.hash) { events.clear(); receipts = {}; cursor = undefined; pending = undefined; }
+    if (cursor && (await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(cursor.number) }))?.hash !== cursor.hash) { events.clear(); identities.clear(); receipts = {}; cursor = undefined; from = undefined; pending = undefined; }
     if (pending && (await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(pending.page.range.toBlock) }))?.hash !== pending.page.range.toBlockHash) pending = undefined;
+    if (pending?.mode === 'older' && mode === 'latest') pending = undefined;
     if (!pending) {
       const latest = BigInt(await readTradeHistoryV2LatestBlockNumber(capability)), lag = BigInt(deployment.finalityLagBlocks);
-      if (latest < lag) throw new Error('Counter finality head is unavailable.'); head = (latest - lag).toString();
-      if (cursor && BigInt(cursor.number) > BigInt(head)) { events.clear(); receipts = {}; cursor = undefined; }
-      const fromBlock = cursor ? BigInt(cursor.number) + 1n : BigInt(deployment.deploymentBlock);
-      if (fromBlock > BigInt(head)) return project(binding);
-      const toBlock = fromBlock + pageBlocks - 1n < BigInt(head) ? fromBlock + pageBlocks - 1n : BigInt(head);
+      if (latest < lag) throw new Error('Counter finality head is unavailable.');
+      const safeHead = latest - lag;
+      if (cursor && BigInt(cursor.number) > safeHead) { events.clear(); identities.clear(); receipts = {}; cursor = undefined; from = undefined; }
+      head = mode === 'older' && cursor ? cursor.number : safeHead.toString();
+      const deploymentBlock = BigInt(deployment.deploymentBlock);
+      if (mode === 'older' && from === deployment.deploymentBlock || mode === 'latest' && cursor?.number === head) return project(binding);
+      const toBlock = mode === 'older' && from ? BigInt(from) - 1n : BigInt(head);
+      if (toBlock < deploymentBlock) return project(binding);
+      const start = mode === 'latest' && cursor && BigInt(head) - BigInt(cursor.number) < pageBlocks ? BigInt(cursor.number) + 1n : toBlock - pageBlocks + 1n;
+      const fromBlock = start < deploymentBlock ? deploymentBlock : start;
       attemptedSpan = toBlock - fromBlock + 1n;
-      const page = await readCanonicalTradeV2RawLogRange({ capability, deployment, fromBlock, toBlock, topics: [opened, null, zeroPadValue(owner, 32)], participantRange: true });
-      await current(); pending = { page, events: new Map(events), receipts: { ...receipts }, stage: 'taker', ids: [], offset: 0 }; merge(page);
+      const page = await readCanonicalTradeV2RawLogRange({ capability, deployment, fromBlock, toBlock, topics: [[opened, closed]], participantRange: true });
+      await current(); pending = { page, events: new Map(events), identities: new Map(identities), receipts: { ...receipts }, ids: [], offset: 0, mode }; merge(page);
+      const openings = new Set([...pending.events.values()].filter(v => v.topics[0] === opened).map(v => parse(ABI, 'CounterOpened', v).id.toString()));
+      pending.ids = [...new Set(page.logs.filter(v => v.topics[0] === closed).map(v => parse(ABI, 'CounterClosed', v).id.toString()))]
+        .filter(id => !openings.has(id) && !pending!.identities.has(id));
     }
-    const range = { fromBlock: BigInt(pending.page.range.fromBlock), toBlock: BigInt(pending.page.range.toBlock) };
-    if (pending.stage === 'taker') {
-      merge(await readCanonicalTradeV2RawLogRange({ capability, deployment, ...range, topics: [opened, null, null, zeroPadValue(owner, 32)], participantRange: true }));
-      await current(); pending.stage = 'closed';
-      pending.ids = [...pending.events.values()].filter(v => v.topics[0] === opened).map(v => parse(ABI, 'CounterOpened', v).id.toString());
+    for (const id of pending.ids.slice(pending.offset, pending.offset + 8)) {
+      const read = async (name: 'getCounter' | 'getTermsForAccount') => {
+        const raw = await readAttestedTradeHistoryV2View({ capability, deployment, data: ABI.encodeFunctionData(name, [id]),
+          ...(name === 'getTermsForAccount' ? { from: owner } : {}) });
+        await current();
+        const result = ABI.decodeFunctionResult(name, raw);
+        if (ABI.encodeFunctionResult(name, result).toLowerCase() !== raw.toLowerCase()) throw new Error('Noncanonical Counter history identity.');
+        return result;
+      };
+      const [proposal, amounts] = await read('getCounter');
+      const maker = proposal.maker.toLowerCase(), taker = proposal.taker.toLowerCase();
+      if (maker === taker || BigInt(maker) === 0n || BigInt(taker) === 0n || proposal.offerToken === proposal.requestToken ||
+          BigInt(proposal.rootKey) === 0n || proposal.depth < 1n || proposal.depth > 16n || (proposal.parentProposal === 0n) !== (proposal.depth === 1n) ||
+          proposal.status < 1n || proposal.status > 6n || proposal.privatePair && (amounts.offer !== 0n || amounts.request !== 0n)) throw new Error('Counter history identity is invalid.');
+      let offer: string | undefined, request: string | undefined, encryptedTerms: string | undefined;
+      if ([maker, taker].includes(owner)) {
+        if (proposal.privatePair) {
+          const result = await read('getTermsForAccount');
+          if (!result[0].initialized) throw new Error('Counter participant terms are unavailable.');
+          encryptedTerms = ABI.encodeFunctionResult('getTermsForAccount', result);
+        } else [offer, request] = [amounts.offer, amounts.request].map(value => value.toString());
+        if ([offer, request].some(value => value !== undefined && (BigInt(value) <= 0n || BigInt(value) >= (1n << 128n)))) throw new Error('Counter activity amount is invalid.');
+      }
+      pending.identities.set(id, Object.freeze({ chainId, escrow, id, maker, taker, offerToken: proposal.offerToken.toLowerCase(), requestToken: proposal.requestToken.toLowerCase(),
+        privatePair: proposal.privatePair as boolean, expiresAt: proposal.expiresAt.toString(), status: 1, offer, request, encryptedTerms }));
+      pending.offset++;
     }
-    if (pending.offset < pending.ids.length) {
-      const ids = pending.ids.slice(pending.offset, pending.offset + 64);
-      merge(await readCanonicalTradeV2RawLogRange({ capability, deployment, ...range, topics: [closed, ids.map(v => toBeHex(BigInt(v), 32))], participantRange: true }));
-      await current(); pending.offset += ids.length;
-      if (pending.offset < pending.ids.length) return project(binding);
-    }
+    if (pending.offset < pending.ids.length) return project(binding);
     const last = await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(pending.page.range.toBlock) });
     if (!last || last.hash !== pending.page.range.toBlockHash) { pending = undefined; throw new Error('Counter activity was reorganized before commit.'); }
+    if (cursor && (await readTradeHistoryV2CanonicalBlock({ capability, blockNumber: BigInt(cursor.number) }))?.hash !== cursor.hash) { pending = undefined; throw new Error('Counter activity was reorganized before commit.'); }
     await current();
     let result: CounterTradeV2ActivitySnapshot;
-    try { result = project(binding, pending.events, pending.receipts, { throughBlock: last.number, complete: BigInt(last.number) >= BigInt(head) }); }
+    const pageFrom = pending.page.range.fromBlock;
+    const nextFrom = from && cursor && BigInt(pageFrom) <= BigInt(cursor.number) + 1n && BigInt(last.number) >= BigInt(from) - 1n
+      ? BigInt(pageFrom) < BigInt(from) ? pageFrom : from : pageFrom;
+    const nextCursor = !cursor || BigInt(last.number) > BigInt(cursor.number) ? last : cursor;
+    try { result = project(binding, pending.events, pending.receipts, { fromBlock: nextFrom, throughBlock: nextCursor.number,
+      complete: nextFrom === deployment.deploymentBlock && BigInt(nextCursor.number) >= BigInt(head) }, pending.identities); }
     catch (error) { pending = undefined; throw error; }
-    events = pending.events; receipts = pending.receipts; cursor = last; pending = undefined; return result;
+    events = pending.events; identities = pending.identities; receipts = pending.receipts; cursor = nextCursor; from = nextFrom; pending = undefined; return result;
     } catch (error) {
-      if (!(error instanceof TradeHistoryV2RangeLimitError) || fellBack || attemptedSpan <= TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS) throw error;
+      if (!(error instanceof TradeHistoryV2RangeLimitError) || attemptedSpan <= 1n) throw error;
       pending = undefined;
-      pageBlocks = TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS;
-      fellBack = true;
+      pageBlocks = attemptedSpan > TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS ? TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS : attemptedSpan / 2n;
       await current();
       return Object.freeze({ ...project(binding), complete: false });
     }
-  }, close: () => { alive = false; events.clear(); receipts = {}; pending = undefined; cursor = undefined; } });
+  }, close: () => { alive = false; events.clear(); identities.clear(); receipts = {}; pending = undefined; cursor = undefined; from = undefined; } });
 };

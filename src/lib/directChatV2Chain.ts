@@ -2,6 +2,8 @@ import { BrowserProvider, getAddress, Interface, keccak256, toUtf8Bytes } from '
 import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import { loadCotiEthersModule, type CotiReadProvider } from './appShared/core';
 import { extractUserCiphertext, parseSubmitMemoPayload } from './appShared/parsers';
+import type { CotiEventHintSubscriber } from './appShared/cotiEventHints';
+import { isWalletTransactionFlowActive } from './walletTransactionFlow';
 import {
   decodeDirectChatV2ContactSettings,
   encodeDirectChatV2ContactSettings,
@@ -703,6 +705,7 @@ export const verifyDirectChatV2Contract = async ({
   capability: DirectChatV2MetaMaskCapability;
   manifest: DirectChatV2DeploymentManifest;
 }): Promise<VerifiedDirectChatV2Deployment> => {
+  await assertDirectChatV2SnapshotCapability(capability);
   const { readProvider, chainId } = resolveDirectChatV2ReadCapability(capability);
   const target = normalizeAddress(manifest.contractAddress, 'Chat contract');
   const expectedChainId = normalizeUint256(manifest.chainId, 'Manifest chain ID');
@@ -715,6 +718,7 @@ export const verifyDirectChatV2Contract = async ({
     'Manifest runtime bytecode hash'
   );
   const runtimeBytecode = await readProvider.getCode(target);
+  await assertDirectChatV2SnapshotCapability(capability);
   if (runtimeBytecode === '0x') {
     throw new Error('The configured V2 chat address has no deployed contract.');
   }
@@ -723,6 +727,17 @@ export const verifyDirectChatV2Contract = async ({
   }
   if (keccak256(runtimeBytecode).toLowerCase() !== expectedRuntimeBytecodeHash) {
     throw new Error('Chat V2 runtime bytecode does not match the trusted deployment manifest.');
+  }
+  // Retained compiler output proves these constants and the embedded deployment block for this exact runtime.
+  if (expectedRuntimeBytecodeHash === '0x7ba5b1b9cfd675905cd70dc62ad81c841daf6f1ba95dab0738254a36256ca970') {
+    if (expectedDeploymentBlock !== 8_981_982n) {
+      throw new Error('Chat V2 deployment block does not match the reviewed runtime.');
+    }
+    const verifiedDeployment = Object.freeze({ chainId, contractAddress: target,
+      deploymentBlock: expectedDeploymentBlock, runtimeBytecodeHash: expectedRuntimeBytecodeHash });
+    VERIFIED_DIRECT_CHAT_V2_DEPLOYMENTS.add(verifiedDeployment);
+    VERIFIED_DIRECT_CHAT_V2_PROFILE_SYNC.set(verifiedDeployment, true);
+    return verifiedDeployment;
   }
   const contract = await loadReadContract(target, capability);
   // Do not enqueue a full feature batch ahead of other App initializers.
@@ -768,7 +783,7 @@ export const verifyDirectChatV2Contract = async ({
   } else if (profileSyncFeatureSupport.some(Boolean)) {
     throw new Error('Configured chat contract exposes only part of the profile and sync feature surface.');
   }
-  resolveDirectChatV2ReadCapability(capability);
+  await assertDirectChatV2SnapshotCapability(capability);
   const verifiedDeployment = Object.freeze({
     chainId,
     contractAddress: target,
@@ -2121,12 +2136,14 @@ export const watchDirectChatV2MessageHints = async ({
   capability,
   deployment,
   peer,
-  onHint
+  onHint,
+  subscribeEventHints
 }: {
   capability: DirectChatV2MetaMaskCapability;
   deployment: VerifiedDirectChatV2Deployment;
   peer: string;
   onHint: () => void | Promise<void>;
+  subscribeEventHints?: CotiEventHintSubscriber;
 }): Promise<(() => Promise<void>) | null> => {
   const verifiedDeployment = requireVerifiedDeployment(deployment);
   if (typeof onHint !== 'function') {
@@ -2145,10 +2162,22 @@ export const watchDirectChatV2MessageHints = async ({
   let active = true;
   let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
   let polling = false;
+  let socketHealthy = false;
+  let pendingSocketHint = false;
+  let delivering = false;
+  let stopSocket: (() => void) | undefined;
+  const held = () => (typeof document !== 'undefined' && document.hidden) || isWalletTransactionFlowActive();
+  const schedulePoll = () => {
+    if (active && timer === null && (!socketHealthy || pendingSocketHint)) {
+      timer = globalThis.setTimeout(() => { timer = null; void poll(); }, MESSAGE_HINT_POLL_MS);
+    }
+  };
   const poll = async () => {
     if (!active || polling) return;
     polling = true;
     try {
+      if (held()) return;
+      pendingSocketHint = false;
       const latestBlock = await readDirectChatV2LatestBlockNumber({
         capability,
         deployment: verifiedDeployment
@@ -2176,14 +2205,47 @@ export const watchDirectChatV2MessageHints = async ({
       // stateless eth_getLogs poll can retry without installing fragile RPC filters.
     } finally {
       polling = false;
-      if (active) timer = globalThis.setTimeout(() => { void poll(); }, MESSAGE_HINT_POLL_MS);
+      schedulePoll();
     }
   };
   resolveDirectChatV2ReadCapability(capability);
-  timer = globalThis.setTimeout(() => { void poll(); }, MESSAGE_HINT_POLL_MS);
+  if (subscribeEventHints) {
+    try {
+      stopSocket = await subscribeEventHints({
+        address: verifiedDeployment.contractAddress,
+        topics: [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, conversation.conversationId],
+        onHint: log => {
+          if (!active) return;
+          const raw = log as { address?: string; topics?: string[] } | undefined;
+          if (raw?.address?.toLowerCase() !== verifiedDeployment.contractAddress.toLowerCase() ||
+            raw.topics?.[0]?.toLowerCase() !== DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC.toLowerCase() ||
+            raw.topics?.[1]?.toLowerCase() !== conversation.conversationId.toLowerCase()) return;
+          if (held() || delivering) { pendingSocketHint = true; schedulePoll(); return; }
+          try {
+            resolveDirectChatV2ReadCapability(capability);
+            delivering = true;
+            void Promise.resolve(onHint()).catch(() => {}).finally(() => { delivering = false; });
+          } catch { delivering = false; }
+        },
+        onStatus: status => {
+          if (!active) return;
+          socketHealthy = status === 'connected';
+          if (socketHealthy) {
+            if (timer !== null) globalThis.clearTimeout(timer);
+            timer = null;
+            // Cover the initial registration gap and later reconnect gaps.
+            pendingSocketHint = true;
+          }
+          schedulePoll();
+        }
+      });
+    } catch { socketHealthy = false; }
+  }
+  schedulePoll();
   return async () => {
     if (!active) return;
     active = false;
+    stopSocket?.();
     if (timer !== null) globalThis.clearTimeout(timer);
   };
 };
@@ -2191,11 +2253,15 @@ export const watchDirectChatV2MessageHints = async ({
 export const watchDirectChatV2IncomingMessageHints = async ({
   capability,
   deployment,
-  onHint
+  onHint,
+  subscribeEventHints,
+  shouldPause
 }: {
   capability: DirectChatV2MetaMaskCapability;
   deployment: VerifiedDirectChatV2Deployment;
   onHint: (peer: string) => void | Promise<void>;
+  subscribeEventHints?: CotiEventHintSubscriber;
+  shouldPause?: () => boolean;
 }): Promise<() => Promise<void>> => {
   const verifiedDeployment = requireVerifiedDeployment(deployment);
   if (typeof onHint !== 'function') {
@@ -2209,14 +2275,29 @@ export const watchDirectChatV2IncomingMessageHints = async ({
   let active = true;
   let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
   let polling = false;
+  const socketStatuses = [false, false];
+  const stopSockets: Array<() => void> = [];
+  let pendingSocketHint = false;
+  const held = () => (typeof document !== 'undefined' && document.hidden) || isWalletTransactionFlowActive();
+  const schedulePoll = () => {
+    if (active && timer === null && (!socketStatuses.every(Boolean) || pendingSocketHint)) {
+      timer = globalThis.setTimeout(() => { timer = null; void poll(); }, MESSAGE_HINT_POLL_MS);
+    }
+  };
   const poll = async () => {
     if (!active || polling) return;
     polling = true;
     try {
+      if (held() || shouldPause?.()) {
+        if (shouldPause?.()) pendingSocketHint = true;
+        return;
+      }
+      pendingSocketHint = false;
       const latestBlock = await readDirectChatV2LatestBlockNumber({
         capability,
         deployment: verifiedDeployment
       });
+      if (shouldPause?.()) { pendingSocketHint = true; return; }
       if (latestBlock < nextBlock - 1n) {
         nextBlock = latestBlock + 1n;
         return;
@@ -2232,6 +2313,8 @@ export const watchDirectChatV2IncomingMessageHints = async ({
         toBlock
       });
       nextBlock = toBlock + 1n;
+      // A socket reconnect does not prove that older pages were delivered.
+      pendingSocketHint = socketStatuses.every(Boolean) && nextBlock <= latestBlock;
       const peers = new Set<string>();
       for (const event of messages) {
         const ownerIsSender = event.sender.toLowerCase() === binding.ownerAddress.toLowerCase();
@@ -2246,14 +2329,54 @@ export const watchDirectChatV2IncomingMessageHints = async ({
       // the same bounded block range on the next poll.
     } finally {
       polling = false;
-      if (active) timer = globalThis.setTimeout(() => { void poll(); }, MESSAGE_HINT_POLL_MS);
+      schedulePoll();
     }
   };
   resolveDirectChatV2ReadCapability(capability);
-  timer = globalThis.setTimeout(() => { void poll(); }, MESSAGE_HINT_POLL_MS);
+  if (subscribeEventHints) {
+    const ownerTopic = `0x${binding.ownerAddress.slice(2).toLowerCase().padStart(64, '0')}`;
+    const filters = [[DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, null, ownerTopic],
+      [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, null, null, ownerTopic]];
+    for (const [index, topics] of filters.entries()) {
+      try {
+        stopSockets.push(await subscribeEventHints({
+          address: verifiedDeployment.contractAddress,
+          topics,
+          onHint: log => {
+            if (!active) return;
+            const raw = log as { address?: string; topics?: string[] } | undefined;
+            if (raw?.address?.toLowerCase() !== verifiedDeployment.contractAddress.toLowerCase() ||
+              raw.topics?.[0]?.toLowerCase() !== DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC.toLowerCase()) return;
+            const senderTopic = raw.topics?.[2]?.toLowerCase(), recipientTopic = raw.topics?.[3]?.toLowerCase();
+            if (!senderTopic || !recipientTopic || !/^0x0{24}[0-9a-f]{40}$/.test(senderTopic) ||
+              !/^0x0{24}[0-9a-f]{40}$/.test(recipientTopic)) return;
+            const peerTopic = senderTopic === ownerTopic ? recipientTopic : recipientTopic === ownerTopic ? senderTopic : null;
+            if (!peerTopic || peerTopic === ownerTopic) return;
+            if (held()) { pendingSocketHint = true; schedulePoll(); return; }
+            try {
+              resolveDirectChatV2ReadCapability(capability);
+              void Promise.resolve(onHint(getAddress(`0x${peerTopic.slice(-40)}`))).catch(() => {});
+            } catch { /* An event hint cannot bypass the current owner scope. */ }
+          },
+          onStatus: status => {
+            if (!active) return;
+            socketStatuses[index] = status === 'connected';
+            if (socketStatuses.every(Boolean)) {
+              if (timer !== null) globalThis.clearTimeout(timer);
+              timer = null;
+              pendingSocketHint = true;
+            }
+            schedulePoll();
+          }
+        }));
+      } catch { socketStatuses[index] = false; }
+    }
+  }
+  schedulePoll();
   return async () => {
     if (!active) return;
     active = false;
+    for (const stop of stopSockets) stop();
     if (timer !== null) globalThis.clearTimeout(timer);
   };
 };

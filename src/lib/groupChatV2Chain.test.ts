@@ -6,12 +6,14 @@ import {
   type JsonRpcSigner
 } from '@coti-io/coti-ethers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import reviewedRuntime from './__fixtures__/reviewed-group-chat-v2-runtime.json';
 
-const coreMocks = vi.hoisted(() => ({ loadCotiEthersModule: vi.fn() }));
+const coreMocks = vi.hoisted(() => ({ loadCotiEthersModule: vi.fn(), loadCotiStartupReadProvider: vi.fn() }));
 
 vi.mock('./appShared/core', async (importOriginal) => ({
   ...await importOriginal<typeof import('./appShared/core')>(),
-  loadCotiEthersModule: coreMocks.loadCotiEthersModule
+  loadCotiEthersModule: coreMocks.loadCotiEthersModule,
+  loadCotiStartupReadProvider: coreMocks.loadCotiStartupReadProvider
 }));
 
 import {
@@ -47,6 +49,7 @@ import {
   readGroupChatV2MetadataLogPage,
   readGroupChatV2MetadataVersionAtBlock,
   readGroupChatV2MessageCountAtBlock,
+  readGroupChatV2LatestBlockNumber,
   readGroupChatV2NativeCredit,
   readGroupChatV2MessageLogPage,
   readGroupChatV2WalletLifecycleLogPage,
@@ -84,6 +87,8 @@ const MANIFEST = {
   deploymentBlock: DEPLOYMENT_BLOCK,
   runtimeBytecodeHash: keccak256(RUNTIME)
 } satisfies GroupChatV2DeploymentManifest;
+const REVIEWED_MANIFEST = { ...MANIFEST, deploymentBlock: 8_982_896n,
+  runtimeBytecodeHash: '0x608dedd00c5aeff7ec5f756395cd8269e24be50e9ae3da0f015c030963f88fd9' };
 const REQUIRED_FEATURES = new Set(
   GROUP_CHAT_V2_REQUIRED_FEATURES.map((feature) => keccak256(toUtf8Bytes(feature)).toLowerCase())
 );
@@ -290,7 +295,151 @@ const install = (contract: Record<string, unknown>) => {
 describe('groupChatV2Chain', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('bounds startup getter production while retaining every verifier read', async () => {
+  const priorityFixture = async (shouldPrioritizeRead?: (groupId: bigint) => boolean) => {
+    let current = true;
+    const snapshot = () => { if (!current) throw new Error('priority owner scope changed'); };
+    const normal = makeProvider(), foreground = makeProvider();
+    for (const provider of [normal, foreground]) {
+      provider.getBlock = vi.fn(async () => ({ number: 111, hash: BLOCK_HASH, timestamp: 1_000 })) as never;
+      provider.getBlockNumber = vi.fn(async () => 120);
+      provider.getLogs = vi.fn(async () => []) as never;
+    }
+    const capability = await bindGroupChatV2MetaMaskCapability({ signer: makeSigner({ provider: normal }),
+      browserProvider: normal, ownerAddress: ALICE, chainId: CHAIN_ID,
+      assertCurrent: async () => snapshot(), assertSnapshotCurrent: snapshot, shouldPrioritizeRead });
+    const surface = install({ getGroup: vi.fn(async () => groupSnapshot()),
+      getEpochMetadata: vi.fn(async () => ({ exists: true, membershipRevision: 5n, rotatedBy: ALICE, createdAt: 1n, firstMessageId: 1n })),
+      getMyEpochEnvelope: vi.fn(async () => 1_123n),
+      getMembershipRangesPage: vi.fn(async () => ({ ranges: [], nextCursor: 0n })) });
+    const deployment = await verifyGroupChatV2Deployment({ capability, manifest: MANIFEST });
+    const runners: unknown[] = [];
+    coreMocks.loadCotiEthersModule.mockResolvedValue({ Contract: vi.fn(function Contract(_address: string, _abi: unknown, runner: unknown) {
+      runners.push(runner); return surface;
+    }) } as never);
+    coreMocks.loadCotiStartupReadProvider.mockResolvedValue(foreground);
+    const readContext = Object.freeze({ purpose: 'selected-history' as const, groupId: 1n });
+    return { normal, foreground, capability, deployment, readContext, runners, surface,
+      invalidate: () => { current = false; } };
+  };
+
+  it('promotes selected history fences and nested key reads only while that group is eligible', async () => {
+    let eligible = true;
+    const f = await priorityFixture(groupId => eligible && groupId === 1n);
+    await readGroupChatV2CanonicalBlock({ ...f, blockNumber: 111n });
+    expect(f.foreground.getBlock).toHaveBeenCalledOnce();
+    await readGroupChatV2EpochKey({ ...f, groupId: 1n, epoch: 3n });
+    expect(f.runners).toEqual([f.foreground, f.foreground]);
+    await readGroupChatV2LatestBlockNumber(f);
+    await readGroupChatV2Group({ ...f, groupId: 1n });
+    await readGroupChatV2MessageCountAtBlock({ ...f, groupId: 1n, blockNumber: 111n });
+    await readGroupChatV2MembershipRanges({ ...f, groupId: 1n, account: ALICE });
+    await readGroupChatV2MessageLogPage({ ...f, groupId: 1n, fromBlock: 111n, toBlock: 111n });
+    expect(f.foreground.getBlockNumber).toHaveBeenCalledOnce();
+    expect(f.foreground.getLogs).toHaveBeenCalledOnce();
+    expect(f.runners.every(runner => runner === f.foreground)).toBe(true);
+    eligible = false;
+    await readGroupChatV2Group({ ...f, groupId: 1n });
+    expect(f.runners[f.runners.length - 1]).toBe(f.normal);
+    await readGroupChatV2CanonicalBlock({ ...f, readContext: { ...f.readContext, groupId: 2n }, blockNumber: 111n });
+    expect(f.normal.getBlock).toHaveBeenCalledOnce();
+  });
+
+  it('keeps discovery, missing callbacks and mismatched group purposes on the normal provider', async () => {
+    const f = await priorityFixture(() => true);
+    await readGroupChatV2Group({ ...f, readContext: undefined, groupId: 1n });
+    await readGroupChatV2Group({ ...f, groupId: 2n });
+    expect(f.runners).toEqual([f.normal, f.normal]);
+    const withoutCallback = await priorityFixture();
+    await readGroupChatV2CanonicalBlock({ ...withoutCallback, blockNumber: 111n });
+    expect(withoutCallback.normal.getBlock).toHaveBeenCalledOnce();
+    expect(coreMocks.loadCotiStartupReadProvider).not.toHaveBeenCalled();
+  });
+
+  it.each(['scope', 'released', 'provider-error'] as const)('handles %s while resolving the foreground provider', async change => {
+    let eligible = true;
+    const f = await priorityFixture(() => eligible);
+    let release!: () => void;
+    coreMocks.loadCotiStartupReadProvider.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { release = resolve; });
+      if (change === 'provider-error') throw new Error('foreground provider failed');
+      return f.foreground;
+    });
+    const pending = readGroupChatV2CanonicalBlock({ ...f, blockNumber: 111n });
+    await vi.waitFor(() => expect(coreMocks.loadCotiStartupReadProvider).toHaveBeenCalled());
+    if (change === 'scope') f.invalidate();
+    if (change === 'released') eligible = false;
+    const rejected = change === 'released' ? undefined : expect(pending).rejects.toThrow(
+      change === 'scope' ? 'priority owner scope changed' : 'foreground provider failed');
+    release();
+    if (rejected) await rejected;
+    else await pending;
+    expect(f.foreground.getBlock).not.toHaveBeenCalled();
+    expect(f.normal.getBlock).toHaveBeenCalledTimes(change === 'released' ? 1 : 0);
+  });
+
+  it('admits the exact reviewed runtime with fresh code reads and no constant getters', async () => {
+    expect(keccak256(reviewedRuntime)).toBe(REVIEWED_MANIFEST.runtimeBytecodeHash);
+    const provider = makeProvider();
+    vi.mocked(provider.getCode).mockResolvedValue(reviewedRuntime);
+    const capability = await bind(makeSigner({ provider }));
+    const surface = install({});
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(await verifyGroupChatV2Deployment({ capability, manifest: REVIEWED_MANIFEST }))
+        .toEqual({ ...REVIEWED_MANIFEST, contractAddress: GROUP.toLowerCase() });
+    }
+    expect(provider.getCode).toHaveBeenCalledTimes(2);
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+    for (const read of Object.values(surface)) expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each(['0x', RUNTIME])('rejects missing or changed reviewed code %s before getters', async runtime => {
+    const provider = makeProvider();
+    vi.mocked(provider.getCode).mockResolvedValue(runtime);
+    const capability = await bind(makeSigner({ provider }));
+    install({});
+    await expect(verifyGroupChatV2Deployment({ capability, manifest: REVIEWED_MANIFEST })).rejects.toThrow('runtime');
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+  });
+
+  it('rejects a different manifest chain or deployment block for reviewed code', async () => {
+    const provider = makeProvider();
+    vi.mocked(provider.getCode).mockResolvedValue(reviewedRuntime);
+    const capability = await bind(makeSigner({ provider }));
+    install({});
+    await expect(verifyGroupChatV2Deployment({ capability,
+      manifest: { ...REVIEWED_MANIFEST, chainId: CHAIN_ID + 1n } })).rejects.toThrow('manifest chain');
+    await expect(verifyGroupChatV2Deployment({ capability,
+      manifest: { ...REVIEWED_MANIFEST, deploymentBlock: 8_982_897n } })).rejects.toThrow('deployment block');
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+  });
+
+  it.each(['before', 'during'] as const)('rejects a stale capability %s the reviewed code read', async when => {
+    let current = true;
+    const snapshot = () => { if (!current) throw new Error('reviewed owner lease changed'); };
+    const provider = makeProvider();
+    const capability = await bind(makeSigner({ provider }), vi.fn(async () => {}), snapshot);
+    install({ deploymentBlock: vi.fn(async () => REVIEWED_MANIFEST.deploymentBlock) });
+    vi.mocked(provider.getCode).mockImplementation(async () => { current = false; return reviewedRuntime; });
+    if (when === 'before') current = false;
+    await expect(verifyGroupChatV2Deployment({ capability, manifest: REVIEWED_MANIFEST }))
+      .rejects.toThrow('reviewed owner lease changed');
+    if (when === 'before') expect(provider.getCode).not.toHaveBeenCalled();
+    expect(coreMocks.loadCotiEthersModule).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the owner lease after generic getter verification', async () => {
+    let current = true;
+    const provider = makeProvider();
+    const capability = await bind(makeSigner({ provider }), vi.fn(async () => {}),
+      () => { if (!current) throw new Error('generic owner lease changed'); });
+    install({ supportsFeature: vi.fn(async (feature: string) => {
+      current = false;
+      return REQUIRED_FEATURES.has(String(feature).toLowerCase());
+    }) });
+    await expect(verifyGroupChatV2Deployment({ capability, manifest: MANIFEST })).rejects.toThrow('generic owner lease changed');
+  });
+
+  it('shares independent startup reads in windows of four while retaining every verifier read', async () => {
     let pending = 0, maximumPending = 0, reads = 0;
     const surface = Object.fromEntries(Object.entries(verifier()).map(([name, read]) => [name,
       async (...args: unknown[]) => {
@@ -303,7 +452,16 @@ describe('groupChatV2Chain', () => {
     const deployment = await verifyGroupChatV2Deployment({ capability: await bind(), manifest: MANIFEST });
     expect(deployment.contractAddress).toBe(GROUP.toLowerCase());
     expect(reads).toBe(24);
-    expect(maximumPending).toBe(1);
+    expect(maximumPending).toBe(4);
+  });
+
+  it('does not start another getter window after an admission read fails', async () => {
+    const surface = install({ contractVersion: vi.fn(async () => { throw new Error('admission read failed'); }) });
+    await expect(verifyGroupChatV2Deployment({ capability: await bind(), manifest: MANIFEST }))
+      .rejects.toThrow('admission read failed');
+    expect(surface.PROTOCOL_VERSION).toHaveBeenCalledOnce();
+    expect(surface.METADATA_AAD_DOMAIN).not.toHaveBeenCalled();
+    expect(surface.supportsFeature).not.toHaveBeenCalled();
   });
 
   it('binds the exact current COTI BrowserProvider owner and rejects another scope', async () => {
@@ -1014,6 +1172,36 @@ describe('groupChatV2Chain', () => {
       fromBlock: 101n,
       toBlock: 2_149n
     })).rejects.toThrow('bounded page');
+  });
+
+  it('bounds the owner-filtered lifecycle page separately from message pages', async () => {
+    const provider = makeProvider();
+    provider.getLogs = vi.fn(async () => []) as never;
+    install({});
+    const capability = await bind(makeSigner({ provider }));
+    const deployment = await verifyGroupChatV2Deployment({ manifest: MANIFEST, capability });
+    await expect(readGroupChatV2WalletLifecycleLogPage({
+      deployment, capability, walletAddress: ALICE, fromBlock: 101n, toBlock: 100_100n
+    })).resolves.toEqual([]);
+    expect(provider.getLogs).toHaveBeenCalledWith({
+      address: GROUP, fromBlock: 101, toBlock: 100_100,
+      topics: [expect.any(Array), null, `0x${ALICE.slice(2).toLowerCase().padStart(64, '0')}`]
+    });
+    await expect(readGroupChatV2WalletLifecycleLogPage({
+      deployment, capability, walletAddress: ALICE, fromBlock: 101n, toBlock: 100_101n
+    })).rejects.toThrow('bounded page');
+    expect(provider.getLogs).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an oversized owner lifecycle response before decoding it', async () => {
+    const provider = makeProvider();
+    provider.getLogs = vi.fn(async () => Array.from({ length: 4_097 }, () => ({}))) as never;
+    install({});
+    const capability = await bind(makeSigner({ provider }));
+    const deployment = await verifyGroupChatV2Deployment({ manifest: MANIFEST, capability });
+    await expect(readGroupChatV2WalletLifecycleLogPage({
+      deployment, capability, walletAddress: ALICE, fromBlock: 101n, toBlock: 120n
+    })).rejects.toThrow('bounded response');
   });
 
   it('discovers only owner-indexed lifecycle logs and reads canonical group projections', async () => {

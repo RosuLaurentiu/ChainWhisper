@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { SwapDirection } from '../../lib/appShared';
 import type {
   PrivacyDirection,
@@ -9,15 +9,11 @@ import type {
 } from '../../lib/privacyPortal';
 import {
   derivePrivacyPortalView,
-  deriveTokenSwapView,
-  resolveTokenSwapDirectionFallback
+  deriveTokenSwapView
 } from './tokenSwapView';
 
 type UseTokenSwapViewModelArgs = {
   hasAesReady: boolean;
-  legacyPrivateRewardTokenBalanceWei: bigint | null;
-  legacyPrivateRewardTokenDecimals: number;
-  legacyPrivateRewardTokenSymbol: string;
   loadingRewardBalances: boolean;
   onCotiNetwork: boolean;
   privateRewardTokenBalanceWei: bigint | null;
@@ -26,7 +22,6 @@ type UseTokenSwapViewModelArgs = {
   rewardTokenBalanceWei: bigint | null;
   rewardTokenDecimals: number;
   rewardTokenSymbol: string;
-  setSwapDirection: (direction: SwapDirection) => void;
   swapAmountInput: string;
   swapDirection: SwapDirection;
   swappingTokens: boolean;
@@ -35,9 +30,6 @@ type UseTokenSwapViewModelArgs = {
 
 export default function useTokenSwapViewModel({
   hasAesReady,
-  legacyPrivateRewardTokenBalanceWei,
-  legacyPrivateRewardTokenDecimals,
-  legacyPrivateRewardTokenSymbol,
   loadingRewardBalances,
   onCotiNetwork,
   privateRewardTokenBalanceWei,
@@ -46,7 +38,6 @@ export default function useTokenSwapViewModel({
   rewardTokenBalanceWei,
   rewardTokenDecimals,
   rewardTokenSymbol,
-  setSwapDirection,
   swapAmountInput,
   swapDirection,
   swappingTokens,
@@ -56,9 +47,6 @@ export default function useTokenSwapViewModel({
     () =>
       deriveTokenSwapView({
         hasAesReady,
-        legacyPrivateRewardTokenBalanceWei,
-        legacyPrivateRewardTokenDecimals,
-        legacyPrivateRewardTokenSymbol,
         loadingRewardBalances,
         onCotiNetwork,
         privateRewardTokenBalanceWei,
@@ -74,9 +62,6 @@ export default function useTokenSwapViewModel({
       }),
     [
       hasAesReady,
-      legacyPrivateRewardTokenBalanceWei,
-      legacyPrivateRewardTokenDecimals,
-      legacyPrivateRewardTokenSymbol,
       loadingRewardBalances,
       onCotiNetwork,
       privateRewardTokenBalanceWei,
@@ -91,28 +76,6 @@ export default function useTokenSwapViewModel({
       walletAddress
     ]
   );
-
-  useEffect(() => {
-    const fallbackSwapDirection = resolveTokenSwapDirectionFallback({
-      canEarlierLegacyUnshieldTokens: view.canEarlierLegacyUnshieldTokens,
-      canLegacyUnshieldTokens: view.canLegacyUnshieldTokens,
-      canShieldTokens: view.canShieldTokens,
-      canUnshieldTokens: view.canUnshieldTokens,
-      currentSwapDirectionEnabled: view.currentSwapDirectionEnabled,
-      swapDirection
-    });
-    if (fallbackSwapDirection !== swapDirection) {
-      setSwapDirection(fallbackSwapDirection);
-    }
-  }, [
-    setSwapDirection,
-    swapDirection,
-    view.canLegacyUnshieldTokens,
-    view.canEarlierLegacyUnshieldTokens,
-    view.canShieldTokens,
-    view.canUnshieldTokens,
-    view.currentSwapDirectionEnabled
-  ]);
 
   return view;
 }

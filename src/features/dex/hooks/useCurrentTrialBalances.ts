@@ -9,7 +9,7 @@ export type CurrentTrialBalanceSelection = Readonly<{
 }>;
 
 export default function useCurrentTrialBalances(session: SharedWalletSession | undefined, result: string,
-  selection?: CurrentTrialBalanceSelection) {
+  selection?: CurrentTrialBalanceSelection, visible = true) {
   const identity = selection?.candidate ?? CURRENT_CHEAP_DEX_CANDIDATE;
   const { graph, packageSha256 } = identity, core = identity.core.toLowerCase();
   const hasExplicitPair = Boolean(selection?.tokens);
@@ -36,7 +36,7 @@ export default function useCurrentTrialBalances(session: SharedWalletSession | u
   const getFunds = session?.actions?.getCurrentSharedDexTokenFundsCapability;
   const context = { owner, chain: session?.chainId, provider: session?.browserProvider,
     source: session?.activeSignerSource, walletId: session?.browserWalletId, privacyReady, getSender, getFunds,
-    graph, core, packageSha256, tokenIn, tokenOut,
+    graph, core, packageSha256, tokenIn, tokenOut, visible,
     privacyKey: privacy?.ownerAesKey,
     onboard: owner ? session?.sessionOnboardInfo?.[owner] : undefined,
     onboardSession: session?.sessionOnboardInfo, health: session?.walletAesHealthByAddress };
@@ -45,18 +45,21 @@ export default function useCurrentTrialBalances(session: SharedWalletSession | u
   const captured = scope.current;
   const sequence = useRef(0);
   const [state, setState] = useState<{ scope: object; status: 'loading' | 'ready' | 'error'; values?: string[] } | null>(null);
-  const eligible = Boolean(selected && owner && context.chain === Number(selected.chain) && context.provider &&
+  const eligible = Boolean(visible && selected && owner && context.chain === Number(selected.chain) && context.provider &&
     (selected.prepared ? getFunds : getSender) && privacyReady);
   const refresh = useCallback(async () => {
     if (!eligible || !selected || scope.current !== captured) return;
     const request = ++sequence.current;
+    const assertReadCurrent = () => {
+      if (scope.current !== captured || sequence.current !== request) throw new Error('Balance read scope changed.');
+    };
     setState({ scope: captured, status: 'loading' });
     try {
       let values: string[];
       if (selected.prepared) {
         const reader = await getFunds!(selected.chain, { candidate: selected.key });
         if (scope.current !== captured || sequence.current !== request) return;
-        const funds = await reader.read();
+        const funds = await reader.read(assertReadCurrent);
         if (scope.current !== captured || sequence.current !== request) return;
         if (funds.owner.toLowerCase() !== owner || funds.core.toLowerCase() !== captured.core ||
           funds.graph !== captured.graph || funds.packageSha256 !== captured.packageSha256 ||

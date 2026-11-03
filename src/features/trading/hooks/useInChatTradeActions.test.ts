@@ -127,13 +127,10 @@ const sourceMessage: ChatMessage = {
 describe('useInChatTradeActions Direct Trade V2 routing', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('routes retained card actions and counters to the original escrow while new offers use the selected escrow', async () => {
+  it('rejects cards from another escrow while new offers use the selected escrow', async () => {
     const oldAddress = `0x${'88'.repeat(20)}`;
     const execute = vi.fn(async () => ({ tradeId: '10', transactionHash: TX_HASH }));
-    const oldExecute = vi.fn(async () => ({ tradeId: '10', transactionHash: TX_HASH }));
-    const root = createRuntime(execute), old = { ...createRuntime(oldExecute), contractAddress: oldAddress } as DirectTradeV2Runtime;
-    const forReference = vi.fn(async () => old);
-    const state = createArgs({ ...root, forReference } as DirectTradeV2Runtime);
+    const state = createArgs(createRuntime(execute));
     state.resolveTradeSnapshotForOffer.mockResolvedValue({ ...snapshot, escrowContract: oldAddress });
     const oldOffer = { ...offer, escrowContract: oldAddress };
     const oldMessage = { ...sourceMessage, directTradeV2: { ...sourceMessage.directTradeV2!, contractAddress: oldAddress } };
@@ -143,13 +140,13 @@ describe('useInChatTradeActions Direct Trade V2 routing', () => {
     }
     state.resolveTradeSnapshotForOffer.mockResolvedValue({ ...snapshot, escrowContract: oldAddress, maker: PEER, taker: OWNER });
     await useInChatTradeActions(state.args).prepareCounterTrade(oldOffer, oldMessage);
-    expect(forReference).toHaveBeenCalledWith({ chainId: '2632500', contractAddress: oldAddress, orderId: '9' });
-    expect(oldExecute).toHaveBeenCalledTimes(3);
     expect(execute).not.toHaveBeenCalled();
+    expect(state.requestTradeActionConfirmation).not.toHaveBeenCalled();
+    expect(state.args.setError).toHaveBeenLastCalledWith(expect.stringMatching(/reference/));
     state.args.tradeCounterContext = { offer: oldOffer, sourceMessage: oldMessage };
     state.args.tradeCounterParentId = 9;
     await useInChatTradeActions(state.args).createTradeOffer();
-    expect(oldExecute).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'counter-public', parentTradeId: 9 }));
+    expect(execute).not.toHaveBeenCalled();
     state.args.tradeCounterContext = null;
     state.args.tradeCounterParentId = null;
     await useInChatTradeActions(state.args).createTradeOffer();

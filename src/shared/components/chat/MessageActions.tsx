@@ -158,9 +158,11 @@ export default function MessageActions({
               onClick={() => {
                 onSendReaction(message, emoji).catch(() => {});
               }}
-              disabled={sendingReaction || reactedEmojiSet.has(emoji)}
-              title={reactedEmojiSet.has(emoji) ? `Already reacted with ${emoji}` : `React with ${emoji}`}
-              aria-label={reactionDisclosure ? `Public on-chain reaction ${emoji}` : `Reaction ${emoji}`}
+              disabled={sendingReaction}
+              title={reactedEmojiSet.has(emoji) ? `Remove reaction ${emoji}` : `React with ${emoji}`}
+              aria-label={reactedEmojiSet.has(emoji)
+                ? `Remove ${reactionDisclosure ? 'public on-chain ' : ''}reaction ${emoji}`
+                : reactionDisclosure ? `Public on-chain reaction ${emoji}` : `Reaction ${emoji}`}
             >
               {emoji}
             </button>

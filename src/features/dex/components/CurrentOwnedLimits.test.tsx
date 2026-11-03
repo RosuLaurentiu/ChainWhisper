@@ -23,7 +23,7 @@ afterEach(()=>{hooks.states=[];hooks.refs=[];hooks.effect=null;vi.clearAllMocks(
 describe('My Orders current wallet list',()=>{
   it('lists owned orders with their pair and no private amount or routine ID input',async()=>{
     const f=fixture();await f.load();expect(f.render()).toContain('Open Limit NFT 43');
-    expect(f.getOrders).toHaveBeenCalledWith(7082400n,{candidate:'cheap-exit',selectedPair:f.props.selectedPair});expect(f.read).toHaveBeenCalledWith();
+    expect(f.getOrders).toHaveBeenCalledWith(7082400n,{candidate:'cheap-exit',selectedPair:f.props.selectedPair});expect(f.read).toHaveBeenCalledWith(expect.any(Function));
     expect(f.render()).not.toContain('Private price');expect(f.render()).not.toContain('Claimable');
   });
   it('uses selected candidate display labels and clears prior orders on candidate change',async()=>{

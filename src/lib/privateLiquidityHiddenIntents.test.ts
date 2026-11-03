@@ -12,6 +12,7 @@ import {
   buildPrivateLiquidityHiddenIntentSettlementRoutes,
   decodePrivateLiquidityHiddenIntentBudget,
   decodePrivateLiquidityHiddenIntentTerms,
+  getPrivateLiquidityHiddenIntentSettlementLimit,
   materializePrivateLiquidityHiddenIntentOwnerReceipt,
   materializePrivateLiquidityHiddenIntentPublicView,
   preparePrivateLiquidityHiddenIntent
@@ -81,6 +82,14 @@ const snapshot = (positions: readonly PrivateLiquidityPosition[]) => Object.free
 }) as unknown as CompleteCanonicalPrivateLiquidityPositionSnapshot;
 
 describe('privateLiquidityHiddenIntents', () => {
+  it('uses only the public position count to bound settlement work', () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map(getPrivateLiquidityHiddenIntentSettlementLimit))
+      .toEqual([4, 3, 2, 1, 1, 1, 1, 1]);
+    for (const count of [0, -1, 1.5, 9, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => getPrivateLiquidityHiddenIntentSettlementLimit(count)).toThrow(/position count/i);
+    }
+  });
+
   it('packs exactly two uint256 values and round-trips both private sides', () => {
     const sell = preparePrivateLiquidityHiddenIntent({
       baseToken: BASE,

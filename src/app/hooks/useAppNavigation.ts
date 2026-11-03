@@ -10,6 +10,7 @@ import { isWalletTransactionFlowActive } from '../../lib/walletTransactionFlow';
 import {
   getPathForAppPage,
   getTitleForAppPage,
+  rememberSessionTradingPage,
   resolveAppRouteFromLocation,
   resolveAppRouteFromPath,
   resolveCanonicalTradingPath,
@@ -161,6 +162,7 @@ export default function useAppNavigation({ activePage, setActivePage }: UseAppNa
   }, [setActivePage]);
 
   useEffect(() => {
+    rememberSessionTradingPage(activePage);
     if (typeof document !== 'undefined') {
       document.title = getTitleForAppPage(activePage);
     }

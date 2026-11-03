@@ -80,7 +80,7 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     const budget=native?currentNativeSigningBudget(signer,owner,now):null;
     const budgetPhase=snapshot?(prepared.closed?'pool-closed-snapshot':'pool-active-snapshot'):'pool-close';
     const admission=()=>{if(!native){assertCurrentPoolPositionNativeAdmission(candidate,prepared.action,snapshot&&prepared.closed,exitPhase);return assertCurrentAppPoolAuthority(candidate.graph,
-      {owner,action:prepared.action,positionId:prepared.positionId,recipient:prepared.recipient});}
+      {owner,action:prepared.action,positionId:prepared.positionId,recipient:prepared.recipient},signer);}
       if(nativePoolProfile!==CURRENT_NATIVE_POOL_PROFILE||session!.positionId!==prepared.positionId||session!.unfundedFailed||
         (!snapshot&&prepared.action!=='close')||(snapshot&&prepared.closed!==!!session!.closedPayouts))throw new Error('Native Pool owner phase is not admitted.');
     };

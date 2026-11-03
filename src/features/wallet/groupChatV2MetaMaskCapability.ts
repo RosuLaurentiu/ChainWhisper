@@ -20,6 +20,7 @@ export type IssueGroupChatV2MetaMaskCapabilityArgs = Readonly<{
   expectedOwnerAddress: string;
   lease: BrowserWalletSignerLease;
   requirePrivacy: boolean;
+  shouldPrioritizeRead?: (groupId: bigint) => boolean;
   sessionOnboardInfo?: Readonly<Record<string, OnboardInfo>>;
 }>;
 
@@ -29,5 +30,5 @@ export const issueGroupChatV2MetaMaskCapability = (
 ): Promise<GroupChatV2MetaMaskCapability> => issueOwnerCotiMetaMaskCapability({
   ...args,
   capabilityLabel: 'ChainWhisper Group Chat V2',
-  bindCapability: bindGroupChatV2MetaMaskCapability
+  bindCapability: input => bindGroupChatV2MetaMaskCapability({ ...input, shouldPrioritizeRead: args.shouldPrioritizeRead })
 });

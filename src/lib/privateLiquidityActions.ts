@@ -38,6 +38,7 @@ import {
 import {
   assertPreparedPrivateLiquidityHiddenIntent,
   assertPreparedPrivateLiquidityHiddenIntentSettlementRoutes,
+  getPrivateLiquidityHiddenIntentSettlementLimit,
   materializePrivateLiquidityHiddenIntentOwnerReceipt,
   materializePrivateLiquidityHiddenIntentPublicView,
   type PrivateLiquidityHiddenIntentOwnerReceipt,
@@ -114,6 +115,8 @@ export const PRIVATE_LIQUIDITY_CREATE_HIDDEN_INTENT_SELECTOR =
 // bounded ceiling (the same ceiling used by the reviewed testnet proof) and let the receipt report
 // actual gas used. This is a limit, not an amount the transaction automatically spends.
 export const PRIVATE_LIQUIDITY_ACTION_GAS_LIMIT = 12_000_000n;
+// Qualified native two-position settlement needs more gas than ordinary owner actions.
+export const PRIVATE_LIQUIDITY_HIDDEN_SETTLEMENT_GAS_LIMIT = 100_000_000n;
 export const PRIVATE_LIQUIDITY_TOKEN_WRITE_GAS_LIMIT = 12_000_000n;
 export const PRIVATE_LIQUIDITY_SWAP_BASE_GAS_LIMIT = 16_000_000n;
 export const PRIVATE_LIQUIDITY_SWAP_GAS_PER_CANDIDATE = 8_000_000n;
@@ -1037,7 +1040,7 @@ export const submitPrivateLiquidityHiddenIntentSettlement = async ({
     binding.signer
   ) as unknown as Record<string, (...values: readonly unknown[]) => Promise<unknown>>;
   const rawTransaction = await contract.settleHiddenIntents(...args, {
-    gasLimit: PRIVATE_LIQUIDITY_ACTION_GAS_LIMIT
+    gasLimit: PRIVATE_LIQUIDITY_HIDDEN_SETTLEMENT_GAS_LIMIT
   });
   await assertBindingSnapshotCurrent(binding);
   const transaction = transactionEnvelope(rawTransaction, {
@@ -1923,7 +1926,8 @@ export const confirmPrivateLiquidityHiddenIntentSettlement = async ({
     if (!parsed || parsed.name !== 'PrivateLiquidityHiddenIntentSettlementProcessed') continue;
     const pairKey = bytes32(parsed.args[1], 'Confirmed hidden-intent settlement pair');
     const caller = address(parsed.args[2], 'Confirmed hidden-intent settlement caller');
-    const processedIntentCount = uint(parsed.args[3], 'Processed hidden-intent count', 4n);
+    const processedIntentCount = uint(parsed.args[3], 'Processed hidden-intent count',
+      BigInt(getPrivateLiquidityHiddenIntentSettlementLimit(submission.routes.asks.positionIds.length)));
     const candidateCount = uint(parsed.args[4], 'Hidden-intent settlement candidate count', 8n);
     if (
       pairKey !== submission.routes.pairKey ||

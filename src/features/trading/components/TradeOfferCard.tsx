@@ -357,9 +357,7 @@ export default function TradeOfferCard({
       ? `${shortenAddress(resolvedPeerAddress)} (you)`
       : resolvedPeerAddress
         ? shortenAddress(resolvedPeerAddress)
-        : hiddenLiquidity
-          ? 'Private liquidity'
-          : 'Any wallet';
+        : 'Any wallet';
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
   const requestScopeLabel = resolvedRequest ? resolveAssetScopeLabel(resolvedRequest.kind) : null;
   const tradeOrderSummary =
@@ -617,7 +615,7 @@ export default function TradeOfferCard({
           {isMaker ? <span className="trade-card-parent">Your offer</span> : null}
           {isTaker ? <span className="trade-card-parent incoming">Incoming offer</span> : null}
           {canAcceptOpenTakerTrade ? <span className="trade-card-parent incoming">Open offer</span> : null}
-          {hiddenLiquidity ? <span className="trade-card-parent">Private liquidity</span> : null}
+          {hiddenLiquidity ? <span className="trade-card-parent">Hidden budget</span> : null}
           {directPrivateTerms ? <span className="trade-card-parent">Private terms</span> : null}
           {counterParentTradeId ? <span className="trade-card-parent">Counter to #{counterParentTradeId}</span> : null}
           {snapshot?.replacesTradeId ? <span className="trade-card-parent">Edited from #{snapshot.replacesTradeId}</span> : null}
@@ -920,7 +918,7 @@ export default function TradeOfferCard({
                     ) : null}
                   </div>
                   <p className="trade-card-private-fill-note">
-                    Private liquidity may fill partially. The contract settles what is available at this ratio and returns any unspent payment.
+                    This offer may fill partially. The contract settles what is available at this ratio and returns any unspent payment.
                   </p>
                 </div>
               ) : null}

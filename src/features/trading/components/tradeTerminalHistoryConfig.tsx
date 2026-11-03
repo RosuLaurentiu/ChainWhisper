@@ -38,6 +38,9 @@ export type TerminalHistoryConfigParams = {
   canonicalV2LifecycleEvents?: readonly TradeHistoryV2CanonicalLifecycleEvent[];
   canonicalV2Loading?: boolean;
   canonicalV2Error?: string;
+  canonicalV2Complete?: boolean;
+  canonicalV2HasMore?: boolean;
+  onLoadOlderCanonicalV2History?: () => void;
 };
 
 const renderHistoryRows = (
@@ -46,8 +49,9 @@ const renderHistoryRows = (
   tradeKey: string,
   params: TerminalHistoryConfigParams,
   statusMessage?: string
-): ReactNode => (
-  <TradeTerminalHistoryRows
+): ReactNode => {
+  if (!lifecycleRows.length && !transactionRows.length && !statusMessage) return undefined;
+  return <TradeTerminalHistoryRows
     lifecycleRows={lifecycleRows}
     transactionRows={transactionRows}
     tradeKey={tradeKey}
@@ -57,8 +61,8 @@ const renderHistoryRows = (
     swapFillNotes={params.swapFillNotes}
     getTransactionLinkFeedbackProps={params.getTransactionLinkFeedbackProps}
     statusMessage={statusMessage}
-  />
-);
+  />;
+};
 
 const resolveCanonicalV2HistoryStatus = (
   snapshot: TradeSnapshot,
@@ -67,6 +71,9 @@ const resolveCanonicalV2HistoryStatus = (
   if (!snapshot.v2 && !snapshot.recurringOrder?.v2) return undefined;
   if (params.canonicalV2Error) return 'Exact fill history could not be verified. Retry the trade refresh.';
   if (params.canonicalV2Loading) return 'Verifying exact fill amounts…';
+  if (params.canonicalV2Complete === false) return params.canonicalV2HasMore
+    ? 'Older events are not loaded.'
+    : 'History coverage has not been verified.';
   return undefined;
 };
 
@@ -126,6 +133,9 @@ export const buildStandardTerminalHistoryConfig = (
     tradeKey,
     title: formatTradeContractIdLabel(snapshot),
     count: lifecycleRows.length + historyRows.length,
+    complete: snapshot.v2 ? params.canonicalV2Complete : undefined,
+    loading: params.canonicalV2Loading,
+    onLoadOlder: snapshot.v2 && params.canonicalV2HasMore ? params.onLoadOlderCanonicalV2History : undefined,
     emptyCopy: historyEmptyCopy,
     children: renderHistoryRows(
       lifecycleRows,
@@ -163,6 +173,9 @@ export const buildRecurringTerminalHistoryConfig = (
     tradeKey,
     title: formatTradeContractIdLabel(snapshot),
     count: lifecycleRows.length + historyRows.length,
+    complete: recurring.v2 ? params.canonicalV2Complete : undefined,
+    loading: params.canonicalV2Loading,
+    onLoadOlder: recurring.v2 && params.canonicalV2HasMore ? params.onLoadOlderCanonicalV2History : undefined,
     emptyCopy,
     children: renderHistoryRows(
       lifecycleRows,

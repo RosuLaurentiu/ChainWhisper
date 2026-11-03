@@ -18,10 +18,12 @@ const REACTION_SYNC_INTERVAL_MS = 12_000;
 
 export default function useChatReactionsV1Runtime({
   activeThreadMessages,
-  runtime
+  runtime,
+  deferSync
 }: {
   activeThreadMessages: readonly ChatMessage[];
   runtime: ChatReactionsV1Runtime | null;
+  deferSync: boolean;
 }) {
   const sourceProjection = useMemo(() => {
     try {
@@ -36,15 +38,26 @@ export default function useChatReactionsV1Runtime({
   }, [activeThreadMessages]);
   const sourceFingerprint = useMemo(() => sourceProjection.sources.map((source) => [
     source.kind,
+    source.chainId,
+    source.contractAddress,
     source.conversationId ?? source.groupId,
     source.messageId,
+    source.blockNumber,
     source.blockHash,
     source.transactionHash,
     source.logIndex
   ].join(':')).join('|'), [sourceProjection.sources]);
   const sourcesRef = useRef(sourceProjection.sources);
   sourcesRef.current = sourceProjection.sources;
-  const [canonicalStates, setCanonicalStates] = useState<readonly ChatReactionObservation[]>([]);
+  const viewRef = useRef({ runtime, sourceFingerprint, deferSync });
+  viewRef.current = { runtime, sourceFingerprint, deferSync };
+  const [canonicalResult, setCanonicalResult] = useState<{
+    runtime: ChatReactionsV1Runtime | null; sourceFingerprint: string; states: readonly ChatReactionObservation[];
+  }>({ runtime: null, sourceFingerprint: '', states: [] });
+  const canonicalStates = canonicalResult.runtime === runtime && canonicalResult.sourceFingerprint === sourceFingerprint
+    ? canonicalResult.states : [];
+  const syncReady = Boolean(runtime) && sourceProjection.sources.length > 0 &&
+    canonicalResult.runtime === runtime && canonicalResult.sourceFingerprint === sourceFingerprint;
   const [pendingStates, setPendingStates] = useState<ReadonlyMap<string, ChatReactionObservation>>(
     () => new Map()
   );
@@ -52,27 +65,32 @@ export default function useChatReactionsV1Runtime({
   const syncRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
-    setCanonicalStates([]);
+    setCanonicalResult({ runtime: null, sourceFingerprint: '', states: [] });
     setPendingStates(new Map());
     setSyncError(sourceProjection.error);
-    if (!runtime || sourceProjection.error) {
+  }, [runtime, sourceProjection.error]);
+
+  useEffect(() => {
+    if (!runtime || sourceProjection.error || deferSync || sourceProjection.sources.length === 0) {
       syncRef.current = null;
       return;
     }
     let disposed = false;
+    const isCurrent = () => !disposed && viewRef.current.runtime === runtime &&
+      viewRef.current.sourceFingerprint === sourceFingerprint && !viewRef.current.deferSync;
     let syncing = false;
     let queued = false;
     const sync = async (): Promise<void> => {
-      if (disposed) return;
+      if (!isCurrent()) return;
       if (syncing) {
         queued = true;
         return;
       }
       syncing = true;
       try {
-        const result = await runtime.sync(sourcesRef.current);
-        if (disposed) return;
-        setCanonicalStates(result.states);
+        const result = await runtime.sync(sourcesRef.current, isCurrent);
+        if (!isCurrent()) return;
+        setCanonicalResult({ runtime, sourceFingerprint, states: result.states });
         setPendingStates((previous) => retainPendingChatReactionStates({
           pendingStates: previous,
           finalizedSources: sourcesRef.current,
@@ -80,10 +98,10 @@ export default function useChatReactionsV1Runtime({
         }));
         setSyncError(null);
       } catch {
-        if (!disposed) setSyncError('Reactions will retry after the next finalized block.');
+        if (isCurrent()) setSyncError('Reactions will retry after the next finalized block.');
       } finally {
         syncing = false;
-        if (queued && !disposed) {
+        if (queued && isCurrent()) {
           queued = false;
           void sync();
         }
@@ -104,11 +122,7 @@ export default function useChatReactionsV1Runtime({
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [runtime, sourceProjection.error]);
-
-  useEffect(() => {
-    if (runtime && !sourceProjection.error) void syncRef.current?.();
-  }, [runtime, sourceFingerprint, sourceProjection.error]);
+  }, [runtime, sourceFingerprint, sourceProjection.error, sourceProjection.sources.length, deferSync]);
 
   const submitReaction = useCallback(async (input: Readonly<{
     source: ChatReactionSource;
@@ -116,7 +130,9 @@ export default function useChatReactionsV1Runtime({
     active: boolean;
     operationId: string;
   }>): Promise<ChatReactionWriteResult> => {
-    if (!runtime || sourceProjection.error || syncError) {
+    if (!runtime || !syncReady || sourceProjection.error || syncError ||
+        viewRef.current.runtime !== runtime || viewRef.current.sourceFingerprint !== sourceFingerprint ||
+        viewRef.current.deferSync) {
       throw new Error(
         sourceProjection.error ?? syncError ?? 'Chat reactions are not active for this deployment.'
       );
@@ -129,7 +145,7 @@ export default function useChatReactionsV1Runtime({
     });
     void syncRef.current?.();
     return result;
-  }, [runtime, sourceProjection.error, syncError]);
+  }, [runtime, sourceFingerprint, syncReady, sourceProjection.error, syncError]);
 
   const states = useMemo(() => {
     if (pendingStates.size === 0) return canonicalStates;
@@ -139,7 +155,7 @@ export default function useChatReactionsV1Runtime({
   }, [canonicalStates, pendingStates]);
 
   return {
-    enabled: Boolean(runtime) && !sourceProjection.error && !syncError,
+    enabled: syncReady && !deferSync && !sourceProjection.error && !syncError,
     sources: sourceProjection.sources,
     states,
     submitReaction,

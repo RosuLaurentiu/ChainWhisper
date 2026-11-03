@@ -2,6 +2,10 @@ export type P2PSyncReason = 'initial' | 'manual' | 'focus' | 'interval' | 'chain
 
 export type P2PSyncDomain = 'public-trades' | 'wallet-trades' | 'trade-detail' | 'balances';
 
+export const mergeP2PSyncReasons = <T extends string>(previous: T | undefined, next: T): T =>
+  previous === 'manual' || ((previous === 'wallet-action' || previous === 'trade-action') && next !== 'manual')
+    ? previous : next;
+
 export type P2PSyncRequest<TSigner = unknown> = {
   domains: Set<P2PSyncDomain>;
   escrowContract?: string;
@@ -16,7 +20,7 @@ export const mergeP2PSyncRequests = <TSigner>(
 ): P2PSyncRequest<TSigner> => ({
   domains: new Set([...(previous?.domains ?? []), ...next.domains]),
   escrowContract: next.escrowContract ?? previous?.escrowContract,
-  reason: next.reason,
+  reason: mergeP2PSyncReasons(previous?.reason, next.reason),
   signer: next.signer ?? previous?.signer,
   tradeId: next.tradeId ?? previous?.tradeId
 });

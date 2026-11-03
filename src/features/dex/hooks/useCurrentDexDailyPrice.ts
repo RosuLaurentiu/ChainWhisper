@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Eip1193Provider } from '@coti-io/coti-ethers';
 import { readCurrentDexDailyPrice } from '../../../lib/appChain';
-import { createPrivateLiquidityHttpProvider } from '../../../lib/privateLiquidityRpc';
-import { CURRENT_DEX_DAILY_PRICE_CONFIG, CurrentDexDailyPriceError, currentDexDailyPricePairOrientation,
+import { CURRENT_DEX_DAILY_PRICE_CONFIG, CurrentDexDailyPriceError, currentDexDailyPricePairOrientation, getCurrentDexPriceReadProvider,
   type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 
 export async function loadCurrentDexDailyPrice({ config, pair, provider, count = 32, assertCurrent = () => {} }: {
@@ -16,7 +15,7 @@ export async function loadCurrentDexDailyPrice({ config, pair, provider, count =
   }
   try {
     const snapshot = await readCurrentDexDailyPrice({
-      provider: provider ?? createPrivateLiquidityHttpProvider({ rpcUrl: config.rpcUrl, maxAttempts: 1 }),
+      provider: provider ?? getCurrentDexPriceReadProvider(config.rpcUrl),
       manifest: config.manifest, finalityLagBlocks: config.finalityLagBlocks, count, assertCurrent
     });
     return { status: snapshot.slots.some(s => s.point !== null) ? 'ready' : 'empty', snapshot };

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import {
-  ArchiveRestore,
   ArrowDownUp,
   ChevronDown,
   ChevronRight,
@@ -43,16 +42,12 @@ export type WispRecoveryView = {
   onDirectionChange: (direction: SwapDirection) => void;
   canShield: boolean;
   canUnshield: boolean;
-  canLegacyUnshield: boolean;
-  canEarlierLegacyUnshield: boolean;
   publicSymbol: string;
   privateSymbol: string;
-  legacyPrivateSymbol?: string;
   inputSymbol: string;
   feeLabel: string;
   liquidityLabel: string;
   contractUrl: string;
-  legacyContractUrl?: string;
   busy: boolean;
   actionStage: ChainWhisperWispStage | null;
   canSubmit: boolean;
@@ -297,9 +292,6 @@ function WispConversionCard({
   onCotiNetwork,
   hasAesReady,
   onCurrentDirectionChange,
-  legacyExpanded,
-  onLegacyExpandedChange,
-  legacyDisabled,
   onOpenHelp
 }: {
   recovery: WispRecoveryView;
@@ -307,13 +299,8 @@ function WispConversionCard({
   onCotiNetwork: boolean;
   hasAesReady: boolean;
   onCurrentDirectionChange: (direction: 'shield' | 'unshield') => void;
-  legacyExpanded: boolean;
-  onLegacyExpandedChange: (open: boolean) => void;
-  legacyDisabled: boolean;
   onOpenHelp?: (reason: AppHelpReason) => void;
 }) {
-  const isLegacyActive = recovery.direction === 'legacy-unshield' ||
-    recovery.direction === 'legacy-unshield-earlier';
   const isToPrivate = recovery.direction === 'shield';
   const inputSymbol = isToPrivate ? recovery.publicSymbol : recovery.privateSymbol;
   const outputSymbol = isToPrivate ? recovery.privateSymbol : recovery.publicSymbol;
@@ -343,7 +330,7 @@ function WispConversionCard({
         : null;
 
   return (
-    <div className={`swap-card privacy-wisp-card${isLegacyActive ? ' is-legacy-active' : ''}`}>
+    <div className="swap-card privacy-wisp-card">
       <div className="privacy-wisp-brand-row">
         <span>
           <WispIcon />
@@ -360,19 +347,19 @@ function WispConversionCard({
         <div className="swap-pill-switch privacy-direction-switch" role="group" aria-labelledby="wisp-direction-label">
           <button
             type="button"
-            className={isToPrivate && !isLegacyActive ? 'swap-pill-option active' : 'swap-pill-option'}
+            className={isToPrivate ? 'swap-pill-option active' : 'swap-pill-option'}
             onClick={() => onCurrentDirectionChange('shield')}
             disabled={!recovery.canShield || recovery.busy}
-            aria-pressed={isToPrivate && !isLegacyActive}
+            aria-pressed={isToPrivate}
           >
             <LockKeyhole size={15} aria-hidden="true" /> To private
           </button>
           <button
             type="button"
-            className={!isToPrivate && !isLegacyActive ? 'swap-pill-option active' : 'swap-pill-option'}
+            className={!isToPrivate ? 'swap-pill-option active' : 'swap-pill-option'}
             onClick={() => onCurrentDirectionChange('unshield')}
             disabled={!recovery.canUnshield || recovery.busy}
-            aria-pressed={!isToPrivate && !isLegacyActive}
+            aria-pressed={!isToPrivate}
           >
             <LockKeyhole size={15} aria-hidden="true" /> To public
           </button>
@@ -393,7 +380,7 @@ function WispConversionCard({
               <button
                 type="button"
                 onClick={recovery.onMaxAmount}
-                disabled={recovery.maxDisabled || recovery.busy || isLegacyActive}
+                disabled={recovery.maxDisabled || recovery.busy}
               >
                 Max
               </button>
@@ -408,7 +395,7 @@ function WispConversionCard({
               value={recovery.amountInput}
               onChange={(event) => recovery.onAmountInputChange(event.target.value)}
               placeholder="0.0"
-              disabled={recovery.busy || isLegacyActive}
+              disabled={recovery.busy}
             />
             <span className="swap-token-chip swap-token-chip-output">
               <WispIcon privateToken={!isToPrivate} />
@@ -421,7 +408,7 @@ function WispConversionCard({
           type="button"
           className="swap-route-chip"
           onClick={() => onCurrentDirectionChange(isToPrivate ? 'unshield' : 'shield')}
-          disabled={recovery.busy || isLegacyActive || (isToPrivate ? !recovery.canUnshield : !recovery.canShield)}
+          disabled={recovery.busy || (isToPrivate ? !recovery.canUnshield : !recovery.canShield)}
           aria-label="Reverse WISP conversion direction"
         >
           <ArrowDownUp size={20} aria-hidden="true" />
@@ -493,7 +480,6 @@ function WispConversionCard({
         </div>
       </div>
 
-      {!isLegacyActive ? (
         <button
           className="connect-btn swap-action-btn"
           type="button"
@@ -502,9 +488,8 @@ function WispConversionCard({
         >
           {recovery.buttonLabel}
         </button>
-      ) : null}
 
-      {recovery.busy && !isLegacyActive ? (
+      {recovery.busy ? (
         <div className="privacy-action-progress" role="status" aria-live="polite">
           <i aria-hidden="true" />
           <span>
@@ -516,13 +501,13 @@ function WispConversionCard({
           </span>
         </div>
       ) : null}
-      {!isLegacyActive && recovery.statusMessage ? <p className="swap-status-note">{recovery.statusMessage}</p> : null}
-      {!isLegacyActive && recovery.transactionUrl ? (
+      {recovery.statusMessage ? <p className="swap-status-note">{recovery.statusMessage}</p> : null}
+      {recovery.transactionUrl ? (
         <a className="privacy-transaction-link" href={recovery.transactionUrl} target="_blank" rel="noreferrer">
           View transaction on COTI Explorer <ExternalLink size={13} aria-hidden="true" />
         </a>
       ) : null}
-      {!isLegacyActive && recovery.error ? (
+      {recovery.error ? (
         <div className="swap-error-row">
           <p className="error swap-error">{recovery.error}</p>
           {onOpenHelp ? (
@@ -533,131 +518,7 @@ function WispConversionCard({
         </div>
       ) : null}
 
-      <LegacyWispRecovery
-        recovery={recovery}
-        expanded={legacyExpanded}
-        onExpandedChange={onLegacyExpandedChange}
-        disabled={legacyDisabled}
-      />
     </div>
-  );
-}
-
-function LegacyWispRecovery({
-  recovery,
-  expanded,
-  onExpandedChange,
-  disabled = false
-}: {
-  recovery: WispRecoveryView;
-  expanded: boolean;
-  onExpandedChange: (open: boolean) => void;
-  disabled?: boolean;
-}) {
-  const legacyPrivateSymbol = (recovery.legacyPrivateSymbol || recovery.inputSymbol)
-    .replace(/^p\.WISP$/i, 'pWISP')
-    .replace(/\s+\(old\)$/i, '');
-
-  return (
-    <details
-      className="privacy-legacy-recovery"
-      open={expanded}
-      onToggle={(event) => onExpandedChange(event.currentTarget.open)}
-    >
-      <summary
-        aria-disabled={recovery.busy || disabled}
-        onClick={(event) => {
-          if (recovery.busy || disabled) {
-            event.preventDefault();
-          }
-        }}
-      >
-        <span className="privacy-legacy-summary-icon" aria-hidden="true">
-          <ArchiveRestore size={17} />
-        </span>
-        <span className="privacy-legacy-summary-copy">
-          <strong>Legacy pWISP</strong>
-          <small>Recover previous-bridge balances to WISP</small>
-        </span>
-        <span className="privacy-legacy-summary-tag">Previous bridge</span>
-        <ChevronDown size={18} aria-hidden="true" />
-      </summary>
-      <div className="privacy-recovery-body">
-        <p>
-          The old pWISP supply is backed across two verified legacy vaults. Select one vault per transaction;
-          this recovery path can only return legacy pWISP to public WISP.
-        </p>
-        <div className="swap-pill-switch privacy-legacy-vault-switch" role="group" aria-label="Legacy recovery vault">
-          <button
-            type="button"
-            className={recovery.direction === 'legacy-unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
-            onClick={() => recovery.onDirectionChange('legacy-unshield')}
-            disabled={recovery.busy || disabled || !recovery.canLegacyUnshield}
-            aria-pressed={recovery.direction === 'legacy-unshield'}
-          >
-            Newer legacy vault
-          </button>
-          <button
-            type="button"
-            className={recovery.direction === 'legacy-unshield-earlier' ? 'swap-pill-option active' : 'swap-pill-option'}
-            onClick={() => recovery.onDirectionChange('legacy-unshield-earlier')}
-            disabled={recovery.busy || disabled || !recovery.canEarlierLegacyUnshield}
-            aria-pressed={recovery.direction === 'legacy-unshield-earlier'}
-          >
-            Earlier legacy vault
-          </button>
-        </div>
-        <div className="privacy-recovery-input">
-          <label htmlFor="wisp-legacy-amount">Amount to recover</label>
-          <div>
-            <input
-              id="wisp-legacy-amount"
-              type="text"
-              inputMode="decimal"
-              value={recovery.amountInput}
-              onChange={(event) => recovery.onAmountInputChange(event.target.value)}
-              placeholder="0.0"
-              disabled={recovery.busy || disabled}
-            />
-            <strong>{legacyPrivateSymbol} (legacy)</strong>
-          </div>
-          <small>Legacy balance: {recovery.inputBalanceLabel}</small>
-        </div>
-        <div className="privacy-recovery-meta">
-          <span>Selected vault liquidity</span>
-          <strong>{recovery.liquidityLabel}</strong>
-          <span>Network fee</span>
-          <strong>{recovery.feeLabel}</strong>
-          {recovery.legacyContractUrl ? (
-            <a href={recovery.legacyContractUrl} target="_blank" rel="noreferrer">
-              View legacy contract <ExternalLink size={12} aria-hidden="true" />
-            </a>
-          ) : null}
-        </div>
-        <button
-          className="connect-btn privacy-recovery-action"
-          type="button"
-          onClick={() => recovery.onSubmit().catch(() => {})}
-          disabled={
-            disabled ||
-            (recovery.direction === 'legacy-unshield-earlier'
-              ? !recovery.canEarlierLegacyUnshield
-              : !recovery.canLegacyUnshield) ||
-            !recovery.canSubmit
-          }
-        >
-          {recovery.buttonLabel}
-        </button>
-        {recovery.busy ? (
-          <div className="privacy-action-progress" role="status" aria-live="polite">
-            <i aria-hidden="true" />
-            <span><strong>Confirming legacy recovery</strong></span>
-          </div>
-        ) : null}
-        {recovery.statusMessage ? <p className="swap-status-note">{recovery.statusMessage}</p> : null}
-        {recovery.error ? <p className="error swap-error">{recovery.error}</p> : null}
-      </div>
-    </details>
   );
 }
 
@@ -690,7 +551,6 @@ export default function TokenSwapPage({
   onOpenHelp
 }: TokenSwapPageProps) {
   const [mobileTokenMenuAnchor, setMobileTokenMenuAnchor] = useState<'summary' | 'chip' | null>(null);
-  const [legacyExpanded, setLegacyExpanded] = useState(false);
   const mobileTokenMenuRef = useRef<HTMLDivElement>(null);
   const mobileSummaryTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileChipTriggerRef = useRef<HTMLButtonElement>(null);
@@ -813,7 +673,6 @@ export default function TokenSwapPage({
     if (selectionLocked) {
       return;
     }
-    setLegacyExpanded(false);
     recovery?.onOpenChange(false);
     onPairChange(pairId);
     closeMobileTokenMenu();
@@ -823,13 +682,6 @@ export default function TokenSwapPage({
     if (selectionLocked || !recovery) {
       return;
     }
-    if (
-      recovery.direction === 'legacy-unshield' ||
-      recovery.direction === 'legacy-unshield-earlier'
-    ) {
-      recovery.onDirectionChange('unshield');
-    }
-    setLegacyExpanded(false);
     recovery.onOpenChange(true);
     closeMobileTokenMenu();
   };
@@ -838,16 +690,7 @@ export default function TokenSwapPage({
     if (!recovery || recovery.busy || actionLocked) {
       return;
     }
-    setLegacyExpanded(false);
     recovery.onDirectionChange(direction);
-  };
-
-  const toggleLegacyRecovery = (open: boolean) => {
-    if (!recovery || recovery.busy || actionLocked) {
-      return;
-    }
-    setLegacyExpanded(open);
-    recovery.onDirectionChange(open ? 'legacy-unshield' : 'unshield');
   };
 
   return (
@@ -989,7 +832,7 @@ export default function TokenSwapPage({
                 </span>
                 <span>
                   <strong>{wispSelected ? 'Private recovery' : '1:1 before portal fee'}</strong>
-                  <small>{wispSelected ? 'Legacy options stay available after connection' : 'Live fee and minimum appear after connection'}</small>
+                  <small>{wispSelected ? 'Live fee appears after connection' : 'Live fee and minimum appear after connection'}</small>
                 </span>
               </div>
               {onOpenHelp ? (
@@ -1009,9 +852,6 @@ export default function TokenSwapPage({
               onCotiNetwork={onCotiNetwork}
               hasAesReady={hasAesReady}
               onCurrentDirectionChange={selectCurrentWispDirection}
-              legacyExpanded={legacyExpanded}
-              onLegacyExpandedChange={toggleLegacyRecovery}
-              legacyDisabled={actionLocked}
               onOpenHelp={onOpenHelp}
             />
           ) : (

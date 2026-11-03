@@ -19,6 +19,7 @@ import {
 import type { PrivateLiquidityWorkspaceModel } from '../../../lib/privateLiquidityWorkspaceModel';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 import type { WalletSessionActions } from '../../../lib/walletSession';
+import type { BrowserWalletPrivacyReadScope } from '../../../lib/browserWalletRuntimeScope';
 
 export type PrivateLiquiditySwapActionStage =
   | 'idle'
@@ -33,6 +34,7 @@ export type PrivateLiquiditySwapActionStage =
 
 type ActionState = Readonly<{
   scopeKey: string;
+  privacyProjectionKey?: string;
   stage: PrivateLiquiditySwapActionStage;
   message: string;
   confirmed?: ConfirmedPrivateLiquiditySwap;
@@ -53,6 +55,11 @@ export type FailedPrivateLiquiditySwapAttempt = Readonly<{
 }>;
 
 const IDLE_STATE: ActionState = Object.freeze({ scopeKey: '', stage: 'idle', message: '' });
+
+const privateProjectionKey = (scope: BrowserWalletPrivacyReadScope, allowUnlock = false): string =>
+  scope.runtimeScopeKey && (scope.ready || allowUnlock)
+    ? `${scope.runtimeScopeKey}:privacy:${scope.revision + (scope.ready ? 0 : 1)}`
+    : '';
 
 const preparedScopeKey = (
   prepared: PreparedPrivateLiquiditySwap | null,
@@ -93,6 +100,7 @@ export default function usePrivateLiquiditySwapAction({
   slippageBps,
   minimumFillBps,
   walletReady,
+  privacyReadScope,
   walletActions,
   requestConfirmation,
   refresh
@@ -106,6 +114,7 @@ export default function usePrivateLiquiditySwapAction({
   slippageBps: number;
   minimumFillBps: number;
   walletReady: boolean;
+  privacyReadScope: BrowserWalletPrivacyReadScope;
   walletActions?: Pick<WalletSessionActions, 'getPrivateLiquidityCapability' | 'runWalletTransactionFlow'>;
   requestConfirmation: (confirmation: TradeActionConfirmModel) => Promise<boolean>;
   refresh: () => void;
@@ -144,14 +153,35 @@ export default function usePrivateLiquiditySwapAction({
   const scopeKey = preparedScopeKey(preparedResult.prepared, model);
   const scopeKeyRef = useRef(scopeKey);
   scopeKeyRef.current = scopeKey;
+  const privacyScopeRef = useRef(privacyReadScope);
+  privacyScopeRef.current = privacyReadScope;
+  const projectionKey = privateProjectionKey(privacyReadScope);
+  const retainedProjectionKey = privateProjectionKey(privacyReadScope, true);
   const activeActionRef = useRef(false);
   const finalizedRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [state, setState] = useState<ActionState>(IDLE_STATE);
-  const [failedAttempts, setFailedAttempts] = useState<readonly FailedPrivateLiquiditySwapAttempt[]>([]);
+  const [failedAttempts, setFailedAttempts] = useState<readonly Readonly<{
+    privacyProjectionKey: string;
+    attempt: FailedPrivateLiquiditySwapAttempt;
+  }>[]>([]);
   const visibleState = state.scopeKey === scopeKey ? state : IDLE_STATE;
   const quoteRequiresFreshLiquidity = Boolean(
     visibleState.requiresFreshLiquidity && visibleState.stage === 'error'
   );
+
+  useEffect(() => {
+    // Remove private terminal projections without changing active sends or quote safety locks.
+    if (state.privacyProjectionKey && state.privacyProjectionKey !== retainedProjectionKey) {
+      setState((current) => current.privacyProjectionKey && current.privacyProjectionKey !== retainedProjectionKey
+        ? Object.freeze({ ...current, confirmed: undefined, message: '', privacyProjectionKey: undefined })
+        : current);
+    }
+    if (failedAttempts.some((failed) => failed.privacyProjectionKey !== retainedProjectionKey)) {
+      setFailedAttempts((current) => Object.freeze(current.filter(
+        (failed) => failed.privacyProjectionKey === retainedProjectionKey
+      )));
+    }
+  }, [retainedProjectionKey, state.privacyProjectionKey, failedAttempts]);
 
   const refreshThroughFinality = useCallback(() => {
     refresh();
@@ -170,6 +200,7 @@ export default function usePrivateLiquiditySwapAction({
     if (!prepared || !deployment || !walletReady || !getCapability || !runWalletTransactionFlow) return;
     if (activeActionRef.current) return;
     const capturedScopeKey = scopeKey;
+    const capturedProjectionKey = privateProjectionKey(privacyScopeRef.current, true);
     const confirmedByUser = await requestConfirmation(buildPrivateLiquiditySwapConfirmation(prepared));
     if (!confirmedByUser || scopeKeyRef.current !== capturedScopeKey) return;
     activeActionRef.current = true;
@@ -273,6 +304,7 @@ export default function usePrivateLiquiditySwapAction({
       setState(Object.freeze({
         scopeKey: capturedScopeKey,
         stage: 'success',
+        privacyProjectionKey: capturedProjectionKey,
         message: `Swapped ${input} ${prepared.inputToken.symbol} for ${output} ${prepared.outputToken.symbol}.`,
         confirmed
       }));
@@ -294,14 +326,15 @@ export default function usePrivateLiquiditySwapAction({
           attemptedAt: Date.now()
         });
         setFailedAttempts((current) => Object.freeze([
-          failed,
-          ...current.filter(({ transactionHash }) => transactionHash !== failed.transactionHash)
+          { privacyProjectionKey: capturedProjectionKey, attempt: failed },
+          ...current.filter(({ attempt }) => attempt.transactionHash !== failed.transactionHash)
         ].slice(0, 10)));
       }
       if (scopeKeyRef.current === capturedScopeKey) {
         setState(Object.freeze({
           scopeKey: capturedScopeKey,
           stage: 'error',
+          privacyProjectionKey: capturedProjectionKey,
           message: failureMessage(error),
           requiresFreshLiquidity
         }));
@@ -326,9 +359,11 @@ export default function usePrivateLiquiditySwapAction({
       ? 'Waiting for a newer finalized liquidity snapshot before another attempt.'
       : preparedResult.error,
     stage: visibleState.stage,
-    message: visibleState.message,
-    confirmed: state.confirmed ?? null,
-    failedAttempts,
+    message: ['success', 'error'].includes(visibleState.stage) &&
+      (!projectionKey || visibleState.privacyProjectionKey !== projectionKey) ? '' : visibleState.message,
+    confirmed: projectionKey && state.privacyProjectionKey === projectionKey ? state.confirmed ?? null : null,
+    failedAttempts: failedAttempts.filter((failed) => projectionKey && failed.privacyProjectionKey === projectionKey)
+      .map(({ attempt }) => attempt),
     busy: [
       'unlocking-privacy',
       'setting-up-token',

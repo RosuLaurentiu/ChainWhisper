@@ -49,7 +49,7 @@ const deferred = <T,>() => {
   return { promise, resolve };
 };
 function fixture() {
-  const read = vi.fn(async () => snapshot());
+  const read = vi.fn(async (_assertCurrent?: () => void) => snapshot());
   const getFunds = vi.fn(async () => ({ read }));
   const legacyRead = vi.fn(async (index: number) => ({ balance: BigInt(index + 1) }));
   const getSender = vi.fn(async () => ({ readCurrentTokenFunding: legacyRead }));
@@ -59,19 +59,35 @@ function fixture() {
     actions: { getCurrentSharedDexTokenFundsCapability: getFunds, getCurrentDexSubmissionCapability: getSender }
   } as unknown as SharedWalletSession;
   let selection: CurrentTrialBalanceSelection | undefined = { candidate: prepared, tokens: [prepared.tokens[0][0], prepared.tokens[1][0]] };
+  let visible = true;
   const Render = (effects = true) => {
     hooks.index = 0;
-    const view = useCurrentTrialBalances(session, '', selection);
+    const view = useCurrentTrialBalances(session, '', selection, visible);
     if (effects) hooks.effects.splice(0).forEach(effect => effect());
     return view;
   };
   const settle = async () => { await vi.waitFor(() => expect(Render().loading).toBe(false)); return Render(); };
   return { session, read, getFunds, getSender, legacyRead, render: Render, settle,
+    setVisible: (value: boolean) => { visible = value; },
     select: (value: CurrentTrialBalanceSelection | undefined) => { selection = value; } };
 }
 beforeEach(() => { hooks.index = 0; hooks.slots = []; hooks.effects = []; });
 
 describe('selected DEX private balance display', () => {
+  it('starts private balance reads only when visible and resumes with the current selection', async () => {
+    const f = fixture(); f.setVisible(false);
+    await f.render().refresh();
+    expect(f.getFunds).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
+    f.setVisible(true); f.render(); await f.settle();
+    expect(f.read).toHaveBeenCalledOnce();
+    f.setVisible(false); f.render();
+    f.select({ candidate: exit, tokens: [exit.tokens[0][0], exit.tokens[1][0]] }); f.render();
+    expect(f.read).toHaveBeenCalledOnce();
+    f.read.mockResolvedValue({ ...snapshot(), core: exit.core, graph: exit.graph, packageSha256: exit.packageSha256 } as never);
+    f.setVisible(true); f.render(); await f.settle();
+    expect(f.getFunds).toHaveBeenLastCalledWith(7082400n, { candidate: 'cheap-exit' });
+    expect(f.read).toHaveBeenCalledTimes(2);
+  });
   it.each([[0,1],[3,0]])('uses the current shared reader for 7b67 token direction %s -> %s', async (input,output) => {
     const f=fixture(); f.select({candidate:history,tokens:[history.tokens[input][0],history.tokens[output][0]]});
     f.read.mockResolvedValue({...snapshot(),core:history.core,graph:history.graph,packageSha256:history.packageSha256,
@@ -131,7 +147,7 @@ describe('selected DEX private balance display', () => {
       expect((await f.settle()).labels).toEqual(['Unavailable', 'Unavailable']);
     });
 
-  it.each(['pair', 'owner', 'privacy', 'privacy-key', 'provider', 'candidate', 'package', 'core', 'reader', 'health', 'onboard', 'wallet', 'chain'])(
+  it.each(['pair', 'owner', 'privacy', 'privacy-key', 'provider', 'candidate', 'package', 'core', 'reader', 'health', 'onboard', 'wallet', 'chain', 'hidden'])(
     'hides prior data and rejects a deferred result after %s change', async kind => {
       const f = fixture(); f.render(); await f.settle();
       const waiting = deferred<ReturnType<typeof snapshot>>(); f.read.mockImplementationOnce(() => waiting.promise);
@@ -150,7 +166,10 @@ describe('selected DEX private balance display', () => {
       if (kind === 'onboard') f.session.sessionOnboardInfo = { ...f.session.sessionOnboardInfo };
       if (kind === 'wallet') f.session.browserWalletId = 'other';
       if (kind === 'chain') f.session.chainId = 1;
+      if (kind === 'hidden') f.setVisible(false);
       expect(f.render(false).labels).not.toContain('0.000001');
+      if (kind === 'hidden') expect(f.read.mock.calls[1][0]).toEqual(expect.any(Function));
+      if (kind === 'hidden') expect(() => f.read.mock.calls[1][0]!()).toThrow('Balance read scope changed');
       waiting.resolve(snapshot()); await pending;
       expect(f.render(false).labels).not.toContain('0.000001');
       const calls = f.read.mock.calls.length;

@@ -12,7 +12,6 @@ import {
   readOneOffDirectTradeV2PrivateTerms,
   readOneOffTradeV2Reference,
   readOneOffTradeV2OwnerIds,
-  readRetainedOneOffTradeV2Orders,
   selectAutomaticDirectTradeV2Reveals
 } from './useOneOffTradeV2Data';
 import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
@@ -30,7 +29,7 @@ it('keeps an exact order reference pending until the verified runtime is ready',
   expect(renderToStaticMarkup(createElement(PendingOrder))).toBe('<output>Loading order</output>');
 });
 
-describe('retained owner discovery', () => {
+describe('current owner discovery', () => {
   it('follows the existing list cursor without repeating a page', async () => {
     const page = vi.fn(async (offset: bigint) => offset === 0n
       ? { tradeIds: ['1', '2'], nextOffset: '2' } : { tradeIds: ['3'], nextOffset: '0' });
@@ -44,41 +43,6 @@ describe('retained owner discovery', () => {
     page.mockClear();
     await expect(readOneOffTradeV2OwnerIds(page, () => false)).rejects.toThrow(/current/);
     expect(page).not.toHaveBeenCalled();
-  });
-  it('discovers retained owner orders by exact escrow, never through an open-market scan', async () => {
-    const owner = `0x${'11'.repeat(20)}`, address = `0x${'88'.repeat(20)}`;
-    const deployment = { ...CURRENT_P2P_BINDING.deployments['standard-v2'], contractAddress: address };
-    const listStandard = vi.fn(async (scope: string) => ({ tradeIds: scope === 'maker' ? ['7'] : [], nextOffset: '0' }));
-    const readStandard = vi.fn(async () => ({ tradeId: '7', maker: owner }));
-    const child = { isCurrent: () => true, deployments: { 'standard-v2': deployment }, listStandard, readStandard };
-    const forReference = vi.fn(async () => child), selectedRead = vi.fn();
-    const runtime = { isCurrent: () => true, retainedDeployments: [deployment, deployment], forReference, readStandard: selectedRead } as unknown as OtcV2ActionRuntime;
-    const result = await readRetainedOneOffTradeV2Orders({ runtime, viewer: owner, privateReadsEnabled: false });
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ deployment, kind: 'standard', view: { tradeId: '7' } });
-    expect(listStandard.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'filler']);
-    expect(readStandard).toHaveBeenCalledExactlyOnceWith('7'); expect(selectedRead).not.toHaveBeenCalled();
-    expect(forReference).toHaveBeenCalledWith({ chainId: deployment.chainId, contractAddress: address, orderId: '7' });
-  });
-  it('keeps same-ID book and Direct orders separate and reveals a book budget only to its maker', async () => {
-    const owner = `0x${'11'.repeat(20)}`, outsider = `0x${'22'.repeat(20)}`;
-    const book = { ...CURRENT_P2P_BINDING.deployments['private-v2'], contractAddress: `0x${'88'.repeat(20)}` };
-    const direct = { ...CURRENT_P2P_BINDING.deployments['direct-v2'], contractAddress: `0x${'99'.repeat(20)}` };
-    const list = vi.fn(async () => ({ orderIds: ['7'], nextOffset: '0' }));
-    const read = vi.fn(async () => ({ orderId: '7', maker: owner })), readAccount = vi.fn(async () => ({ orderId: '7' }));
-    const readDirect = vi.fn(async () => ({ tradeId: '7', maker: owner, taker: outsider }));
-    const runtime = { isCurrent: () => true, retainedDeployments: [book, direct],
-      deployments: { 'private-v2': book, 'direct-v2': direct }, privateBook: { list, read, readAccount }, readDirect,
-      listDirect: vi.fn(async () => ({ tradeIds: ['7'], nextOffset: '0' })) } as unknown as OtcV2ActionRuntime;
-    const root = { ...runtime, forReference: vi.fn(async () => runtime) };
-    const mine = await readRetainedOneOffTradeV2Orders({ runtime: root, viewer: owner, privateReadsEnabled: true });
-    expect(mine.map(item => item.deployment.contractAddress)).toEqual([book.contractAddress, direct.contractAddress]);
-    expect(read).toHaveBeenCalledExactlyOnceWith('7'); expect(readAccount).toHaveBeenCalledExactlyOnceWith('7');
-    expect(readDirect).toHaveBeenCalledExactlyOnceWith('7', true);
-    readAccount.mockClear();
-    await readRetainedOneOffTradeV2Orders({ runtime: root, viewer: outsider, privateReadsEnabled: true });
-    await readRetainedOneOffTradeV2Orders({ runtime: root, viewer: owner, privateReadsEnabled: false });
-    expect(readAccount).not.toHaveBeenCalled();
   });
 });
 
@@ -114,15 +78,6 @@ describe('readOneOffTradeV2Reference', () => {
     expect(f.readAccount).not.toHaveBeenCalled();
   });
 
-  it('uses the resolved older runtime for a full detail reference', async () => {
-    const f = fixture();
-    const forReference = vi.fn(async () => f.runtime);
-    const root = { ...f.runtime, deployments: { ...f.runtime.deployments, 'private-v2': { ...f.runtime.deployments['private-v2'], contractAddress: `0x${'99'.repeat(20)}` } }, forReference };
-    await expect(readOneOffTradeV2Reference({ runtime: root, reference: f.reference, viewer: owner, privateReadsEnabled: true })).resolves.toMatchObject({ kind: 'book', deployment: f.runtime.deployments['private-v2'] });
-    expect(forReference).toHaveBeenCalledExactlyOnceWith(f.reference);
-    expect(f.read).toHaveBeenCalledExactlyOnceWith('501');
-  });
-
   it('selects Standard or Direct by the full reference and never by local order ID', async () => {
     const f = fixture();
     for (const protocol of ['standard-v2', 'direct-v2'] as const) {
@@ -134,22 +89,10 @@ describe('readOneOffTradeV2Reference', () => {
     expect(f.read).not.toHaveBeenCalled();
   });
 
-  it('keeps an admitted legacy private order on its existing reader and receipt path', async () => {
-    const f = fixture('0xe20848f75e59634a16c7d33dd393e91698292a9b29400d456ff57ab0c04ac680');
-    const readPrivateTrade = vi.fn(async () => ({ ...f.view, mode: 'fully-private' }));
-    const readPrivateTradeAccount = vi.fn(async () => ({ orderId: '501', sequence: '1' }));
-    const runtime = { ...f.runtime, readPrivateTrade, readPrivateTradeAccount } as unknown as OtcV2ActionRuntime;
-    await expect(readOneOffTradeV2Reference({ runtime, reference: f.reference, viewer: owner, privateReadsEnabled: true })).resolves.toMatchObject({ kind: 'private', account: { orderId: '501' } });
-    expect(readPrivateTrade).toHaveBeenCalledExactlyOnceWith('501');
-    expect(readPrivateTradeAccount).toHaveBeenCalledExactlyOnceWith('501');
-    expect(f.read).not.toHaveBeenCalled(); expect(f.readAccount).not.toHaveBeenCalled();
-  });
-
-  it('does not downgrade a book reference when its admitted API is missing', async () => {
-    const f = fixture(), readPrivateTrade = vi.fn();
-    const runtime = { ...f.runtime, privateBook: undefined, readPrivateTrade };
+  it('reports an unavailable current Book reader without another protocol fallback', async () => {
+    const f = fixture();
+    const runtime = { ...f.runtime, privateBook: undefined };
     await expect(readOneOffTradeV2Reference({ runtime, reference: f.reference, viewer: owner, privateReadsEnabled: true })).rejects.toThrow(/book reader/);
-    expect(readPrivateTrade).not.toHaveBeenCalled();
   });
 
   it('rejects wrong chain, unknown escrow, invalid ID and expired runtime before reading', async () => {
@@ -202,6 +145,43 @@ const revealed = {
 } as DirectTradeV2TradeTerms;
 
 describe('readOneOffDirectTradeV2PrivateTerms', () => {
+  it('does not start Direct detail reads after route cancellation', async () => {
+    const readDirect = vi.fn(async () => revealed);
+    await expect(readOneOffDirectTradeV2ParticipantTerms({
+      runtime: { isCurrent: () => true, readDirect }, tradeIds: ['3'],
+      privateReadsEnabled: false, shouldContinue: () => false
+    })).rejects.toThrow(/current/);
+    expect(readDirect).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('stops a canceled Direct batch after an in-flight read (private failure: %s)', async privateFailure => {
+    let active = true;
+    const onProgress = vi.fn();
+    const readDirect = vi.fn(async (_id: string, includePrivate: boolean) => {
+      active = false;
+      if (privateFailure && includePrivate) throw new Error('Private read unavailable.');
+      return revealed;
+    });
+    await expect(readOneOffDirectTradeV2ParticipantTerms({
+      runtime: { isCurrent: () => true, readDirect }, tradeIds: ['3', '4'],
+      privateReadsEnabled: privateFailure, shouldContinue: () => active, onProgress
+    })).rejects.toThrow(/current/);
+    expect(readDirect).toHaveBeenCalledTimes(1);
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('does not continue private hydration after its privacy session ends', async () => {
+    let active = true;
+    const unresolved = { ...revealed, offerAmount: undefined, requestAmount: undefined };
+    const readDirect = vi.fn(async () => { active = false; return revealed; });
+    await expect(hydrateOneOffDirectTradeV2ParticipantTerms({
+      runtime: { isCurrent: () => true, readDirect },
+      views: [unresolved, { ...unresolved, tradeId: '4' }],
+      privateReadsEnabled: true, shouldContinue: () => active
+    })).rejects.toThrow(/current/);
+    expect(readDirect).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the Direct V2 participant reader with private decryption enabled', async () => {
     const readDirect = vi.fn(async () => revealed);
     const runtime = {
@@ -227,6 +207,7 @@ describe('readOneOffDirectTradeV2PrivateTerms', () => {
 
     await expect(readOneOffDirectTradeV2ParticipantTerms({
       runtime,
+      shouldContinue: () => true,
       tradeIds: ['3'],
       privateReadsEnabled: true
     })).resolves.toEqual([revealed]);
@@ -252,6 +233,7 @@ describe('readOneOffDirectTradeV2PrivateTerms', () => {
 
     await expect(readOneOffDirectTradeV2ParticipantTerms({
       runtime,
+      shouldContinue: () => true,
       tradeIds: ['3', '4'],
       privateReadsEnabled: true
     })).resolves.toHaveLength(2);
@@ -269,6 +251,7 @@ describe('readOneOffDirectTradeV2PrivateTerms', () => {
 
     await expect(readOneOffDirectTradeV2ParticipantTerms({
       runtime,
+      shouldContinue: () => true,
       tradeIds: ['3'],
       privateReadsEnabled: false
     })).resolves.toEqual([publicTerms]);
@@ -290,6 +273,7 @@ describe('readOneOffDirectTradeV2PrivateTerms', () => {
 
     await expect(readOneOffDirectTradeV2ParticipantTerms({
       runtime,
+      shouldContinue: () => true,
       tradeIds: ['3'],
       privateReadsEnabled: true
     })).resolves.toEqual([publicTerms]);
@@ -324,6 +308,7 @@ describe('readOneOffDirectTradeV2PrivateTerms', () => {
 
     await expect(hydrateOneOffDirectTradeV2ParticipantTerms({
       runtime,
+      shouldContinue: () => true,
       views: [unresolved, alreadyRevealed],
       privateReadsEnabled: true
     })).resolves.toEqual({
@@ -345,6 +330,7 @@ describe('readOneOffDirectTradeV2PrivateTerms', () => {
 
     await expect(hydrateOneOffDirectTradeV2ParticipantTerms({
       runtime,
+      shouldContinue: () => true,
       views: [unresolved],
       privateReadsEnabled: true
     })).resolves.toEqual({

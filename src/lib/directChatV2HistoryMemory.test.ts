@@ -86,6 +86,16 @@ const finalizedProjection = (lastMessageId = 3n): ChatMessage[] => {
   return messages;
 };
 
+it('backs a recent ID suffix without claiming unloaded earlier messages, and rejects a missing suffix entry', () => {
+  const checkpoint = { ...checkpointAt(3n), firstMessageId: '2', olderToBlock: '105' };
+  const messagesByContact = { [BOB.toLowerCase()]: [finalizedMessage({ messageId: 2n }), finalizedMessage({ messageId: 3n })] };
+  expect(selectDirectChatV2MemoryBackedCheckpoint({ checkpoint, messagesByContact, scope: SCOPE, walletAddress: ALICE })).toBe(checkpoint);
+  expect(selectDirectChatV2MemoryBackedCheckpoint({ checkpoint,
+    messagesByContact: { [BOB.toLowerCase()]: [finalizedMessage({ messageId: 3n })] }, scope: SCOPE, walletAddress: ALICE })).toBeUndefined();
+  expect(selectDirectChatV2MemoryBackedCheckpoint({ checkpoint: { ...checkpoint, olderToBlock: '111' },
+    messagesByContact, scope: SCOPE, walletAddress: ALICE })).toBeUndefined();
+});
+
 const historyEntry = (message: ChatMessage = finalizedMessage()): HistoryEntry => ({
   id: message.id,
   contact: BOB,

@@ -44,12 +44,12 @@ export const buildCurrentDexActivityEntries = (rows: readonly CurrentDexActivity
 
 export const readCurrentDexActivityPage = async (session: SharedWalletSession, candidateKey: CurrentCheapDexCandidateKey,
   assertCurrent: () => void, options: { cursor: CurrentDexActivityCursor; head?: { number: bigint; hash: string };
-    onProgress?: (checked: number, total: number) => void }) => {
+    onProgress?: (checked: number, total: number, phase?: string) => void }) => {
   assertCurrent();
   const candidate = resolveCurrentCheapDexCandidate(candidateKey), getSender = session.actions?.getCurrentDexSubmissionCapability;
   if (!['cheap-exit', 'cheap-history'].includes(candidateKey) || session.chainId !== Number(candidate.chainId) || !getSender) throw new Error('Connect the owner wallet on COTI Testnet to read activity.');
   const sender = await getSender(BigInt(candidate.chainId), { candidate: candidateKey }); assertCurrent();
-  const page = await sender.readCurrentDexActivityPage({ ...options, onProgress: (checked,total) => { assertCurrent(); options.onProgress?.(checked,total); } });
+  const page = await sender.readCurrentDexActivityPage({ ...options, assertCurrent, onProgress: (checked,total,phase) => { assertCurrent(); options.onProgress?.(checked,total,phase); } });
   assertCurrent(); return page;
 };
 

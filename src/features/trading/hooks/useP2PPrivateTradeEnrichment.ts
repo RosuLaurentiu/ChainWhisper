@@ -491,7 +491,7 @@ export default function useP2PPrivateTradeEnrichment({
           if (forceReveal) {
             throw privateFillReceiptsResult.reason instanceof Error
               ? privateFillReceiptsResult.reason
-              : new Error('Private liquidity history reveal failed. Privacy may need to be refreshed.');
+              : new Error('Private trade history reveal failed. Privacy may need to be refreshed.');
           }
           return stripOtherWalletPrivateReveal(snapshot);
         }
@@ -512,7 +512,7 @@ export default function useP2PPrivateTradeEnrichment({
           if (forceReveal) {
             throw remainingOfferAmountResult.reason instanceof Error
               ? remainingOfferAmountResult.reason
-              : new Error('Private liquidity reveal failed. Privacy may need to be refreshed.');
+              : new Error('Private trade reveal failed. Privacy may need to be refreshed.');
           }
           return stripOtherWalletPrivateReveal(recoveredSnapshot);
         }

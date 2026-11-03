@@ -764,7 +764,9 @@ export const submitDirectTradeV2Action = async ({
     to: deployment.contractAddress,
     data,
     value: prepared.value
-  }, 'Direct Trade V2', binding.readProvider ? (hash) => waitForOwnerTradeV2Receipt(binding, hash) : undefined);
+  }, 'Direct Trade V2', binding.readProvider ? (hash) => waitForOwnerTradeV2Receipt(binding, hash, {
+    finalityLagBlocks: BigInt(deployment.finalityLagBlocks)
+  }) : undefined);
   const submission = Object.freeze({
     action: action.kind,
     submittedTransactionHash: transaction.hash,

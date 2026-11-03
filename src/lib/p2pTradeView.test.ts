@@ -8,6 +8,7 @@ import {
   getTradeCompletionSummary,
   formatTradeContractIdLabel,
   getTradeDisplayTerms,
+  getTradeAccessFilter,
   getTradeTermsVisibility,
   hasHydratedDirectTradeTerms,
   getTradePairFilterOptions,
@@ -46,6 +47,22 @@ const baseTrade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot =>
   }) as TradeSnapshot;
 
 describe('p2pTradeView helpers', () => {
+  it('keeps explicit public Direct amounts public without changing fixed-recipient access', () => {
+    const contractAddress = '0x7777777777777777777777777777777777777777';
+    const direct = baseTrade({ escrowContract: contractAddress, isPublic: false, hiddenLiquidity: false,
+      taker: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      directTermsMetadata: { hasTermsPayload: true, offerAmountPrivate: false, requestAmountPrivate: false },
+      v2: { protocol: 'direct-v2', chainId: '7082400', contractAddress, amountMode: 'public' } });
+    expect(getTradeTermsVisibility(direct)).toBe('public');
+    const counter = { ...direct, parentTradeId: 3 };
+    expect(getTradeTermsVisibility(counter)).toBe('public');
+    expect(getTradeAccessFilter(direct)).toBe('direct');
+    expect(filterAndSortTradeDesk([direct], { type: 'visible' })).toEqual([direct]);
+    expect(filterAndSortTradeDesk([direct], { type: 'private' })).toEqual([]);
+    expect(getTradeTermsVisibility({ ...direct, v2: { ...direct.v2!, amountMode: 'private' } })).toBe('direct-private-terms');
+    expect(getTradeTermsVisibility({ ...direct, v2: { ...direct.v2!, amountMode: undefined } })).toBe('direct-private-terms');
+  });
+
   it('uses remaining amounts for partially filled open trades', () => {
     const trade = baseTrade({
       fillState: {

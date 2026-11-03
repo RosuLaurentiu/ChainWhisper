@@ -20,7 +20,7 @@ export const currentLimitIntent=(sellToken0:boolean,amount:string,price:string,m
   if(m>=1n<<128n)throw new Error('Maker minimum must fit uint128.');
   return{sellToken0,amount:parseCurrentTrialAtoms(amount,true),terms:[w[0],w[1],m,w[2],w[3]]as const};
 };
-export default function CurrentLimitWorkspace({sharedWalletSession,view='create',priceDisplayInverted=false,candidateKey='cheap-current',selectedPair}:{sharedWalletSession?:SharedWalletSession;view?:'create'|'manage';priceDisplayInverted?:boolean;candidateKey?:CurrentCheapDexCandidateKey;selectedPair?:readonly[string,string]}){
+export default function CurrentLimitWorkspace({sharedWalletSession,view='create',visible=true,priceDisplayInverted=false,candidateKey='cheap-current',selectedPair}:{sharedWalletSession?:SharedWalletSession;view?:'create'|'manage';visible?:boolean;priceDisplayInverted?:boolean;candidateKey?:CurrentCheapDexCandidateKey;selectedPair?:readonly[string,string]}){
   const preparedScope=candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidateKey):null;
   const ownedDiscovery=candidateKey==='cheap-exit'||candidateKey==='cheap-history';
   const c=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),preparedCandidate=preparedScope!==null;
@@ -79,7 +79,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   const create=async()=>{
     if(!connected||inFlight.current||busy||blocked||savedActionPending)return;const captured=scope.current;inFlight.current = true; setBusy(true);setCreation(null);setVerified(null);
     try{const exactAmount=parse(amount,sellToken0?0:1,true);
-      if(preparedCandidate){assertCurrentLimitNativeAdmission(candidateKey,'limit-create');assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:'create',amount:exactAmount});}
+      if(preparedCandidate){assertCurrentLimitNativeAdmission(candidateKey,'limit-create');if(candidateKey!=='cheap-history')assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:'create',amount:exactAmount});}
       const raw=currentLimitIntent(sellToken0,exactAmount.toString(),price,parse(minimum,sellToken0?0:1).toString());
       // Fixed terms always store sorted token0/token1, for either sell direction.
       const w=currentPoolFractionWitness(raw.terms[priceTermsInverted?1:0],raw.terms[priceTermsInverted?0:1]);
@@ -99,7 +99,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   };
   const snapshot=async()=>{
     if(!creation||creation.scope!==scope.current||!connected||inFlight.current||busy||blocked||savedActionPending)return;const captured=scope.current;inFlight.current = true; setBusy(true);
-    try{if(preparedCandidate){assertCurrentLimitNativeAdmission(candidateKey,'limit-snapshot');assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:'snapshot'});}
+    try{if(preparedCandidate){assertCurrentLimitNativeAdmission(candidateKey,'limit-snapshot');if(candidateKey!=='cheap-history')assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:'snapshot'});}
       const prepared=await creation.value.prepareSnapshot(async()=>{assertScope(captured);const accepted=await confirm('Refresh private Limit result',[{label:'Position NFT',value:creation.value.positionId.toString()},{label:'Action',value:'Owner-only snapshot; no token funding'}]);assertScope(captured);return accepted;});
       assertScope(captured);
       if(!prepared){notice('Limit snapshot cancelled.');return;}const sender=await (preparedCandidate?getSender!(BigInt(c.chainId),{candidate:candidateKey}):getSender!(BigInt(c.chainId)));assertScope(captured);setBlocked(true);
@@ -126,7 +126,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       const index:0|1=kind==='create'?(sellToken0?0:1):(currentOwner?.value.amounts?.sellToken0?0:1);
       const exact=kind==='create'?parse(amount,index,true):parseOwner(topUp,index,true);
       assertCurrentLimitNativeAdmission(candidateKey,kind==='create'?'limit-create':'limit-owner',kind==='topup'?'topup':undefined);
-      assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:kind==='create'?'approve-create':'approve-topup',amount:exact});
+      if(candidateKey!=='cheap-history')assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:kind==='create'?'approve-create':'approve-topup',amount:exact});
       if(kind==='topup'&&(!currentOwner?.value.amounts||currentOwner.value.closed||currentOwner.value.refreshRequired))throw new Error('Refresh this Limit privately before funding it.');
       const capability=kind==='topup'?currentOwner!.capability:await getLimit!(BigInt(c.chainId),{candidate:candidateKey,selectedPair:pair!.tokens.map(token=>token.address)as[string,string]});assertReview();
       fundingPreparationStarted=true;const funding=await capability.prepareFundingReview(kind==='create'?{kind,sellToken0,amount:exact}:{kind,positionId:currentOwner!.value.positionId,snapshot:currentOwner!.value,expectedContext:currentOwner!.value.context,amount:exact});assertReview();
@@ -149,7 +149,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       const topUpAmount=action==='topup'?parseOwner(topUp,offeredIndex,true):undefined;
       if(preparedCandidate){
       assertCurrentLimitNativeAdmission(candidateKey,'limit-owner',action);
-      assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action,...(topUpAmount!==undefined?{amount:topUpAmount}:{})});
+      if(candidateKey!=='cheap-history')assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action,...(topUpAmount!==undefined?{amount:topUpAmount}:{})});
     }
       const id=parseCurrentTrialAtoms(ownerId,true),capability=action==='refresh'?await (preparedCandidate?getLimit!(BigInt(c.chainId),{candidate:candidateKey,selectedPair:managementPair!.tokens.map(token=>token.address)as[string,string]}):getLimit!(BigInt(c.chainId))):currentOwner?.capability;assertScope(captured);if(!capability)throw new Error('Refresh this Limit privately before an owner action.');
       const p=action==='reprice'?parseCurrentTrialPriceLimit(editPrice):null,w=p?currentPoolFractionWitness(p.denominator,p.numerator):null;
@@ -235,7 +235,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
     </div>
     <div className="dex-v2-panel-fields" hidden={view!=='manage'}>
     <header className="dex-owner-heading"><div><h2>My orders</h2></div></header>
-    {ownedDiscovery?<CurrentOwnedLimits session={sharedWalletSession} candidateKey={candidateKey} selectedPair={pair!.tokens.map(token=>token.address)as[string,string]} visible={view==='manage'} disabled={busy||blocked||savedActionPending}
+    {ownedDiscovery?<CurrentOwnedLimits session={sharedWalletSession} candidateKey={candidateKey} selectedPair={pair!.tokens.map(token=>token.address)as[string,string]} visible={visible&&view==='manage'} disabled={busy||blocked||savedActionPending}
       selectedId={ownerId} refreshToken={`${hash}:${ownerResult?.value.context??''}:${creation?.value.positionId??''}`} onSelect={order=>{setOwnerId(order.positionId.toString());setOwnerPair(order.poolTokens);setSelectedOrder({id:order.positionId,closed:order.closed,context:order.context});setOwnerResult(null);setMessage(null);setHash('');setTopUp('');setEditPrice('');setEditMinimum('0');}}/>:null}
     <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Manual order lookup</summary><label>Limit position NFT<input aria-label="Limit owner NFT ID" value={ownerId} disabled={busy||blocked} onChange={e=>{setOwnerId(e.target.value);setOwnerPair(null);setSelectedOrder(null);setOwnerResult(null);setTopUp('');setEditPrice('');setEditMinimum('0');}}/></label></details>
     {ownerId?<p>NFT {ownerId}{managementPair?` · ${ownerTokens.join('/')}`:''}{selectedOrder?.closed||currentOwner?.value.closed?' · Closed Limit':''}</p>:null}

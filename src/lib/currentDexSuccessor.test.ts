@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { Interface, keccak256 } from '@coti-io/coti-ethers';
+import { FetchRequest, Interface, keccak256 } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE, CURRENT_CHEAP_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE, STAGED_QUOTE_SLIPPAGE_CANDIDATE, STAGED_TWO_POOL_CANDIDATE,
   STAGED_POOL_REFERENCE_CANDIDATE, STAGED_NATIVE_DEX_CANDIDATE, currentCheapDexStages, currentCheapDexCandidateKey, currentCheapDexQuoteProtocol,
@@ -12,13 +12,14 @@ import { issueCurrentDexSubmissionCapability } from '../features/wallet/currentD
 import { buildCurrentDexQuoteReview, prepareCurrentDexAcceptance } from './currentDexQuoteReview';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
 import { currentTokenFundingAbi, CURRENT_TOKEN_FAUCET_AMOUNT } from './currentDexTokenFunding';
+import { createPacedCotiRpc } from './appShared/cotiRpcPacing';
 
 const mocks = vi.hoisted(() => ({ hashes: new Map<string, string>(), owner: vi.fn(), wide: vi.fn(), decrypt: vi.fn(), bool: vi.fn() }));
 vi.mock('@coti-io/coti-ethers', async original => {
   const actual = await original<typeof import('@coti-io/coti-ethers')>();
   return { ...actual, keccak256: (data: string) => mocks.hashes.get(data) ?? actual.keccak256(data) };
 });
-vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: mocks.owner }));
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: mocks.owner }));
 vi.mock('./privateUint256', () => ({ encryptPrivateUint256Input: mocks.wide, decryptPrivateUint256Output: mocks.decrypt }));
 vi.mock('@coti-io/coti-sdk-typescript', () => ({ decryptUint: mocks.bool }));
 
@@ -98,6 +99,73 @@ async function currentReviewFixture(profile:'fast-pool'|'cheap-async') {
 }
 
 describe('exact successor App stage and authority binding',()=>{
+  it('compares selected Activity graph admission under bounded competing reads', async () => {
+    const results: Array<{ foreground: boolean; graphCalls: number; graphComplete: boolean; startsAtGraphEnd: number; spacing: boolean }> = [];
+    try {
+      for (const foreground of [false, true]) {
+        vi.useFakeTimers();
+        const f = await fixture('cheap-history');
+        let id = 0, starts = 0, graphCalls = 0, startsAtGraphEnd = 0, graphComplete = false, graphError = '';
+        const times: number[] = [];
+        const graphIds = new Set<number>();
+        const paced = createPacedCotiRpc(async request => {
+          const body = JSON.parse(new TextDecoder().decode(request.body!));
+          starts++; times.push(performance.now());
+          const graph = graphIds.has(body.id);
+          if (graph) graphCalls++;
+          const result = graph ? await f.request({ method: body.method, params: body.params }) : '0x';
+          return { statusCode: 200, statusMessage: 'OK', headers: {},
+            body: new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })) };
+        }, undefined, true, 500);
+        const send = async (method: string, params: unknown[], graph = false) => {
+          const requestId = ++id;
+          if (graph) graphIds.add(requestId);
+          const request = new FetchRequest('https://fixture.invalid/rpc');
+          request.body = JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params });
+          const response = await (graph && foreground ? paced.foreground : paced)(request);
+          return JSON.parse(new TextDecoder().decode(response.body!)).result;
+        };
+        // Fixed synthetic contention, not attribution of the connected App's callers.
+        const competitors = Array.from({ length: 9 }, (_, producer) => (async () => {
+          for (let n = 0; n < 100; n++) await send(producer < 3 ? 'eth_getCode' : 'eth_blockNumber', []);
+        })().catch(() => undefined));
+        const capability = createDexV2ReadCapability({ chainId: 7082400n, assertCurrent: () => {},
+          provider: { request: ({ method, params = [] }) => {
+            if (!Array.isArray(params)) throw new Error('The graph fixture requires positional RPC parameters.');
+            return send(method, params, true);
+          } } });
+        const graph = readCurrentSharedPoolDexGraph({ capability, candidate: 'cheap-history', blockNumber: f.blockNumber, blockHash: headHash })
+          .then(() => { graphComplete = true; startsAtGraphEnd = starts; })
+          .catch(error => { graphError = String(error); startsAtGraphEnd = starts; });
+        await vi.runAllTimersAsync();
+        await Promise.all([...competitors, graph]);
+        expect(graphError).toBe(foreground ? '' : 'Error: COTI RPC comparison stopped: request-limit. No automatic retry.');
+        results.push({ foreground, graphCalls, graphComplete, startsAtGraphEnd,
+          spacing: times.slice(1).every((time, index) => time - times[index] >= 500) });
+        vi.useRealTimers();
+      }
+      expect(results[0]).toMatchObject({ graphComplete: false, startsAtGraphEnd: 600, spacing: true });
+      expect(results[1]).toMatchObject({ graphComplete: true, graphCalls: 106, spacing: true });
+      expect(results[1].startsAtGraphEnd).toBeLessThan(250);
+      console.info('Activity graph queue contention comparison', results);
+    } finally { vi.useRealTimers(); }
+  });
+  it('counts cold six-pair Activity graph reads at the raw fixture request boundary', async () => {
+    const f = await fixture('cheap-history');
+    expect('pairs' in f.c ? f.c.pairs : []).toHaveLength(6);
+    await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never);
+    expect(f.request).not.toHaveBeenCalled();
+    await readCurrentSharedPoolDexGraph({ capability: f.cap, candidate: 'cheap-history', blockNumber: f.blockNumber, blockHash: headHash });
+    const counts: Record<string, number> = {};
+    for (const [{ method }] of f.request.mock.calls) counts[method] = (counts[method] ?? 0) + 1;
+    console.info('Cold Activity graph raw fixture counts', { counts, total: f.request.mock.calls.length,
+      runtimes: f.c.runtimes.length, tokens: f.c.tokens.length, companions: f.c.companions.length });
+    expect(counts).toEqual({ eth_chainId: 2, eth_getBlockByNumber: 6,
+      eth_getCode: f.c.runtimes.length + f.c.tokens.length + f.c.companions.length,
+      eth_call: 39, eth_getStorageAt: f.c.factoryStorage.length });
+    expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+    expect(f.signer.estimateGas).not.toHaveBeenCalled();
+  });
   it('uses selected native Core for the real wallet capability funding reads and unsigned approval',async()=>{
     const f=await fixture('cheap-d06'), capability=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-d06'}as never);
     const state=await capability.readCurrentTokenFunding(0);

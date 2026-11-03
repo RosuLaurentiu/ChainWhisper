@@ -39,7 +39,6 @@ export type DirectTradeV2DeploymentConfig =
       finalityLagBlocks: bigint;
       rpcUrl: string;
       fingerprint: string;
-      retainedManifests?: readonly DirectTradeV2Manifest[];
       actionAdmission?: CurrentP2PDirectAdmission;
     }>;
 
@@ -152,8 +151,7 @@ export const resolveDirectTradeV2DeploymentConfig = (
       return Object.freeze({ status: 'invalid', error: 'Direct Trade V2 testnet candidate is invalid.' });
     }
     const manifest = catalog.deployments['direct-v2'].manifest;
-    const retained = catalog.preparedP2p?.retainedDeployments['direct-v2'].manifest;
-    if (manifest.protocol !== 'direct-v2' || (retained && retained.protocol !== 'direct-v2')) {
+    if (manifest.protocol !== 'direct-v2') {
       return Object.freeze({ status: 'invalid', error: 'Direct Trade V2 deployment protocol is invalid.' });
     }
     return Object.freeze({
@@ -162,9 +160,7 @@ export const resolveDirectTradeV2DeploymentConfig = (
       finalityLagBlocks: catalog.finalityLagBlocks,
       rpcUrl: catalog.rpcUrl,
       fingerprint: `${catalog.fingerprint}:direct-trade-v2`,
-      ...(catalog.preparedP2p ? { actionAdmission: catalog.preparedP2p.directAdmission } : {}),
-      ...(retained && retained.contractAddress !== manifest.contractAddress
-        ? { retainedManifests: Object.freeze([retained as DirectTradeV2Manifest]) } : {})
+      ...(catalog.preparedP2p ? { actionAdmission: catalog.preparedP2p.directAdmission } : {})
     });
   }
   try {
@@ -181,7 +177,7 @@ export const DIRECT_TRADE_V2_DEPLOYMENT_CONFIG =
   resolveDirectTradeV2DeploymentConfig(import.meta.env, CHAINWHISPER_TESTNET_CANDIDATE_CONFIG, OTC_V2_DEPLOYMENT_CATALOG);
 
 export const DIRECT_TRADE_V2_SUPPORTED_CONTRACTS = DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.status === 'active'
-  ? Object.freeze([DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.manifest.contractAddress, ...(DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.retainedManifests ?? []).map(item => item.contractAddress)]) : undefined;
+  ? Object.freeze([DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.manifest.contractAddress]) : undefined;
 
 export const isSupportedDirectTradeV2Escrow = (address: string, contracts?: readonly string[], single?: string): boolean =>
-  contracts ? contracts.some(value => value.toLowerCase() === address.toLowerCase()) : !single || single.toLowerCase() === address.toLowerCase();
+  contracts ? contracts.some(value => value.toLowerCase() === address.toLowerCase()) : Boolean(single && single.toLowerCase() === address.toLowerCase());

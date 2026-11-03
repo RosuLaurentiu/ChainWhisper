@@ -119,12 +119,20 @@ function fixture(pairIndex = 0, wallet = owner) {
 afterEach(() => { hooks.states = []; hooks.refs = []; hooks.allowNative = false; vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('prepared Pool top-up money flow', () => {
-  it('keeps the real App hold before wallet access, confirmation, preparation or send', async () => {
+  it('routes current browser top-up through its capability and keeps other candidate holds', async () => {
     const f = fixture(); f.enter(); f.change(`${f.pair.tokens[0].label} top-up maximum`, '0.5');
     f.change(`${f.pair.tokens[1].label} top-up maximum`, '0.5'); await f.click('Review top-up preview');
-    if (key === 'cheap-history') expect(text(f.render())).toContain('App signing hold remains active');
-    else expect(text(f.render())).toContain('native App submission admission is absent');
-    for (const mock of [f.getFunding, f.getSender, f.getPositions, f.request, hooks.confirm, f.preparePoolTopUp, f.submitPreview]) expect(mock).not.toHaveBeenCalled();
+    if (key === 'cheap-history') {
+      expect(f.getSender).toHaveBeenCalledOnce();expect(f.preparePoolTopUp).toHaveBeenCalledOnce();expect(f.submitPreview).toHaveBeenCalledOnce();
+    } else {
+      expect(text(f.render())).toContain('native App submission admission is absent');
+      for (const mock of [f.getFunding, f.getSender, f.getPositions, f.request, hooks.confirm, f.preparePoolTopUp, f.submitPreview]) expect(mock).not.toHaveBeenCalled();
+    }
+  });
+  it('stops a rejected browser capability before reads, private preparation, confirmation or send',async()=>{
+    hooks.allowNative=true;const f=fixture();f.enter();f.getSender.mockRejectedValue(new Error('Wallet session revoked'));
+    await f.click('Review top-up preview');expect(text(f.render())).toContain('Wallet session revoked');
+    expect(f.getSender).toHaveBeenCalledOnce();for(const mock of [f.getFunding,f.getPositions,f.request,hooks.confirm,f.preparePoolTopUp,f.submitPreview])expect(mock).not.toHaveBeenCalled();
   });
   it.each([0, 1, 2, 3, 4, 5])('binds pair %i six-decimal budgets, owner proof and default 0.5 percent tolerance', async index => {
     const f = fixture(index); hooks.allowNative = true;

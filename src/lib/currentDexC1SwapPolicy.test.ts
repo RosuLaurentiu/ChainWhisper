@@ -1,3 +1,4 @@
+const browserContexts = vi.hoisted(() => new WeakMap<object,{owner:string;guard:()=>void}>());
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +7,8 @@ vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
   const actual = await importOriginal<typeof import('./currentDexOwnerBetaPolicy')>();
   return { ...actual, isCurrentOwnerBeta: (graph: string, owner: string) => beta.active && graph === actual.CURRENT_OWNER_BETA.graph && owner.toLowerCase() === actual.CURRENT_OWNER_BETA.owner };
 });
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability',()=>({hasCurrentDexBrowserSigner:(signer:object|undefined,owner:string)=>{const row=signer&&browserContexts.get(signer);if(!row||row.owner!==owner.toLowerCase())return false;row.guard();return true;}}));
+const bindCurrentDexBrowserSigner=(signer:object,owner:string,_chain:bigint,guard:()=>void)=>{browserContexts.set(signer,{owner:owner.toLowerCase(),guard});};
 afterEach(() => { beta.active = false; });
 import { STAGED_D06_DEX_CANDIDATE as d06, STAGED_NATIVE_DEX_CANDIDATE as historical,
   assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
@@ -273,27 +276,42 @@ describe('d06 phase ceilings and separate authority', () => {
 });
 
 describe('Decision-030 selected owner terms', () => {
+  it('admits any actual browser wallet for current Pool, Limit and four-token funding while preserving engineering holds',()=>{
+    const owner=`0x${'cd'.repeat(20)}`,signer={};bindCurrentDexBrowserSigner(signer,owner,7082400n,()=>{});
+    const pool={owner,action:'create' as const,budgets:[100_000_000n,100_000_000n] as const,classId:6n,tolerance:[1n,200n] as const};
+    expect(()=>assertCurrentAppPoolAuthority(history.graph,pool,signer)).not.toThrow();
+    expect(()=>assertCurrentAppPoolAuthority(history.graph,pool)).toThrow();
+    expect(()=>assertCurrentAppPoolAuthority(history.graph,{owner,action:'snapshot',positionId:1n},signer)).not.toThrow();
+    expect(()=>assertCurrentAppPoolAllowanceCleanupAuthority(history.graph,owner,signer)).not.toThrow();
+    expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner,action:'create',amount:100_000_000n},signer)).not.toThrow();
+    expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner,action:'create',amount:100_000_000n})).toThrow();
+    for(const token of history.tokenMetadata)for(const action of ['initial','refill'])expect(()=>assertCurrentAppSharedFundingAuthority(history.graph,owner,token.address,action,signer)).not.toThrow();
+    expect(()=>assertCurrentAppSharedFundingAuthority(history.graph,owner,history.core,'initial',signer)).toThrow();
+    expect(()=>assertCurrentAppPoolAuthority(current.graph,pool,signer)).toThrow();
+  });
   it('admits all six direct pairs and modes above the former trial amount cap', () => {
     beta.active = true;
+    const signer={};bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
     for (const pair of history.pairs) for (const tokens of [pair.tokens, [...pair.tokens].reverse()]) for (const profile of ['fast-pool','cheap-async']) {
       const scope = { principal: CURRENT_APP_SWAP_OWNER, destination: CURRENT_APP_SWAP_OWNER, inputToken: tokens[0], outputToken: tokens[1], maximumInput: 100_000_000n, profile };
-      expect(() => assertCurrentD06AppAuthority(history.graph,scope)).not.toThrow();
+      expect(() => assertCurrentD06AppAuthority(history.graph,scope,signer)).not.toThrow();
       for (const change of [{ maximumInput:1n<<256n },{ maximumInput:0n },{ inputToken:scope.outputToken },{ destination:history.core },{ principal:history.core },{ inputToken:history.core },{ profile:'intermediate' }]) {
-        expect(() => assertCurrentD06AppAuthority(history.graph,{...scope,...change})).toThrow();
+        expect(() => assertCurrentD06AppAuthority(history.graph,{...scope,...change},signer)).toThrow();
       }
-      expect(() => assertCurrentD06AppAuthority(current.graph,scope)).toThrow();
+      expect(() => assertCurrentD06AppAuthority(current.graph,scope,signer)).toThrow();
     }
   });
   it('removes owner Pool/Limit trial amount caps while retaining other actor limits', () => {
     beta.active = true;
+    const signer={};bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
     const pool = { owner:CURRENT_APP_SWAP_OWNER, action:'create' as const, budgets:[100_000_000n,100_000_000n] as const, classId:0n, tolerance:[1n,200n] as const };
-    expect(() => assertCurrentAppPoolAuthority(history.graph,pool)).not.toThrow();
-    expect(() => assertCurrentAppPoolAuthority(history.graph,{...pool,budgets:[1n<<256n,1n]})).toThrow();
+    expect(() => assertCurrentAppPoolAuthority(history.graph,pool,signer)).not.toThrow();
+    expect(() => assertCurrentAppPoolAuthority(history.graph,{...pool,budgets:[1n<<256n,1n]},signer)).toThrow();
     expect(() => assertCurrentAppPoolAuthority(history.graph,{...pool,owner:CURRENT_APP_POOL_ENGINEERING_OWNERS[0]})).toThrow();
     expect(() => assertCurrentAppPoolAuthority(history.graph,{owner:CURRENT_APP_SWAP_OWNER,action:'transfer',positionId:50n,recipient:history.core})).toThrow();
     for (const action of ['create','topup','approve-create','approve-topup'] as const) {
-      expect(() => assertCurrentAppLimitAuthority(history.graph,{owner:CURRENT_APP_SWAP_OWNER,action,amount:100_000_000n})).not.toThrow();
-      expect(() => assertCurrentAppLimitAuthority(history.graph,{owner:CURRENT_APP_SWAP_OWNER,action,amount:1n<<256n})).toThrow();
+      expect(() => assertCurrentAppLimitAuthority(history.graph,{owner:CURRENT_APP_SWAP_OWNER,action,amount:100_000_000n},signer)).not.toThrow();
+      expect(() => assertCurrentAppLimitAuthority(history.graph,{owner:CURRENT_APP_SWAP_OWNER,action,amount:1n<<256n},signer)).toThrow();
     }
   });
 });

@@ -3,7 +3,7 @@ import { formatUnits } from '@coti-io/coti-ethers';
 import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../tests/fixtures/history.fixture';
 import { readCurrentDexDailyPrice } from './currentDexDailyPrice';
 import { currentDexMarketReference, isVerifiedCurrentDexMarketReference } from './currentDexMarketReference';
-import { currentDexPriceImpact } from './currentDexPriceImpact';
+import { currentDexPriceImpact, currentDexQuoteAveragePrice } from './currentDexPriceImpact';
 import type { TradeActionConfirmModel } from './tradeActionConfirm';
 const now = HISTORY_FIXTURE_DAY * 86400n + 100n;
 async function fixture(mode: Parameters<typeof makeHistoryFixture>[0] = 'empty', reverse = false) {
@@ -70,5 +70,42 @@ describe('current net Quote price impact display', () => {
   it('has no pre-Quote impact or inactive reference fallback', async () => {
     const f = await fixture(); expect(currentDexPriceImpact({ ...f, inputIndex: 0, model: null, now })).toBe('Unavailable');
     expect(currentDexPriceImpact({ ...f, reference: undefined, inputIndex: 0, model: model(f.pair, 0, '10', '18'), now })).toBe('Unavailable');
+  });
+});
+
+describe('current Quote average price display', () => {
+  it.each([
+    [0, false, '10', '18', '1.8 B per A (rounded down)'],
+    [1, false, '10', '18', '0.55555555 B per A (rounded down)'],
+    [0, true, '10', '18', '0.55555555 A per B (rounded down)'],
+    [1, true, '10', '18', '1.8 A per B (rounded down)'],
+  ] as const)('formats input side %i, inverted %s', (inputIndex, priceDisplayInverted, input, output, expected) => {
+    const pair = ['A', 'B'] as const;
+    expect(currentDexQuoteAveragePrice({ model: model(pair, inputIndex, input, output), pair, inputIndex, priceDisplayInverted })).toBe(expected);
+  });
+  it('uses normalized atom amounts and exact integer division for large values', () => {
+    const pair = ['A', 'B'] as const;
+    const input = 1n << 250n;
+    expect(currentDexQuoteAveragePrice({ model: model(pair, 0, formatUnits(input, 18), formatUnits(input * 3n, 18)), pair, inputIndex: 0, priceDisplayInverted: false }))
+      .toBe('3.0 B per A (rounded down)');
+  });
+  it('normalizes decimal text with different fractional lengths', () => {
+    const pair = ['A', 'B'] as const;
+    expect(currentDexQuoteAveragePrice({ model: model(pair, 0, '1.25', '2.5'), pair, inputIndex: 0, priceDisplayInverted: false }))
+      .toBe('2.0 B per A (rounded down)');
+  });
+  it.each(['0', '-1', '1e2', '01.0', '1.0000000000000000001', formatUnits(1n << 256n, 18)])('rejects invalid or no-fill amount %s', input => {
+    const pair = ['A', 'B'] as const;
+    expect(currentDexQuoteAveragePrice({ model: model(pair, 0, input, '1'), pair, inputIndex: 0, priceDisplayInverted: false })).toBe('Unavailable');
+  });
+  it('rejects missing, duplicate, mismatched and untrusted-shaped rows', () => {
+    const pair = ['A', 'B'] as const, m = model(pair, 0, '10', '18');
+    for (const edited of [{ ...m, summaryRows: [] }, { ...m, summaryRows: [...m.summaryRows, m.summaryRows[0]] },
+      model(['X', 'B'], 0, '10', '18'), { ...m, summaryRows: [{ label: 'You pay', value: '10 A extra' }, m.summaryRows[1]] }]) {
+      expect(currentDexQuoteAveragePrice({ model: edited, pair, inputIndex: 0, priceDisplayInverted: false })).toBe('Unavailable');
+    }
+  });
+  it('returns unavailable for a null model', () => {
+    expect(currentDexQuoteAveragePrice({ model: null, pair: ['A', 'B'], inputIndex: 0, priceDisplayInverted: false })).toBe('Unavailable');
   });
 });

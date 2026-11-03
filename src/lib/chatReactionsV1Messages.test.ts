@@ -113,6 +113,19 @@ describe('ChatReactionsV1 message projection', () => {
     expect(finalized.size).toBe(0);
   });
 
+  it('requires a canonical birth block for reads while keeping writes independent of read metadata', () => {
+    for (const blockNumber of [undefined, '0', '0100', '-1', (2n ** 64n).toString()]) {
+      const invalid = message();
+      invalid.directV2 = { ...invalid.directV2!, blockNumber: blockNumber as string };
+      expect(() => getChatReactionSourceForMessage(invalid)).toThrow('canonical block number');
+      expect(getChatReactionWriteSourceForMessage(invalid)).not.toBeNull();
+    }
+    expect(getChatReactionSourceForMessage(message())?.blockNumber).toBe('100');
+    const conflicting = message();
+    conflicting.directV2 = { ...conflicting.directV2!, blockNumber: '101' };
+    expect(() => collectChatReactionSources([message(), conflicting])).toThrow('conflicting');
+  });
+
   it('deduplicates identical message sources and rejects reassigned stable IDs', () => {
     expect(collectChatReactionSources([message(), { ...message(), id: 'duplicate' }])).toHaveLength(1);
     const conflicting = message();

@@ -7,6 +7,31 @@ import type {
 } from '../../../lib/appShared';
 import { isWalletAddress } from '../../../lib/appShared';
 
+export type DirectChatDiscoveryView = {
+  runtime: object;
+  scope: object;
+  state: 'loading' | 'partial' | 'ready' | 'error';
+  refreshing: boolean;
+  hasOlder?: boolean;
+  error?: string;
+};
+
+export const selectDirectChatDiscoveryView = ({ runtime, scope, privacyReady, view, setupError }: {
+  runtime: { enabled: boolean; error?: string } | null;
+  scope: object;
+  privacyReady: boolean;
+  view: DirectChatDiscoveryView | null;
+  setupError?: string;
+}): Pick<DirectChatDiscoveryView, 'state' | 'refreshing' | 'error' | 'hasOlder'> | undefined => {
+  if (!privacyReady) return undefined;
+  if (setupError) return { state: 'error', refreshing: false, error: setupError };
+  if (runtime && !runtime.enabled) {
+    return { state: 'error', refreshing: false, error: runtime.error ?? 'Direct Chat is unavailable.' };
+  }
+  if (runtime && view?.runtime === runtime && view.scope === scope) return view;
+  return { state: 'loading', refreshing: false };
+};
+
 type UseConversationSidebarStateArgs = {
   contacts: Contact[];
   groupInvites: GroupInvite[];

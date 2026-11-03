@@ -6,7 +6,6 @@ const productionWriterPath = fileURLToPath(new URL('./tradeActions.ts', import.m
 const activeTradingHooks = [
   '../features/trading/hooks/useP2PTradeActions.ts',
   '../features/trading/hooks/useP2PTradeComposerActions.ts',
-  '../features/trading/hooks/useP2PRecurringOrderActions.ts'
 ];
 
 describe('legacy OTC write retirement', () => {

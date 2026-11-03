@@ -1,7 +1,7 @@
+import { isCurrentDexBrowserSigner } from './currentDexBrowserPolicy';
 import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './currentDexHistoryCandidate';
-import { CURRENT_OWNER_BETA, isCurrentOwnerBeta } from './currentDexOwnerBetaPolicy';
 
 // Candidate-specific ceilings, not permission or a claim of general native fit.
 // Fast: source-bound 73ab service fixture (75M/75M). Async: d06 coexistence.
@@ -122,8 +122,8 @@ export const assertCurrentAppInitialClaimAuthority = (graph:string,owner:string,
 };
 // Owner authorized four-token funding on 2026-10-17; token policy still bounds each credit.
 // This grants no approval or DEX phase and does not renew consumed swap ledgers.
-export const assertCurrentAppSharedFundingAuthority = (graph: string, owner: string, token: string, action: string) => {
-  if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph || !CURRENT_HISTORY_SWAP_OWNERS.includes(owner.toLowerCase()) ||
+export const assertCurrentAppSharedFundingAuthority = (graph: string, owner: string, token: string, action: string, signer?: object) => {
+  if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph || !isCurrentDexBrowserSigner(signer,graph,owner) && !CURRENT_HISTORY_SWAP_OWNERS.includes(owner.toLowerCase()) ||
       !STAGED_SHARED_HISTORY_DEX_CANDIDATE.tokenMetadata.some(asset => asset.address === token.toLowerCase()) ||
       action !== 'initial' && action !== 'refill') throw new Error('Beta token signing is held: this funding action has no current App admission.');
 };
@@ -134,8 +134,8 @@ export const CURRENT_APP_POOL_ENGINEERING_OWNERS = Object.freeze([
   '0xdc9f6af38d2cab7b298bbcd807e521ef71ef5d91',
   '0x23abde1d22019d52852d6845c9444326dde1d99e'
 ]);
-export const assertCurrentAppPoolAllowanceCleanupAuthority = (graph: string, owner: string) => {
-  if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph || !CURRENT_APP_POOL_ENGINEERING_OWNERS.includes(owner.toLowerCase())) {
+export const assertCurrentAppPoolAllowanceCleanupAuthority = (graph: string, owner: string, signer?: object) => {
+  if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph || !isCurrentDexBrowserSigner(signer,graph,owner) && !CURRENT_APP_POOL_ENGINEERING_OWNERS.includes(owner.toLowerCase())) {
     throw new Error('Shared-history DEX App signing hold remains active: Pool allowance cleanup owner or candidate is outside engineering scope.');
   }
 };
@@ -143,29 +143,31 @@ export type CurrentAppPoolScope = Readonly<{ owner: string;
   action: 'create' | 'top-up' | 'approve-create' | 'approve-top-up' | 'clear-create' | 'clear-top-up' | 'snapshot' | 'withdraw' | 'close' | 'transfer' | 'activate' | 'resume';
   positionId?: bigint; budgets?: readonly [bigint, bigint]; classId?: bigint; tolerance?: readonly [bigint, bigint]; recipient?: string | null }>;
 // Existing Testnet actors only; the shared sender also requires authentic issuer objects.
-export const assertCurrentAppPoolAuthority = (graph: string, scope: CurrentAppPoolScope) => {
+export const assertCurrentAppPoolAuthority = (graph: string, scope: CurrentAppPoolScope, signer?: object) => {
   if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph) return assertCurrentD06AppAuthority(graph);
   const owner = scope.owner.toLowerCase(), funded = ['create','top-up','approve-create','approve-top-up','clear-create','clear-top-up'].includes(scope.action);
   const creation = ['create','approve-create','clear-create'].includes(scope.action);
-  const maximum = isCurrentOwnerBeta(graph, owner) ? (1n << 256n) - 1n : 1_000_000n;
-  if (!CURRENT_APP_POOL_ENGINEERING_OWNERS.includes(owner) ||
+  const browser = isCurrentDexBrowserSigner(signer,graph,owner);
+  const maximum = browser ? (1n << 256n) - 1n : 1_000_000n;
+  if (!browser && !CURRENT_APP_POOL_ENGINEERING_OWNERS.includes(owner) ||
       !['create','top-up','approve-create','approve-top-up','clear-create','clear-top-up','snapshot','withdraw','close','transfer','activate','resume'].includes(scope.action) ||
-      (creation ? scope.positionId !== undefined : typeof scope.positionId !== 'bigint' || scope.positionId < 8n) ||
+      (creation ? scope.positionId !== undefined : typeof scope.positionId !== 'bigint' || scope.positionId < (browser ? 1n : 8n)) ||
       (funded ? !scope.budgets || scope.budgets.length !== 2 || scope.budgets.some(value => typeof value !== 'bigint' || value <= 0n || value > maximum) ||
         (creation || scope.classId !== undefined) && (typeof scope.classId !== 'bigint' || scope.classId < 0n || scope.classId > 6n) || !scope.tolerance || scope.tolerance.length !== 2 ||
         scope.tolerance.some(value => typeof value !== 'bigint') || scope.tolerance[0] < 0n || scope.tolerance[1] <= 0n || scope.tolerance[0] * 100n > scope.tolerance[1]
         : scope.budgets !== undefined || scope.classId !== undefined || scope.tolerance !== undefined) ||
-      (scope.action === 'transfer' ? !scope.recipient || !CURRENT_APP_POOL_ENGINEERING_OWNERS.includes(scope.recipient.toLowerCase()) || scope.recipient.toLowerCase() === owner
+      (scope.action === 'transfer' ? !scope.recipient || (browser ? !/^0x[0-9a-f]{40}$/i.test(scope.recipient) || BigInt(scope.recipient) === 0n : !CURRENT_APP_POOL_ENGINEERING_OWNERS.includes(scope.recipient.toLowerCase())) || scope.recipient.toLowerCase() === owner
         : scope.recipient != null)) {
     throw new Error('Shared-history DEX App signing hold remains active: Pool owner, action or terms are outside engineering scope.');
   }
 };
 // Owner authorized the current wallet's Limit journey on 2026-10-18; other trial ledgers stay separate.
-export const assertCurrentAppLimitAuthority = (graph: string, scope: CurrentAppLimitScope) => {
+export const assertCurrentAppLimitAuthority = (graph: string, scope: CurrentAppLimitScope, signer?: object) => {
   if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph) return assertCurrentD06AppAuthority(graph);
   const funding = ['create', 'topup', 'approve-create', 'approve-topup'].includes(scope.action);
-  const maximum = isCurrentOwnerBeta(graph, scope.owner) ? (1n << 256n) - 1n : 1_000_000n;
-  if (![CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.owner, CURRENT_APP_SWAP_OWNER].includes(scope.owner.toLowerCase()) ||
+  const browser = isCurrentDexBrowserSigner(signer,graph,scope.owner);
+  const maximum = browser ? (1n << 256n) - 1n : 1_000_000n;
+  if (!browser && ![CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.owner, CURRENT_APP_SWAP_OWNER].includes(scope.owner.toLowerCase()) ||
       !['create', 'snapshot', 'refresh', 'claim', 'pause', 'resume', 'close', 'topup', 'reprice', 'approve-create', 'approve-topup'].includes(scope.action) ||
       (funding ? typeof scope.amount !== 'bigint' || scope.amount <= 0n || scope.amount > maximum : scope.amount !== undefined)) {
     throw new Error('Shared-history DEX App signing hold remains active: Limit owner, action or amount is outside engineering scope.');
@@ -207,9 +209,9 @@ export const assertCurrentAppSigningCount = (graph:string,owner:string,phase:str
     (replacement?(limit===CURRENT_APP_FOURTH_TRIAL.maximumSigningStarts?a.maximumQuotes:limit===CURRENT_APP_FURTHER_TRIAL.maximumSigningStarts?3:2):1):undefined;
   if(maximum!==undefined&&charges.filter(c=>c.phase===phase).length>=maximum)throw new Error('Current App signing scope is already reserved. Reconcile the original action.');
 };
-export const assertCurrentD06AppAuthority = (graph: string, scope?: CurrentAppSwapScope): void => {
+export const assertCurrentD06AppAuthority = (graph: string, scope?: CurrentAppSwapScope, signer?: object): void => {
   if (graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph) {
-    if (scope && isCurrentOwnerBeta(graph, scope.principal) && scope.destination.toLowerCase() === CURRENT_OWNER_BETA.owner &&
+    if (scope && isCurrentDexBrowserSigner(signer,graph,scope.principal) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
         ['fast-pool','cheap-async'].includes(scope.profile) && scope.maximumInput > 0n && scope.maximumInput < 1n << 256n &&
         STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.some(pair => pair.tokens.some(token => token === scope.inputToken.toLowerCase()) &&
           pair.tokens.some(token => token === scope.outputToken.toLowerCase()) && scope.inputToken.toLowerCase() !== scope.outputToken.toLowerCase())) return;

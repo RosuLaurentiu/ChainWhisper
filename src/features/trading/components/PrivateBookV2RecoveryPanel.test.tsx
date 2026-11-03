@@ -1,6 +1,10 @@
-import { isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react';
+import { createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import PrivateBookV2RecoveryPanel from './PrivateBookV2RecoveryPanel';
+import LinkTradeV2CreationRecoveryPanel from './LinkTradeV2CreationRecoveryPanel';
+import CounterTradeV2Controls from './CounterTradeV2Controls';
+import TradeBalanceDisclosureV2 from './TradeBalanceDisclosureV2';
+import { PendingTradeRecoveryDisclosure } from './P2PTradingPage.helpers';
 
 // Same callback-level component test method as the existing owner operation tests.
 // Chain, review and wallet-flow boundaries are local mocks; no browser or RPC runs.
@@ -11,6 +15,7 @@ const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, memoIndex: 0, effectInd
 const review = vi.hoisted(() => ({ build: vi.fn(), execute: vi.fn() }));
 vi.mock('../../../lib/privateBookV2Review', () => ({ buildPrivateBookV2Review: review.build, executePrivateBookV2Review: review.execute }));
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
+  useCallback: <T,>(callback: T) => callback,
   useState: (initial: unknown) => { const i = hooks.index++; if (!(i in hooks.states)) hooks.states[i] = initial;
     return [hooks.states[i], (value: unknown) => { hooks.states[i] = typeof value === 'function' ? value(hooks.states[i]) : value; }]; },
   useRef: (initial: unknown) => { const i = hooks.refIndex++; return hooks.refs[i] ?? (hooks.refs[i] = { current: initial }); },
@@ -24,7 +29,8 @@ vi.mock('react', async original => ({ ...await original<typeof import('react')>(
     });
   }
 }));
-type NodeProps = { children?: ReactNode; disabled?: boolean; onClick?: () => void; role?: string };
+type NodeProps = { children?: ReactNode; disabled?: boolean; onClick?: () => void; role?: string;
+  onToggle?: (event: { currentTarget: { open: boolean } }) => void };
 const nodes = (node: ReactNode): ReactElement<NodeProps>[] => Array.isArray(node) ? node.flatMap(nodes)
   : isValidElement<NodeProps>(node) ? [node, ...nodes(node.props.children)] : [];
 const text = (node: ReactNode): string => Array.isArray(node) ? node.map(text).join('')
@@ -56,6 +62,69 @@ const fixture = (state: 'submitted' | 'confirmed' | 'unsent' | 'rejected' | 'fai
 afterEach(() => {
   hooks.effects.forEach(effect => effect.cleanup?.());
   hooks.states = []; hooks.refs = []; hooks.memos = []; hooks.effects = []; hooks.scheduled = []; vi.clearAllMocks();
+});
+
+describe('on-demand current-trade recovery', () => {
+  const disclosureFixture = () => {
+    const book = fixture();
+    const link = { ownerAddress: owner, readCreation: vi.fn(async () => null) };
+    const counter = { ownerAddress: owner, readRecovery: vi.fn(async () => null) };
+    const balances = Array.from({ length: 4 }, () => ({ ownerAddress: owner, available: false, pending: vi.fn(async () => null) }));
+    const common = { ...book.props, runtime: undefined };
+    const children = [
+      createElement(PrivateBookV2RecoveryPanel, { ...book.props, key: 'book' }),
+      createElement(LinkTradeV2CreationRecoveryPanel, { ...common, runtime: link, onCreated: vi.fn(), key: 'link' } as never),
+      createElement(CounterTradeV2Controls, { ...common, runtime: counter, key: 'counter' } as never),
+      ...balances.map((runtime, index) => createElement(TradeBalanceDisclosureV2, { ...common, runtime, key: `balance-${index}` } as never))
+    ];
+    const reads = [book.book.readRecovery, link.readCreation, counter.readRecovery, ...balances.map(runtime => runtime.pending)];
+    const render = () => {
+      hooks.index = hooks.refIndex = hooks.memoIndex = hooks.effectIndex = 0;
+      const tree = PendingTradeRecoveryDisclosure({ children });
+      const mounted = nodes(tree).filter(node => typeof node.type === 'function');
+      const panels = mounted.map(node => (node.type as (props: unknown) => ReactNode)(node.props));
+      hooks.scheduled.splice(0).forEach(effect => effect());
+      return { tree, mounted, panels };
+    };
+    const toggle = (open: boolean) => {
+      render().tree.props.onToggle!({ currentTarget: { open } } as never);
+      return render();
+    };
+    return { book, children, reads, render, toggle };
+  };
+
+  it('mounts none of the seven recovery readers until first opening, then loads each once', async () => {
+    const f = disclosureFixture();
+    expect(f.render().mounted).toHaveLength(0);
+    expect(text(f.render().tree)).toContain('Recover pending trades');
+    for (const read of f.reads) expect(read).not.toHaveBeenCalled();
+    expect(f.toggle(true).mounted).toHaveLength(7);
+    await vi.waitFor(() => { for (const read of f.reads) expect(read).toHaveBeenCalledOnce(); });
+    expect(f.toggle(false).mounted).toHaveLength(7);
+    f.toggle(true);
+    for (const read of f.reads) expect(read).toHaveBeenCalledOnce();
+  });
+
+  it('keeps held recovery state and its readers mounted when folded without reissuing the action', async () => {
+    const f = disclosureFixture();
+    f.toggle(true);
+    await vi.waitFor(() => expect(f.book.book.readRecovery).toHaveBeenCalledOnce());
+    let finish!: (result: unknown) => void;
+    const held = new Promise<unknown>(resolve => { finish = resolve; });
+    f.book.book.reconcile.mockImplementationOnce(() => held);
+    const check = nodes(f.render().panels).find(node => node.type === 'button' && text(node.props.children) === 'Check status')!;
+    check.props.onClick!();
+    await vi.waitFor(() => expect(f.book.book.reconcile).toHaveBeenCalledOnce());
+    expect(f.book.props.onBusyChange).toHaveBeenLastCalledWith(true);
+    expect(f.toggle(false).mounted.map(node => node.type)).toEqual(f.children.map(node => node.type));
+    expect(f.book.props.onBusyChange).toHaveBeenLastCalledWith(true);
+    for (const read of f.reads) expect(read).toHaveBeenCalledOnce();
+    finish(null);
+    await vi.waitFor(() => expect(f.book.props.onBusyChange).toHaveBeenLastCalledWith(false));
+    expect(text(f.render().panels)).toContain('Still pending. No transaction was sent.');
+    expect(f.book.book.reconcile).toHaveBeenCalledOnce();
+    expect(f.book.book.execute).not.toHaveBeenCalled();
+  });
 });
 
 describe('Book recovery owner controls with local runtime mocks', () => {

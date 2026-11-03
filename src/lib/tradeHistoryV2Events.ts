@@ -182,6 +182,9 @@ export type ParsedDirectTradeV2Status = Readonly<{
   log: TradeHistoryV2LogRef;
 }>;
 
+export type DirectTradeV2AcceptanceTerms = Pick<ParsedDirectTradeV2Opened,
+  'protocol' | 'chainId' | 'contractAddress' | 'orderId' | 'maker' | 'taker' | 'amountMode' | 'publicAmounts'>;
+
 export type ParsedTradeHistoryV2Lifecycle = Readonly<{
   kind: 'lifecycle';
   lifecycleKind: 'opened' | 'edited' | 'replacement' | 'status' | 'settlement';
@@ -787,7 +790,7 @@ export const materializeDirectTradeV2Acceptance = ({
   recipient,
   decryptedAmounts
 }: {
-  opened: ParsedDirectTradeV2Opened;
+  opened: DirectTradeV2AcceptanceTerms;
   status: ParsedDirectTradeV2Status;
   recipient?: string;
   decryptedAmounts?: TradeHistoryV2Amounts;

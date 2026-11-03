@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getProviderErrorMessage,
+  isAppModuleLoadError,
   isBrowserWalletSessionChangedError,
   isProviderRpcTransportUnavailable,
   isProviderRequestAlreadyPending,
@@ -30,6 +31,23 @@ describe('provider error helpers', () => {
 
     expect(isProviderRpcTransportUnavailable(transportError)).toBe(true);
     expect(getProviderErrorMessage(transportError, 'Failed.')).toBe(PROVIDER_RPC_UNAVAILABLE_MESSAGE);
+  });
+
+  it('distinguishes direct and nested app module failures from RPC failures', () => {
+    const url = 'http://localhost:5173/assets/GroupChatPanel-cERemsCR.js?token=private';
+    const failure = `Failed to fetch dynamically imported module: ${url}`;
+    const errors = [new TypeError(failure), { message: 'could not coalesce error', data: { cause: { message: failure } } }];
+
+    for (const error of errors) {
+      expect(isAppModuleLoadError(error)).toBe(true);
+      expect(isProviderRpcTransportUnavailable(error)).toBe(false);
+      const message = getProviderErrorMessage(error, 'payload={ "jsonrpc": "2.0" }');
+      expect(message).toBe('The app could not load a required file. Reload the app and try again.');
+      expect(message).not.toContain(url);
+      expect(message).not.toContain('jsonrpc');
+    }
+    expect(isAppModuleLoadError(new Error('Failed to fetch'))).toBe(false);
+    expect(isProviderRpcTransportUnavailable(new Error('Failed to fetch'))).toBe(true);
   });
 
   it('turns a nested lease mismatch into a concise non-sensitive wallet diagnostic', () => {

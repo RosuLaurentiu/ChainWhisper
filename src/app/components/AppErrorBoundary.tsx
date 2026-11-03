@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { getProviderErrorMessage } from '../../lib/appShared/core';
+import { getProviderErrorMessage, isAppModuleLoadError } from '../../lib/appShared/core';
 
 type Props = {
   children: ReactNode;
@@ -10,13 +10,15 @@ type Props = {
 
 type State = {
   hasError: boolean;
+  appFileMessage: string;
 };
 
 export default class AppErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+  state: State = { hasError: false, appFileMessage: '' };
 
-  static getDerivedStateFromError(): State {
-    return { hasError: true };
+  static getDerivedStateFromError(error: unknown): State {
+    return { hasError: true, appFileMessage: isAppModuleLoadError(error)
+      ? getProviderErrorMessage(error, 'An App file could not be loaded.') : '' };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -35,6 +37,19 @@ export default class AppErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      if (this.state.appFileMessage) {
+        return (
+          <div className="chat-placeholder" role="alert">
+            <strong>{this.state.appFileMessage}</strong>
+            <div className="app-error-boundary-actions">
+              <button type="button" onClick={() => window.location.reload()}>Reload App</button>
+              {this.props.onOpenHelp ? (
+                <button type="button" className="app-help-context-link" onClick={this.props.onOpenHelp}>Get help</button>
+              ) : null}
+            </div>
+          </div>
+        );
+      }
       return (
         this.props.fallback ?? (
           <div className="chat-placeholder" role="alert">

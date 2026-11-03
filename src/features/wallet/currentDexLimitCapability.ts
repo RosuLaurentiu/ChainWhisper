@@ -1,6 +1,8 @@
 import { toBeHex, Interface } from '@coti-io/coti-ethers';
 import { type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { createDexV2ReadCapability, readCurrentSharedPoolDexGraph, readPreparedDexMarketRegistry } from '../../lib/dexV2Chain';
+import { sendCotiScopedRead } from '../../lib/appShared/core';
+import { createBrowserWalletRuntimeReadGuard } from '../../lib/browserWalletRuntimeScope';
 import { currentLimitAbiForCandidate,resolveCurrentLimitScope,readCurrentLimitPositionBinding,currentLimitBindingAbi,currentLimitNftAbi,currentLimitTokens,currentLimitMappingSlot as slot,CURRENT_LIMIT_LAYOUT as layout,currentLimitContext,decodeCurrentLimitMint,
   CurrentLimitProofMismatch,readCurrentLimitOwnerState,checkCurrentLimitOwnerTransition,checkCurrentLimitOwnerValues,currentLimitOwnerMethod,decodeCurrentLimitOwnerEvent,type CurrentLimitOwnerAction } from '../../lib/currentDexLimit';
 import { decodeCurrentPoolNftTransfer } from '../../lib/currentDexPoolPosition';
@@ -38,15 +40,15 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
     const initialAes=signer.getUserOnboardInfo()?.aesKey;
     const readCapability=createDexV2ReadCapability({chainId,assertCurrent,provider:{request:({method,params})=>readProvider.send(method,params??[])}});
     const guard=async()=>{await assertCurrent();assertSnapshotCurrent();if(!initialAes?.trim()||signer.getUserOnboardInfo()?.aesKey!==initialAes)throw new Error('Unlock the same owner privacy session for Limit preparation.');};
-    const graph=async(block:{number:bigint;hash:string})=>{
+    const graph=async(block:{number:bigint;hash:string},capability=readCapability)=>{
       await guard();
       if(scope.prepared){
-        const g=await readPreparedDexMarketRegistry({capability:readCapability,candidate,blockNumber:block.number,blockHash:block.hash});await guard();
+        const g=await readPreparedDexMarketRegistry({capability,candidate,blockNumber:block.number,blockHash:block.hash});await guard();
         const market=g.markets.find(m=>m.marketId===scope.marketId);
         if(g.chainId!==chainId||g.graph!==c.graph||g.packageSha256!==c.packageSha256||!same(g.core,c.core)||g.releaseId!==c.releaseId||g.block.number!==block.number||!same(g.block.hash,block.hash)||!market||!same(market.engine,scope.engine)||market.token0!==scope.poolTokens[0]||market.token1!==scope.poolTokens[1]||!market.enabled||market.registryRevision!==g.registryRevision||market.registryRevision<=0n||market.marketRevision<=0n)throw new Error('Limit selected market registry changed.');
         return Object.freeze({registryRevision:market.registryRevision,marketRevision:market.marketRevision});
       }
-      const g=await readCurrentSharedPoolDexGraph({capability:readCapability,candidate,blockNumber:block.number,blockHash:block.hash});await guard();
+      const g=await readCurrentSharedPoolDexGraph({capability,candidate,blockNumber:block.number,blockHash:block.hash});await guard();
       if(g.chainId!==chainId||g.graph!==c.graph||g.packageSha256!==c.packageSha256||!same(g.core,c.core)||g.genesisHash!==c.genesisHash||g.block.number!==block.number||!same(g.block.hash,block.hash)||g.operationReadIdentity.runtimeHash!==c.runtimes.find(([role])=>role==='ChainWhisperDexCore')![2]||g.operationReadIdentity.releaseId!==c.releaseId)throw new Error('Limit candidate changed.');
       return Object.freeze({registryRevision:undefined,marketRevision:undefined});
     };
@@ -206,12 +208,23 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       await graph(block);await guard();
       return Object.freeze({...marketFields,positionId:id,sourceId:state.sourceId,owner:ownerAddress,context:state.context,status:state.status,closed:true,termsRevision:state.terms,ownershipRevision:state.ownership,lifecycleRevision:state.lifecycle,transactionHash:null,block,values,amounts,refreshRequired:false,readyToSign:false as const});
     };
-    return Object.freeze({prepareOwnerAction,verifyMinedTopUp,prepareFundingReview,readClosedOrder,readOwnedOrders:async()=>{
+    return Object.freeze({prepareOwnerAction,verifyMinedTopUp,prepareFundingReview,readClosedOrder,readOwnedOrders:async(assertCallerCurrent:()=>void=()=>{})=>{
       if(candidate!=='cheap-exit'&&candidate!=='cheap-history')throw new Error('Order discovery requires a supported DEX deployment.');
-      const block=await head(),inventory=await readCurrentDexOwnedLimits({candidate,owner:ownerAddress,block,rpc:(method,params)=>readProvider.send(method,[...params]),assertCurrent:guard});
-      const canonical=await readProvider.send('eth_getBlockByNumber',[`0x${block.number.toString(16)}`,false]);await guard();
+      const readScope=createBrowserWalletRuntimeReadGuard(()=>{assertCallerCurrent();assertSnapshotCurrent();});
+      const check=async()=>{readScope.assertCurrent();await guard();readScope.assertCurrent();};
+      const rpc=async(method:string,params:readonly unknown[])=>{
+        await check();const value=await sendCotiScopedRead(readProvider,readScope,method,params);await check();return value;
+      };
+      const capability=createDexV2ReadCapability({chainId,assertCurrent:check,provider:{request:({method,params})=>rpc(method,(params??[])as unknown[])}});
+      try{
+      const raw=await rpc('eth_getBlockByNumber',['latest',false])as{number:string;hash:string}|null;
+      if(!raw||!/^0x[0-9a-fA-F]{64}$/.test(raw.hash))throw new Error('Limit head is unavailable.');
+      const block=Object.freeze({number:BigInt(raw.number),hash:raw.hash});await graph(block,capability);await check();
+      const inventory=await readCurrentDexOwnedLimits({candidate,owner:ownerAddress,block,rpc,assertCurrent:check});
+      const canonical=await rpc('eth_getBlockByNumber',[`0x${block.number.toString(16)}`,false])as{number:string;hash:string}|null;await check();
       if(!canonical||BigInt(canonical.number)!==block.number||!same(canonical.hash,block.hash))throw new Error('Order inventory chain head changed. Refresh orders.');
-      await graph(block);return inventory;
+      await graph(block,capability);await check();return inventory;
+      }finally{readScope.close();}
     },prepareLimit:async(request:{graph:{number:bigint;hash:string;expectedGraph:string;expectedPackageSha256:string};intent:CurrentLimitIntent;confirm:(intent:CurrentLimitIntent)=>Promise<boolean>})=>{
       const intent=Object.freeze({...request.intent,terms:Object.freeze([...request.intent.terms]) as CurrentLimitIntent['terms']});
       if(typeof intent.sellToken0!=='boolean'||intent.terms.length!==5||typeof request.confirm!=='function')throw new Error('Plain Limit direction and confirmation are required.');

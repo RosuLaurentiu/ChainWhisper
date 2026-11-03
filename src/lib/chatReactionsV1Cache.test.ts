@@ -1,4 +1,4 @@
-import { Interface } from '@coti-io/coti-ethers';
+import { Interface, keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
 import { describe, expect, it } from 'vitest';
 import {
   CHAT_REACTIONS_V1_ABI,
@@ -93,6 +93,33 @@ const observation = ({
 };
 
 describe('ChatReactionsV1 finalized public cache', () => {
+  it('invalidates a correctly hashed old-schema cache whose compaction could have lost a valid anchor', () => {
+    const storage = new MemoryStorage();
+    const cache = createChatReactionsV1Cache({ storage });
+    const wrong = { ...observation(), messageAnchor: hash('ee') };
+    cache.save({ deployment, finalityLagBlocks: 5n, checkpointBlock: '125', checkpointHash: CHECKPOINT_HASH,
+      observations: [wrong] });
+    const [key, raw] = [...storage.values.entries()][0]!;
+    const { contentHash: _hash, ...payload } = JSON.parse(raw);
+    payload.schema = 1;
+    storage.values.set(key, JSON.stringify({ ...payload, contentHash: keccak256(toUtf8Bytes(JSON.stringify(payload))) }));
+    expect(cache.load({ deployment, finalityLagBlocks: 5n })).toBeNull();
+    expect(storage.values.size).toBe(0);
+  });
+  it('does not let a later wrong anchor discard the last valid state during compaction', () => {
+    const storage = new MemoryStorage();
+    const cache = createChatReactionsV1Cache({ storage });
+    const valid = observation();
+    const wrong = { ...observation({ blockNumber: 121, active: false, transactionSeed: 0x90 }), messageAnchor: hash('ee') };
+    cache.save({ deployment, finalityLagBlocks: 5n, checkpointBlock: '125', checkpointHash: CHECKPOINT_HASH,
+      observations: [valid, wrong] });
+    const candidate = cache.load({ deployment, finalityLagBlocks: 5n });
+    const snapshot = cache.accept({ candidate: candidate!, canonicalCheckpointHash: CHECKPOINT_HASH });
+    const reduced = reduceCanonicalChatReactionCacheSnapshot(snapshot, [source]);
+    expect(reduced.states).toHaveLength(1);
+    expect(reduced.states[0]?.active).toBe(true);
+    expect(reduced.ignored).toContainEqual(expect.objectContaining({ reason: 'anchor-mismatch' }));
+  });
   it('round-trips exact public logs and revalidates their source anchor after checkpoint acceptance', () => {
     const storage = new MemoryStorage();
     const cache = createChatReactionsV1Cache({ storage });

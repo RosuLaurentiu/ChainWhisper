@@ -1,7 +1,8 @@
+const browserContexts = vi.hoisted(() => new WeakMap<object,{owner:string;guard:()=>void}>());
 import { getAddress, Interface, keccak256 } from '@coti-io/coti-ethers';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { issueCurrentDexQuoteCapability } from '../features/wallet/currentDexQuoteCapability';
 import { issueCurrentDexSubmissionCapability } from '../features/wallet/currentDexSubmissionCapability';
@@ -12,16 +13,37 @@ import { CURRENT_DEX_ACCEPT_ABI } from './currentDexQuoteReview';
 import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from './appShared/contracts';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY, readCurrentDexOperationLookups,
   recordCurrentDexOperationLookup } from './currentDexPendingAttempt';
-import { CURRENT_DEX_NATIVE_RELOAD_KEY, readCurrentDexNativeReload, writeCurrentDexNativeReload } from './currentDexNativeReload';
+import { CURRENT_DEX_NATIVE_RELOAD_KEY, CURRENT_DEX_NORMAL_USE_RELOAD_KEY, currentDexNormalUseReloadKey, readCurrentDexNativeReload, writeCurrentDexNativeReload } from './currentDexNativeReload';
 import { CURRENT_CHEAP_DEX_GAS_CAPS } from './currentDexSubmission';
 import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
 import { currentDexOwnerTransferAbi } from './currentDexOwnerTokenProof';
-import { currentNativeSigningBudget, recordCurrentNativeSwapHash, currentNativeSwapCheckpoint, restoreCurrentNativeSwapCheckpoint, completeCurrentNativeSwapScope } from './currentDexNativeSwapPolicy';
+import { currentNativeSigningBudget, recordCurrentNativeSwapHash, currentNativeSwapCheckpoint, restoreCurrentNativeSwapCheckpoint, completeCurrentNativeSwapScope, hasCurrentNativeSigningBudget } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_REPLACEMENT_TRIAL, CURRENT_APP_FURTHER_TRIAL, CURRENT_APP_FOURTH_TRIAL } from './currentDexC1SwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY } from './currentDexC1SwapPolicy';
 import { currentOwnerBetaLegacyReservationHash } from './currentDexNativeSwapPolicy';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './currentDexHistoryCandidate';
+import { currentLimitAbiForCandidate } from './currentDexLimit';
+import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
+import { resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
+import { readCurrentSharedDexTokenFunds } from './currentSharedDexTokenFunds';
+vi.mock('./currentSharedDexTokenFunds',async original=>{
+  const actual=await original<typeof import('./currentSharedDexTokenFunds')>();
+  return {...actual,readCurrentSharedDexTokenFunds:vi.fn(actual.readCurrentSharedDexTokenFunds)};
+});
+const ownerActionBrands=vi.hoisted(()=>new WeakMap<object,object>());
+vi.mock('../features/wallet/currentDexLimitCapability',async original=>{
+  const actual=await original<typeof import('../features/wallet/currentDexLimitCapability')>();
+  return {...actual,assertCurrentLimitPrepared:(value:object,signer:object)=>{
+    if(ownerActionBrands.get(value)!==signer)actual.assertCurrentLimitPrepared(value,signer);
+  }};
+});
+vi.mock('../features/wallet/currentDexPoolPositionCapability',async original=>{
+  const actual=await original<typeof import('../features/wallet/currentDexPoolPositionCapability')>();
+  return {...actual,assertCurrentPoolPositionPrepared:(value:object,signer:object)=>{
+    if(ownerActionBrands.get(value)!==signer)actual.assertCurrentPoolPositionPrepared(value,signer);
+  }};
+});
 const ownerBeta = vi.hoisted(() => ({ active: false, activation: { activatedAt: 2_000_000_000n, startingNonce: 220, legacyReservationHash:'' } }));
 vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
   const actual=await importOriginal<typeof import('./currentDexOwnerBetaPolicy')>();
@@ -34,8 +56,9 @@ vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
 });
 
 const m = vi.hoisted(() => ({ owner: vi.fn(), graph: vi.fn(), issue: vi.fn(), operation: vi.fn(), receipts: vi.fn(),
-  wide: vi.fn(), decrypt: vi.fn() }));
-vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: m.owner }));
+  wide: vi.fn(), decrypt: vi.fn(), rate: vi.fn(()=>1n) }));
+vi.mock('@coti-io/coti-sdk-typescript',async original=>({...await original<typeof import('@coti-io/coti-sdk-typescript')>(),decryptUint:m.rate}));
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: m.owner, hasCurrentDexBrowserSigner: (signer:object|undefined,owner:string)=>{const row=signer&&browserContexts.get(signer);if(!row||row.owner!==owner.toLowerCase())return false;row.guard();return true;} }));
 vi.mock('../features/wallet/currentDexReceiptCapability', () => ({ issueCurrentDexReceiptCapability: m.receipts }));
 vi.mock('./appChain', () => ({ readCurrentDexGraph: vi.fn(), readCurrentDexIssuedQuote: m.issue, readCurrentDexOperation: m.operation }));
 vi.mock('./dexV2Chain', async original => ({ ...await original<typeof import('./dexV2Chain')>(),
@@ -61,6 +84,7 @@ const publicAbi = new Interface(CURRENT_CHEAP_DEX_OPERATION_ABI), token = new In
 const owner = `0x${'22'.repeat(20)}`, blockHash = `0x${'33'.repeat(32)}`, context = `0x${'66'.repeat(32)}`;
 const zero = `0x${'00'.repeat(32)}`, signature = `0x${'44'.repeat(65)}`;
 const native = createRequire(import.meta.url)('../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/current-pool-case.cjs').frozen();
+const bindCurrentDexBrowserSigner=(signer:object,owner:string,_chain:bigint,guard:()=>void)=>{browserContexts.set(signer,{owner:owner.toLowerCase(),guard});};
 afterEach(() => { ownerBeta.active=false; vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 async function fixture(profile: CurrentCheapDexProfile, useNative: boolean | 'd06' | 'exit' | 'history' = false, selectedOwner = owner, operationId = 7n, deadline = 200n) {
@@ -120,7 +144,7 @@ async function fixture(profile: CurrentCheapDexProfile, useNative: boolean | 'd0
       }
       if (useNative === 'exit' && name === 'recoverSwap') logs.push(ownerTransfer(c.tokens[0][0], c.core, owner, amounts.maximumInput));
       receipts.set(hash, { hash, status: 1, from: owner, to: c.core, blockNumber: 50, blockHash,
-        logs: useNative === 'exit' ? originLogs(logs, hash) : logs });
+        logs: useNative === 'exit' || useNative === 'history' ? originLogs(logs, hash) : logs });
       return hash;
     }) };
   const readProvider = { getTransaction: vi.fn(async hash => transactions.get(hash) ?? null),
@@ -136,7 +160,7 @@ async function fixture(profile: CurrentCheapDexProfile, useNative: boolean | 'd0
       if (method === 'eth_getCode') return '0x';
       if (method === 'eth_getTransactionByHash') { const tx=transactions.get(params[0])!; return {...tx, input:tx.data, chainId:'0x6c11a0',value:'0x0',nonce:`0x${(tx.nonce as number).toString(16)}`,gas:`0x${(tx.gasLimit as bigint).toString(16)}`,blockNumber:'0x32',transactionIndex:`0x${[...transactions.keys()].indexOf(params[0]).toString(16)}`}; }
       if (method === 'eth_getTransactionReceipt') { const receipt=receipts.get(params[0])!;return {...receipt,transactionHash:receipt.hash,status:'0x1',blockNumber:'0x32',transactionIndex:`0x${[...transactions.keys()].indexOf(params[0]).toString(16)}`,
-        ...(useNative === 'exit' ? { logs: (receipt.logs as ReturnType<typeof originLogs>).map(log => ({ ...log, blockNumber:'0x32',logIndex:`0x${log.index.toString(16)}` })) } : {}) }; }
+        ...(useNative === 'exit' || useNative === 'history' ? { logs: (receipt.logs as ReturnType<typeof originLogs>).map(log => ({ ...log, blockNumber:'0x32',logIndex:`0x${log.index.toString(16)}` })) } : {}) }; }
       if (method === 'eth_getBlockByNumber') return { number: params[0] === 'latest' ? `0x${latest.toString(16)}` : params[0],
         hash: blockHash, timestamp: `0x${initialTime.toString(16)}`, gasLimit: `0x${headGas.toString(16)}`, baseFeePerGas, transactions:[...transactions.keys()] };
       if (method === 'eth_call') {
@@ -149,6 +173,7 @@ async function fixture(profile: CurrentCheapDexProfile, useNative: boolean | 'd0
       }
       throw new Error('Unexpected RPC ' + method);
     }) };
+  if(ownerBeta.active)bindCurrentDexBrowserSigner(signer,owner,7082400n,()=>{if(!live)throw new Error('Session revoked');});
   const bind = async (args: { bindCapability: (input: unknown) => Promise<unknown> }) => args.bindCapability({ assertCurrent: guard, assertSnapshotCurrent: () => { if (!live) throw new Error('Session revoked'); },
     signer, readProvider, ownerAddress: owner, chainId: 7082400n });
   m.owner.mockImplementation(bind);
@@ -206,13 +231,256 @@ const ownerBetaLegacy = () => {
   ownerBeta.activation.legacyReservationHash=currentOwnerBetaLegacyReservationHash(value);
   return value;
 };
+const ownerReloadScope={owner:CURRENT_APP_SWAP_OWNER,graph:history.graph,chainId:7082400n};
+const ownerReloadAuthentication=(budget:ReturnType<typeof currentNativeSwapCheckpoint>)=>`0x${createHmac('sha256',Buffer.from('11'.repeat(16),'hex'))
+  .update(`ChainWhisper:${budget.version===2?'7b67:owner-normal-use:v2':'b2aa:reload:v1'}:7082400:${CURRENT_APP_SWAP_OWNER}:`+JSON.stringify(budget)).digest('hex')}`;
 
 describe('Decision-030 actual adapter and shared send boundary', () => {
-  it.each((['fast-pool','cheap-async'] as const).flatMap(profile=>[false,true].map(approval=>({profile,approval}))))('keeps legacy charges and a durable no-resend lock for owner $profile Quote, approval:$approval', async ({profile,approval}) => {
+  it.each(['fast-pool','cheap-async'] as const)('admits a new browser wallet at nonce zero for %s and retains its unknown send',async profile=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture(profile,'history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0x0'):rpc(method,params));
+    f.signer.getNonce.mockResolvedValue(0);
+    const legacy=ownerBetaLegacy(),legacyBytes=JSON.stringify({budget:legacy,authentication:ownerReloadAuthentication(legacy)});
+    f.values.set(CURRENT_DEX_NATIVE_RELOAD_KEY,legacyBytes);
+    await expect(f.capability.checkCurrentCheapCandidate()).resolves.toMatchObject({owner:getAddress(wallet),graph:history.graph});
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n};
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({owner:wallet,version:2,charges:[]});
+    f.signer.sendUncheckedTransaction.mockRejectedValue(new Error('TEST_NEW_WALLET_BOUNDARY'));
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('TEST_NEW_WALLET_BOUNDARY');
+    const bytes=f.values.get(currentDexNormalUseReloadKey(scope));
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget.charges).toMatchObject([{phase:'quote',nonce:0,hash:null}]);
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('pending attempt');
+    expect(f.values.get(currentDexNormalUseReloadKey(scope))).toBe(bytes);
+    expect(f.values.get(CURRENT_DEX_NATIVE_RELOAD_KEY)).toBe(legacyBytes);
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledOnce();
+  });
+  it.each(['unbranded','session','privacy','authentication','candidate','pending','blocked','lookup','accept','consumed','context','canonical','pending-nonce','nonce-race','record-race','write-failed'] as const)('retains a Fast Quote and makes no send when local discard has %s uncertainty',async fault=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,11n,ownerBeta.activation.activatedAt+900n);
+    f.signer.getNonce.mockResolvedValue(220);const issued=await f.quote(),rpc=f.readProvider.send.getMockImplementation()!;
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},key=currentDexNormalUseReloadKey(scope),quoteScope=`quote:${keccak256(f.prepared.data)}`;
+    const authenticate=(budget:ReturnType<typeof currentNativeSwapCheckpoint>)=>`0x${createHmac('sha256',Buffer.from('11'.repeat(16),'hex')).update(`ChainWhisper:7b67:owner-normal-use:v2:7082400:${wallet}:`+JSON.stringify(budget)).digest('hex')}`;
+    let nonceReads=0,raced=false;
+    f.readProvider.send.mockImplementation((method,params)=>{
+      if(method==='eth_getTransactionCount'){
+        nonceReads++;
+        return Promise.resolve(fault==='pending-nonce'&&params[1]==='pending'||fault==='nonce-race'&&nonceReads>2?'0xde':'0xdd');
+      }
+      if(fault==='record-race'&&!raced&&method==='eth_getTransactionByHash'){
+        raced=true;const record=JSON.parse(f.values.get(key)!);f.values.set(key,JSON.stringify({...record,authentication:zero}));
+      }
+      return rpc(method,params);
+    });
+    if(fault==='session')f.revoke();
+    if(fault==='privacy')f.signer.getUserOnboardInfo=()=>({aesKey:'22'.repeat(16)});
+    if(fault==='authentication'||fault==='candidate'){
+      const record=JSON.parse(f.values.get(key)!);f.values.set(key,JSON.stringify(fault==='authentication'?{...record,authentication:zero}:{...record,budget:{...record.budget,candidateGraph:'f'.repeat(64)}}));
+    }
+    const attempt={version:1 as const,chainId:'7082400',owner:wallet,core:history.core,graph:`0x${history.graph}`,phase:'accept' as const,callHash:keccak256(f.prepared.data),nonce:221,txHash:null,...(fault==='blocked'?{verificationBlocked:true as const}:{})};
+    if(fault==='pending'||fault==='blocked')f.values.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify(attempt));
+    if(fault==='lookup')recordCurrentDexOperationLookup(window.sessionStorage,{attempt:{...attempt,txHash:`0x${'ab'.repeat(32)}`},operationId:'11',contextHash:context,deadline:String(issued.intent.deadline),origin:{number:50,hash:blockHash}});
+    if(fault==='accept'){
+      currentNativeSigningBudget(f.signer,wallet,()=>ownerBeta.activation.activatedAt,history).commit('accept',`accept:${quoteScope}`,110_000_000n,quoteScope,221);
+      const budget=currentNativeSwapCheckpoint(f.signer);writeCurrentDexNativeReload(window.sessionStorage,{budget,authentication:authenticate(budget)},scope);
+    }
+    if(fault==='consumed')f.setState(0);
+    if(fault==='context')f.setState(currentCheapDexStages(history).ready,`0x${'af'.repeat(32)}`);
+    if(fault==='canonical')f.transactions.get(issued.transactionHash)!.gasLimit=1n;
+    if(fault==='write-failed')vi.spyOn(window.sessionStorage,'setItem').mockImplementation(()=>{throw new Error('QuotaExceededError');});
+    const live=currentNativeSwapCheckpoint(f.signer),bytes=f.values.get(key),pendingBytes=f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY),lookupBytes=f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY);
+    f.signer.sendUncheckedTransaction.mockClear();f.signer.estimateGas.mockClear();
+    await expect(f.capability.discardCurrentFastQuote(fault==='unbranded'?{...issued}:issued)).rejects.toThrow();
+    expect(currentNativeSwapCheckpoint(f.signer)).toEqual(live);
+    if(fault!=='record-race')expect(f.values.get(key)).toBe(bytes);
+    else expect(JSON.parse(f.values.get(key)!).budget).toEqual(live);
+    expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(pendingBytes);expect(f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY)).toBe(lookupBytes);
+    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();expect(f.signer.estimateGas).not.toHaveBeenCalled();
+  });
+  it('rejects local discard for an asynchronous Quote without clearing its accounting',async()=>{
+    ownerBeta.active=true;const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('cheap-async','history',wallet,11n,ownerBeta.activation.activatedAt+900n);
+    f.signer.getNonce.mockResolvedValue(220);const issued=await f.quote(),before=currentNativeSwapCheckpoint(f.signer);f.signer.sendUncheckedTransaction.mockClear();
+    await expect(f.capability.discardCurrentFastQuote(issued)).rejects.toThrow('Fast Quote');expect(currentNativeSwapCheckpoint(f.signer)).toEqual(before);expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
+  });
+  it('discards an expired still-ready unfunded Fast Quote without a signing request',async()=>{
+    ownerBeta.active=true;const wallet=`0x${'cd'.repeat(20)}`,deadline=ownerBeta.activation.activatedAt+900n,f=await fixture('fast-pool','history',wallet,11n,deadline);
+    f.signer.getNonce.mockResolvedValue(220);const issued=await f.quote(),rpc=f.readProvider.send.getMockImplementation()!;
+    f.clock.mockReturnValue(Number(deadline+1n)*1000);
+    f.readProvider.send.mockImplementation(async(method,params)=>{
+      if(method==='eth_getTransactionCount')return '0xdd';
+      const value=await rpc(method,params);
+      if(method==='eth_getBlockByNumber'&&typeof value==='object'&&value!==null&&value.timestamp!==undefined)return {...value,timestamp:`0x${(deadline+1n).toString(16)}`};
+      return value;
+    });
+    const before=currentNativeSwapCheckpoint(f.signer);f.signer.sendUncheckedTransaction.mockClear();
+    await f.capability.discardCurrentFastQuote(issued);expect(currentNativeSwapCheckpoint(f.signer)).toEqual({...before,activeSwap:null});expect(f.capability.readCurrentCheapRestoreHint()).toBeNull();expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
+  });
+  it('rejects explicit old-hash restoration of a discarded Fast Quote after a fresh signer reload',async()=>{
+    ownerBeta.active=true;const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,11n,ownerBeta.activation.activatedAt+900n);
+    f.signer.getNonce.mockResolvedValue(220);const issued=await f.quote(),rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0xdd'):rpc(method,params));
+    await f.capability.discardCurrentFastQuote(issued);
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},bytes=f.values.get(currentDexNormalUseReloadKey(scope)),signer={...f.signer};
+    bindCurrentDexBrowserSigner(signer,wallet,7082400n,()=>{});
+    m.owner.mockImplementation(async args=>args.bindCapability({assertCurrent:async()=>{},assertSnapshotCurrent:()=>{},signer,readProvider:f.readProvider,ownerAddress:wallet,chainId:7082400n}));
+    const sender=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history'} as never);
+    expect(sender.readCurrentCheapRestoreHint()).toBeNull();
+    m.decrypt.mockReturnValueOnce(20n).mockReturnValueOnce(5n).mockReturnValueOnce(1n);
+    const quoteCapability=await issueCurrentDexQuoteCapability({} as never),restored=await quoteCapability.restoreCurrentQuote({quoteHash:issued.transactionHash});
+    f.signer.sendUncheckedTransaction.mockClear();f.signer.estimateGas.mockClear();
+    await expect(sender.restoreCurrentCheapOperation(restored)).rejects.toThrow('closed without funding');
+    expect(hasCurrentNativeSigningBudget(signer)).toBe(false);expect(f.values.get(currentDexNormalUseReloadKey(scope))).toBe(bytes);
+    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();expect(f.signer.estimateGas).not.toHaveBeenCalled();
+  });
+  it('discards a confirmed ready Fast Quote locally, retains all fees, and blocks old Accept and restore hints',async()=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,11n,ownerBeta.activation.activatedAt+900n);
+    f.signer.getNonce.mockResolvedValue(220);
+    const issued=await f.quote(),rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0xdd'):rpc(method,params));
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},before=readCurrentDexNativeReload(window.sessionStorage,scope)!;
+    f.signer.sendUncheckedTransaction.mockClear();f.signer.estimateGas.mockClear();
+    await f.capability.discardCurrentFastQuote(issued);
+    const after=readCurrentDexNativeReload(window.sessionStorage,scope)!;
+    expect(after.budget).toEqual({...before.budget,activeSwap:null});
+    expect(currentNativeSwapCheckpoint(f.signer)).toEqual(after.budget);
+    expect(f.capability.readCurrentCheapRestoreHint()).toBeNull();
+    const reload=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history'} as never);
+    expect(reload.readCurrentCheapRestoreHint()).toBeNull();
+    const confirm=vi.fn(async()=>true);
+    await expect(reload.submitCurrentCheapAcceptance({issued,confirm})).rejects.toThrow('no longer active');
+    expect(confirm).not.toHaveBeenCalled();expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();expect(f.signer.estimateGas).not.toHaveBeenCalled();
+    const quoteCapability=await issueCurrentDexQuoteCapability({} as never);
+    m.wide.mockResolvedValue({ciphertext:{ciphertextHigh:5n,ciphertextLow:6n},signature});
+    const next=(await quoteCapability.prepareCurrentQuote({profile:'fast-pool',graph:{candidate:'cheap-history',expectedGraph:history.graph,expectedPackageSha256:history.packageSha256,blockNumber:55n,blockHash},
+      terms:{...f.prepared.intent,maximumInput:21n},confirmPrivateInputs:async()=>true}))!;
+    f.setFunding(100n,21n);f.signer.getNonce.mockResolvedValue(221);f.signer.sendUncheckedTransaction.mockRejectedValue(new Error('TEST_NEW_QUOTE_WALLET_BOUNDARY'));
+    await expect(reload.submitCurrentCheapQuote(next)).rejects.toThrow('TEST_NEW_QUOTE_WALLET_BOUNDARY');
+    const renewed=currentNativeSwapCheckpoint(f.signer);expect(renewed.charges.slice(0,before.budget.charges.length)).toEqual(before.budget.charges);expect(renewed.charges).toHaveLength(before.budget.charges.length+1);expect(renewed.activeSwap).toBe(`quote:${keccak256(next.data)}`);
+  });
+  it('continues an intact closed authenticated v1 record with later owner charges without resetting it',async()=>{
+    ownerBeta.active=true;
+    const f=await fixture('fast-pool','history',CURRENT_APP_SWAP_OWNER,9n,ownerBeta.activation.activatedAt+900n),legacy=ownerBetaLegacy(),scope=`quote:0x${'ef'.repeat(32)}`;
+    const charges=[...legacy.charges,
+      {phase:'quote' as const,scope,key:scope,gasCap:'110000000',gasPrice:'50000000',nonce:220,hash:`0x${'ab'.repeat(32)}`},
+      {phase:'accept' as const,scope,key:`accept:${scope}`,gasCap:'110000000',gasPrice:'50000000',nonce:221,hash:`0x${'ac'.repeat(32)}`}];
+    const budget={...legacy,charges,committedWei:String(BigInt(legacy.committedWei)+11_000_000_000_000_000n)};
+    writeCurrentDexNativeReload(window.sessionStorage,{budget,authentication:ownerReloadAuthentication(budget)});
+    const before=f.values.get(CURRENT_DEX_NATIVE_RELOAD_KEY);
+    await expect(f.capability.checkCurrentCheapCandidate()).resolves.toMatchObject({graph:history.graph});
+    expect(f.values.get(CURRENT_DEX_NATIVE_RELOAD_KEY)).toBe(before);
+    expect(f.values.has(CURRENT_DEX_NORMAL_USE_RELOAD_KEY)).toBe(false);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0xde'):rpc(method,params));
+    f.signer.getNonce.mockResolvedValue(222);f.signer.sendUncheckedTransaction.mockRejectedValue(new Error('TEST_OWNER_WALLET_BOUNDARY'));
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('TEST_OWNER_WALLET_BOUNDARY');
+    expect(readCurrentDexNativeReload(window.sessionStorage)!.budget.charges.slice(0,16)).toEqual(charges);
+  });
+  it.each(['closed','active','unknown','total','authentication','legacy-conflict','pending','lookup'] as const)('authenticates and holds existing normal-use state: %s',async state=>{
+    ownerBeta.active=true;
+    const f=await fixture('fast-pool','history',CURRENT_APP_SWAP_OWNER,9n,ownerBeta.activation.activatedAt+900n),scope=`quote:0x${'df'.repeat(32)}`,
+      active=state==='active'||state==='unknown';
+    const budget={version:2 as const,owner:CURRENT_APP_SWAP_OWNER,candidateGraph:history.graph,start:String(ownerBeta.activation.activatedAt),
+      activeSwap:active?scope:null,committedWei:active?'5500000000000000':state==='total'?'1':'0',charges:active?
+        [{phase:'quote' as const,scope,key:scope,gasCap:'110000000',gasPrice:'50000000',nonce:220,hash:state==='unknown'?null:`0x${'ab'.repeat(32)}`}]:[]};
+    writeCurrentDexNativeReload(window.sessionStorage,{budget,authentication:state==='authentication'?zero:ownerReloadAuthentication(budget)});
+    const before=f.values.get(CURRENT_DEX_NORMAL_USE_RELOAD_KEY);
+    if(state==='legacy-conflict')f.values.set(CURRENT_DEX_NATIVE_RELOAD_KEY,'{bad');
+    const attempt={version:1,chainId:'7082400',owner:CURRENT_APP_SWAP_OWNER,core:history.core,graph:`0x${history.graph}`,
+      phase:state==='lookup'?'accept':'quote',callHash:keccak256(f.prepared.data),nonce:220,txHash:state==='lookup'?`0x${'aa'.repeat(32)}`:null};
+    if(state==='pending')f.values.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify(attempt));
+    if(state==='lookup')f.values.set(CURRENT_DEX_OPERATION_LOOKUPS_KEY,JSON.stringify([{attempt,operationId:'9',contextHash:context,
+      deadline:String(ownerBeta.activation.activatedAt+900n),origin:{number:50,hash:blockHash}}]));
+    if(state==='closed')await expect(f.capability.checkCurrentCheapCandidate()).resolves.toMatchObject({graph:history.graph});
+    else await expect(f.capability.checkCurrentCheapCandidate()).rejects.toThrow();
+    expect(f.values.get(CURRENT_DEX_NORMAL_USE_RELOAD_KEY)).toBe(before);
+    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
+  });
+  it.each((['pool','limit','claim'] as const).flatMap(action=>(['fresh','corrupt','authentication','pending','unknown','active',...(action==='claim'?['small-balance' as const]:[])] as const).map(state=>({action,state}))))('admits direct owner $action first use without Swap preflight: $state',async({action,state})=>{
+    ownerBeta.active=true;
+    const f=await fixture('fast-pool','history',CURRENT_APP_SWAP_OWNER,9n,ownerBeta.activation.activatedAt+900n);
+    if(state==='corrupt')f.values.set(CURRENT_DEX_NATIVE_RELOAD_KEY,'{bad');
+    if(state==='authentication')writeCurrentDexNativeReload(window.sessionStorage,{budget:ownerBetaLegacy(),authentication:zero});
+    if(state==='pending')f.values.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify({version:1,chainId:'7082400',owner:CURRENT_APP_SWAP_OWNER,
+      core:history.core,graph:`0x${history.graph}`,phase:'quote',callHash:keccak256(f.prepared.data),nonce:220,txHash:null}));
+    if(state==='unknown'||state==='active'){
+      const scope=`quote:0x${'cf'.repeat(32)}`,budget={version:2 as const,owner:CURRENT_APP_SWAP_OWNER,candidateGraph:history.graph,
+        start:String(ownerBeta.activation.activatedAt),activeSwap:scope,committedWei:'5500000000000000',charges:[{phase:'quote' as const,
+          scope,key:scope,gasCap:'110000000',gasPrice:'50000000',nonce:220,hash:state==='unknown'?null:`0x${'ab'.repeat(32)}`} ]};
+      writeCurrentDexNativeReload(window.sessionStorage,{budget,authentication:ownerReloadAuthentication(budget)});
+    }
+    const before=f.values.get(CURRENT_DEX_NORMAL_USE_RELOAD_KEY);
+    if(state==='small-balance'){
+      const rpc=f.readProvider.send.getMockImplementation()!;
+      f.readProvider.send.mockImplementation((method,params)=>method==='eth_getBalance'?Promise.resolve(`0x${11_000_000_000_000_000n.toString(16)}`):rpc(method,params));
+    }
+    f.signer.getNonce.mockResolvedValue(220);
+    f.signer.estimateGas.mockResolvedValue(1_000_000n);
+    f.signer.sendUncheckedTransaction.mockRejectedValue(new Error('TEST_OWNER_WALLET_BOUNDARY'));
+    const pair=history.pairs[0],base={chainId:7082400n,from:CURRENT_APP_SWAP_OWNER,to:history.core,value:0n,graph:history.graph,
+      packageSha256:history.packageSha256,readyToSign:false,positionId:20n,marketId:pair.marketId,poolTokens:pair.tokens,
+      assertCurrent:async()=>{},assertAuthority:async()=>{},assertBeforeSend:async()=>{},readResult:async()=>null};
+    const pool={...base,action:'snapshot',closed:false,data:currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[20n])};
+    const limit={...base,phase:'limit-snapshot',data:currentLimitAbiForCandidate('cheap-history').encodeFunctionData('privateOrderSnapshot',[20n])};
+    ownerActionBrands.set(pool,f.signer);ownerActionBrands.set(limit,f.signer);
+    const execute=action==='pool'?()=>f.capability.submitPoolPositionAction(pool as never):
+      action==='limit'?()=>f.capability.submitLimit(limit as never):async()=>{
+        const policy=resolveCurrentSharedTokenDistribution('cheap-history');
+        vi.mocked(readCurrentSharedDexTokenFunds).mockImplementation(async({head})=>({owner:CURRENT_APP_SWAP_OWNER,head,
+          core:history.core,graph:history.graph,packageSha256:history.packageSha256,vault:policy.vault,privateFundsVerified:true,readyToSign:false,
+          tokens:history.tokenMetadata.map(token=>({...token,claimed:false,balance:0n,allowance:0n,encryptionAddress:CURRENT_APP_SWAP_OWNER,
+            quota:policy.initialQuota,nextClaimAt:0n,initialAmount:policy.initialAmount,refillAmount:policy.refillAmount,
+            initialClaimAvailability:'ready',refillAvailability:'initial-claim-required'}))} as never));
+        const cap=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history',
+          sessionOnboardInfo:{[CURRENT_APP_SWAP_OWNER]:{aesKey:'11'.repeat(16)}}} as never);
+        const review=await cap.prepareSharedTokenFunding({action:'initial',token:history.tokenMetadata[3].address,confirm:async()=>true});
+        return cap.submitSharedTokenFunding(review!);
+      };
+    const admitted=state==='fresh'||state==='small-balance';
+    await expect(execute()).rejects.toThrow(admitted?'TEST_OWNER_WALLET_BOUNDARY':state==='authentication'?'authentication':state==='pending'?'pending':state==='unknown'||state==='active'?'active':'invalid');
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledTimes(admitted?1:0);
+    if(admitted){
+      expect(readCurrentDexNativeReload(window.sessionStorage,ownerReloadScope)!.budget).toMatchObject({version:2,charges:[],committedWei:'0'});
+      expect(f.values.has(CURRENT_DEX_NATIVE_RELOAD_KEY)).toBe(false);
+    }else expect(f.values.get(CURRENT_DEX_NORMAL_USE_RELOAD_KEY)).toBe(before);
+  });
+  it.each(['missing', 'incomplete', 'valid', 'corrupt', 'authentication', 'active', 'pending', 'lookup', 'write-failed'] as const)('checks owner reload records before private-input preparation: %s', async state => {
+    ownerBeta.active = true;
+    const f = await fixture('fast-pool', 'history', CURRENT_APP_SWAP_OWNER, 9n, ownerBeta.activation.activatedAt + 900n);
+    const legacy = ownerBetaLegacy();
+    if (!['missing','pending','lookup','write-failed'].includes(state)) {
+      const budget=state==='incomplete'?{...legacy,charges:legacy.charges.slice(0,11)}:
+        state==='active'?{...legacy,activeSwap:legacy.charges[13].scope}:legacy;
+      const authentication=ownerReloadAuthentication(budget);
+      writeCurrentDexNativeReload(window.sessionStorage, {budget,authentication:state==='authentication'?zero:authentication});
+    }
+    const retained=f.values.get(CURRENT_DEX_NATIVE_RELOAD_KEY);
+    if(state==='corrupt')f.values.set(CURRENT_DEX_NATIVE_RELOAD_KEY,'{bad');
+    if(state==='pending')f.values.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,'{bad');
+    if(state==='lookup')f.values.set(CURRENT_DEX_OPERATION_LOOKUPS_KEY,'{bad');
+    if(state==='write-failed')vi.spyOn(window.sessionStorage,'setItem').mockImplementation(()=>{throw new Error('QuotaExceededError');});
+    m.wide.mockClear(); f.readProvider.send.mockClear();
+    if (state === 'valid'||state==='missing') {
+      await expect(f.capability.checkCurrentCheapCandidate()).resolves.toMatchObject({ graph: history.graph });
+      expect(readCurrentDexNativeReload(window.sessionStorage,ownerReloadScope)!.budget).toMatchObject({version:2,charges:[],committedWei:'0',activeSwap:null});
+      expect(f.values.get(CURRENT_DEX_NATIVE_RELOAD_KEY)).toBe(retained);
+    }
+    else {
+      await expect(f.capability.checkCurrentCheapCandidate()).rejects.toThrow();
+      expect(f.values.has(CURRENT_DEX_NORMAL_USE_RELOAD_KEY)).toBe(false);
+    }
+    expect(m.wide).not.toHaveBeenCalled();
+    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
+  });
+  it.each((['fast-pool','cheap-async'] as const).flatMap(profile=>[false,true].flatMap(approval=>[false,true].map(normal=>({profile,approval,normal})))) )('keeps exact charges and a durable no-resend lock for owner $profile Quote, approval:$approval normal:$normal', async ({profile,approval,normal}) => {
     ownerBeta.active=true;
     const f=await fixture(profile,'history',CURRENT_APP_SWAP_OWNER,9n,ownerBeta.activation.activatedAt+900n),legacy=ownerBetaLegacy();
-    restoreCurrentNativeSwapCheckpoint(f.signer,CURRENT_APP_SWAP_OWNER,history,legacy);
-    writeCurrentDexNativeReload(window.sessionStorage,{budget:currentNativeSwapCheckpoint(f.signer),authentication:zero});
+    if(normal)await f.capability.checkCurrentCheapCandidate();
+    else {
+      restoreCurrentNativeSwapCheckpoint(f.signer,CURRENT_APP_SWAP_OWNER,history,legacy);
+      writeCurrentDexNativeReload(window.sessionStorage,{budget:currentNativeSwapCheckpoint(f.signer),authentication:ownerReloadAuthentication(currentNativeSwapCheckpoint(f.signer))});
+    }
     if(approval){
       f.setFunding(100n,0n);
       const data=new Interface(['function approve(address,((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature) input)']).encodeFunctionData('approve',[history.core,{ciphertext:{ciphertextHigh:1n,ciphertextLow:2n},signature}]);
@@ -227,9 +495,10 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     f.signer.getNonce.mockResolvedValue(nonce);
     f.signer.sendUncheckedTransaction.mockRejectedValue(new Error('TEST_OWNER_WALLET_BOUNDARY'));
     await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('TEST_OWNER_WALLET_BOUNDARY');
-    const saved=readCurrentDexNativeReload(window.sessionStorage)!;
-    expect(saved.budget.charges.slice(0,14)).toEqual(legacy.charges);
-    expect(saved.budget.charges[approval?15:14]).toMatchObject({phase:'quote',nonce,gasPrice:'50000000',hash:null});
+    const saved=readCurrentDexNativeReload(window.sessionStorage,normal?ownerReloadScope:false)!;
+    if(!normal)expect(saved.budget.charges.slice(0,14)).toEqual(legacy.charges);
+    expect(saved.budget.charges[(normal?0:14)+(approval?1:0)]).toMatchObject({phase:'quote',nonce,gasPrice:'50000000',hash:null});
+    expect(saved.budget.committedWei).toBe(String((normal?0n:BigInt(legacy.committedWei))+(110_000_000n+(approval?5_000_000n:0n))*50_000_000n));
     expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({nonce,txHash:null});
     await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('pending attempt');
     const reconnected=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history'} as never);
@@ -250,12 +519,13 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     const now=ownerBeta.activation.activatedAt+(fault==='early'?-1n:fault==='expired'?604800n:0n),nonce=fault==='nonce'?10_000:220;
     const head={number:55n,hash:blockHash,timestamp:now,gasLimit:120_000_000n};
     const send=vi.fn(async()=>{throw new Error('TEST_OWNER_WALLET_BOUNDARY');});
-    const transport={assertCurrent:async()=>{},readHead:async()=>head,readNonce:async()=>nonce,estimateGas:async()=>1_000_000n,send,
+    const transport={assertCurrent:async()=>{},admitOwnerRecord:async()=>{},readHead:async()=>head,readNonce:async()=>nonce,estimateGas:async()=>1_000_000n,send,
       readNativeResources:async()=>({owner:CURRENT_APP_SWAP_OWNER,chainId:7082400n,head,latestNonce:nonce,pendingNonce:nonce,gasPrice:50_000_000n,baseFeePerGas:50_000_000n,code:'0x',balance:1_000_000_000_000_000_000n})} as unknown as CurrentTransport;
     const boundary=createCurrentAttemptBoundary({storage,c:history,core:history.core,owner:CURRENT_APP_SWAP_OWNER,chainId:7082400n,transport,attest:async()=>{},now:()=>now,historical:false,bindTarget:true});
     const token=history.tokenMetadata[3].address,call={chainId:7082400n,from:CURRENT_APP_SWAP_OWNER,to:token,value:0n as const,data:new Interface(['function claimFaucet()']).encodeFunctionData('claimFaucet')};
-    const execute=()=>boundary.sendCurrent('token-faucet',call,undefined,()=>{},()=>{},undefined,5_000_000n,undefined,undefined,undefined,undefined,undefined,{action:'initial',token});
-    const admitted=['allowed','expired','nonce'].includes(fault);
+    const signer={};bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});
+    const execute=()=>boundary.sendCurrent('token-faucet',call,undefined,()=>{},()=>{},undefined,5_000_000n,undefined,undefined,undefined,undefined,undefined,{action:'initial',token,signer});
+    const admitted=['allowed','early','expired','nonce'].includes(fault);
     await expect(execute()).rejects.toThrow(admitted?'TEST_OWNER_WALLET_BOUNDARY':fault==='missing'||fault==='legacy-scope'?'retained':fault==='corrupt'?'invalid':fault==='pending'?'invalid':'check failed');
     expect(send).toHaveBeenCalledTimes(admitted?1:0);
     if(admitted){
@@ -264,11 +534,14 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
       expect(send).toHaveBeenCalledOnce();
     }
   });
-  it.each(['valid','authentication','allowance'] as const)('restores an unquoted beta approval with legacy history after wallet reload: %s',async fault=>{
+  it.each((['valid','authentication','allowance'] as const).flatMap(fault=>[false,true].map(normal=>({fault,normal}))))('restores an unquoted beta approval after wallet reload: $fault normal:$normal',async ({fault,normal})=>{
     ownerBeta.active=true;
     const f=await fixture('fast-pool','history',CURRENT_APP_SWAP_OWNER,9n,ownerBeta.activation.activatedAt+900n);
-    restoreCurrentNativeSwapCheckpoint(f.signer,CURRENT_APP_SWAP_OWNER,history,ownerBetaLegacy());
-    writeCurrentDexNativeReload(window.sessionStorage,{budget:currentNativeSwapCheckpoint(f.signer),authentication:zero});
+    if(normal)await f.capability.checkCurrentCheapCandidate();
+    else {
+      restoreCurrentNativeSwapCheckpoint(f.signer,CURRENT_APP_SWAP_OWNER,history,ownerBetaLegacy());
+      writeCurrentDexNativeReload(window.sessionStorage,{budget:currentNativeSwapCheckpoint(f.signer),authentication:ownerReloadAuthentication(currentNativeSwapCheckpoint(f.signer))});
+    }
     f.setFunding(100n,0n);
     const data=new Interface(['function approve(address,((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature) input)']).encodeFunctionData('approve',[history.core,{ciphertext:{ciphertextHigh:1n,ciphertextLow:2n},signature}]);
     const request={chainId:7082400n,from:CURRENT_APP_SWAP_OWNER,to:f.prepared.intent.inputToken,value:0n as const,data,nonce:220,gasLimit:5_000_000n,gasPrice:50_000_000n},hash=`0x${'de'.repeat(32)}`;
@@ -276,21 +549,28 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     f.transactions.set(hash,{...request,hash,blockNumber:50,blockHash});
     f.receipts.set(hash,{hash,status:1,from:request.from,to:request.to,blockNumber:50,blockHash,logs:[]});
     await f.capability.rememberCurrentCheapSwapApproval({request,transactionHash:hash});
-    const saved=readCurrentDexNativeReload(window.sessionStorage)!;
-    if(fault==='authentication')writeCurrentDexNativeReload(window.sessionStorage,{...saved,authentication:zero});
+    // Simulate the pre-scope v2 browser journal with confirmed, unquoted funding still active.
+    if(normal&&fault==='valid'){
+      const scoped=currentDexNormalUseReloadKey(ownerReloadScope),bytes=f.values.get(scoped)!;
+      f.values.set(CURRENT_DEX_NORMAL_USE_RELOAD_KEY,bytes);f.values.delete(scoped);
+    }
+    const saved=readCurrentDexNativeReload(window.sessionStorage,normal?ownerReloadScope:false)!;
+    if(fault==='authentication')writeCurrentDexNativeReload(window.sessionStorage,{...saved,authentication:zero},normal?ownerReloadScope:undefined);
     f.setFunding(100n,fault==='allowance'?21n:20n);
-    const signer={...f.signer},rpc=f.readProvider.send.getMockImplementation()!;
+    const signer={...f.signer};bindCurrentDexBrowserSigner(signer,CURRENT_APP_SWAP_OWNER,7082400n,()=>{});const rpc=f.readProvider.send.getMockImplementation()!;
     signer.getNonce.mockResolvedValue(221);
     f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0xdd'):rpc(method,params));
     m.owner.mockImplementation(async args=>args.bindCapability({assertCurrent:async()=>{},assertSnapshotCurrent:()=>{},signer,readProvider:f.readProvider,ownerAddress:CURRENT_APP_SWAP_OWNER,chainId:7082400n}));
+    const capability=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history'} as never);
+    if(fault==='valid')await expect(capability.checkCurrentCheapCandidate()).resolves.toMatchObject({graph:history.graph});
     const quotes=await issueCurrentDexQuoteCapability({} as never);
     const fresh=(await quotes.prepareCurrentQuote({profile:'cheap-async',graph:{candidate:'cheap-history',expectedGraph:history.graph,expectedPackageSha256:history.packageSha256,blockNumber:55n,blockHash},
       terms:{...f.prepared.intent,deadline:ownerBeta.activation.activatedAt+899n},confirmPrivateInputs:async()=>true}))!;
-    const capability=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history'} as never);
     signer.sendUncheckedTransaction.mockRejectedValue(new Error('TEST_OWNER_WALLET_BOUNDARY'));
     await expect(capability.submitCurrentCheapQuote(fresh)).rejects.toThrow(fault==='valid'?'TEST_OWNER_WALLET_BOUNDARY':fault==='authentication'?'authenticated':'allowance must equal');
     expect(signer.sendUncheckedTransaction).toHaveBeenCalledTimes(fault==='valid'?1:0);
-    expect(readCurrentDexNativeReload(window.sessionStorage)!.budget.charges.slice(0,15)).toEqual(saved.budget.charges);
+    expect(readCurrentDexNativeReload(window.sessionStorage,normal?ownerReloadScope:false)!.budget.charges.slice(0,saved.budget.charges.length)).toEqual(saved.budget.charges);
+    if(normal&&fault==='valid'){expect(f.values.has(currentDexNormalUseReloadKey(ownerReloadScope))).toBe(false);expect(JSON.parse(f.values.get(CURRENT_DEX_NORMAL_USE_RELOAD_KEY)!).budget.charges).toHaveLength(saved.budget.charges.length+1);}
   });
 });
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DirectTradeV2ChatEntry } from '../../lib/directTradeV2ChatProjection';
 import {
   buildDirectTradeNotificationStorageKey,
+  buildDirectTradeNotificationView,
   markDirectTradeNotificationsRead,
   parseDirectTradeNotifications,
   reconcileDirectTradeNotifications,
@@ -18,7 +19,10 @@ const readStored = (key: string): readonly DirectTradeNotificationItem[] => {
   }
 };
 
-export default function useDirectTradeNotifications(scope: DirectTradeNotificationScope | null) {
+export default function useDirectTradeNotifications(
+  scope: DirectTradeNotificationScope | null,
+  suppressedContacts: ReadonlySet<string>
+) {
   const storageKey = useMemo(() => scope ? buildDirectTradeNotificationStorageKey(scope) : '', [scope]);
   const [items, setItems] = useState<readonly DirectTradeNotificationItem[]>([]);
 
@@ -91,8 +95,7 @@ export default function useDirectTradeNotifications(scope: DirectTradeNotificati
   const clear = useCallback(() => persist(Object.freeze([])), [persist]);
 
   return Object.freeze({
-    items,
-    unreadCount: items.filter((item) => !item.read).length,
+    ...buildDirectTradeNotificationView(items, suppressedContacts),
     ingest,
     markRead,
     clear

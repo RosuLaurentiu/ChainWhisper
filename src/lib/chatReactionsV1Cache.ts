@@ -15,7 +15,8 @@ import {
   type ComparedChatReactionsV1Deployment
 } from './chatReactionsV1';
 
-const CACHE_SCHEMA = 1;
+// Schema 1 compacted different source anchors together and can have lost history.
+const CACHE_SCHEMA = 2;
 const CACHE_PREFIX = 'chainwhisper:chat-reactions-v1:';
 const MAX_CACHED_LOGS = 4_096;
 const MAX_CACHE_BYTES = 4_500_000;
@@ -82,7 +83,7 @@ type CachedRawLog = Readonly<{
 }>;
 
 type CachePayload = Readonly<{
-  schema: 1;
+  schema: 2;
   scope: string;
   checkpointBlock: string;
   checkpointHash: string;
@@ -331,7 +332,7 @@ export const createChatReactionsV1Cache = ({
       }
       const latestByState = new Map<string, ChatReactionObservation>();
       for (const observation of [...byIdentity.values()].sort(compareChatReactionObservationOrder)) {
-        latestByState.set(observation.stateKey, observation);
+        latestByState.set(`${observation.stateKey}:${observation.messageAnchor}`, observation);
       }
       if (latestByState.size > MAX_CACHED_LOGS) {
         clear({ deployment, finalityLagBlocks });

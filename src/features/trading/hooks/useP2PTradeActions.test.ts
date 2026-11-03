@@ -93,26 +93,61 @@ const args = (otcV2ActionRuntime: OtcV2ActionRuntime) => ({
 describe('useP2PTradeActions OTC V2 routing', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('cancels an older referenced order through its resolved runtime instead of the current same-ID instance', async () => {
-    const current = runtime(), retained = runtime();
-    const target = snapshot('standard-v2');
-    const resolve = vi.fn(async () => retained);
-    const root = { ...current, deployments: { ...current.deployments, 'standard-v2': { ...current.deployments['standard-v2'], contractAddress: `0x${'99'.repeat(20)}` } }, forReference: resolve };
-    const input = args(root as OtcV2ActionRuntime);
-    await useP2PTradeActions(input).cancelTrade(target);
-    expect(resolve).toHaveBeenCalledWith({ chainId: target.v2!.chainId, contractAddress: target.escrowContract, orderId: '7' });
-    expect(retained.standard).toHaveBeenCalledExactlyOnceWith({ kind: 'cancel', tradeId: 7 });
+  it('refreshes the exact trade once only after its action is confirmed', async () => {
+    const value = runtime(), input = args(value), item = snapshot('direct-v2');
+    let confirm!: () => void;
+    const receipt = new Promise<void>(resolve => { confirm = resolve; });
+    vi.mocked(value.direct).mockImplementationOnce(async () => {
+      await receipt;
+      return { transactionHash: TX } as never;
+    });
+    const action = useP2PTradeActions(input).cancelTrade(item);
+    await vi.waitFor(() => expect(value.direct).toHaveBeenCalledOnce());
+    expect(input.refreshTradeDataInBackground).not.toHaveBeenCalled();
+    confirm();
+    await action;
+    expect(input.refreshTradeDataInBackground).toHaveBeenCalledExactlyOnceWith(item.tradeId, item.escrowContract);
+    expect(value.direct).toHaveBeenCalledOnce();
+  });
+
+  it('does not refresh trade data when the write fails', async () => {
+    const value = runtime(), input = args(value);
+    vi.mocked(value.direct).mockRejectedValueOnce(new Error('Write failed'));
+    await useP2PTradeActions(input).cancelTrade(snapshot('direct-v2'));
+    expect(input.refreshTradeDataInBackground).not.toHaveBeenCalled();
+    expect(value.direct).toHaveBeenCalledOnce();
+    expect(input.onActionNotice.mock.calls.some(([notice]) => notice.status === 'success')).toBe(false);
+  });
+
+  it('keeps a confirmed action successful when the background refresh throws', async () => {
+    const value = runtime(), input = args(value);
+    input.refreshTradeDataInBackground.mockImplementationOnce(() => { throw new Error('Refresh failed'); });
+    await useP2PTradeActions(input).cancelTrade(snapshot('direct-v2'));
+    expect(input.refreshTradeDataInBackground).toHaveBeenCalledExactlyOnceWith(7, DIRECT);
+    expect(input.onActionNotice).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'cancel', status: 'success', txHash: TX,
+      message: 'Transaction confirmed. The trade display needs a refresh. Do not submit this action again.'
+    }));
+    expect(input.onActionNotice.mock.calls.some(([notice]) => notice.status === 'error')).toBe(false);
+    expect(value.direct).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an unsupported contract reference before funding', async () => {
+    const current = runtime();
+    const resolve = vi.fn(async () => { throw new Error('Unsupported current contract reference'); });
+    const input = args({ ...current, forReference: resolve } as OtcV2ActionRuntime);
+    await useP2PTradeActions(input).cancelTrade(snapshot('standard-v2'));
+    expect(resolve).toHaveBeenCalledOnce();
     expect(current.standard).not.toHaveBeenCalled();
+    expect(input.ensureTradeFunding).not.toHaveBeenCalled();
+    expect(input.setTradeActionError).toHaveBeenCalledWith('Unsupported current contract reference');
   });
 
   it.each([
     ['standard-v2', 'acceptTrade', 'refreshOneOffV2Trades', 'accept'],
-    ['private-v2', 'acceptTrade', 'openTrade', 'accept'],
     ['direct-v2', 'acceptTrade', 'openTrade', 'accept'],
     ['standard-v2', 'partialFillTrade', 'openTrade', 'fill'],
-    ['private-v2', 'partialFillTrade', 'refreshOneOffV2Trades', 'fill'],
     ['standard-v2', 'cancelTrade', 'mergeTradeSnapshot', 'cancel'],
-    ['private-v2', 'cancelTrade', 'refreshOneOffV2Trades', 'cancel'],
     ['direct-v2', 'cancelTrade', 'mergeTradeSnapshot', 'cancel'],
     ['direct-v2', 'declineTrade', 'mergeTradeSnapshot', 'decline']
   ] as const)('keeps %s %s confirmed despite %s failure', async (protocol, method, callback, action) => {
@@ -181,23 +216,13 @@ describe('useP2PTradeActions OTC V2 routing', () => {
     );
   });
 
-  it('accepts a fully-private V2 order with one packed fill action and no legacy fallback', async () => {
+  it('rejects an old private runtime before funding or wallet access', async () => {
     const value = runtime();
     const input = args(value);
     await useP2PTradeActions(input).acceptTrade(snapshot('private-v2'));
-    expect(value.privateTrade).toHaveBeenCalledWith({
-      kind: 'fill', orderId: 7, expectedRevision: '2',
-      terms: { mode: 'fully-private', maxRequestAmount: 200n, minOfferAmount: 100n }
-    });
-    expect(input.ensureTradeFunding).toHaveBeenCalledWith(expect.objectContaining({
-      confirmationPolicy: 'always',
-      confirmationStats: expect.arrayContaining([
-        { label: 'COTI private inputs', value: '1 confirmation' },
-        { label: 'Private token setup', value: 'B: if needed (1 one-time transaction)' },
-        { label: 'Token approval', value: 'B: if needed (1 COTI confirmation + 1 transaction)' }
-      ])
-    }));
+    expect(input.ensureTradeFunding).not.toHaveBeenCalled();
     expect(input.getTradeSigner).not.toHaveBeenCalled();
+    expect(input.setTradeActionError).toHaveBeenCalledWith('This private order does not match the current Book deployment.');
   });
 
   it('routes Direct V2 decline and cancel to the exact direct contract facade', async () => {
@@ -229,6 +254,7 @@ describe('useP2PTradeActions OTC V2 routing', () => {
     await useP2PTradeActions(input).cancelTrade(snapshot('standard-v2'));
 
     expect(value.standard).not.toHaveBeenCalled();
+    expect(input.refreshTradeDataInBackground).not.toHaveBeenCalled();
     expect(input.onActionNotice).toHaveBeenCalledWith(expect.objectContaining({
       action: 'cancel',
       status: 'info'
@@ -341,9 +367,8 @@ describe('promoted book action consumer (runtime admission mocked)', () => {
     expect(input.setTradeActionError).toHaveBeenCalledWith('Execution rejected');
   });
   it.each(['fully-private', 'private-offer-public-request', 'public-offer-private-request'] as const)('reviews exact maximum above price units for %s', async mode => {
-    const { item, current, input, execute } = promoted(mode);
-    await useP2PTradeActions(input).partialFillTrade(item, '20', { tradeSummary: [{ label: 'Bad override', value: 'Do not show' }] });
-    expect(current.privateTrade).not.toHaveBeenCalled(); expect(input.getTradeSigner).not.toHaveBeenCalled();
+    const { item, input, execute } = promoted(mode);
+    await useP2PTradeActions(input).partialFillTrade(item, '20', { tradeSummary: [{ label: 'Bad override', value: 'Do not show' }] }); expect(input.getTradeSigner).not.toHaveBeenCalled();
     expect(execute).toHaveBeenCalledOnce();
     expect(execute.mock.calls[0]?.[0]).toMatchObject({ kind: 'fill', orderId: 7, expectedRevision: '2', terms: { priceTerms: { offerAmount: '1', requestAmount: '2' }, fillBehavior: 'remaining-at-reviewed-price' } });
     expect(input.ensureTradeFunding).toHaveBeenCalledWith(expect.objectContaining({ confirmationPolicy: 'always',
@@ -379,8 +404,8 @@ describe('promoted book action consumer (runtime admission mocked)', () => {
     await useP2PTradeActions(b.input).partialFillTrade(b.item, '20'); expect(b.input.ensureTradeFunding).not.toHaveBeenCalled(); expect(b.execute).not.toHaveBeenCalled();
   });
   it('cancels through the exact reviewed current API with no token funding', async () => {
-    const { item, current, input, execute } = promoted(); await useP2PTradeActions(input).cancelTrade(item);
-    expect(execute).toHaveBeenCalledWith({ kind: 'cancel', orderId: 7 }); expect(current.privateTrade).not.toHaveBeenCalled();
+    const { item, input, execute } = promoted(); await useP2PTradeActions(input).cancelTrade(item);
+    expect(execute).toHaveBeenCalledWith({ kind: 'cancel', orderId: 7 });
     expect(input.ensureTradeFunding).toHaveBeenCalledWith(expect.objectContaining({ requirements: [], tradeSummary: expect.arrayContaining([expect.objectContaining({ label: 'Action', value: expect.stringContaining('return remaining') })]) }));
   });
 });

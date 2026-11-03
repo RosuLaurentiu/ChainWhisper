@@ -6,15 +6,7 @@ import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { resolveCurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
 import { CURRENT_SHARED_DEX_TOKENS } from '../../../lib/currentSharedDexTokenDistribution';
 import DexV2Page, {
-  DEFAULT_POOL_RANGE_PREVIEW,
-  LimitWorkspace,
   ModeNavigation,
-  PoolWorkspace,
-  RecurringWorkspace,
-  isExactSuccessorStrategyBudget,
-  StrategyNavigation,
-  formatDexV2DisplayedPrice,
-  getDisplayedPoolRange,
   resolveDexModeFromPath,
   parseCurrentTrialAtoms,
   parseCurrentSwapAmount,
@@ -27,7 +19,6 @@ import DexV2Page, {
   hasCurrentTrialSavedAction,
   currentTrialAttemptPresentation,
   readCurrentSwapInputFunding,
-  resolveDexV2SwapTickRank
 } from './DexV2Page';
 
 // These server-rendered views read the same pending-attempt store as the browser.
@@ -365,26 +356,12 @@ describe('DexV2Page', () => {
   });
 
   it('keeps Buy/Sell separate from the explicitly reversible displayed ratio', () => {
-    expect(formatDexV2DisplayedPrice(8, false)).toBe('1.0030');
-    expect(formatDexV2DisplayedPrice(8, true)).toBe('0.9970');
-    const invertedRange = getDisplayedPoolRange({ selection: 'custom', lowerPrice: 0.977, upperPrice: 1.037 }, true);
-    expect(invertedRange.lowerPrice.toFixed(4)).toBe('0.9643');
-    expect(invertedRange.upperPrice.toFixed(4)).toBe('1.0235');
-
     const markup = renderToStaticMarkup(<DexV2Page priceDisplayInverted onPriceDisplayInvertedChange={vi.fn()} />);
     expect(markup).toContain('<h2>Sell Test token 1</h2>');
     expect(markup).toContain('<strong>You send</strong><small>Test token 1</small>');
     expect(markup).toContain('<strong>Estimated receive</strong><small>Test token 0</small>');
     expect(markup).toContain('aria-pressed="false">Buy</button>');
     expect(markup).toContain('aria-pressed="true">Sell</button>');
-  });
-
-  it('groups the supported Pool, Limit, and Recurring tools inside Strategies', () => {
-    const markup = renderToStaticMarkup(<StrategyNavigation activeStrategyMode="pool" onSelect={vi.fn()} />);
-
-    for (const mode of ['Pool', 'Limit', 'Recurring']) expect(markup).toContain(`>${mode}<`);
-    expect(markup).not.toContain('Choose how your liquidity should work');
-    expect(markup).toContain('aria-label="DEX strategies"');
   });
 
   it('shows independent exact current trial protections without a synthetic price', () => {
@@ -403,161 +380,6 @@ describe('DexV2Page', () => {
     expect(markup).not.toContain('/ Preview');
     expect(markup).not.toContain('Slippage tolerance');
     expect(markup).not.toContain('Exact price override');
-  });
-
-  it('maps an editable exact boundary to the nearest executable protected tick', () => {
-    expect(resolveDexV2SwapTickRank(1.005, 'quote-to-base')).toBe(8);
-    expect(resolveDexV2SwapTickRank(0.995, 'base-to-quote')).toBe(7);
-    expect(resolveDexV2SwapTickRank(0.7, 'quote-to-base')).toBeNull();
-    expect(resolveDexV2SwapTickRank(1.5, 'base-to-quote')).toBeNull();
-  });
-
-  it('renders encrypted Aggregate price, spread, marginal, and budget controls', () => {
-    const actions = {
-      connectBrowserWallet: vi.fn(),
-      getSigner: vi.fn(),
-      runWalletTransactionFlow: vi.fn(),
-      unlockPrivacy: vi.fn(),
-      disconnect: vi.fn()
-    } as never;
-    const disconnected = renderToStaticMarkup(<PoolWorkspace
-      onRangePreviewChange={vi.fn()}
-      rangePreview={DEFAULT_POOL_RANGE_PREVIEW}
-      sharedWalletSession={{ actions, walletAddress: '', chainId: null } as never}
-    />);
-    expect(disconnected).toContain('Starting price');
-    expect(disconnected).toContain('Reference price');
-    expect(disconnected).toContain('Market reference 2.0000');
-    expect(disconnected).toContain('Use market');
-    expect(disconnected).toContain('Pool spread');
-    for (const preset of ['0%', '0.30%', '0.50%', '1.00%']) expect(disconnected).toContain(preset);
-    expect(disconnected).toContain('Custom');
-    expect(disconnected).toContain('aria-label="Custom total spread"');
-    expect(disconnected).toContain('Sell BCN marginal');
-    expect(disconnected).toContain('1.9970 HBR');
-    expect(disconnected).toContain('Buy BCN marginal');
-    expect(disconnected).toContain('2.0030 HBR');
-    expect(disconnected).toContain('Private budgets');
-    expect(disconnected).toContain('Available: Private HBR');
-    expect(disconnected).toContain('Available: Private BCN');
-    expect(disconnected).toContain('Price, spread, budgets, and inventory stay encrypted.');
-    expect(disconnected).not.toContain('Fee tier');
-    expect(disconnected).not.toContain('Liquidity range');
-    expect(disconnected).not.toContain('Indicative share');
-    expect(disconnected).toContain('Review private pool');
-    expect(disconnected).toContain('No verified Aggregate admission capacity remains for this pair.');
-
-    const concentrated = renderToStaticMarkup(<PoolWorkspace
-      onRangePreviewChange={vi.fn()}
-      priceDisplayInverted={false}
-      rangePreview={{ selection: 'custom', lowerPrice: 1.954, upperPrice: 2.074 }}
-      sharedWalletSession={{
-        actions,
-        walletAddress: '0x1111111111111111111111111111111111111111',
-        chainId: 7082400
-      } as never}
-    />);
-    expect(concentrated).toContain('aria-label="Starting price (HBR per BCN)"');
-    expect(concentrated).toContain('value="2.0000"');
-    expect(concentrated).toContain('value="0.30"');
-    expect(concentrated).toContain('Initial budget token HBR');
-    expect(concentrated).toContain('Initial budget token BCN');
-    expect(concentrated.match(/disabled=""/g)).toHaveLength(3);
-  });
-
-  it('validates Aggregate budgets in the corrected token lot domain', () => {
-    expect(isExactSuccessorStrategyBudget('1.5', { decimals: 6, lotSizeRaw: '500000' })).toBe(true);
-    expect(isExactSuccessorStrategyBudget('1.25', { decimals: 6, lotSizeRaw: '500000' })).toBe(false);
-    expect(isExactSuccessorStrategyBudget('0', { decimals: 6, lotSizeRaw: '500000' })).toBe(false);
-    expect(isExactSuccessorStrategyBudget('0', { decimals: 6, lotSizeRaw: '500000' }, true)).toBe(true);
-  });
-
-  it('renders functional Limit and Recurring test forms', () => {
-    const limit = renderToStaticMarkup(<LimitWorkspace
-      limitCanonicalPrice={2.01}
-      onLimitPriceChange={vi.fn()}
-      onShowMarketChart={vi.fn()}
-      priceDisplayInverted={false}
-    />);
-    expect(limit).toContain('Private Limit');
-    expect(limit).toContain('<h1>Buy BCN</h1>');
-    expect(limit).toContain('>Buy BCN</button>');
-    expect(limit).toContain('>Sell BCN</button>');
-    expect(limit).toContain('Limit price');
-    expect(limit).toContain('Receive if fully filled');
-    expect(limit).toContain('Minimum fill');
-    expect(limit).toContain('Review private fixed');
-    expect(limit).toContain('>Fixed</button>');
-    expect(limit).toContain('>Range</button>');
-    expect(limit).toContain('value="900"');
-    expect(limit).toContain('value="2.0100"');
-    expect(limit).toContain('value="25"');
-    expect(limit).toContain('447.76');
-    expect(limit).toContain('0.50% above market');
-    expect(limit).toContain('1 BCN = 2.0100 HBR');
-    expect(limit).toContain('Private by design');
-    expect(limit).toContain('Connect to view balance');
-    expect(limit).toContain('Show market chart');
-    expect(limit).toContain('No verified Fixed admission capacity remains for this pair.');
-    const recurring = renderToStaticMarkup(<RecurringWorkspace onShowMarketChart={vi.fn()} />);
-    expect(recurring).toContain('Private recurring strategy');
-    expect(recurring).toContain('Fixed-price cycle');
-    expect(recurring).toContain('Fixed prices (LL)');
-    expect(recurring).toContain('Range prices (RR)');
-    expect(recurring).toContain('aria-label="Recurring price model"');
-    expect(recurring).toContain('Buy BCN');
-    expect(recurring).toContain('Sell BCN');
-    expect(recurring).toContain('Two recurring limit prices');
-    expect(recurring).toContain('±5%');
-    expect(recurring).toContain('aria-label="Buy BCN recurring price"');
-    expect(recurring).toContain('aria-label="Sell BCN recurring price"');
-    expect(recurring).toContain('value="1.9000"');
-    expect(recurring).toContain('value="2.1000"');
-    expect(recurring).toContain('Edit either price or use a shortcut');
-    expect(recurring).toContain('aria-describedby="dex-v2-recurring-price-guidance"');
-    expect(recurring).toContain('No verified Recurring admission capacity remains for this pair.');
-    expect(recurring).toContain('aria-label="Connect wallet to view HBR balance"');
-    expect(recurring).toContain('aria-label="Connect wallet to view BCN balance"');
-    expect(recurring).toContain('Show market chart');
-    expect(recurring).toContain('Review fixed-price recurring');
-    expect(recurring).toContain('value="900"');
-    expect(recurring).toContain('473.68 BCN');
-    expect(recurring).toContain('1890.00 HBR');
-    expect(recurring).toContain('Reversing the shared price ratio relabels Buy and Sell');
-    expect(recurring).toContain('Range prices (RR) add a private end marginal price');
-    expect(recurring).toContain('Private by design');
-    expect(recurring).toContain('A private two-sided liquidity cycle');
-    expect(recurring).toContain('Filled inventory moves to the opposite side');
-  });
-
-  it('keeps Range Recurring inside the existing Recurring product screen', () => {
-    const source = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
-
-    expect(source).toContain("useState<'LL' | 'RR'>('LL')");
-    expect(source).toContain('aria-label={`${buyLegLabel} recurring end price`}');
-    expect(source).toContain('aria-label={`${sellLegLabel} recurring end price`}');
-    expect(source).toContain("{ ...common, recurringClass: 'LL' }");
-    expect(source).toContain("{ ...common, recurringClass: 'RR', buyEndPrice, sellEndPrice }");
-    expect(source).not.toContain('Range recurring is a separate future strategy');
-  });
-
-  it('relabels retained Limit and Recurring strategies against the reversed displayed base', () => {
-    const limit = renderToStaticMarkup(<LimitWorkspace
-      limitCanonicalPrice={2.01}
-      onLimitPriceChange={vi.fn()}
-      priceDisplayInverted
-    />);
-    expect(limit).toContain('Fund HBR · receive BCN at your limit.');
-    expect(limit).toContain('<h1>Sell HBR</h1>');
-    expect(limit).toContain('aria-selected="false">Buy HBR</button>');
-    expect(limit).toContain('aria-selected="true" class="active">Sell HBR</button>');
-    expect(limit).toContain('1 HBR = 0.4975 BCN');
-
-    const recurring = renderToStaticMarkup(<RecurringWorkspace priceDisplayInverted />);
-    expect(recurring).toContain('<strong>Sell HBR</strong><small>Spend BCN · receive HBR</small>');
-    expect(recurring).toContain('<strong>Buy HBR</strong><small>Spend HBR · receive BCN</small>');
-    expect(recurring).toContain('aria-label="Connect wallet to view HBR balance"');
-    expect(recurring).toContain('aria-label="Connect wallet to view BCN balance"');
   });
 
   it('does not ship seeded private strategy terms in the Positions source', () => {
@@ -625,7 +447,7 @@ describe('DexV2Page', () => {
     expect(pageSource).not.toContain('sender.submitCurrentQuote(quote)');
     expect(pageSource).not.toContain("profile: 'shared-pool'");
     expect(pageSource).not.toContain('useSuccessorDexSwapAction');
-    expect(pageSource).toContain('successorDexAdmissionAvailable');
+    expect(pageSource).not.toContain('successorDexAdmissionAvailable');
     expect(pageSource).not.toContain("strategies.includes('Aggregate')");
     expect(pageSource).not.toContain('strategies.includes(orderFamily)');
     expect(pageSource).not.toContain("strategies.includes('Recurring')");

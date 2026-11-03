@@ -29,9 +29,9 @@ function ownerView(candidateKey:'cheap-current'|'cheap-history'='cheap-current',
   return{session,render,button,capability:limitCapability,recover,sender,result};
 }
 describe('current exact Limit form',()=>{
-  it.each(['Load private order','Pause Limit'])('keeps new %s behind the wallet hold before preparation or send',async label=>{
+  it.each(['Load private order','Pause Limit'])('routes a connected wallet %s through the live capability',async label=>{
     const f=ownerView('cheap-history');f.button(label).props.onClick!();await vi.waitFor(()=>expect(hooks.states[4]).toBe(false));
-    expect(f.capability.prepareOwnerAction).not.toHaveBeenCalled();expect(f.session.actions!.getCurrentDexLimitCapability).not.toHaveBeenCalled();expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();expect(text(f.render())).toContain('Shared-history DEX App signing hold');
+    expect(f.capability.prepareOwnerAction).toHaveBeenCalledOnce();expect(f.sender.submitLimitOwner).toHaveBeenCalledOnce();
   });
   it('forwards the new deployment to My Orders and keeps manual lookup collapsed',()=>{
     hooks.enabled=true;hooks.index=0;hooks.refIndex=0;
@@ -39,6 +39,15 @@ describe('current exact Limit form',()=>{
     expect(list.props.candidateKey).toBe('cheap-history');
     const lookup=elements(tree).find(x=>x.type==='details'&&text(x.props.children).includes('Manual order lookup'))as ReactElement<{open:boolean}>;
     expect(lookup.props.open).toBe(false);
+  });
+  it.each([false, true])('forwards management visibility %s without unmounting its form or owner list', visible => {
+    hooks.enabled=true; hooks.index=0; hooks.refIndex=0;
+    const props={candidateKey:'cheap-history' as const,selectedPair:['HBR','BCN'] as const,view:'manage' as const,visible};
+    const render=()=>{hooks.index=0;hooks.refIndex=0;return CurrentLimitWorkspace(props);};
+    render(); hooks.states[1]='saved amount';
+    const tree=render(),list=elements(tree).find(x=>x.type===CurrentOwnedLimits)as ReactElement<{visible:boolean}>;
+    expect(list.props.visible).toBe(visible);
+    expect(hooks.states[1]).toBe('saved amount');
   });
   it('uses exact atoms and price witness in both directions',()=>{
     for(const direction of [true,false])expect(currentLimitIntent(direction,'9007199254740993','0.3','1')).toEqual({sellToken0:direction,amount:9007199254740993n,terms:[3n,10n,1n,7n,2n]});
@@ -51,11 +60,12 @@ describe('current exact Limit form',()=>{
     const manage=ownerView('cheap-history',owner);manage.button('Load private order').props.onClick!();await vi.waitFor(()=>expect(manage.capability.prepareOwnerAction).toHaveBeenCalledOnce());expect(manage.capability.prepareOwnerAction).toHaveBeenCalledWith(expect.objectContaining({action:'refresh'}));
     const topup=ownerView('cheap-history',owner);hooks.states[14]='1';topup.button('Review top-up').props.onClick!();await vi.waitFor(()=>expect(topup.capability.prepareOwnerAction).toHaveBeenCalledOnce());expect(topup.capability.prepareOwnerAction).toHaveBeenCalledWith(expect.objectContaining({action:'topup',topUpAmount:1_000_000n}));
   });
-  it('rejects a held owner and an over-limit engineering budget before capability access',async()=>{
-    const held=ownerView('cheap-history',`0x${'22'.repeat(20)}`,'create');hooks.states[1]='1';hooks.states[2]='2';held.button('Review order').props.onClick!();await vi.waitFor(()=>expect(hooks.states[4]).toBe(false));
-    expect(held.session.actions!.getCurrentDexLimitCapability).not.toHaveBeenCalled();expect(held.sender.checkCurrentCheapCandidate).not.toHaveBeenCalled();
-    const over=ownerView('cheap-history','0x8b749251cf1f712d4e39fd048c53394af03e10be','create');hooks.states[1]='1.000001';hooks.states[2]='2';over.button('Review order').props.onClick!();await vi.waitFor(()=>expect(hooks.states[4]).toBe(false));
-    expect(over.session.actions!.getCurrentDexLimitCapability).not.toHaveBeenCalled();expect(over.sender.checkCurrentCheapCandidate).not.toHaveBeenCalled();
+  it('stops a rejected live capability before preparation and allows a browser amount above the old engineering cap',async()=>{
+    const held=ownerView('cheap-history',`0x${'22'.repeat(20)}`,'create');held.sender.checkCurrentCheapCandidate.mockRejectedValue(new Error('Wallet session revoked'));
+    hooks.states[1]='1';hooks.states[2]='2';held.button('Review order').props.onClick!();await vi.waitFor(()=>expect(hooks.states[4]).toBe(false));
+    expect(held.session.actions!.getCurrentDexLimitCapability).not.toHaveBeenCalled();expect(held.capability.prepareLimit).not.toHaveBeenCalled();expect(held.sender.submitLimitOwner).not.toHaveBeenCalled();expect(text(held.render())).toContain('Wallet session revoked');
+    const over=ownerView('cheap-history',`0x${'33'.repeat(20)}`,'create');hooks.states[1]='1.000001';hooks.states[2]='2';over.button('Review order').props.onClick!();await vi.waitFor(()=>expect(hooks.states[4]).toBe(false));
+    expect(over.session.actions!.getCurrentDexLimitCapability).toHaveBeenCalledOnce();expect(over.sender.checkCurrentCheapCandidate).toHaveBeenCalledOnce();expect(over.capability.prepareLimit).toHaveBeenCalledWith(expect.objectContaining({intent:expect.objectContaining({amount:1_000_001n})}));
   });
   it.each(['0','1e3','-1','1.5',''])('rejects invalid offered budget %s',amount=>expect(()=>currentLimitIntent(true,amount,'1','0')).toThrow());
   it('does not enable a legacy writer without an owner session',()=>{const html=renderToStaticMarkup(<CurrentLimitWorkspace/>);expect(html).toContain('waits for a match at your private price');expect(html).toContain('Minimum fill');expect(html).toMatch(/disabled=""[^>]*>Review order/);expect(html).not.toContain('lot size');});

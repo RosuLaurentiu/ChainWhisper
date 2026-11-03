@@ -1,12 +1,8 @@
 import {
   COTI_NETWORK,
-  EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ADDRESS,
-  FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL,
   formatTokenAmount,
-  LEGACY_SWAP_VAULT_CONTRACT_ADDRESS,
   parseTokenAmountInput,
   WHISPER_SHIELD_ENABLED,
-  WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED,
   WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS,
   type SwapDirection
 } from '../../lib/appShared';
@@ -24,9 +20,6 @@ import {
 
 type DeriveTokenSwapViewInput = {
   hasAesReady: boolean;
-  legacyPrivateRewardTokenBalanceWei: bigint | null;
-  legacyPrivateRewardTokenDecimals: number;
-  legacyPrivateRewardTokenSymbol: string;
   loadingRewardBalances: boolean;
   onCotiNetwork: boolean;
   privateRewardTokenBalanceWei: bigint | null;
@@ -41,76 +34,8 @@ type DeriveTokenSwapViewInput = {
   walletAddress: string;
 };
 
-type ResolveTokenSwapDirectionFallbackInput = {
-  canEarlierLegacyUnshieldTokens: boolean;
-  canLegacyUnshieldTokens: boolean;
-  canShieldTokens: boolean;
-  canUnshieldTokens: boolean;
-  currentSwapDirectionEnabled: boolean;
-  swapDirection: SwapDirection;
-};
-
-export const resolveTokenSwapDirectionFallback = ({
-  canEarlierLegacyUnshieldTokens,
-  canLegacyUnshieldTokens,
-  canShieldTokens,
-  canUnshieldTokens,
-  currentSwapDirectionEnabled,
-  swapDirection
-}: ResolveTokenSwapDirectionFallbackInput): SwapDirection => {
-  if (currentSwapDirectionEnabled) {
-    return swapDirection;
-  }
-  if (swapDirection === 'shield') {
-    return canUnshieldTokens
-      ? 'unshield'
-      : canLegacyUnshieldTokens
-        ? 'legacy-unshield'
-        : canEarlierLegacyUnshieldTokens
-          ? 'legacy-unshield-earlier'
-          : 'unshield';
-  }
-  if (swapDirection === 'unshield') {
-    if (canLegacyUnshieldTokens) return 'legacy-unshield';
-    if (canEarlierLegacyUnshieldTokens) return 'legacy-unshield-earlier';
-  }
-  if (swapDirection === 'legacy-unshield' && canEarlierLegacyUnshieldTokens) {
-    return 'legacy-unshield-earlier';
-  }
-  if (swapDirection === 'legacy-unshield-earlier' && canLegacyUnshieldTokens) {
-    return 'legacy-unshield';
-  }
-  return canUnshieldTokens ? 'unshield' : canShieldTokens ? 'shield' : swapDirection;
-};
-
-export const isLegacyUnshieldDirection = (direction: SwapDirection): boolean =>
-  direction === 'legacy-unshield' || direction === 'legacy-unshield-earlier';
-
-export const resolveLegacyRecoverySpendableAmount = ({
-  balanceWei,
-  direction,
-  tokenFeeWei
-}: {
-  balanceWei: bigint;
-  direction: SwapDirection;
-  tokenFeeWei: bigint | null;
-}): bigint => {
-  if (
-    direction !== 'legacy-unshield-earlier' ||
-    tokenFeeWei === null ||
-    tokenFeeWei <= 0n ||
-    balanceWei < tokenFeeWei
-  ) {
-    return balanceWei;
-  }
-  return balanceWei - tokenFeeWei;
-};
-
 export const deriveTokenSwapView = ({
   hasAesReady,
-  legacyPrivateRewardTokenBalanceWei,
-  legacyPrivateRewardTokenDecimals,
-  legacyPrivateRewardTokenSymbol,
   loadingRewardBalances,
   onCotiNetwork,
   privateRewardTokenBalanceWei,
@@ -126,41 +51,17 @@ export const deriveTokenSwapView = ({
 }: DeriveTokenSwapViewInput) => {
   const canShieldTokens = WHISPER_SHIELD_ENABLED && Boolean(WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS);
   const canUnshieldTokens = WHISPER_SHIELD_ENABLED && Boolean(WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS);
-  const canLegacyUnshieldTokens =
-    WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED && Boolean(LEGACY_SWAP_VAULT_CONTRACT_ADDRESS);
-  const canEarlierLegacyUnshieldTokens =
-    WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED && Boolean(EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ADDRESS);
-  const currentSwapDirectionEnabled =
-    swapDirection === 'shield'
-      ? canShieldTokens
-      : swapDirection === 'unshield'
-        ? canUnshieldTokens
-        : swapDirection === 'legacy-unshield'
-          ? canLegacyUnshieldTokens
-          : canEarlierLegacyUnshieldTokens;
-  const activeSwapVaultContractAddress =
-    swapDirection === 'legacy-unshield'
-      ? LEGACY_SWAP_VAULT_CONTRACT_ADDRESS
-      : swapDirection === 'legacy-unshield-earlier'
-        ? EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ADDRESS
-      : WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS;
+  const currentSwapDirectionEnabled = swapDirection === 'shield' ? canShieldTokens : canUnshieldTokens;
+  const activeSwapVaultContractAddress = WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS;
   const activeSwapVaultContractUrl = activeSwapVaultContractAddress
     ? `${COTI_NETWORK.blockExplorerUrl}/address/${activeSwapVaultContractAddress}#code`
     : '';
   const wispBridgeContractUrl = WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS
     ? `${COTI_NETWORK.blockExplorerUrl}/address/${WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS}#code`
     : '';
-  const legacySwapVaultContractUrl = activeSwapVaultContractAddress && isLegacyUnshieldDirection(swapDirection)
-    ? `${COTI_NETWORK.blockExplorerUrl}/address/${activeSwapVaultContractAddress}#code`
-    : '';
-  const swapPrivateRewardTokenBalanceWei =
-    isLegacyUnshieldDirection(swapDirection) ? legacyPrivateRewardTokenBalanceWei : privateRewardTokenBalanceWei;
-  const swapPrivateRewardTokenSymbol =
-    isLegacyUnshieldDirection(swapDirection)
-      ? `${legacyPrivateRewardTokenSymbol || FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL} (old)`
-      : privateRewardTokenSymbol;
-  const swapPrivateRewardTokenDecimals =
-    isLegacyUnshieldDirection(swapDirection) ? legacyPrivateRewardTokenDecimals : privateRewardTokenDecimals;
+  const swapPrivateRewardTokenBalanceWei = privateRewardTokenBalanceWei;
+  const swapPrivateRewardTokenSymbol = privateRewardTokenSymbol;
+  const swapPrivateRewardTokenDecimals = privateRewardTokenDecimals;
   const swapInputDecimals = swapDirection === 'shield' ? rewardTokenDecimals : swapPrivateRewardTokenDecimals;
   const publicBalance =
     rewardTokenBalanceWei !== null ? formatTokenAmount(rewardTokenBalanceWei, rewardTokenDecimals, 4) : '--';
@@ -193,9 +94,7 @@ export const deriveTokenSwapView = ({
     : !currentSwapDirectionEnabled
       ? swapDirection === 'shield'
         ? 'Portal paused'
-        : swapDirection === 'unshield'
-          ? 'Unshield paused'
-          : 'Legacy unshield unavailable'
+        : 'Unshield paused'
       : swapBlockedActionLabel
         ? swapBlockedActionLabel
         : parsedSwapAmount === null || parsedSwapAmount <= 0n
@@ -208,9 +107,6 @@ export const deriveTokenSwapView = ({
     activeSwapVaultContractAddress,
     activeSwapVaultContractUrl,
     wispBridgeContractUrl,
-    legacySwapVaultContractUrl,
-    canEarlierLegacyUnshieldTokens,
-    canLegacyUnshieldTokens,
     canShieldTokens,
     canSwapRewardTokens,
     canUnshieldTokens,

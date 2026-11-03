@@ -79,6 +79,8 @@ export type SharedWalletSession = {
   onWalletAesHealthChange?: (walletAddress: string, health: WalletAesHealthState) => void;
   otcV2Runtime?: OtcTradeHistoryV2Runtime | null;
   otcV2ActionRuntime?: OtcV2ActionRuntime | null;
+  /** Current list reads only; financial handlers use otcV2ActionRuntime. */
+  otcV2ReadRuntime?: OtcV2ActionRuntime | null;
   otcV2RuntimeError?: string;
   sessionOnboardInfo: Record<string, OnboardInfo>;
   walletAesHealthByAddress?: Record<string, WalletAesHealthState>;

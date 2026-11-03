@@ -6,9 +6,10 @@ import type { TradeCreateMode } from '../components/P2PTradingPage.helpers';
 import type { TradeEntryMode, TradePageView } from './useP2PTradeRoute';
 
 type UseP2PTradeEntryNavigationArgs = {
-  buildCurrentTradeSurfacePath: (surface: 'recurring') => string;
-  navigateDeskView: (path: '/otc') => void;
-  navigateToTradePath: (path: string) => void;
+  navigateDeskView: (path: '/otc' | '/otc/agent' | '/otc/desk' | '/otc/limit' | '/otc/orders') => void;
+  hasTradeDraft: boolean;
+  isEntryBlocked: () => boolean;
+  onPrefillMarketPair: () => void;
   routeTradeMode?: TradeEntryMode;
   routeView: TradePageView;
   setTradeActionError: (message: string) => void;
@@ -18,16 +19,16 @@ type UseP2PTradeEntryNavigationArgs = {
   setTradeRequestCustomTokenAddress: Dispatch<SetStateAction<string>>;
   setTradeRequestTokenSelection: Dispatch<SetStateAction<TradeTokenPresetKey>>;
   startFreshOneOffTrade: () => void;
-  startFreshRecurringOrder: () => void;
   swapActionMode: OtcSwapInputMode;
   swapBuyTokenSelection: TradeTokenPresetKey;
   swapSellTokenSelection: TradeTokenPresetKey;
 };
 
 export default function useP2PTradeEntryNavigation({
-  buildCurrentTradeSurfacePath,
   navigateDeskView,
-  navigateToTradePath,
+  hasTradeDraft,
+  isEntryBlocked,
+  onPrefillMarketPair,
   routeTradeMode,
   routeView,
   setTradeActionError,
@@ -37,44 +38,50 @@ export default function useP2PTradeEntryNavigation({
   setTradeRequestCustomTokenAddress,
   setTradeRequestTokenSelection,
   startFreshOneOffTrade,
-  startFreshRecurringOrder,
   swapActionMode,
   swapBuyTokenSelection,
   swapSellTokenSelection
 }: UseP2PTradeEntryNavigationArgs) {
-  const activeTradeMode: TradeEntryMode =
-    routeView === 'create'
-      ? routeTradeMode === 'recurring'
-        ? 'recurring'
-        : 'limit'
-      : 'swap';
+  const activeTradeMode: TradeEntryMode = routeView === 'create' ? 'limit' : 'swap';
+
+  const navigateTradeView = useCallback((path: '/otc' | '/otc/agent' | '/otc/desk' | '/otc/limit' | '/otc/orders') => {
+    if (path === '/otc/limit' && isEntryBlocked()) return;
+    if (path === '/otc/limit' && routeView !== 'create' && routeView !== 'counter' && !hasTradeDraft) {
+      setTradeOfferTokenSelection(swapSellTokenSelection);
+      setTradeRequestTokenSelection(swapBuyTokenSelection);
+      onPrefillMarketPair();
+    }
+    navigateDeskView(path);
+  }, [hasTradeDraft, isEntryBlocked, navigateDeskView, onPrefillMarketPair, routeView, setTradeOfferTokenSelection,
+    setTradeRequestTokenSelection, swapBuyTokenSelection, swapSellTokenSelection]);
 
   useEffect(() => {
     if (routeView !== 'create') {
       return;
     }
-    const nextCreateMode = routeTradeMode === 'recurring' ? 'recurring' : 'one-off';
-    setTradeCreateMode((current) => (current === nextCreateMode ? current : nextCreateMode));
-  }, [routeTradeMode, routeView, setTradeCreateMode]);
+    setTradeCreateMode((current) => current === 'one-off' ? current : 'one-off');
+    if (routeTradeMode === 'recurring') setTradeActionError('Recurring orders are not supported in this App.');
+  }, [routeTradeMode, routeView, setTradeActionError, setTradeCreateMode]);
 
   const openTradeEntryMode = useCallback(
     (mode: TradeEntryMode) => {
+      if (mode !== 'swap' && isEntryBlocked()) return;
       setTradeActionError('');
       if (mode === 'swap') {
         navigateDeskView('/otc');
         return;
       }
       if (mode === 'recurring') {
-        startFreshRecurringOrder();
-        navigateToTradePath(buildCurrentTradeSurfacePath('recurring'));
+        setTradeActionError('Recurring orders are not supported in this App.');
         return;
       }
       startFreshOneOffTrade();
     },
-    [buildCurrentTradeSurfacePath, navigateDeskView, navigateToTradePath, setTradeActionError, startFreshOneOffTrade, startFreshRecurringOrder]
+    [isEntryBlocked, navigateDeskView, setTradeActionError, startFreshOneOffTrade]
   );
 
   const openLimitOrderFromSwapPair = useCallback(() => {
+    if (isEntryBlocked()) return;
     const prefill = resolveSwapLimitPrefill({
       inputMode: swapActionMode,
       sellTokenSelection: swapSellTokenSelection,
@@ -83,15 +90,18 @@ export default function useP2PTradeEntryNavigation({
       buyAmountInput: ''
     });
     startFreshOneOffTrade();
+    onPrefillMarketPair();
     setTradeOfferTokenSelection(prefill.offerTokenSelection as TradeTokenPresetKey);
     setTradeRequestTokenSelection(prefill.requestTokenSelection as TradeTokenPresetKey);
     setTradeOfferCustomTokenAddress('');
     setTradeRequestCustomTokenAddress('');
   }, [
+    isEntryBlocked,
     setTradeOfferCustomTokenAddress,
     setTradeOfferTokenSelection,
     setTradeRequestCustomTokenAddress,
     setTradeRequestTokenSelection,
+    onPrefillMarketPair,
     startFreshOneOffTrade,
     swapActionMode,
     swapBuyTokenSelection,
@@ -100,6 +110,7 @@ export default function useP2PTradeEntryNavigation({
 
   return {
     activeTradeMode,
+    navigateTradeView,
     openLimitOrderFromSwapPair,
     openTradeEntryMode
   };

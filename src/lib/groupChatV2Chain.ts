@@ -9,6 +9,7 @@ import {
 import {
   extractRevertData,
   loadCotiEthersModule,
+  loadCotiStartupReadProvider,
   type CotiReadProvider
 } from './appShared/core';
 import type { GroupChatV2DeploymentManifest } from './groupChatV2Deployment';
@@ -113,6 +114,7 @@ export const GROUP_CHAT_V2_WALLET_LIFECYCLE_TOPICS = Object.freeze([
   'GroupJoinedWithCode'
 ].map(groupChatV2EventTopic));
 export const GROUP_CHAT_V2_MAX_LOG_BLOCK_SPAN = 2_048n;
+export const GROUP_CHAT_V2_MAX_WALLET_LIFECYCLE_BLOCK_SPAN = 100_000n;
 const GROUP_CHAT_V2_RECEIPT_TIMEOUT_MS = 300_000;
 const GROUP_CHAT_V2_RECEIPT_POLL_MS = 2_000;
 const GROUP_CHAT_V2_EPOCH_ENVELOPE_NOT_SYNCHRONIZED_SELECTOR = '0xa70f12a4';
@@ -170,6 +172,8 @@ export type GroupChatV2MetaMaskCapability = Readonly<{
   readonly [GROUP_CHAT_V2_CAPABILITY_BRAND]: true;
 }>;
 
+export type GroupChatV2ReadContext = Readonly<{ purpose: 'selected-history'; groupId: bigint }>;
+
 type CapabilityBinding = Readonly<{
   assertCurrent: () => void | Promise<void>;
   assertSnapshotCurrent?: () => void;
@@ -178,6 +182,7 @@ type CapabilityBinding = Readonly<{
   chainId: bigint;
   ownerAddress: string;
   signer: JsonRpcSigner;
+  shouldPrioritizeRead?: (groupId: bigint) => boolean;
 }>;
 
 export type VerifiedGroupChatV2Deployment = GroupChatV2DeploymentManifest;
@@ -534,6 +539,24 @@ const resolveReadCapability = (
   capability: GroupChatV2MetaMaskCapability
 ): CapabilityBinding => bindingOf(capability);
 
+const readProviderFor = async (
+  capability: GroupChatV2MetaMaskCapability,
+  readContext?: GroupChatV2ReadContext,
+  targetGroupId?: bigint
+): Promise<CapabilityBinding['readProvider']> => {
+  const binding = resolveReadCapability(capability);
+  const groupId = readContext?.groupId;
+  if (readContext?.purpose !== 'selected-history' || typeof groupId !== 'bigint' || groupId <= 0n ||
+    targetGroupId !== undefined && targetGroupId !== groupId || binding.shouldPrioritizeRead?.(groupId) !== true) {
+    return binding.readProvider;
+  }
+  await assertBindingSnapshotCurrent(binding);
+  const foreground = await loadCotiStartupReadProvider();
+  await assertBindingSnapshotCurrent(resolveReadCapability(capability));
+  // Eligibility can end while the admitted shared provider is being resolved.
+  return binding.shouldPrioritizeRead?.(groupId) === true ? foreground : binding.readProvider;
+};
+
 export const bindGroupChatV2MetaMaskCapability = async ({
   signer,
   browserProvider,
@@ -541,7 +564,8 @@ export const bindGroupChatV2MetaMaskCapability = async ({
   ownerAddress,
   chainId,
   assertCurrent,
-  assertSnapshotCurrent
+  assertSnapshotCurrent,
+  shouldPrioritizeRead
 }: {
   signer: JsonRpcSigner;
   browserProvider: BrowserProvider;
@@ -550,6 +574,7 @@ export const bindGroupChatV2MetaMaskCapability = async ({
   chainId: bigint;
   assertCurrent: () => void | Promise<void>;
   assertSnapshotCurrent?: () => void;
+  shouldPrioritizeRead?: (groupId: bigint) => boolean;
 }): Promise<GroupChatV2MetaMaskCapability> => {
   const candidate = signer as JsonRpcSigner & {
     privateKey?: unknown;
@@ -573,6 +598,7 @@ export const bindGroupChatV2MetaMaskCapability = async ({
     assertSnapshotCurrent,
     browserProvider,
     readProvider,
+    shouldPrioritizeRead,
     chainId: uint(chainId, 'Expected Group Chat V2 chain', UINT256_MAX, false),
     ownerAddress: address(ownerAddress, 'Expected Group Chat V2 owner'),
     signer: candidate
@@ -703,11 +729,14 @@ const writeContractFor = async (
 
 const readContractFor = async (
   contractAddress: string,
-  capability: GroupChatV2MetaMaskCapability
+  capability: GroupChatV2MetaMaskCapability,
+  readContext?: GroupChatV2ReadContext,
+  groupId?: bigint
 ) => {
-  const binding = resolveReadCapability(capability);
+  resolveReadCapability(capability);
   const cotiEthers = await loadCotiEthersModule();
-  return new cotiEthers.Contract(contractAddress, GROUP_CHAT_V2_ABI, binding.readProvider);
+  const provider = await readProviderFor(capability, readContext, groupId);
+  return new cotiEthers.Contract(contractAddress, GROUP_CHAT_V2_ABI, provider);
 };
 
 const verified = (deployment: VerifiedGroupChatV2Deployment): VerifiedGroupChatV2Deployment => {
@@ -725,6 +754,7 @@ export const verifyGroupChatV2Deployment = async ({
   capability: GroupChatV2MetaMaskCapability;
 }): Promise<VerifiedGroupChatV2Deployment> => {
   const binding = resolveReadCapability(capability);
+  await assertBindingSnapshotCurrent(binding);
   const expected = Object.freeze({
     chainId: uint(manifest.chainId, 'Group deployment chain', UINT256_MAX, false),
     contractAddress: address(manifest.contractAddress, 'Group deployment address'),
@@ -735,40 +765,58 @@ export const verifyGroupChatV2Deployment = async ({
     throw new Error('Group Chat V2 manifest chain does not match the current wallet.');
   }
   const runtime = await binding.readProvider.getCode(expected.contractAddress);
+  await assertBindingSnapshotCurrent(resolveReadCapability(capability));
   if (runtime === '0x' || keccak256(runtime).toLowerCase() !== expected.runtimeBytecodeHash) {
     throw new Error('Group Chat V2 runtime does not match its frozen manifest.');
+  }
+  // Retained compiler output proves these constants and the embedded deployment block for this exact runtime.
+  if (expected.runtimeBytecodeHash === '0x608dedd00c5aeff7ec5f756395cd8269e24be50e9ae3da0f015c030963f88fd9') {
+    if (expected.deploymentBlock !== 8_982_896n) {
+      throw new Error('Group Chat V2 deployment block does not match the reviewed runtime.');
+    }
+    const result = Object.freeze({ ...expected });
+    VERIFIED_DEPLOYMENTS.add(result);
+    return result;
   }
   const contract = await readContractFor(expected.contractAddress, capability);
   const [
     version,
     protocol,
     deploymentBlock,
-    messageAadDomain,
+    messageAadDomain
+  ] = await Promise.all([
+    contract.contractVersion(),
+    contract.PROTOCOL_VERSION(),
+    contract.deploymentBlock(),
+    contract.MESSAGE_AAD_DOMAIN()
+  ]);
+  const [
     metadataAadDomain,
     maxMembers,
     maxInitialMembers,
-    maxMembershipBatch,
+    maxMembershipBatch
+  ] = await Promise.all([
+    contract.METADATA_AAD_DOMAIN(),
+    contract.MAX_GROUP_MEMBERS(),
+    contract.MAX_INITIAL_MEMBERS(),
+    contract.MAX_MEMBERSHIP_BATCH()
+  ]);
+  const [
     maxInviteBatch,
     maxPageSize,
     minCiphertext,
     maxCiphertext
-  ] = [
-    await contract.contractVersion(),
-    await contract.PROTOCOL_VERSION(),
-    await contract.deploymentBlock(),
-    await contract.MESSAGE_AAD_DOMAIN(),
-    await contract.METADATA_AAD_DOMAIN(),
-    await contract.MAX_GROUP_MEMBERS(),
-    await contract.MAX_INITIAL_MEMBERS(),
-    await contract.MAX_MEMBERSHIP_BATCH(),
-    await contract.MAX_INVITE_BATCH(),
-    await contract.MAX_PAGE_SIZE(),
-    await contract.MIN_CIPHERTEXT_BYTES(),
-    await contract.MAX_CIPHERTEXT_BYTES()
-  ] as const;
+  ] = await Promise.all([
+    contract.MAX_INVITE_BATCH(),
+    contract.MAX_PAGE_SIZE(),
+    contract.MIN_CIPHERTEXT_BYTES(),
+    contract.MAX_CIPHERTEXT_BYTES()
+  ]);
   const requiredFeatures: boolean[] = [];
-  for (const feature of GROUP_CHAT_V2_REQUIRED_FEATURES) {
-    requiredFeatures.push(await contract.supportsFeature(keccak256(toUtf8Bytes(feature))));
+  // Four-read windows share SDK network checks without an unbounded startup queue.
+  for (let offset = 0; offset < GROUP_CHAT_V2_REQUIRED_FEATURES.length; offset += 4) {
+    requiredFeatures.push(...await Promise.all(GROUP_CHAT_V2_REQUIRED_FEATURES.slice(offset, offset + 4)
+      .map(feature => contract.supportsFeature(keccak256(toUtf8Bytes(feature))))));
   }
   const appWalletExecutor = await contract.supportsFeature(keccak256(toUtf8Bytes('APP_WALLET_EXECUTOR')));
   if (
@@ -789,6 +837,7 @@ export const verifyGroupChatV2Deployment = async ({
   ) {
     throw new Error('Group Chat V2 deployment features do not match the reviewed protocol.');
   }
+  await assertBindingSnapshotCurrent(resolveReadCapability(capability));
   const result = Object.freeze({ ...expected });
   VERIFIED_DEPLOYMENTS.add(result);
   return result;
@@ -796,8 +845,10 @@ export const verifyGroupChatV2Deployment = async ({
 
 const groupContract = (
   deployment: VerifiedGroupChatV2Deployment,
-  capability: GroupChatV2MetaMaskCapability
-) => readContractFor(verified(deployment).contractAddress, capability);
+  capability: GroupChatV2MetaMaskCapability,
+  readContext?: GroupChatV2ReadContext,
+  groupId?: bigint
+) => readContractFor(verified(deployment).contractAddress, capability, readContext, groupId);
 
 const groupWriteContract = (
   deployment: VerifiedGroupChatV2Deployment,
@@ -828,15 +879,17 @@ const submitGroupWrite = async (
 export const readGroupChatV2Group = async ({
   deployment,
   capability,
-  groupId
+  groupId,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
   groupId: bigint;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<GroupChatV2GroupSnapshot> => {
   const target = verified(deployment);
   const id = uint(groupId, 'Group ID', UINT256_MAX, false);
-  const raw = await (await groupContract(target, capability)).getGroup(id);
+  const raw = await (await groupContract(target, capability, readContext, id)).getGroup(id);
   if (field(raw, 'exists', 12) !== true) throw new Error('Group Chat V2 group does not exist.');
   return Object.freeze({
     chainId: target.chainId,
@@ -916,16 +969,18 @@ export const readGroupChatV2MembershipRanges = async ({
   deployment,
   capability,
   groupId,
-  account
+  account,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
   groupId: bigint;
   account: string;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<readonly GroupChatV2MembershipRangeSnapshot[]> => {
   const id = uint(groupId, 'Group membership-range ID', UINT256_MAX, false);
   const member = address(account, 'Group membership-range account');
-  const contract = await groupContract(deployment, capability);
+  const contract = await groupContract(deployment, capability, readContext, id);
   const ranges: GroupChatV2MembershipRangeSnapshot[] = [];
   let cursor = 0n;
   for (let page = 0; page < 82; page += 1) {
@@ -1043,16 +1098,18 @@ export const readGroupChatV2EpochMetadata = async ({
   deployment,
   capability,
   groupId,
-  epoch
+  epoch,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
   groupId: bigint;
   epoch: bigint;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<GroupChatV2EpochMetadata> => {
   const id = uint(groupId, 'Group ID', UINT256_MAX, false);
   const epochId = uint(epoch, 'Group epoch', UINT64_MAX, false);
-  const raw = await (await groupContract(deployment, capability)).getEpochMetadata(id, epochId);
+  const raw = await (await groupContract(deployment, capability, readContext, id)).getEpochMetadata(id, epochId);
   return Object.freeze({
     groupId: id,
     epoch: epochId,
@@ -1068,21 +1125,23 @@ export const readGroupChatV2EpochKey = async ({
   deployment,
   capability,
   groupId,
-  epoch
+  epoch,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
   groupId: bigint;
   epoch: bigint;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<GroupChatV2EpochKey> => {
   const target = verified(deployment);
   const binding = resolveReadCapability(capability);
   if (!binding.signer.getUserOnboardInfo()?.aesKey) {
     throw new Error('Unlock the COTI privacy key before reading this group epoch.');
   }
-  const metadata = await readGroupChatV2EpochMetadata({ deployment: target, capability, groupId, epoch });
+  const metadata = await readGroupChatV2EpochMetadata({ deployment: target, capability, groupId, epoch, readContext });
   if (!metadata.exists) throw new Error('Group epoch does not exist.');
-  const contract = await groupContract(target, capability);
+  const contract = await groupContract(target, capability, readContext, groupId);
   let rawEnvelope: unknown;
   try {
     rawEnvelope = await contract.getMyEpochEnvelope(
@@ -1888,13 +1947,15 @@ export const readGroupChatV2MessageLogPage = async ({
   capability,
   groupId,
   fromBlock,
-  toBlock
+  toBlock,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
   groupId: bigint;
   fromBlock: bigint;
   toBlock: bigint;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<GroupChatV2MessageEvent[]> => {
   const target = verified(deployment);
   const id = uint(groupId, 'Group history group ID', UINT256_MAX, false);
@@ -1906,10 +1967,10 @@ export const readGroupChatV2MessageLogPage = async ({
   if (end > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error('Group message history range is not safely representable by the provider.');
   }
-  await readGroupChatV2Group({ deployment: target, capability, groupId: id });
-  const binding = resolveReadCapability(capability);
+  await readGroupChatV2Group({ deployment: target, capability, groupId: id, readContext });
   const groupTopic = `0x${id.toString(16).padStart(64, '0')}`;
-  const logs = await binding.readProvider.getLogs({
+  const provider = await readProviderFor(capability, readContext, id);
+  const logs = await provider.getLogs({
     address: target.contractAddress,
     fromBlock: Number(start),
     toBlock: Number(end),
@@ -2122,7 +2183,7 @@ export const readGroupChatV2WalletLifecycleLogPage = async ({
   const wallet = address(walletAddress, 'Group lifecycle wallet');
   const start = uint(fromBlock, 'Group lifecycle start block', UINT256_MAX, false);
   const end = uint(toBlock, 'Group lifecycle end block', UINT256_MAX, false);
-  if (start < target.deploymentBlock || end < start || end - start + 1n > GROUP_CHAT_V2_MAX_LOG_BLOCK_SPAN) {
+  if (start < target.deploymentBlock || end < start || end - start + 1n > GROUP_CHAT_V2_MAX_WALLET_LIFECYCLE_BLOCK_SPAN) {
     throw new Error('Group lifecycle range is outside the verified bounded page.');
   }
   if (end > BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -2140,6 +2201,7 @@ export const readGroupChatV2WalletLifecycleLogPage = async ({
     topics: [[...GROUP_CHAT_V2_WALLET_LIFECYCLE_TOPICS], null, walletTopic]
   });
   resolveReadCapability(capability);
+  if (logs.length > 4_096) throw new Error('Group lifecycle logs exceed the bounded response.');
   const events = logs.map((log): GroupChatV2WalletLifecycleEvent => {
     const raw = log as unknown as Record<string, unknown>;
     if (
@@ -2188,15 +2250,17 @@ export const readGroupChatV2WalletLifecycleLogPage = async ({
 
 export const readGroupChatV2LatestBlockNumber = async ({
   deployment,
-  capability
+  capability,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<bigint> => {
   verified(deployment);
-  const binding = resolveReadCapability(capability);
+  const provider = await readProviderFor(capability, readContext);
   const blockNumber = uint(
-    await binding.readProvider.getBlockNumber(),
+    await provider.getBlockNumber(),
     'Latest Group Chat V2 block',
     UINT256_MAX,
     false
@@ -2208,19 +2272,21 @@ export const readGroupChatV2LatestBlockNumber = async ({
 export const readGroupChatV2CanonicalBlock = async ({
   deployment,
   capability,
-  blockNumber
+  blockNumber,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
   blockNumber: bigint;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<GroupChatV2CanonicalBlock> => {
   const target = verified(deployment);
   const selected = uint(blockNumber, 'Canonical group block', UINT256_MAX, false);
   if (selected < target.deploymentBlock || selected > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error('Canonical group block is outside the verified provider range.');
   }
-  const binding = resolveReadCapability(capability);
-  const block = await binding.readProvider.getBlock(Number(selected));
+  const provider = await readProviderFor(capability, readContext);
+  const block = await provider.getBlock(Number(selected));
   resolveReadCapability(capability);
   if (!block || BigInt(block.number) !== selected) {
     throw new Error('Canonical group block is unavailable.');
@@ -2240,12 +2306,14 @@ export const readGroupChatV2MessageCountAtBlock = async ({
   deployment,
   capability,
   groupId,
-  blockNumber
+  blockNumber,
+  readContext
 }: {
   deployment: VerifiedGroupChatV2Deployment;
   capability: GroupChatV2MetaMaskCapability;
   groupId: bigint;
   blockNumber: bigint;
+  readContext?: GroupChatV2ReadContext;
 }): Promise<bigint> => {
   const target = verified(deployment);
   const id = uint(groupId, 'Historical group ID', UINT256_MAX, false);
@@ -2256,7 +2324,7 @@ export const readGroupChatV2MessageCountAtBlock = async ({
   ) {
     throw new Error('Historical group block is outside the verified provider range.');
   }
-  const contract = await groupContract(target, capability);
+  const contract = await groupContract(target, capability, readContext, id);
   const raw = await contract.getGroup(id, { blockTag: Number(selected) });
   resolveReadCapability(capability);
   if (field(raw, 'exists', 12) !== true) return 0n;

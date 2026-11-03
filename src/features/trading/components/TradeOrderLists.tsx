@@ -7,7 +7,6 @@ import type {
   MyTradeGroupView,
   TradeOverviewCardOptions
 } from './P2PTradingPage.helpers';
-import TradeRecurringOrderCard from './TradeRecurringOrderCard';
 import TradeStandardOrderCard from './TradeStandardOrderCard';
 
 export type TradeOrderCardProps = {
@@ -46,22 +45,6 @@ export function TradeOverviewCard({
   copyWithFeedback,
   canonicalV2Rows
 }: TradeOverviewCardProps) {
-  if (trade.recurringOrder) {
-    return (
-      <TradeRecurringOrderCard
-        snapshot={trade}
-        options={options}
-        walletKey={walletKey}
-        reversedRateTradeIds={reversedRateTradeIds}
-        lastCopiedKey={lastCopiedKey}
-        openTradeSnapshot={openTradeSnapshot}
-        toggleTradeRateDirection={toggleTradeRateDirection}
-        buildTradeShareUrl={buildTradeShareUrl}
-        copyWithFeedback={copyWithFeedback}
-      />
-    );
-  }
-
   return (
     <TradeStandardOrderCard
       trade={trade}

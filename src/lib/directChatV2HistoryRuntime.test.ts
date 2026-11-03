@@ -53,7 +53,8 @@ const sessionWatch = vi.fn<(
   onHint: () => void | Promise<void>
 ) => Promise<(() => Promise<void>) | null>>(async () => null);
 const sessionWatchIncoming = vi.fn<(
-  onHint: (peer: string) => void | Promise<void>
+  onHint: (peer: string) => void | Promise<void>,
+  shouldPause?: () => boolean
 ) => Promise<() => Promise<void>>>(async () => async () => undefined);
 
 const incomingDependencies = {
@@ -78,7 +79,7 @@ const session = {
     dependencies: incomingDependencies
   })),
   history: vi.fn(async () => ({
-    conversation: { exists: true },
+    conversation: { exists: true, messageCount: 1n, lastMessageBlock: 100n },
     scope: SCOPE,
     dependencies
   })),
@@ -137,7 +138,22 @@ describe('directChatV2HistoryRuntime', () => {
     vi.clearAllMocks();
   });
 
-  it('advances bounded pages with an in-memory-backed checkpoint', async () => {
+  it('returns one recent page without automatically traversing older archive pages', async () => {
+    const checkpoint = createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 100n, blockHash: BLOCK_HASH, lastMessageId: 0n });
+    const result = { status: 'page-applied', messagesByContact: {}, checkpoint, safeHead: 100_000n,
+      hasMore: true, reorged: false, appliedEntries: 0, unavailableEntries: 0,
+      mutation: { scope: SCOPE, viewerAddress: OWNER, resetConversation: false, entries: [] },
+      page: { fromBlock: 100n, toBlock: 100n, expectedPreviousMessageId: 0n, lastMessageId: 0n } };
+    mocks.syncPage.mockResolvedValueOnce(result);
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true,
+      ownerAddress: OWNER, session, cursorStore: testCursorStore() });
+    const batch = await runtime.sync(PEER, {});
+    expect(mocks.syncPage).toHaveBeenCalledOnce();
+    expect(batch.hasMore).toBe(false);
+    runtime.close();
+  });
+
+  it('keeps normal refresh at one page and commits its checkpoint only when applied', async () => {
     const checkpoint = createDirectChatV2HistoryCheckpoint({
       scope: SCOPE,
       blockNumber: 100n,
@@ -186,10 +202,34 @@ describe('directChatV2HistoryRuntime', () => {
     });
 
     const batch = await runtime.sync(PEER, {});
-
-    expect(mocks.syncPage).toHaveBeenCalledTimes(2);
+    expect(mocks.syncPage).toHaveBeenCalledTimes(1);
+    const projection = batch.apply({});
+    expect(batch.apply({})).toEqual(projection);
+    await runtime.sync(PEER, projection);
     expect(mocks.syncPage.mock.calls[1]?.[0].checkpoint).toEqual(checkpoint);
     expect(batch.hasMore).toBe(false);
+  });
+
+  it('yields an obsolete background page to queued selected history without committing it', async () => {
+    let selected = 'old';
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    mocks.syncPage.mockImplementationOnce(async () => { await held; return { ...pageResult(), hasMore: true }; })
+      .mockResolvedValueOnce(pageResult());
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n,
+      isCurrent: () => true, ownerAddress: OWNER, session, cursorStore: testCursorStore() });
+    const old = runtime.sync(PEER, {}, () => selected === 'old');
+    const rejected = expect(old).rejects.toThrow(/history scope changed/);
+    await vi.waitFor(() => expect(mocks.syncPage).toHaveBeenCalledOnce());
+    selected = 'new';
+    const next = runtime.sync(PEER, {}, () => selected === 'new');
+    expect(mocks.syncPage).toHaveBeenCalledOnce();
+    release(); await rejected;
+    const result = await next;
+    expect(mocks.syncPage).toHaveBeenCalledTimes(2);
+    expect(mocks.syncPage.mock.calls[1][0].checkpoint).toBeUndefined();
+    expect(result.apply({})[PEER.toLowerCase()]).toHaveLength(1);
+    runtime.close();
   });
 
   it('applies a reorg reset only to the matching V2 conversation', async () => {
@@ -325,6 +365,38 @@ describe('directChatV2HistoryRuntime', () => {
     });
   });
 
+  it.each(['valid', 'forged-block', 'forged-id'] as const)('validates an unloaded older unread cursor with one canonical block (%s)', async kind => {
+    dependencies.getLatestBlockNumber.mockResolvedValue(110n);
+    dependencies.readCanonicalBlock.mockImplementation(async (_chain, number) => ({ number, hash: BLOCK_HASH }));
+    dependencies.readMessagePage.mockImplementation(async ({ fromBlock }) => fromBlock === 100n
+      ? [{ messageId: 1n, blockNumber: 100n, blockHash: BLOCK_HASH }] : []);
+    const scope = { chainId: SCOPE.chainId, contractAddress: CHAT, walletAddress: OWNER, conversationId: CONVERSATION_ID };
+    let serialized = JSON.stringify(createDirectChatV2ReadCursor(scope, {
+      messageId: kind === 'forged-id' ? 2n : 1n,
+      blockNumber: kind === 'forged-block' ? 101n : 100n, blockHash: BLOCK_HASH
+    }));
+    const cursorStore = createDirectChatV2ReadCursorStore({ storage: {
+      getItem: () => serialized || null, setItem: (_key, value) => { serialized = value; }, removeItem: () => { serialized = ''; }
+    }, broadcastFactory: null, runExclusive: null, sourceId: `unloaded-${kind}` });
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true,
+      ownerAddress: OWNER, session, cursorStore });
+    await runtime.getUnreadCount(PEER, {});
+    expect(serialized ? JSON.parse(serialized).lastReadMessageId : '0').toBe(kind === 'valid' ? '1' : '0');
+    expect(dependencies.readMessagePage).toHaveBeenCalledOnce();
+    expect(dependencies.readCanonicalBlock).toHaveBeenCalledOnce();
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
+  it('keeps finality waiting out of the historical count fallback for unread reads', async () => {
+    dependencies.getLatestBlockNumber.mockResolvedValue(104n);
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true,
+      ownerAddress: OWNER, session, cursorStore: testCursorStore() });
+    await expect(runtime.getUnreadCount(PEER, {})).rejects.toThrow('waiting for the latest message to finalize');
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
   it('updates unread state when another browser context advances the canonical cursor', async () => {
     dependencies.getLatestBlockNumber.mockResolvedValue(110n);
     dependencies.readConversationMessageCountAtBlock.mockResolvedValue(1n);
@@ -349,6 +421,8 @@ describe('directChatV2HistoryRuntime', () => {
     const onUnreadCount = vi.fn();
 
     const closeWatcher = await runtime.watchUnread(PEER, () => messages, onUnreadCount);
+    expect(dependencies.getLatestBlockNumber).not.toHaveBeenCalled();
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
     broadcastCursor?.({
       ...createDirectChatV2ReadCursor({
         chainId: SCOPE.chainId,
@@ -366,6 +440,100 @@ describe('directChatV2HistoryRuntime', () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it('reports unknown for an outgoing-only suffix until a visible cursor covers the unloaded earlier gap', async () => {
+    dependencies.getLatestBlockNumber.mockResolvedValue(110n);
+    dependencies.readCanonicalBlock.mockImplementation(async (_chain, number) => ({ number, hash: BLOCK_HASH }));
+    dependencies.readMessagePage.mockResolvedValue([{ messageId: 3n, blockNumber: 100n, blockHash: BLOCK_HASH }]);
+    const baseAccess = await session.history(PEER);
+    const localSession = { ...session, history: vi.fn(async () => ({ ...baseAccess!,
+      conversation: { ...baseAccess!.conversation, messageCount: 3n } })) } as unknown as DirectChatV2SessionController;
+    const outgoing = { ...finalizedMessage(), direction: 'outgoing' as const,
+      directV2: { ...finalizedMessage().directV2!, messageId: '3' } };
+    const messages = { [PEER.toLowerCase()]: [outgoing] };
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true,
+      ownerAddress: OWNER, session: localSession, cursorStore: testCursorStore() });
+    expect(await runtime.getUnreadCount(PEER, messages)).toBeNull();
+    expect(await runtime.markVisible(PEER, outgoing, messages)).toBe(0);
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
+  it('publishes unknown, proven positive and known-zero unread results through the existing watcher', async () => {
+    const access = await session.history(PEER);
+    const localSession = { ...session, history: vi.fn(async () => ({ ...access!,
+      conversation: { ...access!.conversation, messageCount: 3n } })) } as unknown as DirectChatV2SessionController;
+    let subscription!: Parameters<DirectChatV2ReadCursorStore['subscribe']>[0];
+    const cursorStore = { ...testCursorStore(), subscribe: (input: typeof subscription) => { subscription = input; return vi.fn(); } };
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true,
+      ownerAddress: OWNER, session: localSession, cursorStore });
+    const projected = { ...finalizedMessage(), direction: 'outgoing' as const,
+      directV2: { ...finalizedMessage().directV2!, messageId: '3' } };
+    let messages = { [PEER.toLowerCase()]: [projected] as ChatMessage[] };
+    const onUnread = vi.fn();
+    await runtime.watchUnread(PEER, () => messages, onUnread);
+    const scope = { chainId: SCOPE.chainId, contractAddress: CHAT, walletAddress: OWNER, conversationId: CONVERSATION_ID };
+    subscription.onCursor(createDirectChatV2ReadCursor(scope));
+    expect(onUnread).toHaveBeenLastCalledWith(null);
+    messages = { [PEER.toLowerCase()]: [{ ...projected, direction: 'incoming' }] };
+    subscription.onCursor(createDirectChatV2ReadCursor(scope));
+    expect(onUnread).toHaveBeenLastCalledWith(1);
+    messages = { [PEER.toLowerCase()]: [projected] };
+    subscription.onCursor(createDirectChatV2ReadCursor(scope, { messageId: 2n, blockNumber: 100n, blockHash: BLOCK_HASH }));
+    expect(onUnread).toHaveBeenLastCalledWith(0);
+    expect(dependencies.readMessagePage).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
+  it('keeps watcher counts fresh and checks anchors without discarded head/count reads', async () => {
+    dependencies.getLatestBlockNumber.mockResolvedValue(110n);
+    dependencies.readConversationMessageCountAtBlock.mockResolvedValue(1n);
+    dependencies.readCanonicalBlock.mockResolvedValue({ number: 100n, hash: BLOCK_HASH, timestamp: 123 });
+    dependencies.readMessagePage.mockResolvedValue([{ messageId: 1n, blockNumber: 100n, blockHash: BLOCK_HASH }]);
+    let current = true;
+    let subscription!: Parameters<DirectChatV2ReadCursorStore['subscribe']>[0];
+    const base = testCursorStore();
+    const cursorStore = { ...base, subscribe: (input: typeof subscription) => { subscription = input; return vi.fn(); } };
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => current,
+      ownerAddress: OWNER, session, cursorStore });
+    const messages = { [PEER.toLowerCase()]: [finalizedMessage()] };
+    await runtime.getUnreadCount(PEER, messages);
+    dependencies.getLatestBlockNumber.mockClear();
+    dependencies.readConversationMessageCountAtBlock.mockClear();
+    dependencies.readCanonicalBlock.mockClear();
+    dependencies.readMessagePage.mockClear();
+    await runtime.watchUnread(PEER, () => messages, vi.fn());
+    expect(subscription.scope).toEqual({ chainId: SCOPE.chainId, contractAddress: CHAT,
+      walletAddress: OWNER, conversationId: CONVERSATION_ID });
+    expect(dependencies.getLatestBlockNumber).not.toHaveBeenCalled();
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    const history = vi.mocked(session.history);
+    const captured = await session.history(PEER);
+    history.mockResolvedValueOnce({ ...captured!, conversation: { ...captured!.conversation, messageCount: 1n } })
+      .mockResolvedValueOnce({ ...captured!, conversation: { ...captured!.conversation, messageCount: 2n } });
+    expect(await subscription.getCanonicalMessageCount()).toBe(1n);
+    expect(await subscription.getCanonicalMessageCount()).toBe(2n);
+    expect(dependencies.getLatestBlockNumber).toHaveBeenCalledTimes(2);
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    expect(await subscription.readCanonicalMessageAnchor(1n)).toEqual({ messageId: 1n, blockNumber: 100n, blockHash: BLOCK_HASH });
+    expect(dependencies.readCanonicalBlock).toHaveBeenCalledExactlyOnceWith(SCOPE.chainId, 100n);
+    expect(dependencies.readMessagePage).toHaveBeenCalledExactlyOnceWith({ scope: SCOPE, fromBlock: 100n, toBlock: 100n });
+    dependencies.readMessagePage.mockResolvedValueOnce([{ messageId: 1n, blockNumber: 100n, blockHash: `0x${'99'.repeat(32)}` }]);
+    expect(await subscription.readCanonicalMessageAnchor(1n)).toBeNull();
+    dependencies.readCanonicalBlock.mockResolvedValueOnce({ number: 100n, hash: `0x${'99'.repeat(32)}`, timestamp: 123 });
+    expect(await subscription.readCanonicalMessageAnchor(1n)).toBeNull();
+    dependencies.readCanonicalBlock.mockRejectedValueOnce(new Error('Canonical header unavailable.'));
+    await expect(subscription.readCanonicalMessageAnchor(1n)).rejects.toThrow('Canonical header unavailable');
+    expect(dependencies.getLatestBlockNumber).toHaveBeenCalledTimes(2);
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    expect(dependencies.readCanonicalBlock).toHaveBeenCalledTimes(4);
+    expect(dependencies.readMessagePage).toHaveBeenCalledTimes(4);
+    current = false;
+    await expect(subscription.readCanonicalMessageAnchor(1n)).rejects.toThrow('scope changed');
+    expect(dependencies.readCanonicalBlock).toHaveBeenCalledTimes(4);
+    expect(dependencies.readMessagePage).toHaveBeenCalledTimes(4);
+    runtime.close();
+  });
+
   it('forwards global incoming hints and cleans up the watcher', async () => {
     const stop = vi.fn(async () => undefined);
     sessionWatchIncoming.mockResolvedValueOnce(stop);
@@ -378,7 +546,9 @@ describe('directChatV2HistoryRuntime', () => {
     });
     const onHint = vi.fn();
 
-    const closeWatcher = await runtime.watchIncoming(onHint);
+    const shouldPause = () => true;
+    const closeWatcher = await runtime.watchIncoming(onHint, shouldPause);
+    expect(sessionWatchIncoming.mock.calls[0]?.[1]).toBe(shouldPause);
     const forwardedHint = sessionWatchIncoming.mock.calls[0]?.[0];
     await forwardedHint?.(PEER);
     await closeWatcher();
@@ -405,11 +575,13 @@ describe('directChatV2HistoryRuntime', () => {
 
     await expect(runtime.discoverIncoming()).resolves.toMatchObject({
       peers: [PEER],
+      changedPeers: [PEER],
       hasMore: false,
       reorged: false,
       scannedFromBlock: 90n,
       scannedToBlock: 105n
     });
+    await expect(runtime.discoverIncoming()).resolves.toMatchObject({ peers: [PEER], changedPeers: [] });
 
     expect(session.incomingHistory).toHaveBeenCalledOnce();
     expect(session.history).not.toHaveBeenCalled();
@@ -461,6 +633,43 @@ describe('directChatV2HistoryRuntime', () => {
     expect(retried.apply({})[PEER.toLowerCase()]).toHaveLength(1);
     expect(mocks.syncPage.mock.calls[1][0].checkpoint).toBeUndefined();
   });
+
+  it('commits an older cursor only on apply and permits repeated apply without a second cursor advance', async () => {
+    const entry = (id: bigint) => {
+      const message = finalizedMessage();
+      return { ...message, id: buildDirectChatV2MessageKey({ chainId: SCOPE.chainId, contractAddress: CHAT,
+        conversationId: CONVERSATION_ID, messageId: id }), contact: PEER,
+        directV2: { ...message.directV2!, messageId: id.toString() } };
+    };
+    const recent = { ...pageResult(), hasOlder: true,
+      checkpoint: { ...pageResult().checkpoint, lastMessageId: '3', firstMessageId: '2', olderToBlock: '100' },
+      mutation: { ...pageResult().mutation, entries: [entry(2n), entry(3n)] },
+      page: { ...pageResult().page, expectedPreviousMessageId: 1n, lastMessageId: 3n,
+        direction: 'recent' as const, previousCheckpointLastMessageId: 0n } };
+    const older = { ...recent, hasOlder: false, checkpoint: { ...recent.checkpoint, firstMessageId: '1' },
+      mutation: { ...recent.mutation, entries: [entry(1n)] },
+      page: { ...recent.page, expectedPreviousMessageId: 0n, lastMessageId: 1n,
+        direction: 'older' as const, previousCheckpointLastMessageId: 3n } };
+    mocks.syncPage.mockResolvedValueOnce(recent).mockResolvedValueOnce(older).mockResolvedValueOnce(older)
+      .mockResolvedValueOnce({ ...older, status: 'up-to-date', mutation: undefined, page: undefined });
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true,
+      ownerAddress: OWNER, session, cursorStore: testCursorStore() });
+    const first = await runtime.sync(PEER, {});
+    const projection = first.apply({});
+    expect(first.apply({})).toEqual(projection);
+    await runtime.loadOlder(PEER, projection); // Deliberately discarded.
+    const retry = await runtime.loadOlder(PEER, projection);
+    expect(mocks.syncPage.mock.calls[1][0].checkpoint.firstMessageId).toBe('2');
+    expect(mocks.syncPage.mock.calls[2][0].checkpoint.firstMessageId).toBe('2');
+    const complete = retry.apply(projection);
+    expect(retry.apply(projection)).toEqual(complete);
+    expect(complete[PEER.toLowerCase()]).toHaveLength(3);
+    expect(retry.hasOlder).toBe(false);
+    expect(first.apply(complete)).toBe(complete);
+    await runtime.sync(PEER, complete);
+    expect(mocks.syncPage.mock.calls[3][0].checkpoint.firstMessageId).toBe('1');
+    runtime.close();
+  });
   it('replays a discarded reorg replacement even when old message IDs still back its new checkpoint', async () => {
     const replacementHash = `0x${'99'.repeat(32)}`;
     mocks.syncPage.mockResolvedValueOnce(pageResult());
@@ -487,7 +696,7 @@ describe('directChatV2HistoryRuntime', () => {
     mocks.syncPage.mockResolvedValueOnce(empty);
     const replayed = await runtime.sync(PEER, original);
     // Applying an older response must not acknowledge this newer recovery batch.
-    discarded.apply(original);
+    expect(() => discarded.apply(original)).toThrow('superseded');
     mocks.syncPage.mockResolvedValueOnce(empty);
     const recovered = await runtime.sync(PEER, original);
     expect(replayed.reorged).toBe(false); expect(replayed.appliedEntries).toBe(0);
@@ -504,6 +713,32 @@ describe('directChatV2HistoryRuntime', () => {
     expect(mocks.syncPage.mock.calls[2][0].checkpoint).toEqual(first.checkpoint);
     expect(unchanged.apply(projection)).toBe(projection);
   });
+  it('replays an unapplied empty reorg reset through the actual coordinator without log reads', async () => {
+    const actual = await vi.importActual<typeof import('./directChatV2SyncCoordinator')>('./directChatV2SyncCoordinator');
+    const reads = {
+      getLatestBlockNumber: vi.fn(async () => 100_000n),
+      readCanonicalBlock: vi.fn(async (_chain: bigint, number: bigint) => ({ number, hash: `0x${'88'.repeat(32)}` })),
+      readMessagePage: vi.fn(async () => []),
+      readConversationMessageCountAtBlock: vi.fn(async () => 0n),
+      resolveEpochKey: vi.fn(), clearEpochKeys: vi.fn()
+    };
+    const localSession = { ...session, history: vi.fn(async () => ({ scope: SCOPE, conversation: { messageCount: 0n, lastMessageBlock: 0n }, dependencies: reads })) } as unknown as DirectChatV2SessionController;
+    const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true,
+      ownerAddress: OWNER, session: localSession, cursorStore: testCursorStore() });
+    mocks.syncPage.mockResolvedValueOnce(pageResult());
+    const original = (await runtime.sync(PEER, {})).apply({});
+    mocks.syncPage.mockImplementationOnce(actual.syncDirectChatV2HistoryPage);
+    const discarded = await runtime.sync(PEER, original);
+    expect(discarded.reorged).toBe(true);
+    mocks.syncPage.mockImplementationOnce(actual.syncDirectChatV2HistoryPage);
+    const replayed = await runtime.sync(PEER, original);
+    expect(replayed.apply(original)[PEER.toLowerCase()]).toBeUndefined();
+    expect(reads.readMessagePage).not.toHaveBeenCalled();
+    expect(reads.resolveEpochKey).not.toHaveBeenCalled();
+    expect(reads.clearEpochKeys).toHaveBeenCalledOnce();
+    runtime.close();
+  });
+
   it('rejects a captured batch after its owner runtime is closed', async () => {
     mocks.syncPage.mockResolvedValueOnce(pageResult());
     const runtime = createDirectChatV2HistoryRuntime({ confirmationDepth: 5n, isCurrent: () => true, ownerAddress: OWNER, session, cursorStore: testCursorStore() });

@@ -262,8 +262,8 @@ export default function OtcOffersPanel({
           ) : null}
           {visibleCandidates.length === 0 && !loadingOffers && !offersError && selectedOfferIsMissing ? (
             <div className="p2p-offers-empty is-stale" role="status">
-              <strong>This selected offer is no longer available</strong>
-              <span>Clear it to return to the current offers for this pair.</span>
+              <strong>This offer is not in the current public list</strong>
+              <span>Review its status and terms in the trade panel.</span>
               <button type="button" onClick={onClearPinnedOrder}>Clear selected offer</button>
             </div>
           ) : null}
@@ -343,7 +343,7 @@ export default function OtcOffersPanel({
           </form>
           {orderLinkError ? <p className="p2p-swap-link-error">{orderLinkError}</p> : null}
         </details>
-        {pinnedTrade ? <p className="p2p-offers-linked-note">Private-link offer #{pinnedTrade.recurringOrder?.orderId ?? pinnedTrade.tradeId} is shown with its exact terms.</p> : null}
+        {pinnedTrade ? <p className="p2p-offers-linked-note">Selected offer #{pinnedTrade.recurringOrder?.orderId ?? pinnedTrade.tradeId} is shown with its exact terms.</p> : null}
         <details ref={marketChartRef} className="p2p-offers-chart" onToggle={handleMarketChartToggle}>
           <summary>
             <ChartNoAxesCombined size={15} aria-hidden="true" />

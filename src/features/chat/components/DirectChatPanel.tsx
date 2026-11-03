@@ -105,10 +105,10 @@ type DirectChatPanelProps = {
   onRotateDirectChatV2Key: () => void;
   onToggleConversationHidden: () => void;
   onSaveContactName: (name: string) => Promise<boolean>;
-  onLoadFullConversationHistory: () => void;
+  hasOlderHistory?: boolean;
+  onLoadOlderHistory?: () => void;
   syncingHistory: boolean;
   chatMessagesRef: Ref<HTMLDivElement>;
-  markConversationAsRead: (contactAddress?: string | null) => void;
   loadingOlderHistory: boolean;
   activeMessages: ChatMessage[];
   isReactionOnlyMessage: (message: ChatMessage) => boolean;
@@ -213,10 +213,10 @@ function DirectChatPanel({
   onRotateDirectChatV2Key,
   onToggleConversationHidden,
   onSaveContactName,
-  onLoadFullConversationHistory,
+  hasOlderHistory = false,
+  onLoadOlderHistory,
   syncingHistory,
   chatMessagesRef,
-  markConversationAsRead,
   loadingOlderHistory,
   activeMessages,
   isReactionOnlyMessage,
@@ -387,7 +387,7 @@ function DirectChatPanel({
     totalSize: messageVirtualizerTotalSize
   });
   const showHistorySyncIndicator = loadingOlderHistory && renderableMessages.length > 0;
-  const showInitialMessageSkeleton = loadingOlderHistory && renderableMessages.length === 0;
+  const showInitialMessageSkeleton = (loadingOlderHistory || syncingHistory) && renderableMessages.length === 0;
   const linkedTradeContextContent = linkedTradeContext ? (
     <LinkedTradeContextPanel
       context={linkedTradeContext}
@@ -401,6 +401,10 @@ function DirectChatPanel({
       shareCopied={linkedTradeContextShareCopied}
     />
   ) : null;
+
+  if (!privacyUnlocked) {
+    return <div className="chat-placeholder" role="status">Unlock privacy to view this conversation.</div>;
+  }
 
   return (
     <div className="chat-shell">
@@ -496,13 +500,17 @@ function DirectChatPanel({
               {rotatingDirectChatV2Key ? 'Rotating key...' : 'Rotate key'}
             </button>
           ) : null}
-          <button type="button" className="contact" onClick={onLoadFullConversationHistory} disabled={syncingHistory}>
-            {syncingHistory ? 'Syncing...' : 'Sync History'}
-          </button>
         </div>
       </div>
 
-      <div className="chat-messages" ref={setChatMessagesNode} onClick={() => markConversationAsRead(activeContact)}>
+      <div className="chat-messages" ref={setChatMessagesNode}>
+        {hasOlderHistory && onLoadOlderHistory ? (
+          <div className="chat-message-sync-indicator">
+            <button type="button" onClick={onLoadOlderHistory} disabled={syncingHistory || loadingOlderHistory}>
+              {loadingOlderHistory ? 'Loading older messages' : 'Load older messages'}
+            </button>
+          </div>
+        ) : null}
         {showHistorySyncIndicator ? (
           <div className="chat-message-sync-indicator" role="status" aria-live="polite">
             <span className="inline-spinner" aria-hidden="true" />
@@ -526,12 +534,7 @@ function DirectChatPanel({
         ) : renderableMessages.length === 0 ? (
           <div className="chat-empty-state" role="status" aria-live="polite">
             <strong>No messages yet</strong>
-            <p>Send the first message, or sync history if this conversation already exists on-chain.</p>
-            <div className="chat-empty-actions">
-              <button type="button" onClick={onLoadFullConversationHistory} disabled={syncingHistory}>
-                {syncingHistory ? 'Syncing...' : 'Sync History'}
-              </button>
-            </div>
+            <p>Send the first message, or use Force sync if this conversation already exists on-chain.</p>
           </div>
         ) : (
           <div

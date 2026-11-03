@@ -30,7 +30,7 @@ vi.mock('../../lib/currentDexPreparedPoolSnapshot', async original => ({
 const m = vi.hoisted(() => ({ issue: vi.fn(), graph: vi.fn(), registry: vi.fn(), small: vi.fn(), wide: vi.fn(), decrypt: vi.fn(), resign: vi.fn(), nativeState:{} as Record<string,unknown>,
   preparedFactory: vi.fn(), preparedReadState: vi.fn(), preparedReadWallets: vi.fn(), preparedIssue: vi.fn(), preparedState: {} as Record<string, unknown>,
   preparedWallets: [] as { token: string; balance: bigint; allowance: bigint }[] }));
-vi.mock('./ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: m.issue }));
+vi.mock('./ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: m.issue }));
 vi.mock('../../lib/dexV2Chain', async original => ({ ...await original<typeof import('../../lib/dexV2Chain')>(), readCurrentSharedPoolDexGraph: m.graph, readPreparedDexMarketRegistry: m.registry }));
 vi.mock('../../lib/privateUint256', () => ({ encryptPrivateUint128Input: m.small, encryptPrivateUint256Input: m.wide,
   decryptPrivateUint256Output: m.decrypt, resignPrivateInput: m.resign }));

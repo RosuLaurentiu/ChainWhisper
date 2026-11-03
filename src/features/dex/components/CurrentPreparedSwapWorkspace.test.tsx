@@ -15,7 +15,7 @@ import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../../../tests/fixtu
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY, reserveCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
 import { CURRENT_OWNER_BETA } from '../../../lib/currentDexOwnerBetaPolicy';
 
-const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[], balances: vi.fn(), confirm: vi.fn(), allowSwap: false }));
+const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[], effects: [] as { callback: () => void | (() => void); deps?: readonly unknown[] }[], balances: vi.fn(), confirm: vi.fn(), allowSwap: false }));
 vi.mock('../../../lib/currentDexNativeSwapPolicy', async original => {
   const actual = await original<typeof import('../../../lib/currentDexNativeSwapPolicy')>();
   return { ...actual, assertCurrentSwapCandidate: (...args: Parameters<typeof actual.assertCurrentSwapCandidate>) => {
@@ -25,7 +25,7 @@ vi.mock('../../../lib/currentDexNativeSwapPolicy', async original => {
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
   useState: (initial: unknown) => { const i = hooks.index++; if (!(i in hooks.states)) hooks.states[i] = initial; return [hooks.states[i], (value: unknown) => { hooks.states[i] = typeof value === 'function' ? value(hooks.states[i]) : value; }]; },
   useRef: (initial: unknown) => { const i = hooks.refIndex++; return hooks.refs[i] ?? (hooks.refs[i] = { current: initial }); },
-  useEffect: () => undefined
+  useEffect: (callback: () => void | (() => void), deps?: readonly unknown[]) => { hooks.effects.push({ callback, deps }); }
 }));
 vi.mock('../hooks/useCurrentTrialBalances', () => ({ default: hooks.balances }));
 vi.mock('../../trading/hooks/useTradeActionConfirmationState', () => ({ default: () => ({ confirmation: null, requestConfirmation: hooks.confirm, resolveConfirmation: vi.fn() }) }));
@@ -74,18 +74,55 @@ function fixture(candidateKey: CurrentCheapDexCandidateKey | undefined = key, se
       getCurrentDexSubmissionCapability: getCapability, getCurrentDexQuoteCapability: getQuote, getCurrentDexReceiptCapability: getReceipt
     } } as unknown as SharedWalletSession;
   const props: { selectedPair: TradingPair; candidateKey?: CurrentCheapDexCandidateKey;
-    priceDisplayInverted: boolean; sharedWalletSession: SharedWalletSession; marketReference?:CurrentDexMarketReference } = {
+    priceDisplayInverted: boolean; referenceDisplayInverted?: boolean; onReferenceDisplayInvertedChange?: (inverted: boolean | undefined) => void;
+    sharedWalletSession: SharedWalletSession; marketReference?:CurrentDexMarketReference; visible?: boolean } = {
     selectedPair, candidateKey, priceDisplayInverted: false, sharedWalletSession: session };
-  const render = () => { hooks.index = 0; hooks.refIndex = 0; return CurrentSwapWorkspace(props); };
+  const render = () => { hooks.index = 0; hooks.refIndex = 0; hooks.effects = []; return CurrentSwapWorkspace(props); };
   const button = (label: string) => elements(render()).find(e => e.type === 'button' && (e.props['aria-label'] === label || text(e.props.children) === label));
   const click = (label: string) => { const control = button(label)!; expect(control.props.disabled).toBe(false); control.props.onClick!(); };
   const status = () => text(elements(render()).find(e => e.props.role === 'status')?.props.children);
   render();
   return { props, render, button, click, status, sender, getCapability, getQuote, getReceipt, providerRequest, sharedTokens, sharedFunds };
 }
-afterEach(() => { hooks.states = []; hooks.refs = []; hooks.allowSwap = false; vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { hooks.states = []; hooks.refs = []; hooks.effects = []; hooks.allowSwap = false; vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('prepared candidate swap view', () => {
+  it.skipIf(key !== 'cheap-history')('reports Buy and Sell input orientation, ignores global inversion, and clears it when hidden', () => {
+    const f = fixture(), onOrientation = vi.fn();
+    f.props.onReferenceDisplayInvertedChange = onOrientation;
+    f.render();
+    const orientationEffect = () => hooks.effects.find(effect => effect.deps?.includes(onOrientation))!;
+    orientationEffect().callback();
+    expect(onOrientation).toHaveBeenLastCalledWith(true);
+    const buyDeps = orientationEffect().deps;
+    f.props.priceDisplayInverted = true;
+    f.render();
+    expect(orientationEffect().deps).toEqual(buyDeps);
+    f.click('Sell');
+    expect(onOrientation).toHaveBeenLastCalledWith(true);
+    f.click('Buy');
+    expect(onOrientation).toHaveBeenLastCalledWith(false);
+    f.props.priceDisplayInverted = false;
+    f.click('Sell');
+    expect(onOrientation).toHaveBeenLastCalledWith(false);
+    f.render();
+    orientationEffect().callback();
+    expect(onOrientation).toHaveBeenLastCalledWith(false);
+    f.props.visible = false;
+    f.render();
+    const cleanup = orientationEffect().callback();
+    expect(onOrientation).toHaveBeenLastCalledWith(undefined);
+    cleanup?.();
+    expect(onOrientation).toHaveBeenLastCalledWith(undefined);
+  });
+  it('forwards hidden and visible Swap state to balance reads while keeping its form mounted', () => {
+    const f=fixture(); f.props.visible=false; f.render();
+    expect(hooks.balances.mock.calls[hooks.balances.mock.calls.length-1][3]).toBe(false);
+    expect(elements(f.render()).find(e=>e.props['aria-label']==='Maximum input')).toBeDefined();
+    f.props.visible=true; f.render();
+    expect(hooks.balances.mock.calls[hooks.balances.mock.calls.length-1][3]).toBe(true);
+    expect(f.sender.recoverPendingCurrentCheapAttempt).not.toHaveBeenCalled();
+  });
   it('uses the existing privacy action before offering Quote and does not submit a trade', () => {
     const f = fixture();
     const unlockPrivacy = vi.fn(async () => undefined);
@@ -206,6 +243,18 @@ describe('prepared candidate swap view', () => {
     expect(f.sender.submitCurrentTokenFunding).not.toHaveBeenCalled();
     expect(f.getQuote).not.toHaveBeenCalled();
   });
+  it('keeps the original failure when checking finds no saved transaction', async () => {
+    const f = fixture(), failure = 'Owner beta requires all retained legacy reservations.';
+    Object.assign(f.sender, { readCurrentCheapRestoreHint: vi.fn(() => null) });
+    f.getCapability.mockRejectedValueOnce(new Error(failure));
+    f.click('Check current state');
+    await vi.waitFor(() => expect(f.status()).toBe(failure));
+    f.click('Check current state');
+    await vi.waitFor(() => expect(f.sender.recoverPendingCurrentCheapAttempt).toHaveBeenCalledOnce());
+    expect(f.status()).toBe(failure);
+    expect(f.getQuote).not.toHaveBeenCalled();
+    expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled();
+  });
   const admittedFundingFixture = (selectedOwner = owner) => {
     hooks.allowSwap = true; hooks.confirm.mockResolvedValue(true); const f = fixture(undefined, selectedOwner);
     const input = elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!;
@@ -216,6 +265,40 @@ describe('prepared candidate swap view', () => {
       prepareSharedTokenFunding:vi.fn(async()=>{throw new Error('Claim test tokens separately');})});
     f.getQuote.mockResolvedValue({ prepareCurrentQuote: prepareQuote }); return { ...f, prepareQuote };
   };
+  it.skipIf(key !== 'cheap-history').each([false, true])('keeps Quote average in explicit reference units independent of global inversion (inverted=%s)', async inverted => {
+    const price = makeHistoryFixture('empty'), now = HISTORY_FIXTURE_DAY * 86400n + 100n;
+    const snapshot = await readCurrentDexDailyPrice({ provider: price.provider, manifest: { ...price.manifest, symbols: pair }, finalityLagBlocks: 0, count: 1 });
+    const reference = currentDexMarketReference({ status: 'empty', snapshot }, pair, now);
+    vi.spyOn(Date, 'now').mockReturnValue(Number(now * 1000n));
+    const f = admittedFundingFixture(); f.props.marketReference = { status: 'stale' };
+    f.props.priceDisplayInverted = inverted; f.props.referenceDisplayInverted = !inverted;
+    let openReview!: () => void;
+    const reviewReady = new Promise<void>(resolve => { openReview = resolve; });
+    const hash = `0x${'44'.repeat(32)}`;
+    const issued = { operationId: 9n, transactionHash: hash, intent: { profile: 'fast-pool', candidate: prepared,
+      maximumInput: 1_234_567n, deadline: now + 600n }, operation: { ready: true, phase: 'quote-prepared', stage: 0 } };
+    const sender = Object.assign(f.sender, {
+      submitCurrentCheapQuote: vi.fn(async () => ({ transactionHash: hash, recover: async () => issued })),
+      submitCurrentCheapAcceptance: vi.fn(async ({ confirm }: { confirm: (model: object) => Promise<boolean> }) => {
+        await reviewReady;
+        await confirm({ title: 'Review private quote', primaryLabel: 'Accept quote', fundingMoves: [], stats: [], message: 'After fees.',
+          summaryRows: [{ label: 'You pay', value: `1 ${pair[1]}` }, { label: 'You receive', value: `0.4 ${pair[0]}` },
+            { label: 'Average price', value: `0.4 ${pair[0]} per ${pair[1]} (rounded down)` }] });
+        return null;
+      })
+    });
+    f.click('Get Quote');
+    await vi.waitFor(() => expect(sender.submitCurrentCheapAcceptance).toHaveBeenCalledOnce());
+    f.props.marketReference = reference; f.render(); openReview();
+    await vi.waitFor(() => expect(f.status()).toBe('Quote ready. Review and Accept when you are ready.'));
+    const review = hooks.confirm.mock.calls.find(call => call[0].title === 'Review private quote')![0];
+    expect(review.summaryRows).toContainEqual({ label: 'Average price', value: inverted ? `2.5 ${pair[1]} per ${pair[0]} (rounded down)` : `0.4 ${pair[0]} per ${pair[1]} (rounded down)` });
+    expect(review.summaryRows).toContainEqual({ label: 'Price impact (net)', value: '≈ 20.00% worse' });
+    f.props.marketReference = { status: 'stale' };
+    expect(text(f.render())).toContain('Price impact (net): ≈ 20.00% worse');
+    expect(sender.submitCurrentCheapQuote).toHaveBeenCalledOnce();
+    expect(sender.submitCurrentCheapAcceptance).toHaveBeenCalledOnce();
+  });
   it.skipIf(key !== 'cheap-history')('continues Quote preparation after the former owner beta expiry',async()=>{
     vi.spyOn(Date,'now').mockReturnValue(Number((CURRENT_OWNER_BETA.activation!.activatedAt+604800n)*1000n));
     const f=admittedFundingFixture(CURRENT_OWNER_BETA.owner);f.click('Get Quote');
@@ -297,12 +380,68 @@ describe('prepared candidate swap view', () => {
     f.click('Check current state');
     await vi.waitFor(() => expect(f.status()).toBe(failure ? 'Private payout verification failed.' : 'Settlement confirmed by the private receipt.'));
     expect(readCurrentCheapDelivery).toHaveBeenCalledOnce();
-    if (failure) expect(text(f.render())).not.toContain('Paid 1.234567');
-    else expect(text(f.render())).toContain('Paid 1.234567 ORBT; received 0.9 EMBR; refunded 0.0 ORBT.');
+    if (failure) {
+      expect(text(f.render())).not.toContain('Paid 1.234567');
+      expect(f.button('New Quote')).toBeUndefined();
+    } else {
+      expect(text(f.render())).toContain('Paid 1.234567 ORBT; received 0.9 EMBR; refunded 0.0 ORBT.');
+      expect(f.button('Review and Accept')).toBeUndefined();
+      f.click('New Quote');
+      expect(f.button('Get Quote')!.props.disabled).toBe(false);
+      expect(elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!.props.disabled).toBe(false);
+    }
     expect(hooks.confirm).not.toHaveBeenCalled(); expect(f.providerRequest).not.toHaveBeenCalled();
     expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled();
   });
-  it.skipIf(key !== 'cheap-exit').each(['confirmed', 'timeout', 'private-failure'] as const)(
+  it.skipIf(key !== 'cheap-history').each(['discarded', 'held', 'session-changed', 'expired'] as const)(
+    'cancels an unfunded Fast Quote safely (outcome=%s)', async outcome => {
+    const f = fixture(), quoteHash = `0x${'55'.repeat(32)}`;
+    const issued = { transactionHash: quoteHash, operationId: 11n,
+      intent: { profile: 'fast-pool', candidate: prepared, destination: owner, inputToken: addresses[1], outputToken: addresses[0],
+        maximumInput: 1_234_567n, minimumInput: 1n, minimumOutput: 1n, toleranceBps: 50,
+        rateNumerator: 0n, rateDenominator: 1n, deadline: BigInt(Math.floor(Date.now() / 1000)) + (outcome === 'expired' ? -1n : 600n) },
+      operation: { ready: true, phase: outcome === 'expired' ? 'expired-unrecovered' : 'quote-prepared', stage: 0 }, readCurrent: vi.fn() };
+    issued.readCurrent.mockResolvedValue(issued);
+    let finish!: () => void;
+    const discard = vi.fn(() => new Promise<void>((resolve, reject) => {
+      finish = () => outcome === 'held' ? reject(new Error('Reconcile the pending Accept before cancelling this quote.')) : resolve();
+    }));
+    Object.assign(f.sender, { readCurrentCheapRestoreHint: vi.fn(() => ({ quoteHash })),
+      restoreCurrentCheapOperation: vi.fn(async () => issued), discardCurrentFastQuote: discard });
+    f.getQuote.mockResolvedValue({ restoreCurrentQuote: vi.fn(async () => issued) });
+    f.click('Check current state');
+    await vi.waitFor(() => expect(f.status()).toBe(outcome === 'expired'
+      ? 'Fast Quote expired. Quote did not fund the swap; create a new Quote.' : 'Private Quote is READY for review.'));
+    if (outcome === 'expired') {
+      expect(f.button('Cancel quote')).toBeUndefined(); f.click('New Quote');
+      expect(f.button('Get Quote')?.props.disabled).toBe(false);
+      expect(elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!.props.disabled).toBe(false);
+      expect(discard).not.toHaveBeenCalled(); return;
+    }
+    expect(elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!.props.disabled).toBe(true);
+    f.click('Cancel quote');
+    expect(f.button('Cancel quote')?.props.disabled).toBe(true);
+    expect(f.button('Review and Accept')?.props.disabled).toBe(true);
+    if (outcome === 'session-changed') { f.props.sharedWalletSession = { ...f.props.sharedWalletSession, sessionOnboardInfo: {} }; f.render(); }
+    finish();
+    if (outcome === 'discarded') {
+      await vi.waitFor(() => expect(f.status()).toBe('Quote cancelled. Change the amount and get a new quote.'));
+      expect(f.button('Cancel quote')).toBeUndefined();
+      expect(f.button('Get Quote')?.props.disabled).toBe(false);
+      const input = elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!;
+      expect(input.props.disabled).toBe(false);
+      input.props.onChange!({ target: { value: '2' } });
+      expect(f.button('Get Quote')?.props.disabled).toBe(false);
+    } else {
+      await vi.waitFor(() => expect(f.status()).toContain(outcome === 'held' ? 'pending Accept' : 'session changed'));
+      expect(elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!.props.disabled).toBe(true);
+      expect(f.button('Get Quote')).toBeUndefined();
+    }
+    expect(discard).toHaveBeenCalledOnce(); expect(discard).toHaveBeenCalledWith(issued);
+    expect(f.getQuote.mock.results).toHaveLength(1);
+    expect(f.providerRequest).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
+  });
+  it.skipIf(key === 'cheap-prepared').each(['confirmed', 'timeout', 'private-failure'] as const)(
     'checks cancellation automatically and retains unresolved %s recovery', async outcome => {
     const f = fixture(), quoteHash = `0x${'55'.repeat(32)}`, cancelHash = `0x${'99'.repeat(32)}`;
     const issued = { transactionHash: quoteHash, operationId: 52n,
@@ -336,6 +475,9 @@ describe('prepared candidate swap view', () => {
     expect(recover).toHaveBeenCalledOnce();
     expect(f.sender.waitForCurrentCheapReceipt).toHaveBeenCalledWith(cancelHash);
     expect(text(f.render())).toContain('unused 1.234567 ORBT');
+    f.click('New Quote');
+    expect(f.button('Get Quote')!.props.disabled).toBe(false);
+    expect(elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!.props.disabled).toBe(false);
   });
   it.skipIf(key === 'cheap-prepared')('uses shared selected-token funding and exact approval before Quote in the injected local flow', async () => {
     const f = admittedFundingFixture(); f.click('Get Quote');
@@ -384,7 +526,7 @@ describe('prepared candidate swap view', () => {
     expect(text(f.render())).toContain('Estimated receiveEMBR');
     expect(text(elements(f.render()).find(e => e.props['aria-label'] === 'Input token balance')?.props.children)).toBe('Balance: 2.345678');
     expect(text(elements(f.render()).find(e => e.props['aria-label'] === 'Output token balance')?.props.children)).toBe('Balance: 1.234567');
-    expect(hooks.balances).toHaveBeenLastCalledWith(f.props.sharedWalletSession, '', { candidate: prepared, tokens: addresses });
+    expect(hooks.balances).toHaveBeenLastCalledWith(f.props.sharedWalletSession, '', { candidate: prepared, tokens: addresses }, true);
     expect(parseDexCandidateTokenAmount(prepared, addresses[1], '1.234567', 'You send')).toBe(1234567n);
     expect(formatDexCandidateTokenAmount(prepared, addresses[0], 1234567n)).toBe('1.234567');
     expect(() => parseDexCandidateTokenAmount(prepared, addresses[1], '1.2345678', 'You send')).toThrow('at most 6 decimal');
@@ -393,9 +535,9 @@ describe('prepared candidate swap view', () => {
     expect(text(f.render())).toContain('Estimated receiveORBT');
     f.props.selectedPair = ['ORBT', 'EMBR'] as TradingPair;
     f.render();
-    expect(hooks.balances).toHaveBeenLastCalledWith(f.props.sharedWalletSession, '', { candidate: prepared, tokens: [...addresses].reverse() });
+    expect(hooks.balances).toHaveBeenLastCalledWith(f.props.sharedWalletSession, '', { candidate: prepared, tokens: [...addresses].reverse() }, true);
   });
-  it('holds Get Quote before sender, funding, quote, receipt or wallet actions', () => {
+  it.skipIf(key === 'cheap-history')('holds Get Quote before sender, funding, quote, receipt or wallet actions', () => {
     const f = fixture();
     const input = elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!;
     input.props.onChange!({ target: { value: '1.234567' } });
@@ -407,6 +549,17 @@ describe('prepared candidate swap view', () => {
     expect(f.getCapability).not.toHaveBeenCalled(); expect(f.getQuote).not.toHaveBeenCalled(); expect(f.getReceipt).not.toHaveBeenCalled();
     expect(f.sender.readCurrentTokenFunding).not.toHaveBeenCalled(); expect(f.sender.prepareCurrentTokenFunding).not.toHaveBeenCalled();
     expect(f.sender.submitCurrentTokenFunding).not.toHaveBeenCalled(); expect(f.providerRequest).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
+  });
+  it.skipIf(key !== 'cheap-history')('requires a live wallet capability before current Quote preparation or funding', async () => {
+    const f = fixture();
+    f.getCapability.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
+    elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!.props.onChange!({ target: { value: '1.234567' } });
+    f.click('Get Quote');
+    await vi.waitFor(() => expect(f.status()).toBe('Connected wallet lease is unavailable.'));
+    expect(f.getCapability).toHaveBeenCalledOnce();
+    expect(f.getQuote).not.toHaveBeenCalled(); expect(f.getReceipt).not.toHaveBeenCalled();
+    expect(f.sender.prepareSharedSwapApproval).not.toHaveBeenCalled(); expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled();
+    expect(f.providerRequest).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
   });
   it.each(['candidate', 'pair'] as const)('checks only the exact prepared candidate and invalidates readiness when %s changes', async change => {
     const f = fixture(); f.click('Check current contracts');
@@ -460,7 +613,7 @@ describe('prepared candidate swap view', () => {
     f.props.candidateKey = undefined;
     expect(text(f.render())).toContain('You sendTest token 1');
     expect(text(f.render())).toContain('Estimated receiveTest token 0');
-    expect(hooks.balances).toHaveBeenLastCalledWith(f.props.sharedWalletSession, '', { candidate: CURRENT_CHEAP_DEX_CANDIDATE, tokens: CURRENT_CHEAP_DEX_CANDIDATE.tokens.slice(0, 2).map(([address]) => address) });
+    expect(hooks.balances).toHaveBeenLastCalledWith(f.props.sharedWalletSession, '', { candidate: CURRENT_CHEAP_DEX_CANDIDATE, tokens: CURRENT_CHEAP_DEX_CANDIDATE.tokens.slice(0, 2).map(([address]) => address) }, true);
     f.sender.checkCurrentCheapCandidate.mockResolvedValueOnce({ chainId: BigInt(CURRENT_CHEAP_DEX_CANDIDATE.chainId), owner, core: CURRENT_CHEAP_DEX_CANDIDATE.core, graph: CURRENT_CHEAP_DEX_CANDIDATE.graph, readyToSign: false });
     f.click('Check current contracts'); await vi.waitFor(() => expect(f.status()).toContain('verified'));
     expect(f.getCapability).toHaveBeenCalledWith(BigInt(CURRENT_CHEAP_DEX_CANDIDATE.chainId));

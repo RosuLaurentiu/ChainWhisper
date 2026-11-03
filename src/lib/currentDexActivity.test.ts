@@ -26,17 +26,30 @@ const fixture = () => {
 };
 
 describe('saved owner-private async activity', () => {
+  it('passes caller invalidation into an in-progress Activity reader before its next request', async () => {
+    const f = fixture(); let active = true, release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; }), nextRequest = vi.fn();
+    const readPage = vi.fn(async ({ assertCurrent }: { assertCurrent?: () => void }) => {
+      await held; assertCurrent?.(); nextRequest(); return { rows: [], complete: true };
+    });
+    const session = { ...f.session, actions: { getCurrentDexSubmissionCapability: async () => ({ readCurrentDexActivityPage: readPage }) } } as unknown as SharedWalletSession;
+    const pending = readCurrentDexActivityPage(session, 'cheap-history', () => { if (!active) throw new Error('caller replaced'); },
+      { cursor: { transactions: 1, nfts: 1 } });
+    await vi.waitFor(() => expect(readPage).toHaveBeenCalledOnce()); active = false; release();
+    await expect(pending).rejects.toThrow('caller replaced'); expect(nextRequest).not.toHaveBeenCalled();
+  });
   it('routes chain History to the new candidate without restoring a saved Quote', async () => {
     const f = fixture(), page = { rows: [], complete: true };
-    const readPage = vi.fn(async () => page);
+    const readPage = vi.fn(async ({ onProgress }) => { onProgress(0, 0, 'validation'); return page; });
     const getSender = vi.fn(async () => ({ readCurrentDexActivityPage: readPage }));
     const session = { ...f.session, chainId: Number(historyCandidate.chainId), actions: {
       ...f.session.actions, getCurrentDexSubmissionCapability: getSender
     } } as unknown as SharedWalletSession;
-    const options = { cursor: { transactions: 1, nfts: 1 } };
+    const options = { cursor: { transactions: 1, nfts: 1 }, onProgress: vi.fn() };
     expect(await readCurrentDexActivityPage(session, 'cheap-history', f.assertCurrent, options)).toBe(page);
     expect(getSender).toHaveBeenCalledWith(BigInt(historyCandidate.chainId), { candidate: 'cheap-history' });
     expect(readPage).toHaveBeenCalledOnce();
+    expect(options.onProgress).toHaveBeenCalledWith(0, 0, 'validation');
     expect(f.quote.restoreCurrentQuote).not.toHaveBeenCalled();
     await expect(readCurrentDexActivitySwap(session, 'cheap-history', f.assertCurrent)).rejects.toThrow('unavailable');
   });

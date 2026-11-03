@@ -66,7 +66,8 @@ const props = (overrides: Partial<Parameters<typeof PrivateLiquiditySwapPanel>[0
 describe('PrivateLiquiditySwapPanel', () => {
   it('shows a simple best price, full-fill range, and advanced partial-fill policy before review', () => {
     const markup = renderToStaticMarkup(createElement(PrivateLiquiditySwapPanel, props()));
-    expect(markup).toContain('Recurring swaps across fixed-price NFT strategies');
+    expect(markup).toContain('Trade bid/ask strategies');
+    expect(markup).toContain('Back to offers');
     expect(markup).toContain('Executable liquidity available');
     expect(markup).toContain('p2p-liquidity-availability is-available');
     expect(markup).toContain('does not continuously move its own price');
@@ -173,6 +174,23 @@ describe('PrivateLiquiditySwapPanel', () => {
     expect(markup).toContain('Loading finalized liquidity');
     expect(markup).toContain('Checking finalized liquidity');
     expect(markup).not.toContain('No executable private quote');
+  });
+
+  it('shows a failed history read and enables retry without disabling the verified swap', () => {
+    const markup = renderToStaticMarkup(createElement(PrivateLiquiditySwapPanel, props({
+      historyStatus: 'error',
+      historyError: 'Private-liquidity history loading failed.',
+      onRevealHistory: () => undefined
+    })));
+    expect(markup).toContain('Private-liquidity history loading failed.');
+    expect(markup).toContain('role="alert"');
+    const retry = markup.match(/<button[^>]*>Retry history<\/button>/)?.[0];
+    const review = markup.match(/<button[^>]*>Review private swap<\/button>/)?.[0];
+    expect(retry).toBeDefined();
+    expect(review).toBeDefined();
+    expect(retry).not.toContain('disabled');
+    expect(review).not.toContain('disabled');
+    expect(markup).not.toContain('Loading history…');
   });
 
   it('keeps deployment failures visible and offers an explicit retry', () => {

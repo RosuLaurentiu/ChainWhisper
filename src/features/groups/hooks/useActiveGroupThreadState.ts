@@ -54,7 +54,7 @@ export default function useActiveGroupThreadState({
   );
 
   const activeGroupParticipants = useMemo((): GroupParticipantSummary[] => {
-    if (!activeGroupMeta) {
+    if (!activeGroupMeta || activeGroupMeta.membershipEnded || activeGroupMeta.membersLoaded === false) {
       return [];
     }
 
@@ -132,7 +132,7 @@ export default function useActiveGroupThreadState({
   );
 
   const isActiveGroupAdmin = useMemo(() => {
-    if (!activeGroupMeta || !walletScopeKey) {
+    if (!activeGroupMeta || activeGroupMeta.membershipEnded || !walletScopeKey) {
       return false;
     }
 
@@ -147,7 +147,7 @@ export default function useActiveGroupThreadState({
   }, [groupRenameOpen, isActiveGroupAdmin, setGroupRenameInput, setGroupRenameOpen]);
 
   const canInviteToActiveGroup = useMemo(() => {
-    if (!activeGroupMeta) {
+    if (!activeGroupMeta || activeGroupMeta.membershipEnded || activeGroupMeta.membersLoaded === false) {
       return false;
     }
     if (!activeGroupMeta.isPrivate) {

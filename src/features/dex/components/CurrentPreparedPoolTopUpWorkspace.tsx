@@ -70,7 +70,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
   const run = async (work: (captured: object) => Promise<void>, recovery = false, authority?: () => CurrentAppPoolScope) => {
     if (inFlight.current || busy || (!recovery && (disabled || pending || hasCurrentDexPendingAction()))) return;
     const captured = scope.current; inFlight.current = true; setBusy(true);
-    try { if (!recovery) { assertCurrentPoolFundingNativeAdmission(candidate, 'top-up'); assertCurrentAppPoolAuthority(candidate.graph, authority!()); } await work(captured); }
+    try { if (!recovery) { assertCurrentPoolFundingNativeAdmission(candidate, 'top-up'); if(key!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph, authority!()); } await work(captured); }
     catch (error) {
       if (captured === scope.current && !hasCurrentDexPendingAction() && !current(preview) && !current(funding) && !current(managed)) onReleased();
       show(captured === scope.current && error instanceof Error ? error.message : 'Top-up session changed. Recover the pending action before another request.');

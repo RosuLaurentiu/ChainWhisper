@@ -13,6 +13,10 @@ import type { PrivateLiquidityHistory } from '../../../lib/privateLiquidityHisto
 import type { PrivateLiquidityWorkspaceModel } from '../../../lib/privateLiquidityWorkspaceModel';
 import type { WalletSessionActions } from '../../../lib/walletSession';
 import { getProviderErrorMessage } from '../../../lib/appShared/core';
+import {
+  assertBrowserWalletPrivacyReadScopeCurrent,
+  type BrowserWalletPrivacyReadScope
+} from '../../../lib/browserWalletRuntimeScope';
 
 export type PrivateLiquidityOwnerDataStatus =
   | 'locked'
@@ -28,6 +32,8 @@ const EMPTY_HISTORY: PrivateLiquidityHistory = Object.freeze({
 });
 
 type OwnerDataState = Readonly<{
+  privacyReadScope?: BrowserWalletPrivacyReadScope;
+  canonicalDataKey?: string;
   status: PrivateLiquidityOwnerDataStatus;
   inventory: PrivateLiquidityOwnerInventorySnapshot | null;
   history: PrivateLiquidityHistory;
@@ -50,6 +56,7 @@ export default function usePrivateLiquidityOwnerData({
   historyPages,
   walletAddress,
   walletReady,
+  privacyReadScope,
   walletActions
 }: {
   deployment: AttestedPrivateLiquidityDeployment | null;
@@ -57,12 +64,23 @@ export default function usePrivateLiquidityOwnerData({
   historyPages: readonly CanonicalPrivateLiquidityLogRange[];
   walletAddress?: string | null;
   walletReady: boolean;
+  privacyReadScope: BrowserWalletPrivacyReadScope;
   walletActions?: Pick<WalletSessionActions, 'getPrivateLiquidityCapability' | 'runWalletTransactionFlow'>;
 }) {
   const capabilityRef = useRef<Awaited<ReturnType<NonNullable<WalletSessionActions['getPrivateLiquidityCapability']>>> | null>(null);
   const revealedRef = useRef(false);
   const requestIdRef = useRef(0);
   const activeRevealRef = useRef(false);
+  const privacyScopeRef = useRef(privacyReadScope);
+  if (privacyScopeRef.current !== privacyReadScope) {
+    capabilityRef.current = null;
+    revealedRef.current = false;
+  }
+  privacyScopeRef.current = privacyReadScope;
+  const pendingUnlockRef = useRef<{
+    scope: BrowserWalletPrivacyReadScope;
+    resume?: (scope: BrowserWalletPrivacyReadScope | null) => void;
+  } | null>(null);
   const [state, setState] = useState<OwnerDataState>(LOCKED_STATE);
   const selectedPosition = model?.selection.status === 'manageable'
     ? model.selection.position
@@ -84,6 +102,7 @@ export default function usePrivateLiquidityOwnerData({
       ].join(':')
     : '';
   const loadContextRef = useRef({
+    canonicalDataKey,
     deployment,
     historyPages,
     model,
@@ -93,6 +112,7 @@ export default function usePrivateLiquidityOwnerData({
     walletReady
   });
   loadContextRef.current = {
+    canonicalDataKey,
     deployment,
     historyPages,
     model,
@@ -103,7 +123,9 @@ export default function usePrivateLiquidityOwnerData({
   };
 
   const load = useCallback(async ({ interactive }: { interactive: boolean }) => {
+    const startingScope = privacyScopeRef.current;
     const {
+      canonicalDataKey: capturedCanonicalDataKey,
       deployment: currentDeployment,
       historyPages: currentHistoryPages,
       model: currentModel,
@@ -115,21 +137,50 @@ export default function usePrivateLiquidityOwnerData({
     const getCapability = currentWalletActions?.getPrivateLiquidityCapability;
     const runWalletTransactionFlow = currentWalletActions?.runWalletTransactionFlow;
     if (!currentDeployment || !currentModel || !currentWalletReady || !currentWalletKey ||
-        currentHistoryPages.length === 0 || !getCapability || !runWalletTransactionFlow) {
+        currentHistoryPages.length === 0 || !getCapability || !runWalletTransactionFlow ||
+        !startingScope.runtimeScopeKey || (!interactive && (!startingScope.ready || !capabilityRef.current))) {
       setState(LOCKED_STATE);
       return;
     }
     if (interactive && activeRevealRef.current) return;
     const requestId = ++requestIdRef.current;
     if (interactive) activeRevealRef.current = true;
+    if (!startingScope.ready) pendingUnlockRef.current = { scope: startingScope };
+    let readScope = startingScope;
     setState((previous) => Object.freeze({
-      ...previous,
+      ...(previous.privacyReadScope === startingScope && previous.canonicalDataKey === capturedCanonicalDataKey
+        ? previous : LOCKED_STATE),
+      privacyReadScope: startingScope,
+      canonicalDataKey: capturedCanonicalDataKey,
       status: 'loading',
       error: ''
     }));
     try {
       const operation = async () => {
         let capability = capabilityRef.current ?? await getCapability(true, BigInt(currentDeployment.chainId));
+        if (loadContextRef.current.canonicalDataKey !== capturedCanonicalDataKey) return null;
+        if (!startingScope.ready) {
+          const currentScope = privacyScopeRef.current;
+          const unlockedScope = currentScope === startingScope
+            ? await new Promise<BrowserWalletPrivacyReadScope | null>((resume, reject) => {
+                const timer = setTimeout(() => reject(new Error(
+                  'Privacy unlock did not become ready. Unlock privacy and reveal again.'
+                )), 10_000);
+                const finish = (scope: BrowserWalletPrivacyReadScope | null) => {
+                  clearTimeout(timer);
+                  resume(scope);
+                };
+                if (pendingUnlockRef.current?.scope === startingScope) pendingUnlockRef.current.resume = finish;
+                else finish(null);
+              })
+            : currentScope;
+          if (!unlockedScope?.ready || unlockedScope.runtimeScopeKey !== startingScope.runtimeScopeKey ||
+              unlockedScope.revision !== startingScope.revision + 1) return null;
+          readScope = unlockedScope;
+        }
+        if (requestId !== requestIdRef.current) return null;
+        assertBrowserWalletPrivacyReadScopeCurrent(readScope, privacyScopeRef.current);
+        pendingUnlockRef.current = null;
         capabilityRef.current = capability;
         const read = () => currentSelectedPosition?.privacyOwner?.toLowerCase() === currentWalletKey
           ? readPrivateLiquidityOwnerPrivateData({
@@ -150,8 +201,12 @@ export default function usePrivateLiquidityOwnerData({
           // Background synchronization must never open a wallet prompt. An explicit reveal/retry
           // may refresh the wallet privacy key once, then reread the same canonical history.
           if (!interactive || !isPrivateLiquidityReceiptPrivacyRefreshRequired(error)) throw error;
+          if (loadContextRef.current.canonicalDataKey !== capturedCanonicalDataKey) return null;
+          assertBrowserWalletPrivacyReadScopeCurrent(readScope, privacyScopeRef.current);
           capabilityRef.current = null;
           capability = await getCapability(true, BigInt(currentDeployment.chainId), { refreshAes: true });
+          if (loadContextRef.current.canonicalDataKey !== capturedCanonicalDataKey) return null;
+          assertBrowserWalletPrivacyReadScopeCurrent(readScope, privacyScopeRef.current);
           capabilityRef.current = capability;
           return read();
         }
@@ -159,38 +214,61 @@ export default function usePrivateLiquidityOwnerData({
       const loaded = interactive
         ? await runWalletTransactionFlow(operation)
         : await operation();
-      if (requestId !== requestIdRef.current) return;
+      if (!loaded || requestId !== requestIdRef.current ||
+          loadContextRef.current.canonicalDataKey !== capturedCanonicalDataKey) return;
+      assertBrowserWalletPrivacyReadScopeCurrent(readScope, privacyScopeRef.current);
       revealedRef.current = true;
       setState(Object.freeze({
         status: 'available',
+        privacyReadScope: readScope,
+        canonicalDataKey: capturedCanonicalDataKey,
         inventory: loaded.inventory,
         history: loaded.history.history,
         error: ''
       }));
     } catch (error) {
-      if (requestId !== requestIdRef.current) return;
+      if (requestId !== requestIdRef.current ||
+          loadContextRef.current.canonicalDataKey !== capturedCanonicalDataKey) return;
+      pendingUnlockRef.current = null;
       const message = errorMessage(error);
       const unavailable = message.includes('privacy must be activated') ||
         message.includes('not initialized for this connected owner');
       if (!unavailable) capabilityRef.current = null;
       setState(Object.freeze({
         status: unavailable ? 'unavailable' : 'error',
+        privacyReadScope: readScope,
+        canonicalDataKey: capturedCanonicalDataKey,
         inventory: null,
         history: EMPTY_HISTORY,
         error: message
       }));
     } finally {
-      if (interactive) activeRevealRef.current = false;
+      if (interactive && requestId === requestIdRef.current) activeRevealRef.current = false;
     }
   }, []);
 
   useEffect(() => {
+    const pending = pendingUnlockRef.current;
+    const resumedUnlock = securityScopeKey && pending && !pending.scope.ready && privacyReadScope.ready &&
+      pending.scope.runtimeScopeKey === privacyReadScope.runtimeScopeKey &&
+      privacyReadScope.revision === pending.scope.revision + 1;
     capabilityRef.current = null;
     revealedRef.current = false;
+    setState(LOCKED_STATE);
+    if (resumedUnlock) {
+      pending.resume?.(privacyReadScope);
+      return;
+    }
+    pending?.resume?.(null);
+    pendingUnlockRef.current = null;
     requestIdRef.current += 1;
     activeRevealRef.current = false;
-    setState(LOCKED_STATE);
-  }, [securityScopeKey]);
+  }, [securityScopeKey, privacyReadScope]);
+
+  useEffect(() => () => {
+    requestIdRef.current += 1;
+    pendingUnlockRef.current?.resume?.(null);
+  }, []);
 
   useEffect(() => {
     if (!canonicalDataKey) {
@@ -204,5 +282,8 @@ export default function usePrivateLiquidityOwnerData({
 
   const reveal = useCallback(() => load({ interactive: true }), [load]);
 
-  return Object.freeze({ ...state, reveal });
+  const visibleState = securityScopeKey && state.privacyReadScope === privacyReadScope &&
+    state.canonicalDataKey === canonicalDataKey &&
+    (privacyReadScope.ready || state.status !== 'available') ? state : LOCKED_STATE;
+  return Object.freeze({ ...visibleState, reveal });
 }

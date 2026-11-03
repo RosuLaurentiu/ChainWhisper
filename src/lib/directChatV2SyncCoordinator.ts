@@ -5,7 +5,7 @@ import type {
   DirectChatV2EpochReference,
   DirectChatV2MessageEvent
 } from './directChatV2Chain';
-import { decryptDirectChatV2EventMessage } from './directChatV2Chain';
+import { decryptDirectChatV2EventMessage, DIRECT_CHAT_V2_MAX_LOG_BLOCK_SPAN } from './directChatV2Chain';
 import {
   deriveDirectChatV2AadHash,
   DIRECT_CHAT_V2_MAX_CIPHERTEXT_BYTES,
@@ -63,6 +63,7 @@ export type DirectChatV2SyncResult = {
   checkpoint?: DirectChatV2HistoryCheckpoint;
   safeHead?: bigint;
   hasMore: boolean;
+  hasOlder?: boolean;
   reorged: boolean;
   appliedEntries: number;
   unavailableEntries: number;
@@ -72,6 +73,8 @@ export type DirectChatV2SyncResult = {
     toBlock: bigint;
     expectedPreviousMessageId: bigint;
     lastMessageId: bigint;
+    direction?: 'recent' | 'older';
+    previousCheckpointLastMessageId?: bigint;
   };
 };
 
@@ -246,7 +249,8 @@ export const syncDirectChatV2HistoryPage = async ({
   previousMessages,
   checkpoint,
   dependencies,
-  shouldContinue
+  shouldContinue,
+  paging
 }: {
   config: DirectChatV2DualReadConfig;
   scope: DirectChatV2HistoryScope;
@@ -256,6 +260,7 @@ export const syncDirectChatV2HistoryPage = async ({
   checkpoint?: DirectChatV2HistoryCheckpoint;
   dependencies: DirectChatV2SyncDependencies;
   shouldContinue?: () => boolean;
+  paging?: Readonly<{ direction: 'recent' | 'older'; messageCount: bigint; lastMessageBlock: bigint }>;
 }): Promise<DirectChatV2SyncResult> => {
   if (!config.enabled) {
     return {
@@ -275,6 +280,7 @@ export const syncDirectChatV2HistoryPage = async ({
 
   const blockPromises = new Map<string, Promise<DirectChatV2CanonicalBlock | null>>();
   const readBlock = (blockNumber: bigint): Promise<DirectChatV2CanonicalBlock | null> => {
+    assertReadLease(shouldContinue);
     const cacheKey = blockNumber.toString();
     const existing = blockPromises.get(cacheKey);
     if (existing) return existing;
@@ -314,7 +320,93 @@ export const syncDirectChatV2HistoryPage = async ({
   }
   const retainedCheckpoint = plan.resetConversation ? undefined : checkpoint;
 
+  if (paging) {
+    normalizeMessageCount(paging.messageCount);
+    if (paging.lastMessageBlock > plan.safeHead) {
+      throw new Error('Direct-chat V2 history is waiting for the latest message to finalize.');
+    }
+    const firstBlock = scope.firstMessageBlock ?? scope.conversationStartBlock;
+    if (paging.messageCount > 0n && (paging.lastMessageBlock < firstBlock || paging.lastMessageBlock > latestBlock)) {
+      throw new Error('Direct-chat V2 recent history has inconsistent message-block anchors.');
+    }
+    const span = config.maxBlockSpan ?? DIRECT_CHAT_V2_MAX_LOG_BLOCK_SPAN;
+    const older = paging.direction === 'older' && retainedCheckpoint?.firstMessageId !== undefined;
+    const end = older ? BigInt(retainedCheckpoint!.olderToBlock!) : paging.lastMessageBlock;
+    const start = end - span + 1n > firstBlock ? end - span + 1n : firstBlock;
+    plan.fromBlock = start;
+    plan.toBlock = end;
+    if (!older && retainedCheckpoint && BigInt(retainedCheckpoint.blockNumber) + 1n > start &&
+        BigInt(retainedCheckpoint.blockNumber) + 1n <= end) {
+      plan.fromBlock = BigInt(retainedCheckpoint.blockNumber) + 1n;
+    }
+    if (plan.fromBlock > plan.toBlock || paging.messageCount === 0n) {
+      plan.fromBlock = undefined;
+      plan.toBlock = undefined;
+    }
+  }
+
+  const safeHeadBlock = plan.safeHead >= scope.conversationStartBlock ? await readBlock(plan.safeHead) : null;
+  if (plan.safeHead >= scope.conversationStartBlock && !safeHeadBlock) {
+    throw new Error('Direct-chat V2 history safe head is no longer canonical.');
+  }
+  const finalizedCount = safeHeadBlock ? paging?.messageCount ?? normalizeMessageCount(
+    await dependencies.readConversationMessageCountAtBlock({ scope, blockNumber: plan.safeHead })
+  ) : undefined;
+  assertReadLease(shouldContinue);
+  if (finalizedCount !== undefined && finalizedCount < plan.expectedPreviousMessageId) {
+    throw new Error('Direct-chat V2 history page is incomplete: finalized count is below the checkpoint.');
+  }
+  const verifyRetainedBoundary = async (): Promise<void> => {
+    assertReadLease(shouldContinue);
+    if (!retainedCheckpoint) return;
+    const number = parseCheckpointBlockNumber(retainedCheckpoint);
+    const block = validateCanonicalBlock(await dependencies.readCanonicalBlock(scope.chainId, number), number);
+    assertReadLease(shouldContinue);
+    if (!block || block.hash.toLowerCase() !== retainedCheckpoint.blockHash.toLowerCase() ||
+      block.hash.toLowerCase() !== canonicalCheckpointBlockHash?.toLowerCase()) {
+      await dependencies.clearEpochKeys();
+      assertReadLease(shouldContinue);
+      throw new Error('Direct-chat V2 checkpoint boundary changed while the page was loading.');
+    }
+  };
+  const verifySafeHead = async (): Promise<DirectChatV2CanonicalBlock> => {
+    assertReadLease(shouldContinue);
+    const block = validateCanonicalBlock(
+      await dependencies.readCanonicalBlock(scope.chainId, plan.safeHead), plan.safeHead
+    );
+    assertReadLease(shouldContinue);
+    if (!block || block.hash.toLowerCase() !== safeHeadBlock?.hash.toLowerCase()) {
+      await dependencies.clearEpochKeys();
+      assertReadLease(shouldContinue);
+      throw new Error('Direct-chat V2 history safe head changed during synchronization.');
+    }
+    return block;
+  };
+  if (safeHeadBlock && finalizedCount === plan.expectedPreviousMessageId &&
+      !(paging?.direction === 'older' && BigInt(retainedCheckpoint?.firstMessageId ?? '1') > 1n)) {
+    await verifyRetainedBoundary();
+    const boundary = await verifySafeHead();
+    assertReadLease(shouldContinue);
+    const mutation = plan.resetConversation
+      ? { scope, viewerAddress, resetConversation: true, entries: [] } satisfies DirectChatV2SyncMutation
+      : undefined;
+    return {
+      status: plan.resetConversation ? 'reorg-reset' : 'up-to-date',
+      messagesByContact: mutation ? applyDirectChatV2SyncMutation(previousMessages, mutation) : previousMessages,
+      checkpoint: { ...createDirectChatV2HistoryCheckpoint({ scope, blockNumber: plan.safeHead,
+        blockHash: boundary.hash, lastMessageId: finalizedCount }),
+        ...(paging ? { firstMessageId: retainedCheckpoint?.firstMessageId ?? '1',
+          olderToBlock: retainedCheckpoint?.olderToBlock ?? (scope.firstMessageBlock ?? scope.conversationStartBlock).toString() } : {}) },
+      safeHead: plan.safeHead, hasMore: false, reorged: plan.resetConversation,
+      appliedEntries: 0, unavailableEntries: 0, mutation,
+      hasOlder: BigInt(retainedCheckpoint?.firstMessageId ?? '1') > 1n
+    };
+  }
+
   if (plan.fromBlock === undefined || plan.toBlock === undefined) {
+    if (finalizedCount !== undefined) {
+      throw new Error('Direct-chat V2 history page is incomplete: finalized messages have no readable block range.');
+    }
     const mutation = plan.resetConversation
       ? { scope, viewerAddress, resetConversation: true, entries: [] } satisfies DirectChatV2SyncMutation
       : undefined;
@@ -339,23 +431,36 @@ export const syncDirectChatV2HistoryPage = async ({
   }
 
   assertReadLease(shouldContinue);
-  const events = await dependencies.readMessagePage({
+  const rawEvents = await dependencies.readMessagePage({
     scope,
     fromBlock: plan.fromBlock,
     toBlock: plan.toBlock
   });
   assertReadLease(shouldContinue);
-  if (!Array.isArray(events)) {
+  if (!Array.isArray(rawEvents)) {
     throw new Error('Direct-chat V2 history reader did not return an event page.');
   }
   validateEventPageScope({
-    events,
+    events: rawEvents,
     scope,
     fromBlock: plan.fromBlock,
     toBlock: plan.toBlock
   });
 
-  const expectedMessageCount = normalizeMessageCount(
+  const older = paging?.direction === 'older' && retainedCheckpoint?.firstMessageId !== undefined;
+  const expectedEnd = older ? BigInt(retainedCheckpoint!.firstMessageId!) - 1n : finalizedCount!;
+  const events = older ? rawEvents.filter(event => event.messageId <= expectedEnd) : rawEvents;
+  if (paging) {
+    // The end count is independent of this response. A missing leading record
+    // does not claim block coverage: it remains reachable at the inclusive cursor.
+    const firstId = events.reduce<bigint | null>((first, event) => first === null || event.messageId < first ? event.messageId : first, null);
+    plan.expectedPreviousMessageId = firstId === null ? expectedEnd : firstId - 1n;
+    if (events.length === 0 && expectedEnd > 0n &&
+        (!older || plan.fromBlock === (scope.firstMessageBlock ?? scope.conversationStartBlock))) {
+      throw new Error('Direct-chat V2 history page is incomplete: missing terminal message.');
+    }
+  }
+  const expectedMessageCount = paging ? expectedEnd : plan.toBlock === plan.safeHead ? finalizedCount! : normalizeMessageCount(
     await dependencies.readConversationMessageCountAtBlock({
       scope,
       blockNumber: plan.toBlock
@@ -364,6 +469,7 @@ export const syncDirectChatV2HistoryPage = async ({
   assertReadLease(shouldContinue);
   if (
     expectedMessageCount < plan.expectedPreviousMessageId ||
+    expectedMessageCount > finalizedCount! ||
     BigInt(events.length) !== expectedMessageCount - plan.expectedPreviousMessageId
   ) {
     throw new Error(
@@ -472,23 +578,8 @@ export const syncDirectChatV2HistoryPage = async ({
   }
 
   assertReadLease(shouldContinue);
-  if (retainedCheckpoint) {
-    const retainedBlockNumber = parseCheckpointBlockNumber(retainedCheckpoint);
-    const finalRetainedBoundary = validateCanonicalBlock(
-      await dependencies.readCanonicalBlock(scope.chainId, retainedBlockNumber),
-      retainedBlockNumber
-    );
-    assertReadLease(shouldContinue);
-    if (
-      !finalRetainedBoundary ||
-      finalRetainedBoundary.hash.toLowerCase() !== retainedCheckpoint.blockHash.toLowerCase() ||
-      finalRetainedBoundary.hash.toLowerCase() !== canonicalCheckpointBlockHash?.toLowerCase()
-    ) {
-      await dependencies.clearEpochKeys();
-      assertReadLease(shouldContinue);
-      throw new Error('Direct-chat V2 checkpoint boundary changed while the page was loading.');
-    }
-  }
+  await verifyRetainedBoundary();
+  assertReadLease(shouldContinue);
   const finalPageBoundary = validateCanonicalBlock(
     await dependencies.readCanonicalBlock(scope.chainId, plan.toBlock),
     plan.toBlock
@@ -503,12 +594,33 @@ export const syncDirectChatV2HistoryPage = async ({
     throw new Error('Direct-chat V2 page boundary changed while the page was loading.');
   }
 
+  const finalSafeHead = plan.toBlock === plan.safeHead ? finalPageBoundary : await verifySafeHead();
+  assertReadLease(shouldContinue);
+  const complete = lastMessageId === finalizedCount;
+
   const nextCheckpoint = createDirectChatV2HistoryCheckpoint({
     scope,
-    blockNumber: plan.toBlock,
-    blockHash: finalPageBoundary.hash,
-    lastMessageId
+    blockNumber: older ? BigInt(retainedCheckpoint!.blockNumber) : paging || complete ? plan.safeHead : plan.toBlock,
+    blockHash: older ? retainedCheckpoint!.blockHash : paging || complete ? (plan.toBlock === plan.safeHead ? finalPageBoundary.hash : finalSafeHead.hash) : finalPageBoundary.hash,
+    lastMessageId: older ? BigInt(retainedCheckpoint!.lastMessageId) : paging ? finalizedCount! : lastMessageId
   });
+  if (paging) {
+    const firstEvent = sortedEvents[0];
+    const previousFirst = retainedCheckpoint?.firstMessageId;
+    const joinsPrevious = !older && retainedCheckpoint &&
+      plan.expectedPreviousMessageId <= BigInt(retainedCheckpoint.lastMessageId) &&
+      finalizedCount! >= BigInt(retainedCheckpoint.lastMessageId);
+    const extendsEarlier = firstEvent && previousFirst !== undefined && firstEvent.messageId < BigInt(previousFirst);
+    nextCheckpoint.firstMessageId = older
+      ? firstEvent?.messageId.toString() ?? previousFirst!
+      : joinsPrevious && !extendsEarlier ? previousFirst ?? '1' : (firstEvent?.messageId ?? finalizedCount! + 1n).toString();
+    nextCheckpoint.olderToBlock = joinsPrevious && !extendsEarlier ? retainedCheckpoint!.olderToBlock : firstEvent
+      ? firstEvent.blockNumber.toString() : (plan.fromBlock - 1n).toString();
+    if (plan.fromBlock === (scope.firstMessageBlock ?? scope.conversationStartBlock) &&
+        BigInt(nextCheckpoint.firstMessageId) > 1n) {
+      throw new Error('Direct-chat V2 history page is incomplete at the first-message block.');
+    }
+  }
   const mutation = {
     scope,
     viewerAddress,
@@ -522,7 +634,8 @@ export const syncDirectChatV2HistoryPage = async ({
     messagesByContact,
     checkpoint: nextCheckpoint,
     safeHead: plan.safeHead,
-    hasMore: plan.toBlock < plan.safeHead,
+    hasMore: paging ? false : !complete,
+    hasOlder: paging ? BigInt(nextCheckpoint.firstMessageId!) > 1n : undefined,
     reorged: plan.resetConversation,
     appliedEntries: entries.length,
     unavailableEntries,
@@ -531,7 +644,9 @@ export const syncDirectChatV2HistoryPage = async ({
       fromBlock: plan.fromBlock,
       toBlock: plan.toBlock,
       expectedPreviousMessageId: plan.expectedPreviousMessageId,
-      lastMessageId
+      lastMessageId,
+      ...(paging ? { direction: older ? 'older' as const : 'recent' as const,
+        previousCheckpointLastMessageId: BigInt(retainedCheckpoint?.lastMessageId ?? '0') } : {})
     }
   };
 };

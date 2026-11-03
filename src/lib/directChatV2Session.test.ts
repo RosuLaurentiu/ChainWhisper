@@ -1,5 +1,6 @@
 import { BrowserProvider, Interface, type JsonRpcSigner } from '@coti-io/coti-ethers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CotiEventHintSubscriber } from './appShared/cotiEventHints';
 
 const chainMocks = vi.hoisted(() => ({
   createConversation: vi.fn(),
@@ -51,6 +52,7 @@ import {
 import {
   DIRECT_CHAT_V2_ABI,
   bindDirectChatV2MetaMaskCapability,
+  releaseDirectChatV2MetaMaskCapability,
   type DirectChatV2ConversationLookup,
   type DirectChatV2ConversationSnapshot,
   type DirectChatV2DeploymentManifest,
@@ -257,7 +259,8 @@ const makeController = ({
   manifest = MANIFEST,
   ownerAddress = ALICE,
   retireNonceAttempt = vi.fn(),
-  runOwnerTransactionFlow = ownerTransactionFlow()
+  runOwnerTransactionFlow = ownerTransactionFlow(),
+  subscribeEventHints
 }: {
   getOwnerCapability?: (requirePrivacy: boolean) => Promise<DirectChatV2MetaMaskCapability>;
   invalidateOwnerCapabilities?: () => void;
@@ -265,6 +268,7 @@ const makeController = ({
   ownerAddress?: string;
   retireNonceAttempt?: DirectChatV2NonceAttemptRetirer;
   runOwnerTransactionFlow?: DirectChatV2TransactionFlow;
+  subscribeEventHints?: CotiEventHintSubscriber;
 } = {}) => ({
   controller: createDirectChatV2Session({
     getOwnerCapability,
@@ -272,7 +276,8 @@ const makeController = ({
     manifest,
     ownerAddress,
     retireNonceAttempt,
-    runOwnerTransactionFlow
+    runOwnerTransactionFlow,
+    subscribeEventHints
   }),
   getOwnerCapability,
   invalidateOwnerCapabilities,
@@ -406,7 +411,8 @@ describe('directChatV2Session', () => {
       contractAddress: CHAT,
       conversationId: CONVERSATION_ID,
       deploymentBlock: 99n,
-      conversationStartBlock: 99n
+      conversationStartBlock: 99n,
+      firstMessageBlock: 100n
     });
     await expect(access.dependencies.getLatestBlockNumber(CHAIN_ID)).resolves.toBe(120n);
     await expect(access.dependencies.readCanonicalBlock(CHAIN_ID, 100n)).resolves.toMatchObject({
@@ -442,6 +448,27 @@ describe('directChatV2Session', () => {
     })).rejects.toThrow('different verified scope');
     await expect(access.dependencies.getLatestBlockNumber(CHAIN_ID + 1n))
       .rejects.toThrow('wrong chain');
+  });
+
+  it('keeps empty-history creation separate from the absent first-message hint', async () => {
+    chainMocks.readConversation.mockResolvedValue({ ...conversation(), messageCount: 0n,
+      firstMessageBlock: 0n, lastMessageBlock: 0n });
+    const { controller } = makeController();
+    const access = await controller.history(BOB);
+    expect(access?.scope).toMatchObject({ conversationStartBlock: 99n, firstMessageBlock: undefined });
+    await expect(access!.dependencies.readMessagePage({ scope: { ...access!.scope, firstMessageBlock: 100n },
+      fromBlock: 99n, toBlock: 100n })).rejects.toThrow('different verified scope');
+  });
+
+  it.each([
+    { messageCount: 1n, firstMessageBlock: 98n, lastMessageBlock: 101n },
+    { messageCount: 1n, firstMessageBlock: 102n, lastMessageBlock: 101n },
+    { messageCount: 0n, firstMessageBlock: 100n, lastMessageBlock: 101n }
+  ])('rejects inconsistent verified message-block anchors', async (anchors) => {
+    chainMocks.readConversation.mockResolvedValue({ ...conversation(), ...anchors });
+    const { controller } = makeController();
+    await expect(controller.history(BOB)).rejects.toThrow(anchors.messageCount === 0n
+      ? 'empty history has non-zero' : 'anchors are inconsistent');
   });
 
   it('serializes uncached epoch-key reads so privacy unlock cannot fan out through MetaMask', async () => {
@@ -601,6 +628,34 @@ describe('directChatV2Session', () => {
     });
   });
 
+  it('forwards an optional socket hint subscriber to both read-only watchers', async () => {
+    const capability = await ownerCapability();
+    const subscribeEventHints = vi.fn(async () => () => {});
+    const { controller } = makeController({ getOwnerCapability: async () => capability, subscribeEventHints });
+    const onHint = vi.fn();
+    await controller.watch(BOB, onHint); await controller.watchIncoming(onHint);
+    expect(chainMocks.watchMessageHints).toHaveBeenCalledWith(expect.objectContaining({ subscribeEventHints }));
+    expect(chainMocks.watchIncomingHints).toHaveBeenCalledWith(expect.objectContaining({ subscribeEventHints }));
+  });
+
+  it.each(['peer', 'incoming'] as const)('cleans up an acquired %s watcher when its held registration outlives the owner scope', async kind => {
+    const capability = await ownerCapability(), stop = vi.fn(async () => {});
+    let entered!: () => void, finish!: (value: typeof stop) => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const registration = new Promise<typeof stop>(resolve => { finish = resolve; });
+    (kind === 'peer' ? chainMocks.watchMessageHints : chainMocks.watchIncomingHints)
+      .mockImplementationOnce(async () => { entered(); return registration; });
+    const { controller } = makeController({ getOwnerCapability: async () => capability,
+      subscribeEventHints: async () => () => {} });
+    const pending = kind === 'peer' ? controller.watch(BOB, vi.fn()) : controller.watchIncoming(vi.fn());
+    const rejected = expect(pending).rejects.toThrow('session capability');
+    await started;
+    releaseDirectChatV2MetaMaskCapability(capability);
+    finish(stop);
+    await rejected;
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it('creates a global incoming hint watcher without requesting the privacy key', async () => {
     const stop = vi.fn(async () => undefined);
     chainMocks.watchIncomingHints.mockResolvedValueOnce(stop);
@@ -609,13 +664,15 @@ describe('directChatV2Session', () => {
     const { controller } = makeController({ getOwnerCapability });
     const onHint = vi.fn();
 
-    await expect(controller.watchIncoming(onHint)).resolves.toBe(stop);
+    const shouldPause = () => true;
+    await expect(controller.watchIncoming(onHint, shouldPause)).resolves.toBe(stop);
 
     expect(getOwnerCapability).toHaveBeenCalledWith(false);
     expect(chainMocks.watchIncomingHints).toHaveBeenCalledWith({
       capability,
       deployment: VERIFIED,
-      onHint
+      onHint,
+      shouldPause
     });
   });
 

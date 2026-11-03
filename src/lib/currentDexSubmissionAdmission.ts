@@ -104,8 +104,8 @@ export const issueCurrentCheapDexQuoteAdmission = (prepared: CurrentCheapDexPrep
   signer: object): CurrentDexInternalAdmission<'quote'> => {
   assertCurrentCheapDexPreparedQuote(prepared, signer);
   const c = prepared.intent.candidate ? resolveCurrentCheapDexCandidate(currentCheapDexCandidateKey(prepared.intent.candidate)) : CURRENT_CHEAP_DEX_CANDIDATE;
-  assertCurrentSwapCandidate(c, prepared.intent);
-  if (prepared.intent.candidate) assertCurrentSwapCandidate(prepared.intent.candidate, prepared.intent);
+  assertCurrentSwapCandidate(c, prepared.intent, signer);
+  if (prepared.intent.candidate) assertCurrentSwapCandidate(prepared.intent.candidate, prepared.intent, signer);
   const protocol = currentCheapDexQuoteProtocol(c);
   if (prepared.graph !== c.graph || prepared.chainId !== BigInt(c.chainId) || prepared.to.toLowerCase() !== c.core ||
       prepared.value !== 0n || prepared.intent.runtimeHash !== c.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2] ||
@@ -129,7 +129,7 @@ export const issueCurrentCheapDexAcceptAdmission = (quote: CurrentDexInternalAdm
   }
   const original = previous.preparedQuote as CurrentCheapDexPreparedQuote;
   const identity = issued.intent.candidate ?? CURRENT_CHEAP_DEX_CANDIDATE;
-  assertCurrentSwapCandidate(identity, issued.intent);
+  assertCurrentSwapCandidate(identity, issued.intent, signer);
   if (original.graph !== identity.graph || original.to.toLowerCase() !== identity.core.toLowerCase() ||
       original.intent.runtimeHash !== issued.runtimeHash || original.intent.releaseId !== issued.releaseId ||
       original.intent.principal.toLowerCase() !== issued.principal.toLowerCase()) {

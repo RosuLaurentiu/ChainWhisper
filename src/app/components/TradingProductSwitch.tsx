@@ -28,6 +28,7 @@ type TradingProductSwitchProps = {
   priceDisplayInverted: boolean;
   onPriceDisplayInvertedChange: (inverted: boolean) => void;
   marketReference?: CurrentDexMarketReference;
+  referenceDisplayInverted?: boolean;
   dexCandidate?: CurrentCheapDexIdentity;
 } & ({ activeProduct: 'dex'; selectedPair: TradingPair; onSelectedPairChange: (pair: TradingPair) => void; p2pMarket?: never }
   | { activeProduct: 'p2p'; p2pMarket: P2PTradingHeaderContext; selectedPair?: never; onSelectedPairChange?: never });
@@ -40,6 +41,7 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
   priceDisplayInverted,
   onPriceDisplayInvertedChange,
   marketReference,
+  referenceDisplayInverted,
   dexCandidate
   } = props;
   const p2pMarket = props.activeProduct === 'p2p' ? props.p2pMarket : null;
@@ -54,8 +56,11 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
   const displayPair = activeProduct === 'dex' && !dexDisplay ? CURRENT_DEX_DISPLAY_PAIR : selectedPair;
   const baseSymbol = priceDisplayInverted ? displayPair[1] : displayPair[0];
   const quoteSymbol = priceDisplayInverted ? displayPair[0] : displayPair[1];
-  const marketPrice = marketReference?.status === 'available' ? priceDisplayInverted ? 1/marketReference.price : marketReference.price : null;
-  const marketLabel = marketPrice !== null ? `${marketPrice.toLocaleString('en',{maximumSignificantDigits:6})} ${quoteSymbol} per ${baseSymbol}` :
+  const rateInverted = activeProduct === 'dex' ? referenceDisplayInverted ?? priceDisplayInverted : priceDisplayInverted;
+  const rateBaseSymbol = rateInverted ? displayPair[1] : displayPair[0];
+  const rateQuoteSymbol = rateInverted ? displayPair[0] : displayPair[1];
+  const marketPrice = marketReference?.status === 'available' ? rateInverted ? 1/marketReference.price : marketReference.price : null;
+  const marketLabel = marketPrice !== null ? `${marketPrice.toLocaleString('en',{maximumSignificantDigits:6})} ${rateQuoteSymbol} per ${rateBaseSymbol}` :
     marketReference?.status === 'loading' ? 'Checking price' : marketReference?.status === 'stale' ? 'Price stale' : 'Price unavailable';
   const sampleAge = marketReference?.status === 'available'
     ? Math.max(0, Math.floor(Date.now() / 1000) - Number(marketReference.sampledAt)) : null;
@@ -109,23 +114,23 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
               type="button"
               className="trading-ratio-trigger"
               onClick={() => onPriceDisplayInvertedChange(!priceDisplayInverted)}
-              aria-label={`Reverse price display to 1 ${quoteSymbol} priced in ${baseSymbol}`}
+              aria-label={`Reverse price display to 1 ${rateQuoteSymbol} priced in ${rateBaseSymbol}`}
               title="Reverse price display"
             >
               <strong
-                key={priceDisplayInverted ? 'ratio-inverted' : 'ratio-forward'}
+                key={rateInverted ? 'ratio-inverted' : 'ratio-forward'}
                 className="trading-ratio-value"
                 aria-live="polite"
                 aria-atomic="true"
               >
-                {quoteSymbol} <small>per {baseSymbol}</small>
+                {rateQuoteSymbol} <small>per {rateBaseSymbol}</small>
               </strong>
               <ArrowLeftRight size={15} strokeWidth={2.1} aria-hidden="true" />
             </button>
           </div>
         </div>
         <div className="trading-market-change" data-price-state={activeProduct === 'dex' ? marketReference?.status ?? 'unavailable' : p2pMarket?.reference ? 'available' : 'unavailable'}>
-          <span>{activeProduct === 'dex' ? 'COTI Testnet' : 'Market reference'}</span>
+          <span>{activeProduct === 'dex' ? 'COTI Testnet · Live Pool reference' : 'Market reference'}</span>
           <strong title={activeProduct === 'dex' ? 'Rounded Pool reference · excludes Limits' : p2pMarket?.reference?.title}>{activeProduct === 'dex' ? marketLabel : p2pMarket?.reference?.label ?? 'Price unavailable'}</strong>
           {activeProduct === 'dex' && sampleAge !== null ? <small aria-label="Market sample age" title="Expires after 120s">{sampleAge}s ago</small> : null}
         </div>

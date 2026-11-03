@@ -11,10 +11,11 @@ import {
   PrivateTvlPage,
   preloadChatPage,
   preloadSwapPage,
-  preloadTradesPage,
+  preloadTradingPage,
   preloadPrivateTvlPage
 } from './app/lazyRoutes';
 import { BROWSER_WALLET_DIRECT_MESSAGE_MAX_LENGTH } from './app/appHelpers';
+import type { GroupChatV2DiscoveryResult } from './lib/groupChatV2DiscoveryRuntime';
 import { type CurrentCheapDexCandidateKey } from './lib/dexV2Deployment';
 import { currentDexAppPair, resolveCurrentDexAppCandidate } from './lib/currentDexAppScope';
 import { currentNativeDexDailyPriceConfig } from './lib/currentDexNativeDailyPriceTestnet';
@@ -23,6 +24,7 @@ import AppErrorBoundary from './app/components/AppErrorBoundary';
 import AppHeader from './app/components/AppHeader';
 import WalletUtilityMenu from './app/components/WalletUtilityMenu';
 import { AppHeaderHomeButton, AppHeaderNavigation } from './app/components/AppHeaderNavigation';
+import { getSessionTradingPage } from './shell/routing';
 import TradingProductSwitch from './app/components/TradingProductSwitch';
 import type { TradingPair } from './app/components/TradingProductSwitch';
 import useDirectTradeNotifications from './features/notifications/useDirectTradeNotifications';
@@ -49,14 +51,11 @@ import { mergeLeaseScopedOnboardInfo } from './features/wallet/hooks/useSharedWa
 import { issuePrivateLiquidityMetaMaskCapability } from './features/wallet/privateLiquidityMetaMaskCapability';
 import { issueOtcV2MetaMaskCapability } from './features/wallet/otcV2MetaMaskCapability';
 import { releaseOwnerCotiMetaMaskProviderPool } from './features/wallet/ownerCotiMetaMaskCapability';
-import useDirectConversationSync from './features/chat/hooks/useDirectConversationSync';
 import useActiveConversationState from './features/chat/hooks/useActiveConversationState';
-import useConversationSidebarState from './features/chat/hooks/useConversationSidebarState';
+import useConversationSidebarState, { selectDirectChatDiscoveryView, type DirectChatDiscoveryView } from './features/chat/hooks/useConversationSidebarState';
 import useConversationPreferenceActions from './features/chat/hooks/useConversationPreferenceActions';
 import useContactActions from './features/chat/hooks/useContactActions';
-import useConversationReadStateActions from './features/chat/hooks/useConversationReadStateActions';
 import useDirectMessageActions from './features/chat/hooks/useDirectMessageActions';
-import useDirectConversationRealtimeSync from './features/chat/hooks/useDirectConversationRealtimeSync';
 import useContactsSidebarHandlers from './features/chat/hooks/useContactsSidebarHandlers';
 import useDirectChatPanelHandlers from './features/chat/hooks/useDirectChatPanelHandlers';
 import useChatMemoCrypto from './features/chat/hooks/useChatMemoCrypto';
@@ -69,9 +68,9 @@ import useChatReactionsV1Runtime from './features/chat/hooks/useChatReactionsV1R
 import useChatThreadScroll from './features/chat/hooks/useChatThreadScroll';
 import useActiveGroupThreadState from './features/groups/hooks/useActiveGroupThreadState';
 import useGroupAdminActions from './features/groups/hooks/useGroupAdminActions';
-import useGroupDataSync from './features/groups/hooks/useGroupDataSync';
 import useGroupChatV2History from './features/groups/hooks/useGroupChatV2History';
-import useGroupRealtimeSync from './features/groups/hooks/useGroupRealtimeSync';
+import { rememberDirectChatV2Preview } from './lib/directChatV2IncomingDiscovery';
+import useInitialReadPriority from './features/wallet/hooks/useInitialReadPriority';
 import useGroupMessageActions from './features/groups/hooks/useGroupMessageActions';
 import useInChatTradeActions from './features/trading/hooks/useInChatTradeActions';
 import useTradeActionConfirmationState from './features/trading/hooks/useTradeActionConfirmationState';
@@ -97,20 +96,30 @@ import type { ChatReactionsV1Runtime } from './lib/chatReactionsV1Runtime';
 import { OTC_V2_DEPLOYMENT_CATALOG } from './lib/otcV2DeploymentCatalog';
 import type { OtcTradeHistoryV2Runtime } from './lib/otcTradeHistoryV2Runtime';
 import type { OtcV2ActionRuntime } from './lib/otcV2ActionRuntime';
+import { subscribeCotiEventHints } from './lib/appShared/cotiEventHints';
 import {
   requestChainWhisperBrowserNotificationPermission,
   showChainWhisperBrowserNotification
 } from './lib/browserNotifications';
 import {
+  bindBrowserWalletRuntimePrivacyScope,
   buildBrowserOwnerDataScopeKey,
-  buildBrowserWalletRuntimeScopeKey
+  buildBrowserWalletRuntimeScopeKey,
+  createBrowserWalletRuntimeReadGuard,
+  getBrowserRuntimeSetupError,
+  resolveBrowserWalletPrivacyReadScope,
+  assertBrowserWalletPrivacyReadScopeCurrent,
+  resolveBrowserRuntimeStartupScope,
+  shouldDeferBrowserRuntimeStartup,
+  type BrowserRuntimeInitialDiscovery,
+  type BrowserRuntimeSetupFailure,
+  type BrowserWalletPrivacyReadScope
 } from './lib/browserWalletRuntimeScope';
 import type {
   GroupChatV2ReadCursor,
   GroupChatV2ReadCursorAnchor,
   GroupChatV2ReadCursorScope
 } from './lib/groupChatV2ReadCursor';
-import { useStateBackupSync } from './app/hooks/useStateBackupSync';
 import { useStoredWalletPreference } from './features/wallet/hooks/useStoredWalletPreference';
 import { useWalletOnboarding } from './features/wallet/hooks/useWalletOnboarding';
 import {
@@ -132,7 +141,7 @@ import {
 } from './lib/appHelpLaunch';
 import type { LinkedTradeContext } from './lib/linkedTradeContext';
 import { buildTradeTerminalPath } from './features/trading/hooks/useP2PTradeRoute';
-import { runWalletTransactionFlow } from './lib/walletTransactionFlow';
+import { isWalletTransactionPromptActive, runWalletTransactionFlow } from './lib/walletTransactionFlow';
 import { ensureProviderOnNetwork } from './lib/walletNetwork';
 import {
   CHAINWHISPER_NETWORK_SELECTION_LOCKED,
@@ -155,10 +164,6 @@ import { useTokenToolsStore } from './features/tokenTools/tokenToolsStore';
 import useRewardTokenMetrics from './features/tokenTools/useRewardTokenMetrics';
 import useTokenSwapActions from './features/tokenTools/useTokenSwapActions';
 import useTokenSwapViewModel, { usePrivacyPortalViewModel } from './features/tokenTools/useTokenSwapViewModel';
-import {
-  isLegacyUnshieldDirection,
-  resolveLegacyRecoverySpendableAmount
-} from './features/tokenTools/tokenSwapView';
 import usePrivacyPortal from './features/tokenTools/usePrivacyPortal';
 import { getPrivacyTokenPair, PRIVACY_TOKEN_PAIRS } from './lib/privacyPortal';
 import type { JsonRpcSigner } from '@coti-io/coti-ethers';
@@ -170,24 +175,20 @@ import {
   COTI_NETWORK,
   DEFAULT_GROUP_JOIN_CODE_MULTI_USES,
   DEFAULT_NICKNAME_MAX_BYTES,
-  FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL,
-  FALLBACK_REWARD_TOKEN_DECIMALS,
   formatCotiAmount,
   formatTokenAmount,
   getMessageDisplayText,
   getGroupActionErrorMessage,
   getProviderErrorMessage,
-  GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS,
   GroupInvite,
   GroupSummary,
   isWalletAddress,
   loadCotiReadProvider,
+  loadCotiStartupReadProvider,
+  sendCotiScopedRead,
   MAX_MESSAGE_LENGTH,
   mergeUniqueContacts,
-  normalizeLastReadAllTs,
   sanitizeTokenAmountInput,
-  SyncConversationOptions,
-  SyncGroupOptions,
   type TradeOfferMessagePayload,
   trimReplyPreview,
 } from './lib/appShared';
@@ -201,6 +202,12 @@ const dexAppScope = resolveCurrentDexAppCandidate(import.meta.env.MODE, import.m
 export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const [networkSwitching, setNetworkSwitching] = useState(false);
   const [tradingPriceDisplayInverted, setTradingPriceDisplayInverted] = useState(false);
+  const [dexSwapReferenceInverted, setDexSwapReferenceInverted] = useState<boolean | undefined>();
+  const changeDexPriceDisplayInverted = useCallback((inverted: boolean) => {
+    if (inverted === tradingPriceDisplayInverted) return;
+    setTradingPriceDisplayInverted(inverted);
+    setDexSwapReferenceInverted(value => value === undefined ? undefined : !value);
+  }, [tradingPriceDisplayInverted]);
   const [selectedTradingPair, setSelectedTradingPair] = useState<TradingPair>(['BCN', 'HBR']);
   const [mobileTradingScrolled, setMobileTradingScrolled] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -239,13 +246,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     unreadMap,
     unreadGroupMap,
     lastCopiedKey,
-    lastReadAllTs,
     soundEnabled,
     sending,
     uploadingImage,
     sendingReaction,
-    syncingHistory,
-    loadingOlderHistory,
     replyingToMessage,
     reactionPickerMessageId,
     highlightedMessageId,
@@ -262,13 +266,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setUnreadMap,
     setUnreadGroupMap,
     setLastCopiedKey,
-    setLastReadAllTs,
     setSoundEnabled,
     setSending,
     setUploadingImage,
     setSendingReaction,
-    setSyncingHistory,
-    setLoadingOlderHistory,
     setReplyingToMessage,
     setReactionPickerMessageId,
     setHighlightedMessageId,
@@ -296,7 +297,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     groupTipRecipientAddress,
     sendingGroupMessage,
     processingGroupAction,
-    syncingGroups,
     mobileGroupOptionsOpen,
     setNewGroupTitle,
     setNewGroupIsPrivate,
@@ -316,7 +316,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setGroupTipRecipientAddress,
     setSendingGroupMessage,
     setProcessingGroupAction,
-    setSyncingGroups,
     setMobileGroupOptionsOpen
   } = useGroupUiStore();
   const {
@@ -329,7 +328,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     rewardTokenDecimals,
     privateRewardTokenDecimals,
     swapFeeWei,
-    swapTokenFeeAmount,
     swapDirection,
     swapAmountInput,
     privacyAmountInput,
@@ -342,16 +340,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     privacyTokenSearch,
     privacyRecoveryOpen,
     setTipNativeBalanceWei,
-    setGroupRewardsContractAddress,
-    setGroupRewardsPaused,
-    setRewardsContractPaused,
-    setRewardsCallerAllowed,
-    setRewardsPublicPerInteractionWei,
-    setRewardsPublicReserveWei,
     setRewardTokenBalanceWei,
     setPrivateRewardTokenBalanceWei,
     setSwapFeeWei,
-    setSwapTokenFeeAmount,
     setGroupFeeModeSelection,
     setSwapDirection,
     setSwapAmountInput,
@@ -361,9 +352,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setPrivacyTokenSearch,
     setPrivacyRecoveryOpen
   } = useTokenToolsStore();
-  const [, setLegacyPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
-  const [legacyPrivateRewardTokenSymbol, setLegacyPrivateRewardTokenSymbol] = useState(FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL);
-  const [legacyPrivateRewardTokenDecimals, setLegacyPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
   const {
     tradeComposerOpen,
     creatingTrade,
@@ -380,7 +368,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     tradeExpiryHoursInput,
     tradeCounterParentId,
     tradeCounterContext,
-    tradeSnapshotsById,
     setTradeComposerOpen,
     setCreatingTrade,
     setProcessingTradeActionId,
@@ -396,12 +383,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setTradeExpiryHoursInput,
     setTradeHidePrivateLiquidity,
     setTradeCounterParentId,
-    setTradeCounterContext,
-    setTradeSnapshotsById
+    setTradeCounterContext
   } = useInChatTradeStore();
-  const lastReadAllTsRef = useRef(0);
-  const lastReadByContactRef = useRef<Record<string, number>>({});
-  const lastReadByGroupRef = useRef<Record<string, number>>({});
   const unreadMapRef = useRef<Record<string, boolean>>({});
   const unreadGroupMapRef = useRef<Record<string, boolean>>({});
   const {
@@ -435,9 +418,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setActiveMobileView,
     setMobileLinksOpen,
     setChatWalletMenuOpen,
-    setDirectRealtimeStatus,
-    setGroupRealtimeStatus
   } = useAppShellStore();
+  const { navigationPath, navigateToInternalAppLink, navigateToPage } = useAppNavigation({ activePage, setActivePage });
   const [appHelpLaunchContext, setAppHelpLaunchContext] = useState<AppHelpLaunchContext | null>(
     initialAppHelpLaunchContext
   );
@@ -479,11 +461,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const previousWalletAddressRef = useRef<string>('');
   const postConnectDataSyncRunIdRef = useRef(0);
   const pinnedContactStateRef = useRef<Map<string, { muted?: boolean; hidden?: boolean }>>(new Map());
-  const { blockTimestampCacheRef, resetBlockTimestampCache, resolveBlockTimestampMap } = useBlockTimestampCache();
+  const { resetBlockTimestampCache } = useBlockTimestampCache();
 
-  useEffect(() => {
-    lastReadAllTsRef.current = normalizeLastReadAllTs(lastReadAllTs);
-  }, [lastReadAllTs]);
 
   const prevUnreadRef = useRef<Record<string, boolean>>({});
   const prevUnreadGroupRef = useRef<Record<string, boolean>>({});
@@ -509,18 +488,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const notificationSuppressedContactAddressSetRef = useRef(notificationSuppressedContactAddressSet);
   notificationSuppressedContactAddressSetRef.current = notificationSuppressedContactAddressSet;
 
-  const syncConversationHistoryRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
-  const syncGroupDataRef = useRef<(options?: SyncGroupOptions) => Promise<void>>(async () => {});
-  const syncGroupDataInFlightRef = useRef(false);
-  const pendingGroupSyncOptionsRef = useRef<SyncGroupOptions | null>(null);
-  const groupOverviewLastSyncedBlockRef = useRef<Record<string, number>>({});
-  const groupMessageLastSyncedBlockRef = useRef<Record<string, number>>({});
-  const groupMemberLastSyncedBlockRef = useRef<Record<string, number>>({});
-  const groupRemovalNoticeSeenRef = useRef<Record<string, Set<number>>>({});
-  const groupRemovalNoticeMarkersRef = useRef<Record<string, Record<string, string>>>({});
-  const groupRemovalNoticeMarkersLoadedRef = useRef(false);
-  const conversationDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
-  const groupDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const memoAesRecoveryAttemptedRef = useRef<Record<string, boolean>>({});
   const messagesByContactRef = useRef<Record<string, ChatMessage[]>>({});
   const directChatV2HistoryCaughtUpRef = useRef<Record<string, boolean>>({});
@@ -528,7 +495,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const contactsRef = useRef<Contact[]>([]);
   const messagesByGroupRef = useRef<Record<string, ChatMessage[]>>({});
   const groupMessageLoadPhaseByGroupRef = useRef<Record<string, GroupMessageLoadPhase>>({});
-  const prefetchedGroupMessagesRef = useRef<Record<string, boolean>>({});
   const groupsRef = useRef<GroupSummary[]>([]);
   const groupInvitesRef = useRef<GroupInvite[]>([]);
   const activeContactRef = useRef<string | null>(null);
@@ -759,10 +725,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   }, [contacts]);
 
   useEffect(() => {
-    messagesByContactRef.current = messagesByContact;
-  }, [messagesByContact]);
-
-  useEffect(() => {
     messagesByGroupRef.current = messagesByGroup;
   }, [messagesByGroup]);
 
@@ -800,31 +762,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const readStateFeaturesEnabled = true;
   const browserWalletLiteModeTitle = '';
   const directMessageMaxLength = browserWalletLiteMode ? BROWSER_WALLET_DIRECT_MESSAGE_MAX_LENGTH : MAX_MESSAGE_LENGTH;
-  useEffect(() => {
-    if (readStateFeaturesEnabled) {
-      return;
-    }
-
-    unreadMapRef.current = {};
-    unreadGroupMapRef.current = {};
-    prevUnreadRef.current = {};
-    prevUnreadGroupRef.current = {};
-    lastReadByContactRef.current = {};
-    lastReadByGroupRef.current = {};
-    lastReadAllTsRef.current = 0;
-    setUnreadMap({});
-    setUnreadGroupMap({});
-    setLastReadAllTs(0);
-    setReplyingToMessage(null);
-    setReactionPickerMessageId(null);
-  }, [
-    readStateFeaturesEnabled,
-    setLastReadAllTs,
-    setReactionPickerMessageId,
-    setReplyingToMessage,
-    setUnreadGroupMap,
-    setUnreadMap
-  ]);
   const {
     activeContactMeta,
     activeConversationHidden,
@@ -901,9 +838,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     ownerAesKey,
     ownerAesReady,
     ownerWalletAddress,
-    readableWalletAccountKeys,
     readableWalletAccounts,
-    walletAccountScope
   } = useWalletReadiness({
     activeGroupId,
     browserWalletAddress: browserWalletSession?.address,
@@ -944,7 +879,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   );
   const {
     ownerNativeBalanceWei,
-    ownerLegacyPrivateRewardTokenBalanceWei,
     ownerPrivateRewardTokenBalanceWei,
     ownerRewardTokenBalanceWei,
     ownerTokenBalancesLoading
@@ -962,7 +896,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const wispPortalLoadingRewardBalances = ownerTokenBalancesLoading;
   const wispPortalRewardTokenBalanceWei = ownerRewardTokenBalanceWei;
   const wispPortalPrivateRewardTokenBalanceWei = ownerPrivateRewardTokenBalanceWei;
-  const wispPortalLegacyPrivateRewardTokenBalanceWei = ownerLegacyPrivateRewardTokenBalanceWei;
   const findContactNameForWalletAddress = useCallback((address?: string): string | undefined => {
     if (!address) return undefined;
     const key = address.toLowerCase();
@@ -971,10 +904,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   }, [contacts]);
   const {
     activeSwapVaultContractAddress,
-    legacySwapVaultContractUrl,
     wispBridgeContractUrl,
-    canEarlierLegacyUnshieldTokens,
-    canLegacyUnshieldTokens,
     canShieldTokens,
     canSwapRewardTokens,
     canUnshieldTokens,
@@ -988,9 +918,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     swapPrivateRewardTokenSymbol
   } = useTokenSwapViewModel({
     hasAesReady: wispPortalHasAesReady,
-    legacyPrivateRewardTokenBalanceWei: wispPortalLegacyPrivateRewardTokenBalanceWei,
-    legacyPrivateRewardTokenDecimals,
-    legacyPrivateRewardTokenSymbol,
     loadingRewardBalances: wispPortalLoadingRewardBalances,
     onCotiNetwork,
     privateRewardTokenBalanceWei: wispPortalPrivateRewardTokenBalanceWei,
@@ -999,7 +926,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     rewardTokenBalanceWei: wispPortalRewardTokenBalanceWei,
     rewardTokenDecimals,
     rewardTokenSymbol,
-    setSwapDirection,
     swapAmountInput,
     swapDirection,
     swappingTokens,
@@ -1007,6 +933,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   });
 
   const [directChatV2Runtime, setDirectChatV2Runtime] = useState<DirectChatV2Runtime | null>(null);
+  const [directChatV2InitialRead, setDirectChatV2InitialRead] = useState<DirectChatV2Runtime | null>(null);
+  const [directChatV2SetupFailure, setDirectChatV2SetupFailure] = useState<BrowserRuntimeSetupFailure | null>(null);
+  const [directChatV2DiscoveryView, setDirectChatV2DiscoveryView] = useState<DirectChatDiscoveryView | null>(null);
+  const directChatV2DiscoveryRefreshRef = useRef<(() => void) | null>(null);
+  const directChatV2LoadOlderContactsRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const provider = browserWalletSession?.provider;
     if (!provider) return;
@@ -1025,11 +956,13 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     ingest: ingestDirectTradeNotifications,
     markRead: markDirectTradeNotificationRead,
     clear: clearDirectTradeNotifications
-  } = useDirectTradeNotifications(directTradeNotificationScope);
+  } = useDirectTradeNotifications(directTradeNotificationScope, notificationSuppressedContactAddressSet);
   const [otcV2Runtime, setOtcV2Runtime] = useState<OtcTradeHistoryV2Runtime | null>(null);
   const [otcV2ActionRuntime, setOtcV2ActionRuntime] = useState<OtcV2ActionRuntime | null>(null);
-  const [otcV2HistorySetupError, setOtcV2HistorySetupError] = useState('');
-  const [otcV2ActionSetupError, setOtcV2ActionSetupError] = useState('');
+  const [otcV2ReadRuntime, setOtcV2ReadRuntime] = useState<OtcV2ActionRuntime | null>(null);
+  const [otcV2InitialDiscovery, setOtcV2InitialDiscovery] = useState<BrowserRuntimeInitialDiscovery<OtcV2ActionRuntime> | null>(null);
+  const [otcV2HistorySetupFailure, setOtcV2HistorySetupFailure] = useState<BrowserRuntimeSetupFailure | null>(null);
+  const [otcV2ActionSetupFailure, setOtcV2ActionSetupFailure] = useState<BrowserRuntimeSetupFailure | null>(null);
   const [groupChatV2Runtime, setGroupChatV2Runtime] = useState<GroupChatV2Runtime | null>(null);
   const [groupChatV2EpochSyncRequest, setGroupChatV2EpochSyncRequest] = useState<Readonly<{
     groupId: number;
@@ -1038,18 +971,22 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const [synchronizingGroupChatV2Epoch, setSynchronizingGroupChatV2Epoch] = useState(false);
   const [groupChatV2HistoryRefreshNonce, setGroupChatV2HistoryRefreshNonce] = useState(0);
   const groupChatV2RefreshRef = useRef<(() => void) | null>(null);
+  const groupChatV2LoadOlderRef = useRef<(() => void) | null>(null);
   const directChatV2RefreshRef = useRef<(() => void) | null>(null);
+  const directChatV2LoadOlderHistoryRef = useRef<(() => void) | null>(null);
   const [groupChatV2DiscoveryView, setGroupChatV2DiscoveryView] = useState<{
-    runtime: GroupChatV2Runtime; state: 'loading' | 'ready' | 'error'; refreshing: boolean;
+    runtime: GroupChatV2Runtime; state: 'loading' | 'ready' | 'error'; refreshing: boolean; hasOlder?: boolean; error?: string;
   } | null>(null);
   const [directChatV2RefreshView, setDirectChatV2RefreshView] = useState<{
-    runtime: DirectChatV2Runtime; peer: string; refreshing: boolean;
+    runtime: DirectChatV2Runtime; peer: string; scope: object; refreshing: boolean;
+    hasOlder: boolean; loadingOlder: boolean;
   } | null>(null);
   const startGroupChatV2HistoryLoad = useCallback((groupId: number) => {
     setGroupMessageLoadPhase(groupId, messagesByGroupRef.current[String(groupId)]?.length ? 'history' : 'initial');
   }, [setGroupMessageLoadPhase]);
-  const refreshGroupChatV2 = () => {
-    groupChatV2RefreshRef.current?.();
+  const refreshGroupChatV2 = (older = false) => {
+    if (older) groupChatV2LoadOlderRef.current?.();
+    else groupChatV2RefreshRef.current?.();
     setGroupChatV2HistoryRefreshNonce(previous => previous + 1);
   };
   const isGroupChatV2ScopeCurrent = useCallback(
@@ -1086,6 +1023,22 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       : null,
     [activeSignerSource, browserWalletSession, walletAddress]
   );
+  // Keep discovery status out of the next wallet/provider or privacy session.
+  const directChatV2DiscoveryScope = useMemo(() => ({}),
+    [directChatV2RuntimeScopeKey, browserOwnerDataScopeKey, ownerAesKey, ownerAesReady]);
+  const directChatV2PrivateScopeRef = useRef(directChatV2DiscoveryScope);
+  directChatV2PrivateScopeRef.current = directChatV2DiscoveryScope;
+  const [directChatPrivateDisplayScope, setDirectChatPrivateDisplayScope] = useState(directChatV2DiscoveryScope);
+  const chatPrivateDisplayReady = ownerAesReady &&
+    directChatPrivateDisplayScope === directChatV2DiscoveryScope;
+  useEffect(() => {
+    if (!import.meta.env.DEV && import.meta.env.MODE !== 'coti-testnet-candidate') return;
+    document.documentElement.setAttribute('data-coti-read-view', JSON.stringify({
+      page: activePage, privateReadsEnabled: ownerAesReady
+    }));
+    return () => document.documentElement.removeAttribute('data-coti-read-view');
+  }, [activePage, ownerAesReady]);
+  const directChatV2SetupError = getBrowserRuntimeSetupError(directChatV2RuntimeScopeKey, directChatV2SetupFailure);
   const otcV2RuntimeScopeKey = useMemo(
     () => OTC_V2_DEPLOYMENT_CATALOG.status === 'active'
       ? buildBrowserWalletRuntimeScopeKey({
@@ -1093,24 +1046,55 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           deploymentFingerprint: OTC_V2_DEPLOYMENT_CATALOG.fingerprint,
           expectedChainId: BigInt(OTC_V2_DEPLOYMENT_CATALOG.chainId),
           session: browserWalletSession,
-          variant: hasAesReady ? 'private' : 'public',
-          walletAddress
-        })
-      : null,
-    [activeSignerSource, browserWalletSession, hasAesReady, walletAddress]
-  );
-  const directTradeV2RuntimeScopeKey = useMemo(
-    () => DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.status === 'active'
-      ? buildBrowserWalletRuntimeScopeKey({
-          activeSignerSource,
-          deploymentFingerprint: DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.fingerprint,
-          expectedChainId: BigInt(DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.manifest.chainId),
-          session: browserWalletSession,
+          variant: 'public-identity',
           walletAddress
         })
       : null,
     [activeSignerSource, browserWalletSession, walletAddress]
   );
+  const otcV2PrivacyReadScopeRef = useRef<BrowserWalletPrivacyReadScope | null>(null);
+  otcV2PrivacyReadScopeRef.current = resolveBrowserWalletPrivacyReadScope(
+    otcV2RuntimeScopeKey, hasAesReady, otcV2PrivacyReadScopeRef.current);
+  const otcV2DiscoveryScopeKey = otcV2RuntimeScopeKey
+    ? `${otcV2RuntimeScopeKey}:privacy:${otcV2PrivacyReadScopeRef.current.revision}` : null;
+  const [otcV2ParticipantReadPass, setOtcV2ParticipantReadPass] = useState<{ scopeKey: string | null; pending: boolean } | null>(null);
+  const participantReadPassScopeRef = useRef({ scopeKey: otcV2DiscoveryScopeKey, runtime: otcV2ActionRuntime });
+  participantReadPassScopeRef.current = { scopeKey: otcV2DiscoveryScopeKey, runtime: otcV2ActionRuntime };
+  const handleParticipantReadPassChange = useCallback((runtime: OtcV2ActionRuntime | null, pending: boolean) => {
+    const current = participantReadPassScopeRef.current;
+    if (current.scopeKey !== otcV2DiscoveryScopeKey || current.runtime !== runtime) return;
+    setOtcV2ParticipantReadPass(previous => previous?.scopeKey === current.scopeKey && previous.pending === pending
+      ? previous : { scopeKey: current.scopeKey, pending });
+  }, [otcV2DiscoveryScopeKey]);
+  const otcV2StartupScopeRef = useRef<string | null>(null);
+  const otcV2StartupScopeKey = resolveBrowserRuntimeStartupScope(
+    otcV2RuntimeScopeKey, otcV2StartupScopeRef.current,
+    activePage !== 'trades' && !(activePage === 'dex' && navigationPath === '/dex/agent'));
+  otcV2StartupScopeRef.current = otcV2StartupScopeKey;
+  const otcV2HistorySetupError = getBrowserRuntimeSetupError(otcV2RuntimeScopeKey, otcV2HistorySetupFailure);
+  const otcV2ActionSetupError = getBrowserRuntimeSetupError(otcV2RuntimeScopeKey, otcV2ActionSetupFailure);
+  const handleOtcV2InitialDiscoverySettled = useCallback((runtime: OtcV2ActionRuntime) => {
+    if (!otcV2DiscoveryScopeKey || !runtime.isCurrent()) return;
+    setOtcV2InitialDiscovery(previous => previous?.scopeKey === otcV2DiscoveryScopeKey && previous.runtime === runtime
+      ? previous : { scopeKey: otcV2DiscoveryScopeKey, runtime });
+  }, [otcV2DiscoveryScopeKey]);
+  // A reader object is not a settled owner discovery attempt. Keep cold Chat
+  // work behind that same-scope attempt; a source or setup failure releases it.
+  const deferChatBackgroundStartup = shouldDeferBrowserRuntimeStartup({
+    selected: activePage === 'trades', scopeKey: otcV2DiscoveryScopeKey, runtime: otcV2ReadRuntime ?? otcV2ActionRuntime,
+    setupFailed: Boolean(otcV2HistorySetupError || otcV2ActionSetupError), initialDiscovery: otcV2InitialDiscovery
+  });
+  const deferP2PReadPass = shouldDeferBrowserRuntimeStartup({
+    selected: activePage === 'trades', scopeKey: otcV2DiscoveryScopeKey, runtime: otcV2ReadRuntime ?? otcV2ActionRuntime,
+    setupFailed: Boolean(otcV2HistorySetupError || otcV2ActionSetupError), initialDiscovery: otcV2InitialDiscovery,
+    activeReadPass: hasAesReady ? otcV2ParticipantReadPass : null
+  });
+  const participantReadPriorityRef = useRef(deferP2PReadPass);
+  participantReadPriorityRef.current = deferP2PReadPass;
+  const dexAppPair = currentDexAppPair(dexAppScope, selectedTradingPair);
+  const currentMarketReference = useCurrentDexMarketReference(activePage === 'dex', dexAppScope.candidate, dexAppPair);
+  const groupFirstContent = groupChatV2Runtime && groupChatV2DiscoveryView?.runtime === groupChatV2Runtime &&
+    (groups.length > 0 || groupInvites.length > 0 || groupChatV2DiscoveryView.state !== 'loading');
   const groupChatV2RuntimeScopeKey = useMemo(
     () => GROUP_CHAT_V2_DEPLOYMENT_CONFIG.status === 'active' && hasAesReady
       ? buildBrowserWalletRuntimeScopeKey({
@@ -1124,6 +1108,41 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       : null,
     [activeSignerSource, browserWalletSession, hasAesReady, walletAddress]
   );
+  const groupChatV2PrivateScope = useMemo(() => ({}), [groupChatV2RuntimeScopeKey, ownerAesKey]);
+  const groupChatV2PrivateScopeRef = useRef(groupChatV2PrivateScope);
+  groupChatV2PrivateScopeRef.current = groupChatV2PrivateScope;
+  const selectedReadPending = activePage === 'dex' ? currentMarketReference.status === 'loading' :
+    activePage === 'chat' && hasAesReady && !groupFirstContent && !directChatV2SetupError &&
+      (!directChatV2Runtime || (directChatV2Runtime.enabled && directChatV2InitialRead !== directChatV2Runtime));
+  const deferSelectedGroupHistory = useInitialReadPriority(
+    activePage === 'chat' && groupChatV2RuntimeScopeKey && activeGroupId !== null
+      ? `${groupChatV2RuntimeScopeKey}:initial-history:${activeGroupId}` : null,
+    hasAesReady && activeGroupMessageLoadPhase === 'initial' && activeGroupId !== null &&
+      !messagesByGroup[String(activeGroupId)]?.length
+  );
+  const groupHistoryReadPriorityRef = useRef(deferSelectedGroupHistory);
+  groupHistoryReadPriorityRef.current = deferSelectedGroupHistory;
+  const deferNotificationStartup = useInitialReadPriority(
+    directChatV2RuntimeScopeKey ? `${directChatV2RuntimeScopeKey}:${activePage}` : null,
+    selectedReadPending
+  ) || deferP2PReadPass || deferSelectedGroupHistory;
+  // Pause the next read without discarding a current runtime's committed batch.
+  const directTradeReadDeferredRef = useRef(deferNotificationStartup);
+  directTradeReadDeferredRef.current = deferNotificationStartup;
+  const chatReadDeferredRef = useRef(deferSelectedGroupHistory || (activePage !== 'chat' && deferNotificationStartup));
+  chatReadDeferredRef.current = deferSelectedGroupHistory || (activePage !== 'chat' && deferNotificationStartup);
+  const directTradeV2RuntimeScopeKey = useMemo(
+    () => DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.status === 'active'
+      ? buildBrowserWalletRuntimeScopeKey({
+          activeSignerSource,
+          deploymentFingerprint: DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.fingerprint,
+          expectedChainId: BigInt(DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.manifest.chainId),
+          session: browserWalletSession,
+          walletAddress
+        })
+      : null,
+    [activeSignerSource, browserWalletSession, walletAddress]
+  );
   const chatReactionsV1RuntimeScopeKey = useMemo(
     () => buildChatReactionsV1RuntimeScopeKey({
       activeSignerSource,
@@ -1133,6 +1152,18 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     }),
     [activeSignerSource, browserWalletSession, walletAddress]
   );
+  // Cold notification/reaction admission must not compete with the selected
+  // screen. Once started, keep the same owner's runtime across privacy
+  // preparation; a different wallet/network/candidate still clears its scope.
+  const directTradeStartupScopeRef = useRef<string | null>(null);
+  const directTradeStartupScopeKey = resolveBrowserRuntimeStartupScope(
+    directTradeV2RuntimeScopeKey, directTradeStartupScopeRef.current, deferNotificationStartup || !ownerAesReady);
+  directTradeStartupScopeRef.current = directTradeStartupScopeKey;
+  const reactionsStartupScopeRef = useRef<string | null>(null);
+  const reactionsStartupScopeKey = resolveBrowserRuntimeStartupScope(
+    chatReactionsV1RuntimeScopeKey, reactionsStartupScopeRef.current,
+    deferNotificationStartup || !ownerAesReady || activePage !== 'chat');
+  reactionsStartupScopeRef.current = reactionsStartupScopeKey;
   const directTradeV2OnboardInfoRef = useRef(sessionOnboardInfo);
   directTradeV2OnboardInfoRef.current = sessionOnboardInfo;
   const ownerTradeOnboardInfoRef = useRef(sessionOnboardInfo);
@@ -1154,8 +1185,14 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   useEffect(() => {
     let disposed = false;
     let createdRuntime: DirectChatV2Runtime | null = null;
+    const privateScope = directChatV2DiscoveryScope;
+    const isPrivateScopeCurrent = () => !disposed && directChatV2PrivateScopeRef.current === privateScope;
     setDirectChatV2Runtime(null);
+    setDirectChatV2SetupFailure(null);
     if (DIRECT_CHAT_V2_DEPLOYMENT_CONFIG.status !== 'active' || !directChatV2RuntimeScopeKey) {
+      setDirectChatV2SetupFailure({ scopeKey: directChatV2RuntimeScopeKey, message:
+        DIRECT_CHAT_V2_DEPLOYMENT_CONFIG.status === 'invalid' ? DIRECT_CHAT_V2_DEPLOYMENT_CONFIG.error
+          : 'Direct Chat is unavailable for the current deployment or owner session.' });
       return () => {
         disposed = true;
       };
@@ -1170,8 +1207,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         ? import('./lib/chatReadCursorCloudStores')
         : Promise.resolve(null)
     ]).then(([runtimeModule, writeModule, capabilityModule, cloudStoreModule]) => {
-      if (disposed) return;
+      if (!isPrivateScopeCurrent()) return;
       createdRuntime = runtimeModule.createDirectChatV2Runtime({
+        subscribeEventHints: subscribeCotiEventHints,
         cursorStore: cloudStoreModule && chatReadCursorCloud.session
           ? cloudStoreModule.createCloudSyncedDirectChatV2ReadCursorStore({
               onCloudError: chatReadCursorCloud.reportCloudError,
@@ -1207,24 +1245,30 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         },
         lifecycle: {
           onOptimistic: (update) => {
+            if (!isPrivateScopeCurrent()) return;
+            messagesByContactRef.current = writeModule.appendDirectChatV2OptimisticMessage(messagesByContactRef.current, update);
             setMessagesByContact((previous) =>
-              writeModule.appendDirectChatV2OptimisticMessage(previous, update)
+              isPrivateScopeCurrent() ? messagesByContactRef.current : previous
             );
-            setContacts((previous) => mergeUniqueContacts(previous, [update.contactKey]));
+            setContacts((previous) => isPrivateScopeCurrent() ? mergeUniqueContacts(previous, [update.contactKey]) : previous);
           },
           onReceipt: (update) => {
+            if (!isPrivateScopeCurrent()) return;
+            messagesByContactRef.current = writeModule.applyDirectChatV2ReceiptUpdate(messagesByContactRef.current, update);
             setMessagesByContact((previous) =>
-              writeModule.applyDirectChatV2ReceiptUpdate(previous, update)
+              isPrivateScopeCurrent() ? messagesByContactRef.current : previous
             );
-            setContacts((previous) => mergeUniqueContacts(previous, [update.contactKey]));
+            setContacts((previous) => isPrivateScopeCurrent() ? mergeUniqueContacts(previous, [update.contactKey]) : previous);
             const ownerKey = ownerAddress.toLowerCase();
             const pendingPeers = directChatV2PendingPeerHintsRef.current[ownerKey] ?? new Set<string>();
             pendingPeers.add(update.contactKey.toLowerCase());
             directChatV2PendingPeerHintsRef.current[ownerKey] = pendingPeers;
           },
           onFailure: (update) => {
+            if (!isPrivateScopeCurrent()) return;
+            messagesByContactRef.current = writeModule.failDirectChatV2OptimisticMessage(messagesByContactRef.current, update);
             setMessagesByContact((previous) =>
-              writeModule.failDirectChatV2OptimisticMessage(previous, update)
+              isPrivateScopeCurrent() ? messagesByContactRef.current : previous
             );
           }
         },
@@ -1232,10 +1276,15 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         runOwnerTransactionFlow: (operation) =>
           browserRuntimeDependenciesRef.current.runOwnerFundsTransactionFlow(operation)
       });
-      if (!disposed) setDirectChatV2Runtime(createdRuntime);
+      createdRuntime = bindBrowserWalletRuntimePrivacyScope(createdRuntime, isPrivateScopeCurrent);
+      if (isPrivateScopeCurrent()) setDirectChatV2Runtime(createdRuntime);
       else createdRuntime.close();
-    }).catch(() => {
-      if (!disposed) setDirectChatV2Runtime(null);
+    }).catch((cause) => {
+      if (!disposed) {
+        setDirectChatV2Runtime(null);
+        setDirectChatV2SetupFailure({ scopeKey: directChatV2RuntimeScopeKey,
+          message: getProviderErrorMessage(cause, 'Direct Chat setup failed.') });
+      }
     });
     return () => {
       disposed = true;
@@ -1244,11 +1293,13 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   }, [
     chatReadCursorCloud.reportCloudError,
     chatReadCursorCloud.session,
-    directChatV2RuntimeScopeKey
+    directChatV2RuntimeScopeKey,
+    directChatV2DiscoveryScope
   ]);
   useEffect(() => {
     let disposed = false;
     let createdRuntime: OtcTradeHistoryV2Runtime | null = null;
+    let setupReadGuard: ReturnType<typeof createBrowserWalletRuntimeReadGuard> | undefined;
     let setupReadNumber = 0;
     const reportSetupPhase = (phase: string): void => {
       if (import.meta.env.DEV && !disposed) {
@@ -1256,42 +1307,61 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       }
     };
     setOtcV2Runtime(null);
-    setOtcV2HistorySetupError('');
+    setOtcV2HistorySetupFailure(null);
     if (OTC_V2_DEPLOYMENT_CATALOG.status !== 'active' || !otcV2RuntimeScopeKey) {
-      setOtcV2HistorySetupError(OTC_V2_DEPLOYMENT_CATALOG.status === 'invalid'
+      setOtcV2HistorySetupFailure({ scopeKey: otcV2RuntimeScopeKey, message: OTC_V2_DEPLOYMENT_CATALOG.status === 'invalid'
         ? OTC_V2_DEPLOYMENT_CATALOG.error
         : OTC_V2_DEPLOYMENT_CATALOG.status !== 'active'
           ? 'P2P deployment is not configured.'
-          : 'P2P needs a current wallet session on the configured network. Connect the wallet to continue.');
+          : 'P2P needs a current wallet session on the configured network. Connect the wallet to continue.' });
       return () => { disposed = true; };
     }
+    if (!otcV2StartupScopeKey) return () => { disposed = true; };
     const catalog = OTC_V2_DEPLOYMENT_CATALOG;
     const ownerAddress = browserRuntimeDependenciesRef.current.walletAddress;
-    const privateReadsEnabled = browserRuntimeDependenciesRef.current.hasAesReady;
     reportSetupPhase('module');
     void import('./lib/otcTradeHistoryV2Runtime').then(async (runtimeModule) => {
       if (disposed) return;
       const dependencies = browserRuntimeDependenciesRef.current;
       const lease = dependencies.captureBrowserWalletSignerLease();
+      const guard = createBrowserWalletRuntimeReadGuard(() => dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent(lease));
+      setupReadGuard = guard;
       reportSetupPhase('read-provider');
-      const readProvider = await loadCotiReadProvider(true);
+      const readProvider = await guard.run(() => loadCotiReadProvider(true));
+      const startupReadProvider = await guard.run(() => loadCotiStartupReadProvider());
+      let startupAdmissionComplete = false;
       reportSetupPhase('history-runtime');
       createdRuntime = await runtimeModule.createOtcTradeHistoryV2Runtime({
         catalog,
         ownerAddress,
         provider: {
           request: ({ method, params }) => {
+            guard.assertCurrent();
             if (import.meta.env.DEV) {
               const safeMethod = ['eth_chainId', 'eth_blockNumber', 'eth_getBlockByNumber', 'eth_getCode', 'eth_call'].includes(method)
                 ? method : 'other';
               reportSetupPhase(`rpc-${safeMethod}-${++setupReadNumber}`);
             }
-            return readProvider.send(method, Array.isArray(params) ? [...params] : []);
+            const foregroundStartup = (!startupAdmissionComplete || participantReadPriorityRef.current) &&
+              activePageRef.current === 'trades' && !isWalletTransactionPromptActive();
+            return sendCotiScopedRead(foregroundStartup ? startupReadProvider : readProvider,
+              guard, method, Array.isArray(params) ? params : []);
           }
         },
-        assertCurrent: () => dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent(lease),
-        getOwnerCapability: privateReadsEnabled
-          ? () => issueOtcV2MetaMaskCapability({
+        assertCurrent: guard.assertCurrent,
+        getPrivateReadScope: () => {
+          const scope = otcV2PrivacyReadScopeRef.current;
+          return { key: `${scope?.runtimeScopeKey ?? 'disconnected'}:privacy:${scope?.revision ?? -1}`, enabled: Boolean(scope?.ready) };
+        },
+        getOwnerCapability: () => {
+          const privacyScope = otcV2PrivacyReadScopeRef.current;
+          const assertPrivateReadCurrent = () => {
+            guard.assertCurrent();
+            assertBrowserWalletPrivacyReadScopeCurrent(privacyScope, otcV2PrivacyReadScopeRef.current);
+          };
+          assertPrivateReadCurrent();
+          return issueOtcV2MetaMaskCapability({
+              assertCapabilityCurrent: assertPrivateReadCurrent,
               assertLeaseCurrent: async (currentLease) =>
                 browserRuntimeDependenciesRef.current.assertBrowserWalletSignerLeaseSnapshotCurrent(currentLease),
               assertLeaseSnapshotCurrent:
@@ -1309,9 +1379,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
               lease,
               requirePrivacy: true,
               sessionOnboardInfo: ownerTradeOnboardInfoRef.current
-            })
-          : undefined
+            });
+        }
       });
+      // Only initial admission and the selected bounded read pass take foreground turns.
+      startupAdmissionComplete = true;
       if (!disposed) {
         reportSetupPhase('ready');
         setOtcV2Runtime(createdRuntime);
@@ -1322,19 +1394,22 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       if (!disposed) {
         reportSetupPhase('failed');
         setOtcV2Runtime(null);
-        setOtcV2HistorySetupError(`P2P history setup: ${getProviderErrorMessage(cause, 'Verified history is unavailable.')}`);
+        setOtcV2HistorySetupFailure({ scopeKey: otcV2RuntimeScopeKey,
+          message: `P2P history setup: ${getProviderErrorMessage(cause, 'Verified history is unavailable.')}` });
       }
     });
     return () => {
       disposed = true;
+      setupReadGuard?.close();
       createdRuntime?.close();
     };
-  }, [otcV2RuntimeScopeKey]);
+  }, [otcV2RuntimeScopeKey, otcV2StartupScopeKey]);
   useEffect(() => {
     let disposed = false;
     let createdRuntime: DirectTradeV2Runtime | null = null;
+    let setupReadGuard: ReturnType<typeof createBrowserWalletRuntimeReadGuard> | undefined;
     setDirectTradeV2Runtime(null);
-    if (DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.status !== 'active' || !directTradeV2RuntimeScopeKey) {
+    if (DIRECT_TRADE_V2_DEPLOYMENT_CONFIG.status !== 'active' || !directTradeStartupScopeKey) {
       return () => { disposed = true; };
     }
     const deploymentConfig = DIRECT_TRADE_V2_DEPLOYMENT_CONFIG;
@@ -1344,17 +1419,19 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       import('./features/wallet/directTradeV2MetaMaskCapability')
     ]).then(async ([runtimeModule, capabilityModule]) => {
       if (disposed) return;
-      const readProvider = await loadCotiReadProvider(true);
+      const dependencies = browserRuntimeDependenciesRef.current;
+      const lease = dependencies.captureBrowserWalletSignerLease();
+      const guard = createBrowserWalletRuntimeReadGuard(() => dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent(lease));
+      setupReadGuard = guard;
+      const readProvider = await guard.run(() => loadCotiReadProvider(true));
       createdRuntime = await runtimeModule.createDirectTradeV2Runtime({
         config: deploymentConfig,
         ownerAddress,
         provider: {
-          request: ({ method, params }) => readProvider.send(
-            method,
-            Array.isArray(params) ? [...params] : []
-          )
+          request: ({ method, params }) => sendCotiScopedRead(readProvider, guard, method,
+            Array.isArray(params) ? params : [])
         },
-        assertCurrent: () => undefined,
+        assertCurrent: guard.assertCurrent,
         getOwnerCapability: (requirePrivacy) => {
           const dependencies = browserRuntimeDependenciesRef.current;
           const lease = dependencies.captureBrowserWalletSignerLease();
@@ -1388,15 +1465,17 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     });
     return () => {
       disposed = true;
+      setupReadGuard?.close();
       createdRuntime?.close();
     };
-  }, [directTradeV2RuntimeScopeKey]);
+  }, [directTradeStartupScopeKey]);
   useEffect(() => {
     let disposed = false;
     let createdRuntime: ChatReactionsV1Runtime | null = null;
+    let setupReadGuard: ReturnType<typeof createBrowserWalletRuntimeReadGuard> | undefined;
     setChatReactionsV1Runtime(null);
     setChatReactionsV1RuntimeError('');
-    if (CHAT_REACTIONS_V1_DEPLOYMENT_CONFIG.status !== 'active' || !chatReactionsV1RuntimeScopeKey) {
+    if (CHAT_REACTIONS_V1_DEPLOYMENT_CONFIG.status !== 'active' || !reactionsStartupScopeKey) {
       return () => {
         disposed = true;
       };
@@ -1407,6 +1486,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       import('./features/wallet/chatReactionsV1MetaMaskCapability')
     ]).then(async ([runtimeModule, capabilityModule]) => {
       if (disposed) return;
+      const dependencies = browserRuntimeDependenciesRef.current;
+      const lease = dependencies.captureBrowserWalletSignerLease();
+      const guard = createBrowserWalletRuntimeReadGuard(() => dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent(lease));
+      setupReadGuard = guard;
       const getOwnerCapability = () => {
         const dependencies = browserRuntimeDependenciesRef.current;
         const lease = dependencies.captureBrowserWalletSignerLease();
@@ -1422,12 +1505,16 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           lease
         });
       };
-      const readProvider = await loadCotiReadProvider(true);
-      if (disposed) return;
+      const readProvider = await guard.run(() => loadCotiReadProvider(true));
       createdRuntime = await runtimeModule.createChatReactionsV1Runtime({
         config: deploymentConfig,
         getOwnerCapability,
-        readProvider,
+        assertCurrent: guard.assertCurrent,
+        readProvider: {
+          send: (method, params) => sendCotiScopedRead(readProvider, guard, method,
+            Array.isArray(params) ? params : []),
+          getTransactionReceipt: (hash) => readProvider.getTransactionReceipt(hash)
+        },
         runOwnerTransactionFlow: (operation) =>
           browserRuntimeDependenciesRef.current.runOwnerFundsTransactionFlow(operation)
       });
@@ -1445,9 +1532,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     });
     return () => {
       disposed = true;
+      setupReadGuard?.close();
       createdRuntime?.close();
     };
-  }, [chatReactionsV1RuntimeScopeKey]);
+  }, [reactionsStartupScopeKey]);
   const {
     enabled: chatReactionsV1Enabled,
     states: chatReactionsV1States,
@@ -1455,7 +1543,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     syncError: chatReactionsV1SyncError
   } = useChatReactionsV1Runtime({
     activeThreadMessages,
-    runtime: chatReactionsV1Runtime
+    runtime: chatReactionsV1Runtime,
+    deferSync: deferNotificationStartup || !ownerAesReady || activePage !== 'chat'
   });
   const {
     getReactionsForMessage,
@@ -1470,6 +1559,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   useEffect(() => {
     let disposed = false;
     let createdRuntime: GroupChatV2Runtime | null = null;
+    const privateScope = groupChatV2PrivateScope;
+    const isPrivateScopeCurrent = () => !disposed && groupChatV2PrivateScopeRef.current === privateScope;
     setGroupChatV2Runtime(null);
     if (GROUP_CHAT_V2_DEPLOYMENT_CONFIG.status !== 'active' || !groupChatV2RuntimeScopeKey) {
       return () => {
@@ -1478,6 +1569,39 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     }
     const deploymentConfig = GROUP_CHAT_V2_DEPLOYMENT_CONFIG;
     const ownerAddress = browserRuntimeDependenciesRef.current.walletAddress;
+    const observeReads = (import.meta.env.DEV || import.meta.env.MODE === 'coti-testnet-candidate') &&
+      typeof document !== 'undefined';
+    const pendingReads = new Map<string, { count: number; startedAt: number }>();
+    const completedReads = new Map<string, { count: number; busyMs: number; lastBusyMs: number }>();
+    let readRuntimeStatus = 'initializing';
+    const publishReadState = () => {
+      if (disposed || !observeReads) return;
+      try {
+        document.documentElement.setAttribute('data-chat-group-read', JSON.stringify({
+          sampledAt: Date.now(), status: readRuntimeStatus,
+          pending: Array.from(pendingReads, ([phase, state]) => ({ phase, ...state })),
+          completed: Array.from(completedReads, ([phase, state]) => ({ phase, ...state }))
+        }));
+      } catch { /* Diagnostic output must not affect startup. */ }
+    };
+    const onReadPhase = observeReads ? (phase: string, pending: boolean) => {
+      if (disposed) return;
+      const current = pendingReads.get(phase);
+      if (pending) pendingReads.set(phase, { count: (current?.count ?? 0) + 1,
+        startedAt: current?.startedAt ?? Date.now() });
+      else if (current) {
+        const done = completedReads.get(phase) ?? { count: 0, busyMs: 0, lastBusyMs: 0 };
+        if (current.count > 1) pendingReads.set(phase, { ...current, count: current.count - 1 });
+        else {
+          pendingReads.delete(phase);
+          done.lastBusyMs = Date.now() - current.startedAt;
+          done.busyMs += done.lastBusyMs;
+        }
+        completedReads.set(phase, { ...done, count: done.count + 1 });
+      }
+      publishReadState();
+    } : undefined;
+    onReadPhase?.('module', true);
     Promise.all([
       import('./lib/groupChatV2Runtime'),
       import('./features/wallet/groupChatV2MetaMaskCapability'),
@@ -1485,13 +1609,18 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         ? import('./lib/chatReadCursorCloudStores')
         : Promise.resolve(null)
     ]).then(([runtimeModule, capabilityModule, cloudStoreModule]) => {
-      if (disposed) return;
+      if (!isPrivateScopeCurrent()) return;
+      onReadPhase?.('module', false);
       createdRuntime = runtimeModule.createGroupChatV2Runtime({
         deploymentConfig,
+        onReadPhase,
         getOwnerCapability: async (requirePrivacy) => {
           const dependencies = browserRuntimeDependenciesRef.current;
           const lease = dependencies.captureBrowserWalletSignerLease();
           return capabilityModule.issueGroupChatV2MetaMaskCapability({
+            shouldPrioritizeRead: (groupId) => !disposed && createdRuntime?.isCurrent() === true &&
+              activePageRef.current === 'chat' && groupHistoryReadPriorityRef.current &&
+              groupId === BigInt(activeGroupIdRef.current ?? 0),
             assertLeaseCurrent: async (currentLease) =>
               dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent(currentLease),
             assertLeaseSnapshotCurrent: dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent,
@@ -1520,19 +1649,29 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         runOwnerTransactionFlow: (operation) =>
           browserRuntimeDependenciesRef.current.runOwnerFundsTransactionFlow(operation)
       });
-      if (!disposed) setGroupChatV2Runtime(createdRuntime);
+      readRuntimeStatus = createdRuntime.status;
+      publishReadState();
+      createdRuntime = bindBrowserWalletRuntimePrivacyScope(createdRuntime, isPrivateScopeCurrent);
+      if (isPrivateScopeCurrent()) setGroupChatV2Runtime(createdRuntime);
       else createdRuntime.close();
     }).catch(() => {
+      onReadPhase?.('module', false);
+      readRuntimeStatus = 'failed';
+      publishReadState();
       if (!disposed) setGroupChatV2Runtime(null);
     });
     return () => {
       disposed = true;
       createdRuntime?.close();
+      if (observeReads) {
+        try { document.documentElement.removeAttribute('data-chat-group-read'); } catch { /* Same diagnostic boundary. */ }
+      }
     };
   }, [
     chatReadCursorCloud.reportCloudError,
     chatReadCursorCloud.session,
-    groupChatV2RuntimeScopeKey
+    groupChatV2RuntimeScopeKey,
+    groupChatV2PrivateScope
   ]);
   useEffect(() => {
     if (groupChatV2Runtime?.enabled) setGroupFeeModeSelection('coti');
@@ -1549,6 +1688,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setGroupInvites([]);
     setGroups([]);
     setMessagesByGroup({});
+    messagesByGroupRef.current = {};
     setGroupChatV2EpochSyncRequest(null);
     setSynchronizingGroupChatV2Epoch(false);
     groupChatV2ReadCursorRef.current = {};
@@ -1558,6 +1698,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setUnreadGroupMap({});
   }, [
     groupChatV2Runtime?.enabled,
+    groupChatV2PrivateScope,
     hasAesReady,
     setActiveGroupId,
     setGroupInvites,
@@ -1599,45 +1740,108 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   }, [groupChatV2Runtime]);
   useEffect(() => {
     const runtime = groupChatV2Runtime;
-    if (!runtime?.enabled || !hasAesReady) return;
+    if (!runtime?.enabled || !hasAesReady || deferChatBackgroundStartup) return;
     let disposed = false;
     let timer: number | undefined;
     let inFlight = false;
     let wakeRequested = false;
+    let retryFailed = false;
+    let olderRequested = false;
+    let hasOlderGroups = true;
+    let failed = false;
     let cursorRecoveryInFlight = false;
+    let hintHealthy = false;
+    let hintGeneration = 0;
+    let hintGroupKey: string | undefined;
+    let stopHints: (() => void) | undefined;
+    let pollDelay: () => number = () => activePageRef.current === 'chat' ? 5_000 : 30_000;
     const cursorSubscriptions = new Map<string, () => void>();
     const isCurrent = () => !disposed && runtime.isCurrent();
     const schedule = (delayMs: number) => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || failed) return;
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => { void sync(); }, delayMs);
     };
     const requestRefresh = () => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || failed) return;
       setGroupChatV2DiscoveryView(previous => ({
-        runtime, state: previous?.runtime === runtime ? previous.state : 'loading', refreshing: true
+        runtime, state: previous?.runtime === runtime && previous.state === 'ready' ? 'ready' : 'loading', refreshing: true
       }));
       if (inFlight) wakeRequested = true;
       else schedule(0);
     };
-    groupChatV2RefreshRef.current = requestRefresh;
+    const manualRefresh = () => {
+      retryFailed = true;
+      failed = false;
+      requestRefresh();
+    };
+    groupChatV2RefreshRef.current = manualRefresh;
+    const loadOlderGroups = () => { olderRequested = true; manualRefresh(); };
+    groupChatV2LoadOlderRef.current = loadOlderGroups;
+    const refreshHints = async (groupIds: readonly number[]) => {
+      const ids = [...new Set(groupIds)].sort((a, b) => a - b), key = ids.join(':');
+      if (!isCurrent() || hintGroupKey === key) return;
+      hintGroupKey = key;
+      const generation = ++hintGeneration;
+      stopHints?.(); stopHints = undefined; hintHealthy = false;
+      try {
+        const helpers = await import('./lib/groupChatV2DiscoveryRuntime');
+        if (!isCurrent() || generation !== hintGeneration) return;
+        pollDelay = () => helpers.chatV2BackgroundPollDelay(hintHealthy, activePageRef.current === 'chat', 5_000);
+        const stop = await helpers.subscribeGroupChatV2DiscoveryHints({ subscribe: subscribeCotiEventHints,
+          contractAddress: runtime.session.manifest.contractAddress, ownerAddress: runtime.session.ownerAddress,
+          groupIds: ids, isCurrent: () => isCurrent() && generation === hintGeneration,
+          onHint: requestRefresh,
+          onStatus: status => {
+            if (!isCurrent() || generation !== hintGeneration) return;
+            const wasHealthy = hintHealthy;
+            hintHealthy = status === 'connected';
+            if (hintHealthy && !wasHealthy) requestRefresh();
+            else if (!hintHealthy) schedule(pollDelay());
+          }
+        });
+        if (!isCurrent() || generation !== hintGeneration) stop(); else stopHints = stop;
+      } catch {
+        if (!isCurrent() || generation !== hintGeneration) return;
+        hintHealthy = false;
+        schedule(pollDelay());
+      }
+    };
     const sync = async () => {
       if (!isCurrent() || inFlight) return;
+      if (chatReadDeferredRef.current) {
+        schedule(1_000);
+        return;
+      }
       inFlight = true;
+      const retry = retryFailed;
+      retryFailed = false;
+      const older = olderRequested || (hasOlderGroups && activePageRef.current === 'chat');
+      olderRequested = false;
       try {
-        const result = await runtime.discovery.sync();
+        const publishOverview = (page: GroupChatV2DiscoveryResult) => {
+          if (!isCurrent()) return;
+          const visibleGroups = [...page.groups], visibleInvites = [...page.invites];
+          groupsRef.current = visibleGroups;
+          groupInvitesRef.current = visibleInvites;
+          setGroups(visibleGroups);
+          setGroupInvites(visibleInvites);
+          setGroupChatV2DiscoveryView(previous => ({
+            runtime, state: 'ready', hasOlder: page.hasOlder,
+            refreshing: previous?.runtime === runtime && previous.refreshing
+          }));
+        };
+        const result = await runtime.discovery.sync(retry, publishOverview, () => chatReadDeferredRef.current, {
+          older, groupIds: [...groupsRef.current.map(group => BigInt(group.id)),
+            ...groupInvitesRef.current.map(invite => BigInt(invite.groupId)),
+            ...(activeGroupIdRef.current === null ? [] : [BigInt(activeGroupIdRef.current)])]
+        });
         if (!isCurrent()) return;
+        publishOverview(result);
+        hasOlderGroups = result.hasOlder;
         const nextGroups = [...result.groups];
         const nextInvites = [...result.invites];
-        // The verified list does not depend on remote unread-cursor recovery.
-        groupsRef.current = nextGroups;
-        groupInvitesRef.current = nextInvites;
-        setGroups(nextGroups);
-        setGroupInvites(nextInvites);
-        setGroupChatV2DiscoveryView(previous => ({
-          runtime, state: result.complete ? 'ready' : 'loading',
-          refreshing: previous?.runtime === runtime && previous.refreshing
-        }));
+        void refreshHints([...nextGroups.map(group => group.id), ...nextInvites.map(invite => invite.groupId)]);
         if (
           result.complete && activeGroupIdRef.current !== null &&
           !nextGroups.some(group => group.id === activeGroupIdRef.current)
@@ -1650,8 +1854,16 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           nextLatestIncoming[item.groupId.toString()] = item.anchor;
         }
         groupChatV2LatestIncomingRef.current = nextLatestIncoming;
+        const incomingComplete = new Set(result.incomingCompleteGroupIds.map(String));
+        const endedGroupKeys = nextGroups.filter(group => group.membershipEnded).map(group => String(group.id));
+        if (endedGroupKeys.length) setUnreadGroupMap(previous => {
+          const next = { ...previous };
+          for (const key of endedGroupKeys) delete next[key];
+          unreadGroupMapRef.current = next;
+          return next;
+        });
         groupChatV2DiscoveryCaughtUpRef.current = Object.fromEntries(
-          nextGroups.map((group) => [String(group.id), result.complete])
+          nextGroups.map((group) => [String(group.id), incomingComplete.has(String(group.id))])
         );
         // Unread recovery has its own bounded store reads. It must not hold
         // discovery, selected history or the Refresh control behind a cloud read.
@@ -1669,8 +1881,14 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 return { groupKey: groupId.toString(), cursor, anchor, scope, context };
               }));
               if (disposed || !runtime.isCurrent()) return;
-              const nextUnreadGroups: Record<string, boolean> = {};
+              const nextUnreadGroups = { ...unreadGroupMapRef.current };
+              for (const group of groupsRef.current) {
+                if (group.membershipEnded) delete nextUnreadGroups[String(group.id)];
+              }
               const incomingGroupKeys = new Set(cursorEntries.map(({ groupKey }) => groupKey));
+              for (const groupKey of incomingComplete) {
+                if (!incomingGroupKeys.has(groupKey)) delete nextUnreadGroups[groupKey];
+              }
               for (const [groupKey, unsubscribe] of cursorSubscriptions) {
                 if (!incomingGroupKeys.has(groupKey)) {
                   unsubscribe();
@@ -1678,6 +1896,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 }
               }
               for (const { groupKey, cursor, anchor, scope, context } of cursorEntries) {
+                if (groupsRef.current.some(group => String(group.id) === groupKey && group.membershipEnded)) {
+                  cursorSubscriptions.get(groupKey)?.();
+                  cursorSubscriptions.delete(groupKey);
+                  continue;
+                }
                 groupChatV2ReadCursorRef.current[groupKey] = cursor;
                 const latestIncoming = groupChatV2LatestIncomingRef.current[groupKey] ?? anchor;
                 if (latestIncoming.messageId > BigInt(cursor.lastReadMessageId)) nextUnreadGroups[groupKey] = true;
@@ -1692,7 +1915,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                       const latestIncoming = groupChatV2LatestIncomingRef.current[groupKey];
                       setUnreadGroupMap((previous) => {
                         const next = { ...previous };
-                        if (latestIncoming && latestIncoming.messageId > BigInt(nextCursor.lastReadMessageId)) {
+                        if (!groupsRef.current.some(group => String(group.id) === groupKey && group.membershipEnded) &&
+                          latestIncoming && latestIncoming.messageId > BigInt(nextCursor.lastReadMessageId)) {
                           next[groupKey] = true;
                         } else {
                           delete next[groupKey];
@@ -1713,12 +1937,22 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
             }
           })();
         }
-        schedule(result.complete ? 5_000 : 0);
-      } catch {
-        if (isCurrent()) {
-          setGroupChatV2DiscoveryView({ runtime, state: 'error', refreshing: false });
+        schedule(pollDelay());
+      } catch (cause) {
+        const { isGroupChatV2DiscoveryYield } = await import('./lib/groupChatV2DiscoveryRuntime');
+        if (isGroupChatV2DiscoveryYield(cause)) {
+          retryFailed ||= retry;
+          olderRequested ||= older;
+          schedule(1_000);
+          return;
         }
-        schedule(5_000);
+        failed = true;
+        wakeRequested = false;
+        if (timer !== undefined) window.clearTimeout(timer);
+        if (isCurrent()) {
+          setGroupChatV2DiscoveryView({ runtime, state: 'error', refreshing: false,
+            error: getProviderErrorMessage(cause, 'Group discovery failed.') });
+        }
       } finally {
         inFlight = false;
         if (isCurrent()) {
@@ -1732,16 +1966,21 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         }
       }
     };
+    void refreshHints([]);
     void sync();
     return () => {
       disposed = true;
-      if (groupChatV2RefreshRef.current === requestRefresh) groupChatV2RefreshRef.current = null;
+      hintGeneration++;
+      stopHints?.();
+      if (groupChatV2RefreshRef.current === manualRefresh) groupChatV2RefreshRef.current = null;
+      if (groupChatV2LoadOlderRef.current === loadOlderGroups) groupChatV2LoadOlderRef.current = null;
       if (timer !== undefined) window.clearTimeout(timer);
       for (const unsubscribe of cursorSubscriptions.values()) unsubscribe();
       cursorSubscriptions.clear();
     };
   }, [
     getGroupChatV2ReadCursorContext,
+    deferChatBackgroundStartup,
     groupChatV2Runtime,
     hasAesReady,
     setActiveGroupId,
@@ -1749,8 +1988,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setGroups,
     setUnreadGroupMap
   ]);
-  const { historyUnavailable: groupChatV2HistoryUnavailable } = useGroupChatV2History({
-    runtime: groupChatV2Runtime,
+  const { historyUnavailable: groupChatV2HistoryUnavailable, hasOlderHistory: groupHasOlderHistory,
+    loadingOlderHistory: groupLoadingOlderHistory, loadOlderHistory: loadOlderGroupHistory } = useGroupChatV2History({
+    runtime: activePage === 'chat' ? groupChatV2Runtime : null,
     activeGroupId,
     activeGroupIdRef,
     hasAesReady,
@@ -1945,6 +2185,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       setError((previous) => previous === historyError ? '' : previous);
     };
     if (
+      activePage !== 'chat' ||
       !runtime?.enabled ||
       !runtime.history ||
       !ownerAesReady ||
@@ -1964,11 +2205,18 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     let errorReported = false;
     let inFlight = false;
     let wakeRequested = false;
-    let manualRefresh = false;
+    let olderRequested = false;
+    let hasOlder = false;
     const shouldContinue = () =>
       !disposed &&
       runtime.isCurrent() &&
+      activePageRef.current === 'chat' &&
+      directChatV2PrivateScopeRef.current === directChatV2DiscoveryScope &&
       activeContactRef.current?.trim().toLowerCase() === peer.toLowerCase();
+    const publishHistoryView = (refreshing: boolean, loadingOlder = false) => {
+      if (shouldContinue()) setDirectChatV2RefreshView({ runtime, peer: peer.toLowerCase(),
+        scope: directChatV2DiscoveryScope, refreshing, hasOlder, loadingOlder });
+    };
     const schedule = (delayMs: number) => {
       if (disposed) return;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
@@ -1978,19 +2226,27 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     };
     const requestRefresh = () => {
       if (!shouldContinue()) return;
-      manualRefresh = true;
-      setDirectChatV2RefreshView({ runtime, peer: peer.toLowerCase(), refreshing: true });
+      publishHistoryView(true);
       if (inFlight) wakeRequested = true;
       else schedule(0);
     };
     directChatV2RefreshRef.current = requestRefresh;
+    const requestOlderHistory = () => {
+      if (!shouldContinue() || !hasOlder || inFlight || olderRequested) return;
+      olderRequested = true;
+      publishHistoryView(true, true);
+      schedule(0);
+    };
+    directChatV2LoadOlderHistoryRef.current = requestOlderHistory;
     const ensureWatcher = async () => {
       if (disposed || stopWatching || watchAttemptInFlight) return;
       watchAttemptInFlight = true;
       try {
         const stop = await runtime.history.watch(peer, () => {
+          if (!shouldContinue()) return;
           recentHintUntil = Date.now() + 60_000;
-          schedule(0);
+          if (inFlight) wakeRequested = true;
+          else schedule(0);
         });
         if (disposed) {
           await stop?.();
@@ -2010,8 +2266,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         return;
       }
       inFlight = true;
+      const older = olderRequested;
+      olderRequested = false;
+      publishHistoryView(true, older);
       try {
-        const batch = await runtime.history.sync(
+        const batch = await (older ? runtime.history.loadOlder : runtime.history.sync)(
           peer,
           messagesByContactRef.current,
           shouldContinue
@@ -2020,7 +2279,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         errorReported = false;
         clearHistoryError();
         messagesByContactRef.current = batch.apply(messagesByContactRef.current);
-        setMessagesByContact((current) => runtime.isCurrent() ? batch.apply(current) : current);
+        setMessagesByContact((current) => shouldContinue() ? messagesByContactRef.current : current);
+        hasOlder = batch.hasOlder;
+        if (batch.appliedEntries > 0 || !batch.hasMore) setDirectChatV2InitialRead(runtime);
         if (batch.appliedEntries > 0) {
           setContacts((previous) => mergeUniqueContacts(previous, [peer]));
           directChatV2PendingPeerHintsRef.current[browserOwnerDataScopeKey]?.delete(
@@ -2036,6 +2297,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           );
           if (!shouldContinue()) return;
           setUnreadMap((previous) => {
+            if (unreadCount === null) return previous;
             const next = { ...previous };
             if (unreadCount > 0) next[peerKey] = true;
             else delete next[peerKey];
@@ -2044,9 +2306,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           });
         }
         void ensureWatcher();
-        schedule(batch.hasMore ? 50 : Date.now() < recentHintUntil ? 2_000 : 12_000);
+        schedule(Date.now() < recentHintUntil ? 2_000 : 12_000);
       } catch (historyFailure) {
         if (!shouldContinue()) return;
+        setDirectChatV2InitialRead(runtime);
         if (
           historyFailure instanceof Error &&
           historyFailure.message === 'Direct-chat V2 history is waiting for the latest message to finalize.'
@@ -2066,9 +2329,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           if (wakeRequested) {
             wakeRequested = false;
             schedule(0);
-          } else if (manualRefresh) {
-            manualRefresh = false;
-            setDirectChatV2RefreshView({ runtime, peer: peer.toLowerCase(), refreshing: false });
+          } else {
+            publishHistoryView(false);
           }
         }
       }
@@ -2078,29 +2340,51 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     return () => {
       disposed = true;
       if (directChatV2RefreshRef.current === requestRefresh) directChatV2RefreshRef.current = null;
+      if (directChatV2LoadOlderHistoryRef.current === requestOlderHistory) directChatV2LoadOlderHistoryRef.current = null;
       clearHistoryError();
       delete directChatV2HistoryCaughtUpRef.current[peer.toLowerCase()];
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       void stopWatching?.().catch(() => undefined);
     };
-  }, [activeContact, browserOwnerDataScopeKey, directChatV2Runtime, ownerAesReady, setError, setMessagesByContact]);
+  }, [activeContact, activePage, browserOwnerDataScopeKey, directChatV2DiscoveryScope, directChatV2Runtime, ownerAesReady, setError, setMessagesByContact]);
   useEffect(() => {
     const runtime = directChatV2Runtime;
-    if (!runtime?.enabled || !runtime.history || !browserOwnerDataScopeKey) return;
+    if (!runtime?.enabled || !runtime.history || !browserOwnerDataScopeKey || !ownerAesReady || deferChatBackgroundStartup) return;
 
     let disposed = false;
     const walletKey = browserOwnerDataScopeKey;
     const pendingPeerHints = directChatV2PendingPeerHintsRef.current[walletKey] ?? new Set<string>();
     directChatV2PendingPeerHintsRef.current[walletKey] = pendingPeerHints;
     let stopIncoming: (() => Promise<void>) | null = null;
+    let incomingWatcherPending = false;
     let discoveryTimer: number | undefined;
     let conversationPreviewTimer: number | undefined;
     let backgroundSyncInFlight = false;
+    let discoveryInFlight = false;
+    let discoveryWakeRequested = false;
+    let previewsInFlight = false;
+    let previewsWakeRequested = false;
+    let previewsOlderRequested = false;
+    let olderConversationCursor: bigint | undefined;
+    let conversationIndexGeneration = 0;
+    let hintHealthy = false;
+    let stopHintStatus: (() => void) | undefined;
+    let pollDelay: (connected?: boolean) => number = (connected = hintHealthy) => connected
+      ? activePageRef.current === 'chat' ? 60_000 : 120_000
+      : activePageRef.current === 'chat' ? 12_000 : 30_000;
     const timers = new Map<string, number>();
     const hintDeadlines = new Map<string, number>();
     const unreadWatcherStops = new Map<string, () => Promise<void>>();
     const unreadWatcherPending = new Set<string>();
+    const seenPreviews = new Map<string, string>();
+    const discoveredPeers = new Set<string>();
     const shouldContinue = () => !disposed && runtime.isCurrent();
+    const publishDirectDiscovery = (state: DirectChatDiscoveryView['state'], refreshing: boolean, error?: string) => {
+      if (!shouldContinue() || !ownerAesReady) return;
+      setDirectChatV2DiscoveryView(previous => shouldContinue()
+        ? { runtime, scope: directChatV2DiscoveryScope, state, refreshing, error,
+          hasOlder: olderConversationCursor !== undefined && olderConversationCursor > 0n } : previous);
+    };
     const clearPeerTimer = (peerKey: string) => {
       const timer = timers.get(peerKey);
       if (timer !== undefined) window.clearTimeout(timer);
@@ -2109,29 +2393,32 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     const schedulePeer = (peer: string, delayMs: number) => {
       const peerKey = peer.toLowerCase();
       clearPeerTimer(peerKey);
-      if (disposed) return;
+      if (!shouldContinue()) return;
       timers.set(peerKey, window.setTimeout(() => {
         timers.delete(peerKey);
         void synchronizePeer(peer);
       }, delayMs));
     };
     const scheduleDiscovery = (delayMs: number) => {
+      if (!shouldContinue()) return;
+      if (delayMs === 0 && discoveryInFlight) { discoveryWakeRequested = true; return; }
       if (discoveryTimer !== undefined) window.clearTimeout(discoveryTimer);
-      if (disposed) return;
       discoveryTimer = window.setTimeout(() => {
         discoveryTimer = undefined;
         void discoverIncoming();
       }, delayMs);
     };
     const scheduleConversationPreviews = (delayMs: number) => {
+      if (!shouldContinue() || !ownerAesReady) return;
+      if (delayMs === 0 && previewsInFlight) { previewsWakeRequested = true; return; }
       if (conversationPreviewTimer !== undefined) window.clearTimeout(conversationPreviewTimer);
-      if (disposed || !ownerAesReady) return;
       conversationPreviewTimer = window.setTimeout(() => {
         conversationPreviewTimer = undefined;
         void discoverKnownConversations();
       }, delayMs);
     };
-    const updateUnread = (peer: string, unreadCount: number) => {
+    const updateUnread = (peer: string, unreadCount: number | null) => {
+      if (unreadCount === null) return;
       const peerKey = peer.toLowerCase();
       setUnreadMap((previous) => {
         const next = { ...previous };
@@ -2146,6 +2433,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       if (
         disposed ||
         !ownerAesReady ||
+        chatReadDeferredRef.current ||
         unreadWatcherStops.has(peerKey) ||
         unreadWatcherPending.has(peerKey)
       ) {
@@ -2171,34 +2459,41 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       if (
         !shouldContinue() ||
         !ownerAesReady ||
-        activeContactRef.current?.trim().toLowerCase() === peer.toLowerCase()
+        (activePageRef.current === 'chat' && activeContactRef.current?.trim().toLowerCase() === peer.toLowerCase())
       ) {
+        return;
+      }
+      if (chatReadDeferredRef.current) {
+        schedulePeer(peer, 1_000);
         return;
       }
       if (backgroundSyncInFlight) {
         schedulePeer(peer, 100);
         return;
       }
+      watchPeerUnread(peer);
       backgroundSyncInFlight = true;
+      const selectedContact = activeContactRef.current;
+      const selectedGroup = activeGroupIdRef.current;
+      const continueBackground = () => shouldContinue() && (activePageRef.current !== 'chat' ||
+        (activeContactRef.current === selectedContact && activeGroupIdRef.current === selectedGroup));
       try {
         const batch = await runtime.history.sync(
           peer,
           messagesByContactRef.current,
-          shouldContinue
+          () => continueBackground() && !chatReadDeferredRef.current
         );
-        if (!shouldContinue()) return;
+        if (!continueBackground()) { if (shouldContinue()) schedulePeer(peer, 5_000); return; }
         messagesByContactRef.current = batch.apply(messagesByContactRef.current);
-        setMessagesByContact((current) => runtime.isCurrent() ? batch.apply(current) : current);
+        setMessagesByContact((current) => continueBackground() &&
+          directChatV2PrivateScopeRef.current === directChatV2DiscoveryScope ? messagesByContactRef.current : current);
         if (batch.appliedEntries > 0) {
           setContacts((previous) => mergeUniqueContacts(previous, [peer]));
           pendingPeerHints.delete(peer.toLowerCase());
         }
         const peerKey = peer.toLowerCase();
         directChatV2HistoryCaughtUpRef.current[peerKey] = !batch.hasMore;
-        if (batch.hasMore) {
-          schedulePeer(peer, 50);
-          return;
-        }
+        if (chatReadDeferredRef.current) { schedulePeer(peer, 1_000); return; }
         const unreadCount = await runtime.history.getUnreadCount(
           peer,
           messagesByContactRef.current
@@ -2214,14 +2509,16 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           hintDeadlines.delete(peerKey);
         }
       } catch {
-        if (shouldContinue()) schedulePeer(peer, 5_000);
+        if (shouldContinue()) schedulePeer(peer, chatReadDeferredRef.current ? 1_000 : activePageRef.current === 'chat' ? 5_000 : 30_000);
       } finally {
         backgroundSyncInFlight = false;
       }
     };
-    const rememberIncomingPeer = (peer: string, liveHint: boolean) => {
-      if (!isWalletAddress(peer) || peer.toLowerCase() === walletKey) return;
+    const rememberIncomingPeer = (peer: string, liveHint: boolean, changedActivity = false) => {
+      if (!shouldContinue() || !isWalletAddress(peer) || peer.toLowerCase() === walletKey) return;
       const peerKey = peer.toLowerCase();
+      if (discoveredPeers.has(peerKey) && !liveHint && !changedActivity) return;
+      discoveredPeers.add(peerKey);
       pendingPeerHints.add(peerKey);
       if (liveHint) hintDeadlines.set(peerKey, Date.now() + 60_000);
       if (ownerAesReady) {
@@ -2230,50 +2527,139 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       }
     };
     const handleIncomingHint = async (peer: string) => {
+      if (!shouldContinue()) return;
       rememberIncomingPeer(peer, true);
       scheduleDiscovery(0);
     };
-    const discoverKnownConversations = async () => {
+    const discoverKnownConversations = async (older = false) => {
       if (!shouldContinue() || !ownerAesReady) return;
-      try {
-        let beforeIndexExclusive: bigint | undefined;
-        for (let pageIndex = 0; pageIndex < 4; pageIndex += 1) {
-          const page = await runtime.session.listConversations(beforeIndexExclusive, 32n);
-          if (!shouldContinue()) return;
-          const peers = page.previews.map(({ peer }) => peer);
-          if (peers.length > 0) {
-            setContacts((previous) => mergeUniqueContacts(previous, peers));
-            for (const peer of peers) rememberIncomingPeer(peer, false);
-          }
-          if (page.nextBeforeIndex === 0n || page.previews.length === 0) break;
-          beforeIndexExclusive = page.nextBeforeIndex;
-        }
-        scheduleConversationPreviews(12_000);
-      } catch {
-        if (shouldContinue()) scheduleConversationPreviews(5_000);
+      previewsOlderRequested ||= older;
+      if (previewsInFlight) { previewsWakeRequested = true; return; }
+      if (chatReadDeferredRef.current) {
+        scheduleConversationPreviews(1_000);
+        return;
       }
+      older = (older || previewsOlderRequested) && olderConversationCursor !== undefined && olderConversationCursor > 0n;
+      previewsOlderRequested = false;
+      previewsInFlight = true;
+      if (!older) previewsWakeRequested = false;
+      publishDirectDiscovery('loading', true);
+      try {
+        const beforeIndexExclusive = older ? olderConversationCursor : undefined;
+        const indexGeneration = conversationIndexGeneration;
+        const page = await runtime.session.listConversations(beforeIndexExclusive, 32n);
+        if (!shouldContinue() || indexGeneration !== conversationIndexGeneration) return;
+        const peers = page.previews.map(({ peer }) => peer);
+        if (peers.length > 0) {
+          setContacts((previous) => mergeUniqueContacts(previous, peers));
+          for (const preview of page.previews) {
+            if (rememberDirectChatV2Preview(seenPreviews, preview)) rememberIncomingPeer(preview.peer, false, true);
+          }
+        }
+        // Refresh the newest page without resetting an already advanced older cursor.
+        if (older || olderConversationCursor === undefined || page.nextBeforeIndex < olderConversationCursor) {
+          olderConversationCursor = page.nextBeforeIndex;
+        }
+        publishDirectDiscovery(olderConversationCursor === 0n ? 'ready' : 'partial', false);
+        setDirectChatV2InitialRead(runtime);
+        scheduleConversationPreviews(pollDelay());
+      } catch (error) {
+        previewsOlderRequested = false;
+        previewsWakeRequested = false;
+        if (shouldContinue()) {
+          publishDirectDiscovery('error', false, getProviderErrorMessage(error, 'Direct conversation discovery failed.'));
+          setDirectChatV2InitialRead(runtime);
+          scheduleConversationPreviews(pollDelay(false));
+        }
+      } finally {
+        previewsInFlight = false;
+        if (shouldContinue()) setDirectChatV2DiscoveryView(previous => shouldContinue() &&
+          previous?.runtime === runtime && previous.scope === directChatV2DiscoveryScope
+          ? { ...previous, refreshing: false } : previous);
+        if (shouldContinue() && (previewsWakeRequested || previewsOlderRequested)) {
+          scheduleConversationPreviews(0);
+        }
+      }
+    };
+    const ensureIncomingWatcher = () => {
+      if (!shouldContinue() || stopIncoming || incomingWatcherPending || chatReadDeferredRef.current) return;
+      incomingWatcherPending = true;
+      void runtime.history.watchIncoming(handleIncomingHint, () => chatReadDeferredRef.current).then(stop => {
+        if (disposed) void stop().catch(() => undefined);
+        else stopIncoming = stop;
+      }).catch(() => undefined).finally(() => { incomingWatcherPending = false; });
     };
     const discoverIncoming = async () => {
       if (!shouldContinue()) return;
+      if (discoveryInFlight) { discoveryWakeRequested = true; return; }
+      if (chatReadDeferredRef.current) {
+        scheduleDiscovery(1_000);
+        return;
+      }
+      ensureIncomingWatcher();
+      discoveryInFlight = true;
       try {
-        const result = await runtime.history.discoverIncoming(shouldContinue);
+        const result = await runtime.history.discoverIncoming(() => shouldContinue() && !chatReadDeferredRef.current);
         if (!shouldContinue()) return;
         for (const peer of result.peers) rememberIncomingPeer(peer, false);
+        for (const peer of result.changedPeers) rememberIncomingPeer(peer, false, true);
         if (result.reorged && ownerAesReady) {
+          seenPreviews.clear();
+          conversationIndexGeneration += 1;
+          olderConversationCursor = undefined;
+          scheduleConversationPreviews(0);
           for (const contact of contactsRef.current) {
             if (isWalletAddress(contact.address)) schedulePeer(contact.address, 0);
           }
         }
-        scheduleDiscovery(result.hasMore ? 50 : 12_000);
+        scheduleDiscovery(pollDelay());
       } catch {
-        if (shouldContinue()) scheduleDiscovery(5_000);
+        if (shouldContinue()) scheduleDiscovery(chatReadDeferredRef.current ? 1_000 : pollDelay(false));
+      } finally {
+        discoveryInFlight = false;
+        if (shouldContinue() && discoveryWakeRequested) {
+          discoveryWakeRequested = false;
+          scheduleDiscovery(0);
+        }
       }
     };
 
-    void runtime.history.watchIncoming(handleIncomingHint).then((stop) => {
-      if (disposed) void stop().catch(() => undefined);
-      else stopIncoming = stop;
-    }).catch(() => undefined);
+    const requestDiscoveryRefresh = () => {
+      if (!shouldContinue() || !ownerAesReady) return;
+      scheduleDiscovery(0);
+      previewsWakeRequested = true;
+      scheduleConversationPreviews(0);
+    };
+    directChatV2DiscoveryRefreshRef.current = requestDiscoveryRefresh;
+    const requestOlderConversations = () => { void discoverKnownConversations(true); };
+    directChatV2LoadOlderContactsRef.current = requestOlderConversations;
+
+    void Promise.all([import('./lib/directChatV2IncomingDiscovery'), import('./lib/groupChatV2DiscoveryRuntime')]).then(async ([incoming, helpers]) => {
+      if (!shouldContinue()) return;
+      pollDelay = (connected = hintHealthy) => helpers.chatV2BackgroundPollDelay(connected, activePageRef.current === 'chat', 12_000);
+      const stop = await incoming.subscribeDirectChatV2DiscoveryHints({ subscribe: subscribeCotiEventHints,
+        scope: { ...runtime.session.manifest, ownerAddress: walletKey }, isCurrent: shouldContinue,
+        onHint: () => { if (shouldContinue()) scheduleDiscovery(0); },
+        onStatus: status => {
+          if (!shouldContinue()) return;
+          const wasHealthy = hintHealthy;
+          hintHealthy = status === 'connected';
+          if (hintHealthy && !wasHealthy) {
+            scheduleDiscovery(0);
+            if (ownerAesReady) scheduleConversationPreviews(0);
+          } else if (!hintHealthy) {
+            scheduleDiscovery(pollDelay());
+            if (ownerAesReady) scheduleConversationPreviews(pollDelay());
+          }
+        }
+      });
+      if (!shouldContinue()) stop(); else stopHintStatus = stop;
+    }).catch(() => {
+      if (!shouldContinue()) return;
+      hintHealthy = false;
+      scheduleDiscovery(pollDelay(false));
+      if (ownerAesReady) scheduleConversationPreviews(pollDelay(false));
+    });
     void discoverIncoming();
     if (ownerAesReady) {
       void discoverKnownConversations();
@@ -2284,6 +2670,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     }
     return () => {
       disposed = true;
+      if (directChatV2DiscoveryRefreshRef.current === requestDiscoveryRefresh) directChatV2DiscoveryRefreshRef.current = null;
+      if (directChatV2LoadOlderContactsRef.current === requestOlderConversations) directChatV2LoadOlderContactsRef.current = null;
+      stopHintStatus?.();
       if (discoveryTimer !== undefined) window.clearTimeout(discoveryTimer);
       if (conversationPreviewTimer !== undefined) window.clearTimeout(conversationPreviewTimer);
       for (const timer of timers.values()) window.clearTimeout(timer);
@@ -2294,7 +2683,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       unreadWatcherStops.clear();
       unreadWatcherPending.clear();
     };
-  }, [browserOwnerDataScopeKey, directChatV2Runtime, ownerAesReady, setContacts, setMessagesByContact, setUnreadMap]);
+  }, [browserOwnerDataScopeKey, deferChatBackgroundStartup, directChatV2DiscoveryScope, directChatV2Runtime, ownerAesReady, setContacts, setMessagesByContact, setUnreadMap]);
   const directChatV2ContactSettingsScope = contacts
     .map((contact) => contact.address.trim().toLowerCase())
     .filter((address) => isWalletAddress(address))
@@ -2349,7 +2738,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   }, [directChatV2ContactSettingsScope, directChatV2Runtime, ownerAesReady, setContacts]);
   useEffect(() => {
     const runtime = directTradeV2Runtime;
-    if (!runtime || !runtime.isCurrent() || !browserOwnerDataScopeKey) return;
+    if (!runtime || !runtime.isCurrent() || !browserOwnerDataScopeKey || !ownerAesReady) return;
 
     let disposed = false;
     let timer: number | undefined;
@@ -2361,21 +2750,27 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       timer = window.setTimeout(() => { void synchronize(); }, delayMs);
     };
     const synchronize = async () => {
+      if (!shouldContinue()) return;
+      if (directTradeReadDeferredRef.current) {
+        schedule(1_000);
+        return;
+      }
       try {
         const batch = await runtime.sync();
         if (!shouldContinue()) return;
         errorReported = false;
-        if (batch.applied) {
+        if (batch.applied && ownerAesReady && directChatV2PrivateScopeRef.current === directChatV2DiscoveryScope) {
           messagesByContactRef.current = batch.apply(messagesByContactRef.current);
-          setMessagesByContact((current) => batch.apply(current));
+          setMessagesByContact((current) => shouldContinue() &&
+            directChatV2PrivateScopeRef.current === directChatV2DiscoveryScope ? messagesByContactRef.current : current);
         }
-        if (batch.contacts.length > 0) {
+        if (batch.contacts.length > 0 && ownerAesReady && directChatV2PrivateScopeRef.current === directChatV2DiscoveryScope) {
           setContacts((previous) => mergeUniqueContacts(previous, [...batch.contacts]));
         }
         ingestDirectTradeNotifications({
           newOpenings: batch.newIncomingOpenings,
           canonicalOpenings: batch.canonicalIncomingOpenings,
-          canonicalComplete: !batch.hasMore
+          canonicalComplete: batch.historyComplete
         });
         if (batch.incomingContacts.length > 0) {
           const incomingContacts = batch.incomingContacts.filter(
@@ -2407,14 +2802,16 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
             });
           }
         }
-        schedule(batch.hasMore ? 50 : 12_000);
+        const chatIsActive = activePageRef.current === 'chat';
+        schedule(chatIsActive ? (batch.hasMore ? 50 : 12_000) : (batch.hasMore ? 30_000 : 60_000));
       } catch {
         if (!shouldContinue()) return;
         if (!errorReported) {
           errorReported = true;
-          setError('Direct trade notifications could not be verified. Retrying securely.');
+          setError('Direct trade notifications could not be verified.');
         }
-        schedule(5_000);
+        // Keep the last canonical projection. A failed read must not create a
+        // retry producer behind the shared RPC stop; a new scope can reconnect.
       }
     };
 
@@ -2426,6 +2823,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   }, [
     browserOwnerDataScopeKey,
     directTradeV2Runtime,
+    directChatV2DiscoveryScope,
+    ownerAesReady,
     ingestDirectTradeNotifications,
     setActiveMobileView,
     setActivePage,
@@ -2598,18 +2997,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     watchedTokens: watchedAccountTokens,
     walletAddress
   });
-  const showGroupRemovalNotice = useCallback((message: string) => {
-    setError(message);
-    if (groupRemovalNoticeTimeoutRef.current !== null) {
-      window.clearTimeout(groupRemovalNoticeTimeoutRef.current);
-    }
-
-    groupRemovalNoticeTimeoutRef.current = window.setTimeout(() => {
-      groupRemovalNoticeTimeoutRef.current = null;
-      setError((previous) => (previous === message ? '' : previous));
-    }, GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS);
-  }, []);
-
   const activeComposerMaxMessageLength = activeGroupId !== null ? MAX_MESSAGE_LENGTH : directMessageMaxLength;
   const handleMessageInputChange = useCallback((value: string) => {
     setMessageInput(sanitizeOutgoingMessagePlainText(value).slice(0, activeComposerMaxMessageLength));
@@ -2631,33 +3018,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     tradeCounterParentId,
     tradeOfferTokenKind: selectedTradeOfferToken?.kind ?? null,
     tradeOfferTokenSymbol: selectedTradeOfferToken?.symbol ?? '',
-    walletAddress
-  });
-
-  const {
-    markAllConversationsAsRead: markAllLegacyConversationsAsRead,
-    markConversationAsRead,
-    markGroupConversationAsRead
-  } = useConversationReadStateActions({
-    activeContact,
-    activeGroupId,
-    directChatV2Enabled: Boolean(directChatV2Runtime?.enabled),
-    groupChatV2Enabled: Boolean(groupChatV2Runtime?.enabled),
-    groups,
-    groupsRef,
-    lastReadAllTsRef,
-    lastReadByContactRef,
-    lastReadByGroupRef,
-    messagesByContact,
-    messagesByGroup,
-    prevUnreadGroupRef,
-    prevUnreadRef,
-    readStateFeaturesEnabled,
-    setLastReadAllTs,
-    setUnreadGroupMap,
-    setUnreadMap,
-    unreadGroupMapRef,
-    unreadMapRef,
     walletAddress
   });
 
@@ -2684,6 +3044,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
             messagesByContactRef.current
           );
           if (!directRuntime.isCurrent()) return;
+          if (unreadCount === null) continue;
           if (unreadCount > 0) nextUnread[peerKey] = true;
           else delete nextUnread[peerKey];
         } catch {
@@ -2739,26 +3100,17 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setUnreadGroupMap,
     setUnreadMap
   ]);
-  const markAllConversationsAsRead = useCallback(() => {
-    markAllLegacyConversationsAsRead();
-    void markAllV2ConversationsAsRead();
-  }, [markAllLegacyConversationsAsRead, markAllV2ConversationsAsRead]);
-
   const activateContact = useCallback((contactAddress: string) => {
     activeGroupIdRef.current = null;
     setActiveGroupId(null);
     setActiveContact(contactAddress);
-    markConversationAsRead(contactAddress);
     if (isMobileNav) {
       setActiveMobileView('chat');
     }
-  }, [isMobileNav, markConversationAsRead, setActiveMobileView]);
+  }, [isMobileNav, setActiveMobileView]);
 
   const {
-    decryptMemoPlaintextWithRecovery,
     getMemoSigner,
-    getMemoSignerForAccount,
-    parseEncryptedChatMessagePayload
   } = useChatMemoCrypto({
     encodeMemoForActiveSignerRef,
     getMemoSignerRef,
@@ -2814,25 +3166,17 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     shieldVaultTokenBalanceWei,
     swapAmountInput,
     swapDirection,
-    swapFeeWei,
     swapInputDecimals,
     swapInputSymbol,
     swapPrivateRewardTokenBalanceWei,
     swapPrivateRewardTokenDecimals,
     swapPrivateRewardTokenSymbol,
-    swapTokenFeeAmount,
     walletAddress: wispPortalWalletAddress
   });
   const wispMaxBalanceWei = swapDirection === 'shield'
     ? wispPortalRewardTokenBalanceWei
     : swapPrivateRewardTokenBalanceWei;
-  const wispSpendableBalanceWei = wispMaxBalanceWei === null
-    ? null
-    : resolveLegacyRecoverySpendableAmount({
-        balanceWei: wispMaxBalanceWei,
-        direction: swapDirection,
-        tokenFeeWei: swapTokenFeeAmount
-      });
+  const wispSpendableBalanceWei = wispMaxBalanceWei;
   const wispCurrentPrivateTokenSymbol = privateRewardTokenSymbol.replace(/^p\.WISP$/i, 'pWISP');
   const wispInputBalanceSymbol = swapDirection === 'unshield'
     ? wispCurrentPrivateTokenSymbol
@@ -2878,15 +3222,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const wispRecoveryCanSubmit = canSwapRewardTokens &&
     parsedSwapAmount !== null &&
     wispRecoveryMaxAmountWei !== null &&
-    (!isLegacyUnshieldDirection(swapDirection) || (swapFeeWei !== null && swapTokenFeeAmount !== null)) &&
     parsedSwapAmount <= wispRecoveryMaxAmountWei;
-  const wispRecoveryFeeLabel = swapDirection === 'legacy-unshield-earlier'
-    ? swapFeeWei === null || swapTokenFeeAmount === null
-      ? 'Read at confirmation'
-      : `${formatTokenAmount(swapTokenFeeAmount, legacyPrivateRewardTokenDecimals, 6)} pWISP preferred; otherwise approved WISP or ${formatCotiAmount(swapFeeWei)} COTI`
-    : swapFeeWei === null
-      ? 'Read at confirmation'
-      : `${formatCotiAmount(swapFeeWei)} COTI`;
+  const wispRecoveryFeeLabel = swapFeeWei === null
+    ? 'Read at confirmation'
+    : `${formatCotiAmount(swapFeeWei)} COTI`;
   const wispRecoveryLiquidityLabel = swapDirection === 'shield'
     ? 'Not applicable'
     : shieldVaultTokenBalanceWei === null
@@ -2905,24 +3244,19 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     wispRecoveryMaxAmountWei
   ]);
 
-  const {
-    groupRequiredFeeCacheRef,
-    groupTokenFeeCacheRef,
-    resetGroupFeeCaches
-  } = useAppFeeResolvers({
+  useAppFeeResolvers({
     setTradeRequiredFeeWei
   });
 
   const {
-    fetchOnChainNicknames,
     getNicknameMaxLength,
     loadMyNicknameFromChain,
-    resolveConversationBlockRange,
     resolveTradeSnapshotForOffer,
-    saveMyNicknameOnChain
+    saveMyNicknameOnChain,
+    tradeSnapshotsById,
+    setTradeSnapshotsById
   } = useAppChainLookups({
     directChatV2Runtime,
-    directChatV2Selected: DIRECT_CHAT_V2_DEPLOYMENT_CONFIG.status !== 'inactive',
     directTradeV2Runtime,
     directTradeV2Contracts: DIRECT_TRADE_V2_SUPPORTED_CONTRACTS,
     loadMyNicknameFromChainRef,
@@ -2937,8 +3271,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setError,
     setMyNickname,
     setNicknameMaxBytes,
-    setTradeSnapshotsById,
-    tradeSnapshotsById,
+    tradeSnapshotSessionScope: directChatV2DiscoveryScope,
     walletAddress
   });
   useActiveTradeOfferSnapshots({
@@ -2979,79 +3312,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setError,
     setProcessingTradeActionId
   ]);
-  const {
-    applyStateBackupPayload
-  } = useStateBackupSync({
-    chainId,
-    lastReadAllTs,
-    lastReadAllTsRef,
-    readStateSyncEnabled: readStateFeaturesEnabled,
-    setLastReadAllTs,
-    setUnreadGroupMap,
-    setUnreadMap,
-    unreadGroupMapRef,
-    unreadMapRef,
-    walletAddress
-  });
-
-  const {
-    isSyncingConversationHistoryRef,
-    loadFullConversationHistory,
-    loadOlderMessagesForActiveContact,
-    resetConversationHistoryCaches,
-    syncConversationHistory
-  } = useDirectConversationSync({
-    activeContact,
-    activeGroupId,
-    activeMessagesLength: activeMessages.length,
-    automaticLegacySyncEnabled: !directChatV2Runtime?.enabled,
-    applyStateBackupPayload,
-    chainId,
-    contacts,
-    currentWalletKeyRef,
-    decryptMemoPlaintextWithRecovery,
-    fetchOnChainNicknames,
-    getMemoSigner,
-    getMemoSignerForAccount,
-    hasAesReady,
-    lastReadAllTsRef,
-    lastReadByContactRef,
-    messagesByContact,
-    notificationSuppressedContactAddressSet,
-    parseEncryptedChatMessagePayload,
-    pinnedContactStateRef,
-    resolveBlockTimestampMap,
-    resolveConversationBlockRange,
-    setContacts,
-    setError,
-    setLoadingOlderHistory,
-    setMessagesByContact,
-    setSessionOnboardInfo,
-    setSyncingHistory,
-    setUnreadMap,
-    unreadMapRef,
-    walletAddress,
-    readAccounts: readableWalletAccounts
-  });
-
-  useEffect(() => {
-    syncConversationHistoryRef.current = syncConversationHistory;
-  }, [syncConversationHistory]);
-  useDirectConversationRealtimeSync({
-    activeContactRef,
-    chainId,
-    conversationDeepBackfillDoneRef,
-    isSyncingConversationHistoryRef,
-    legacyEnabled: !directChatV2Runtime?.enabled,
-    onChainNicknameCacheRef,
-    readableWalletAccountKeys,
-    readableWalletAccounts,
-    setContacts,
-    setDirectRealtimeStatus,
-    setMyNickname,
-    syncConversationHistoryRef,
-    walletAddress
-  });
   const markLatestDirectV2MessageVisible = useCallback(async (message: ChatMessage) => {
     const runtime = directChatV2Runtime;
     const peer = activeContactRef.current?.trim() ?? '';
@@ -3071,7 +3331,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     );
     if (
       !runtime.isCurrent() ||
-      activeContactRef.current?.trim().toLowerCase() !== peer.toLowerCase()
+      activeContactRef.current?.trim().toLowerCase() !== peer.toLowerCase() ||
+      unreadCount === null
     ) {
       return;
     }
@@ -3087,12 +3348,15 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const markLatestGroupV2MessageVisible = useCallback(async (message: ChatMessage) => {
     const runtime = groupChatV2Runtime;
     const selectedGroupId = activeGroupIdRef.current;
+    const visibleHistoricalMessage = message.groupV2?.contentState === 'available' &&
+      groupsRef.current.some(group => group.id === selectedGroupId && group.membershipEnded);
     if (
       !runtime?.enabled ||
+      !runtime.isCurrent() ||
       selectedGroupId === null ||
       message.groupV2?.finality !== 'finalized' ||
       message.groupV2.groupId !== String(selectedGroupId) ||
-      !groupChatV2DiscoveryCaughtUpRef.current[String(selectedGroupId)]
+      (!groupChatV2DiscoveryCaughtUpRef.current[String(selectedGroupId)] && !visibleHistoricalMessage)
     ) {
       throw new Error('Group Chat V2 visibility is not finalized and caught up yet.');
     }
@@ -3104,7 +3368,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     const latestIncoming = groupChatV2LatestIncomingRef.current[groupKey];
     setUnreadGroupMap((previous) => {
       const next = { ...previous };
-      if (latestIncoming && latestIncoming.messageId > BigInt(cursor.lastReadMessageId)) {
+      if (!groupsRef.current.some(group => String(group.id) === groupKey && group.membershipEnded) &&
+        latestIncoming && latestIncoming.messageId > BigInt(cursor.lastReadMessageId)) {
         next[groupKey] = true;
       } else {
         delete next[groupKey];
@@ -3118,9 +3383,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     getReplyReferenceFallbackLabel,
     jumpToReferencedMessage,
     messageElementRefs,
-    pendingForcedBottomAnchorThreadKeyRef,
     resetThreadScrollState,
-    stickToBottomRef,
     visibleActiveGroupMessages,
     visibleActiveMessages
   } = useChatThreadScroll({
@@ -3133,81 +3396,19 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     activeThreadMessages,
     hasAesReady,
     isConnected,
-    loadOlderMessagesForActiveContact,
     onLatestDirectMessageVisible: markLatestDirectV2MessageVisible,
     onLatestGroupMessageVisible: markLatestGroupV2MessageVisible,
     setHighlightedMessageId,
     walletAddress
   });
-  const {
-    activateGroup,
-    prefetchGroupBeforeOpen,
-    syncGroupData
-  } = useGroupDataSync({
-    activeGroupId,
-    activeGroupIdRef,
-    blockTimestampCacheRef,
-    chainId,
-    clearGroupMessageLoadPhase,
-    currentWalletKeyRef,
-    fetchOnChainNicknames,
-    getMemoSigner,
-    groupInvitesRef,
-    groupDeepBackfillDoneRef,
-    groupMemberLastSyncedBlockRef,
-    groupMessageLastSyncedBlockRef,
-    groupOverviewLastSyncedBlockRef,
-    groupRemovalNoticeMarkersLoadedRef,
-    groupRemovalNoticeMarkersRef,
-    groupRemovalNoticeSeenRef,
-    groupsRef,
-    hasAesReady,
-    isMobileNav,
-    lastReadAllTsRef,
-    lastReadByGroupRef,
-    legacyEnabled: !groupChatV2Runtime?.enabled,
-    markGroupConversationAsRead,
-    messagesByGroup,
-    messagesByGroupRef,
-    parseEncryptedChatMessagePayload,
-    pendingForcedBottomAnchorThreadKeyRef,
-    pendingGroupSyncOptionsRef,
-    prefetchedGroupMessagesRef,
-    readStateFeaturesEnabled,
-    setActiveContact,
-    setActiveGroupId,
-    setActiveMobileView,
-    setContacts,
-    setError,
-    setGroupInvites,
-    setGroups,
-    setGroupMessageLoadPhase,
-    setMessagesByGroup,
-    setReplyingToMessage,
-    setSessionOnboardInfo,
-    setSyncingGroups,
-    setUnreadGroupMap,
-    showGroupRemovalNotice,
-    sortedGroups,
-    stickToBottomRef,
-    syncGroupDataInFlightRef,
-    syncGroupDataRef,
-    unreadGroupMapRef,
-    walletAccountScope,
-    walletAddress
-  });
-  useGroupRealtimeSync({
-    activeGroupIdRef,
-    chainId,
-    groupInvitesRef,
-    groupsRef,
-    hasAesReady,
-    legacyEnabled: !groupChatV2Runtime?.enabled,
-    setGroupRealtimeStatus,
-    syncGroupDataInFlightRef,
-    syncGroupDataRef,
-    walletAddress
-  });
+  const activateGroup = useCallback((groupId: number) => {
+    if (!Number.isSafeInteger(groupId) || groupId <= 0) return;
+    activeGroupIdRef.current = groupId;
+    setActiveContact(null);
+    setReplyingToMessage(null);
+    setActiveGroupId(groupId);
+    if (isMobileNav) setActiveMobileView('chat');
+  }, [isMobileNav, setActiveMobileView, setReplyingToMessage]);
 
   const {
     acceptGroupInvite,
@@ -3262,7 +3463,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setProcessingGroupAction,
     setRevokingGroupJoinCodeHash,
     setShowQuickActionsModal,
-    syncGroupData,
+    onGroupChanged: refreshGroupChatV2,
     walletAddress
   });
   const { sendGroupImageMessage, sendGroupMessage } = useGroupMessageActions({
@@ -3321,10 +3522,12 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     }
     try {
       const current = await runtime.session.readContactSettings(contactAddress);
+      if (!runtime.isCurrent()) return false;
       const confirmed = await runtime.session.setContactSettings(contactAddress, {
         savedName,
         hidden: current.settings.hidden
       });
+      if (!runtime.isCurrent()) return false;
       const addressKey = contactAddress.toLowerCase();
       setContacts((previous) => previous.map((contact) =>
         contact.address.toLowerCase() === addressKey
@@ -3339,6 +3542,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       setError('');
       return true;
     } catch (error) {
+      if (!runtime.isCurrent()) return false;
       setError(getProviderErrorMessage(error, 'Private contact name update failed.'));
       return false;
     }
@@ -3449,19 +3653,30 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     (groupChatV2DiscoveryView?.runtime === groupChatV2Runtime && groupChatV2DiscoveryView.refreshing) ||
     activeGroupMessageLoadPhase
   ));
-  const directChatV2Refreshing = Boolean(directChatV2Runtime?.enabled && ownerAesReady &&
+  const selectedDirectHistoryView = directChatV2Runtime?.enabled && ownerAesReady &&
     directChatV2RefreshView?.runtime === directChatV2Runtime &&
     directChatV2RefreshView.peer === activeContact?.trim().toLowerCase() &&
-    directChatV2RefreshView.refreshing);
+    directChatV2RefreshView.scope === directChatV2DiscoveryScope ? directChatV2RefreshView : null;
+  const directChatV2Refreshing = selectedDirectHistoryView?.refreshing ?? false;
+  const selectedDirectDiscovery = selectDirectChatDiscoveryView({ runtime: directChatV2Runtime,
+    scope: directChatV2DiscoveryScope, privacyReady: ownerAesReady, view: directChatV2DiscoveryView,
+    setupError: directChatV2SetupError });
+  const refreshDirectChatV2 = () => {
+    directChatV2DiscoveryRefreshRef.current?.();
+    directChatV2RefreshRef.current?.();
+  };
   const forceSyncAllData = async () => {
     if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
       return;
     }
 
-    if (directChatV2Runtime?.enabled) directChatV2RefreshRef.current?.();
-    else syncConversationHistory({ deep: true }).catch(() => {});
-    if (groupChatV2Runtime?.enabled) refreshGroupChatV2();
-    else syncGroupData({ deep: true }).catch(() => {});
+    if (directChatV2Runtime?.enabled) {
+      refreshDirectChatV2();
+      if (selectedDirectDiscovery?.hasOlder) directChatV2LoadOlderContactsRef.current?.();
+    }
+    if (groupChatV2Runtime?.enabled) {
+      refreshGroupChatV2(groupChatV2DiscoveryView?.runtime === groupChatV2Runtime && groupChatV2DiscoveryView.hasOlder === true);
+    }
   };
 
   useEffect(() => {
@@ -3470,7 +3685,19 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setPersistedContactOrder([]);
     setActiveContact(null);
     setShowHiddenContacts(false);
-  }, [browserOwnerDataScopeKey]);
+    messagesByContactRef.current = {};
+    setMessagesByContact(messagesByContactRef.current);
+    contactsRef.current = [];
+    activeContactRef.current = null;
+    directChatV2HistoryCaughtUpRef.current = {};
+    directChatV2LoadedContactSettingsRef.current = { runtime: null, addresses: new Set() };
+    pinnedContactStateRef.current.clear();
+    setReplyingToMessage(null);
+    setHighlightedMessageId(null);
+    setMessageInput('');
+    clearImageAttachmentStatus();
+    setDirectChatPrivateDisplayScope(directChatV2DiscoveryScope);
+  }, [directChatV2DiscoveryScope]);
 
   useEffect(() => {
     setGroups([]);
@@ -3483,7 +3710,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     memoAesRecoveryAttemptedRef.current = {};
     messagesByGroupRef.current = {};
     groupMessageLoadPhaseByGroupRef.current = {};
-    prefetchedGroupMessagesRef.current = {};
     setGroupMessageLoadPhaseByGroup({});
     setGeneratedGroupJoinCode(null);
     setGroupJoinCodeInput('');
@@ -3492,25 +3718,12 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     groupsRef.current = [];
     groupInvitesRef.current = [];
     activeGroupIdRef.current = null;
-    groupOverviewLastSyncedBlockRef.current = {};
-    groupMessageLastSyncedBlockRef.current = {};
-    groupRemovalNoticeSeenRef.current = {};
-    conversationDeepBackfillDoneRef.current = {};
-    groupDeepBackfillDoneRef.current = {};
-    resetGroupFeeCaches();
-    setGroupRewardsContractAddress('');
-    setGroupRewardsPaused(null);
-    setRewardsContractPaused(null);
-    setRewardsCallerAllowed(null);
-    setRewardsPublicPerInteractionWei(null);
-    setRewardsPublicReserveWei(null);
     setRewardTokenBalanceWei(null);
     setPrivateRewardTokenBalanceWei(null);
     setSwapFeeWei(null);
-    setSwapTokenFeeAmount(null);
     setSwapAmountInput('');
     setGroupFeeModeSelection('coti');
-  }, [browserOwnerDataScopeKey, resetGroupFeeCaches]);
+  }, [browserOwnerDataScopeKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3602,10 +3815,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       setActiveMobileView('contacts');
     }
   }, [isConnected]);
-
-  const { navigationPath, navigateToInternalAppLink, navigateToPage } = useAppNavigation({ activePage, setActivePage });
-  const dexAppPair = currentDexAppPair(dexAppScope, selectedTradingPair);
-  const currentMarketReference = useCurrentDexMarketReference(activePage === 'dex', dexAppScope.candidate, dexAppPair);
 
   const openAppHelp = useCallback(
     ({
@@ -3702,13 +3911,12 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         ...context,
         counterpartyAddress: address
       });
-      markConversationAsRead(address);
       if (isMobileNav) {
         setActiveMobileView('chat');
       }
       navigateToPage('chat');
     },
-    [isMobileNav, markConversationAsRead, navigateToPage, setActiveMobileView]
+    [isMobileNav, navigateToPage, setActiveMobileView]
   );
 
   useEffect(() => {
@@ -3759,8 +3967,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     if (previousWallet !== nextWallet) {
       postConnectDataSyncRunIdRef.current += 1;
       resetThreadScrollState();
-      resetConversationHistoryCaches();
-      setMessagesByContact({});
+      messagesByContactRef.current = {};
+      setMessagesByContact(messagesByContactRef.current);
       setReplyingToMessage(null);
       setHighlightedMessageId(null);
       pinnedContactStateRef.current.clear();
@@ -3770,7 +3978,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     previousWalletAddressRef.current = nextWallet;
   }, [
     resetBlockTimestampCache,
-    resetConversationHistoryCaches,
     resetThreadScrollState,
     setHighlightedMessageId,
     setReplyingToMessage,
@@ -3788,17 +3995,13 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   }, [ownerNativeBalanceWei, setTipNativeBalanceWei]);
 
   useRewardTokenMetrics({
+    bridgeEnabled: activePage === 'swap',
     activeSwapVaultContractAddress,
     chainId,
     currentSwapDirectionEnabled,
     getMemoSigner,
-    groupRequiredFeeCacheRef,
-    groupTokenFeeCacheRef,
     hasAesReady,
     refreshNonce: walletBalanceRefreshNonce,
-    setLegacyPrivateRewardTokenBalanceWei,
-    setLegacyPrivateRewardTokenDecimals,
-    setLegacyPrivateRewardTokenSymbol,
     setSessionOnboardInfo,
     swapDirection,
     walletAddress
@@ -3934,13 +4137,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
             text: 'Simulated incoming',
             timestamp: Math.floor(Date.now() / 1000)
           };
-          setMessagesByContact((prev) => {
-            const copy = { ...prev };
-            const arr = (copy[key] ?? []).slice();
-            arr.push(msg);
-            copy[key] = arr;
-            return copy;
-          });
+          messagesByContactRef.current = { ...messagesByContactRef.current,
+            [key]: [...(messagesByContactRef.current[key] ?? []), msg] };
+          setMessagesByContact(messagesByContactRef.current);
         }}
         title="Simulate incoming message (debug)"
         style={{ marginLeft: 6 }}
@@ -4074,6 +4273,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         expiresHoursInput={tradeExpiryHoursInput}
         onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
         expiryError={tradeComposerFieldErrors.expiry}
+        privateTokenAmounts={selectedTradeOfferToken?.kind === 'private-erc20' || selectedTradeRequestToken?.kind === 'private-erc20'}
+        tradeVisibility="direct"
         sending={creatingTrade}
         canSend={canSendTradeOffer}
         actionNotice={tradeComposerActionNotice}
@@ -4394,8 +4595,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   useEffect(() => {
     let disposed = false;
     let createdRuntime: OtcV2ActionRuntime | null = null;
+    let displayRuntime: OtcV2ActionRuntime | null = null;
     setOtcV2ActionRuntime(null);
-    setOtcV2ActionSetupError('');
+    setOtcV2ReadRuntime(null);
+    setOtcV2InitialDiscovery(null);
+    setOtcV2ActionSetupFailure(null);
     if (!otcV2Runtime || !otcV2Runtime.isCurrent()) {
       return () => { disposed = true; };
     }
@@ -4404,6 +4608,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       createdRuntime = await runtimeModule.createOtcV2ActionRuntimeFromCatalog({
         catalog: OTC_V2_DEPLOYMENT_CATALOG,
         history: otcV2Runtime,
+        onReadRuntime: runtime => {
+          displayRuntime = runtime;
+          if (disposed) runtime.close();
+          else setOtcV2ReadRuntime(runtime);
+        },
         getOwnerCapability: (requirePrivacy) => otcV2ActionRuntimeDependenciesRef.current.getOtcV2Capability(
           requirePrivacy,
           BigInt(OTC_V2_DEPLOYMENT_CATALOG.status === 'active'
@@ -4419,14 +4628,16 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       createdRuntime?.close();
       if (!disposed) {
         setOtcV2ActionRuntime(null);
-        setOtcV2ActionSetupError(`P2P order setup: ${getProviderErrorMessage(cause, 'Verified order actions are unavailable.')}`);
+        setOtcV2ActionSetupFailure({ scopeKey: otcV2RuntimeScopeKey,
+          message: `P2P order setup: ${getProviderErrorMessage(cause, 'Verified order actions are unavailable.')}` });
       }
     });
     return () => {
       disposed = true;
       createdRuntime?.close();
+      displayRuntime?.close();
     };
-  }, [otcV2Runtime]);
+  }, [otcV2Runtime, otcV2RuntimeScopeKey]);
   const sharedWalletActions = useMemo<WalletSessionActions>(
     () => ({
       connectBrowserWallet: (walletId?: string, options = {}) =>
@@ -4489,6 +4700,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       chainId,
       onWalletAesHealthChange: setWalletAesHealth,
       otcV2ActionRuntime,
+      otcV2ReadRuntime,
       otcV2Runtime,
       otcV2RuntimeError: otcV2HistorySetupError || otcV2ActionSetupError,
       sessionOnboardInfo,
@@ -4508,6 +4720,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       currentInjectedWalletOption?.id,
       currentInjectedWalletOption?.label,
       otcV2ActionRuntime,
+      otcV2ReadRuntime,
       otcV2Runtime,
       otcV2HistorySetupError,
       otcV2ActionSetupError,
@@ -4641,7 +4854,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           <ContactsSidebar
             nicknameEditorRef={nicknameEditorRef}
             nicknameMaxBytes={nicknameMaxBytes}
-            hasAesReady={hasAesReady}
+            hasAesReady={chatPrivateDisplayReady}
             canSavePublicName={
               activeSignerSource === 'metamask' && directChatV2Runtime?.enabled === true
             }
@@ -4651,11 +4864,18 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
             hasUnreadConversations={hasUnreadConversations}
             readStateActionsDisabled={!readStateFeaturesEnabled}
             walletPromptSensitiveActionsTitle={browserWalletLiteModeTitle}
-            onMarkAllConversationsAsRead={markAllConversationsAsRead}
+            onMarkAllConversationsAsRead={markAllV2ConversationsAsRead}
             onForceSync={handleForceSync}
-            syncingHistory={directChatV2Runtime?.enabled ? directChatV2Refreshing : syncingHistory}
-            syncingGroups={groupChatV2Runtime?.enabled ? groupChatV2Refreshing : syncingGroups}
+            syncingHistory={directChatV2Refreshing}
+            directDiscoveryState={selectedDirectDiscovery?.state}
+            directDiscoveryError={selectedDirectDiscovery?.error}
+            hasOlderContacts={selectedDirectDiscovery?.hasOlder}
+            refreshingContacts={selectedDirectDiscovery?.refreshing ?? false}
+            canRefreshContacts={directChatV2Runtime?.enabled === true && !directChatV2SetupError}
+            syncingGroups={groupChatV2Refreshing}
             groupDiscoveryState={groupChatV2DiscoveryState}
+            groupDiscoveryError={groupChatV2DiscoveryView?.runtime === groupChatV2Runtime ? groupChatV2DiscoveryView?.error : undefined}
+            hasOlderGroups={groupChatV2DiscoveryView?.runtime === groupChatV2Runtime && groupChatV2DiscoveryView?.hasOlder}
             onOpenNewChat={handleOpenNewChat}
             showHiddenContacts={showHiddenContacts}
             onToggleShowHiddenContacts={handleToggleShowHiddenContacts}
@@ -4682,7 +4902,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
             messagesByGroup={messagesByGroup}
             unreadGroupMap={readStateFeaturesEnabled || groupChatV2Runtime?.enabled ? unreadGroupMap : {}}
             onActivateGroup={activateGroup}
-            onPrefetchGroup={prefetchGroupBeforeOpen}
             error={error || (groupChatV2HistoryUnavailable ? 'Group history unavailable. Refresh to retry.' : '')}
           />
         ) : null}
@@ -4690,6 +4909,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         <main className="chat-panel">
           <h1 className="app-visually-hidden">Encrypted Chat</h1>
           <AppErrorBoundary
+            onOpenHelp={openGenericErrorHelp}
             fallback={
               <div className="chat-placeholder" role="alert">
                 <strong>Something went wrong.</strong>
@@ -4708,7 +4928,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 error={walletConnectionError}
                 onOpenHelp={() => openAppHelp({ origin: 'chat', reason: 'wallet-needed' })}
               />
-            ) : activeGroupId !== null ? (
+            ) : chatPrivateDisplayReady && groupChatV2Runtime?.isCurrent() && activeGroupId !== null ? (
               <GroupChatPanel
                 activeGroupId={activeGroupId!}
                 activeGroupMeta={activeGroupMeta}
@@ -4727,15 +4947,13 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 desktopGroupActions={desktopGroupActions}
                 mobileGroupActions={mobileGroupActions}
                 isMobileNav={isMobileNav}
-                syncingGroups={groupChatV2Runtime?.enabled ? groupChatV2Refreshing : syncingGroups}
                 mobileGroupOptionsOpen={mobileGroupOptionsOpen}
                 onToggleMobileGroupOptions={() => setMobileGroupOptionsOpen((previous) => !previous)}
-                onRefreshGroup={() => {
-                  if (groupChatV2Runtime?.enabled) refreshGroupChatV2();
-                  else syncGroupData({ deep: true }).catch(() => {});
-                }}
                 chatMessagesRef={setChatMessagesContainerRef}
                 activeGroupMessages={visibleActiveGroupMessages}
+                hasOlderHistory={groupHasOlderHistory}
+                loadingOlderHistory={groupLoadingOlderHistory}
+                onLoadOlderHistory={() => { void loadOlderGroupHistory(); }}
                 messageLoadPhase={activeGroupMessageLoadPhase}
                 groupEpochSyncRequired={
                   groupChatV2EpochSyncRequest?.groupId === activeGroupId
@@ -4824,7 +5042,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 } : null}
                 onOpenInternalAppLink={navigateToInternalAppLink}
               />
-            ) : activeContact ? (
+            ) : chatPrivateDisplayReady && activeContact ? (
               <DirectChatPanel
                 activeContact={activeContact!}
                 activeContactMeta={activeContactMeta}
@@ -4857,14 +5075,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                   toggleConversationHiddenForContact(activeContact!).catch(() => {});
                 }}
                 onSaveContactName={(name) => savePrivateContactName(activeContact!, name)}
-                onLoadFullConversationHistory={() => {
-                  if (directChatV2Runtime?.enabled) directChatV2RefreshRef.current?.();
-                  else void loadFullConversationHistory();
-                }}
-                syncingHistory={directChatV2Runtime?.enabled ? directChatV2Refreshing : syncingHistory}
+                hasOlderHistory={selectedDirectHistoryView?.hasOlder ?? false}
+                onLoadOlderHistory={() => directChatV2LoadOlderHistoryRef.current?.()}
+                syncingHistory={directChatV2Refreshing}
                 chatMessagesRef={setChatMessagesContainerRef}
-                markConversationAsRead={markConversationAsRead}
-                loadingOlderHistory={loadingOlderHistory}
+                loadingOlderHistory={selectedDirectHistoryView?.loadingOlder ?? false}
                 activeMessages={visibleActiveMessages}
                 isReactionOnlyMessage={isReactionOnlyMessage}
                 reactionPickerMessageId={reactionPickerMessageId}
@@ -4883,7 +5098,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 linkedTradeContext={activeLinkedTradeContext}
                 linkedTradeContextShareCopied={lastCopiedKey === activeLinkedTradeContextCopyKey}
                 walletAddress={walletAddress}
-                privacyUnlocked={hasAesReady}
+                privacyUnlocked={chatPrivateDisplayReady}
                 processingTradeActionId={processingTradeActionId}
                 onCopyLinkedTradeContextLink={(value) => {
                   if (activeLinkedTradeContextCopyKey) {
@@ -5022,9 +5237,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           onOpenPrivateTvl={() => navigateToPage('treasury')}
           onPrefetchChat={preloadChatPage}
           onPrefetchSwap={preloadSwapPage}
-          onPrefetchTrades={preloadTradesPage}
+          onPrefetchTrades={preloadTradingPage}
           onPrefetchPrivateTvl={preloadPrivateTvlPage}
-          onOpenTrades={() => navigateToPage('trades')}
+          onOpenTrades={() => navigateToPage(getSessionTradingPage())}
         />
       </div>
     );
@@ -5061,6 +5276,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
               priceDisplayInverted={tradingPriceDisplayInverted}
               onPriceDisplayInvertedChange={setTradingPriceDisplayInverted}
               sharedWalletSession={sharedTradeWalletSession}
+              onInitialOwnerDiscoverySettled={handleOtcV2InitialDiscoverySettled}
+              onParticipantReadPassChange={handleParticipantReadPassChange}
               appHelpLaunchContext={appHelpLaunchContext}
               onAppHelpLaunchConsumed={() => setAppHelpLaunchContext(null)}
               onOpenAppHelp={(reason) => openAppHelp({ origin: 'otc', reason })}
@@ -5089,13 +5306,14 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         })}
         <TradingProductSwitch
           activeProduct="dex"
-          dexCandidate={dexAppScope.key === 'cheap-exit' || dexAppScope.key === 'cheap-history' ? dexAppScope.candidate : undefined}
+          dexCandidate={dexAppScope.key === 'cheap-history' ? dexAppScope.candidate : undefined}
           marketReference={currentMarketReference}
+          referenceDisplayInverted={dexSwapReferenceInverted}
           onNavigate={(product) => navigateToPage(product === 'dex' ? 'dex' : 'trades')}
           selectedPair={selectedTradingPair}
           onSelectedPairChange={setSelectedTradingPair}
           priceDisplayInverted={tradingPriceDisplayInverted}
-          onPriceDisplayInvertedChange={setTradingPriceDisplayInverted}
+          onPriceDisplayInvertedChange={changeDexPriceDisplayInverted}
         />
         <AppErrorBoundary onOpenHelp={openGenericErrorHelp}>
           <Suspense fallback={<RouteLoadingFallback shellClassName="dex-v2-loading-shell" label={showDexAgent ? 'Loading Trade Agent' : 'Loading Private DEX'} />}>
@@ -5105,6 +5323,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 priceDisplayInverted={tradingPriceDisplayInverted}
                 onPriceDisplayInvertedChange={setTradingPriceDisplayInverted}
                 sharedWalletSession={sharedTradeWalletSession}
+                onInitialOwnerDiscoverySettled={handleOtcV2InitialDiscoverySettled}
+                onParticipantReadPassChange={handleParticipantReadPassChange}
                 appHelpLaunchContext={appHelpLaunchContext}
                 onAppHelpLaunchConsumed={() => setAppHelpLaunchContext(null)}
                 onOpenAppHelp={(reason) => openAppHelp({ origin: 'otc', reason })}
@@ -5115,8 +5335,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
               <DexV2Page
                 swapCandidate={dexAppScope.key}
                 marketReference={currentMarketReference}
+                referenceDisplayInverted={dexSwapReferenceInverted}
+                onReferenceDisplayInvertedChange={setDexSwapReferenceInverted}
                 dailyPriceConfig={currentNativeDexDailyPriceConfig(dexAppScope.candidate, dexAppPair)}
-                onPriceDisplayInvertedChange={setTradingPriceDisplayInverted}
+                onPriceDisplayInvertedChange={changeDexPriceDisplayInverted}
                 priceDisplayInverted={tradingPriceDisplayInverted}
                 selectedPair={dexAppPair}
                 sharedWalletSession={sharedTradeWalletSession}
@@ -5185,16 +5407,12 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 onDirectionChange: setSwapDirection,
                 canShield: canShieldTokens,
                 canUnshield: canUnshieldTokens,
-                canLegacyUnshield: canLegacyUnshieldTokens,
-                canEarlierLegacyUnshield: canEarlierLegacyUnshieldTokens,
                 publicSymbol: rewardTokenSymbol,
                 privateSymbol: wispCurrentPrivateTokenSymbol,
-                legacyPrivateSymbol: legacyPrivateRewardTokenSymbol,
                 inputSymbol: swapInputSymbol,
                 feeLabel: wispRecoveryFeeLabel,
                 liquidityLabel: wispRecoveryLiquidityLabel,
                 contractUrl: wispBridgeContractUrl,
-                legacyContractUrl: legacySwapVaultContractUrl,
                 busy: swappingTokens,
                 actionStage: swapActionStage,
                 canSubmit: wispRecoveryCanSubmit,

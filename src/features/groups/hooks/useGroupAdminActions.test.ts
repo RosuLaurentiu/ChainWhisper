@@ -7,6 +7,22 @@ import type { GroupChatV2SessionController } from '../../../lib/groupChatV2Sessi
 afterEach(() => vi.unstubAllGlobals());
 
 describe('group admin action context', () => {
+  it('does not send an invite while the verified group roster is incomplete', async () => {
+    const inviteMembers = vi.fn(), setError = vi.fn();
+    let actions!: ReturnType<typeof useGroupAdminActions>;
+    function Harness() {
+      actions = useGroupAdminActions({ activeGroupId: 4, activeGroupMeta: { isPrivate: true, membersLoaded: false },
+        isActiveGroupAdmin: true, walletAddress: '0x1111111111111111111111111111111111111111',
+        groupChatV2Session: { inviteMembers }, setError
+      } as unknown as Parameters<typeof useGroupAdminActions>[0]);
+      return null;
+    }
+    renderToStaticMarkup(createElement(Harness));
+    await actions.inviteMembersToActiveGroup();
+    expect(inviteMembers).not.toHaveBeenCalled();
+    expect(setError).toHaveBeenLastCalledWith('Wait for the group members to load before inviting.');
+  });
+
   it('allows a generated join code to publish only to the group and wallet that created it', () => {
     const activeGroupIdRef = { current: 7 };
     const currentWalletKeyRef = { current: '0xabc' };
@@ -42,11 +58,12 @@ describe('group admin action context', () => {
     ).toBe(false);
   });
 
-  it('asks to archive while preserving existing messages and authorized history', async () => {
-    const confirm = vi.fn(() => false);
+  it.each([false, true])('asks to archive and refreshes current groups only after confirmation: %s', async confirmed => {
+    const confirm = vi.fn(() => confirmed);
     vi.stubGlobal('window', { confirm });
     const noop = () => undefined;
     const disband = vi.fn();
+    const onGroupChanged = vi.fn();
     let actions: ReturnType<typeof useGroupAdminActions> | undefined;
     function Harness() {
       actions = useGroupAdminActions({
@@ -60,7 +77,7 @@ describe('group admin action context', () => {
         setGroupInviteMembersInput: noop, setGroupJoinCodeInput: noop, setGroupRenameInput: noop, setGroupRenameOpen: noop,
         setLoadingActiveGroupJoinCodes: noop, setNewGroupIsPrivate: noop, setNewGroupMembersInput: noop, setNewGroupTitle: noop,
         setProcessingGroupAction: noop, setRevokingGroupJoinCodeHash: noop, setShowQuickActionsModal: noop,
-        syncGroupData: async () => undefined, walletAddress: '0x1111111111111111111111111111111111111111'
+        onGroupChanged, walletAddress: '0x1111111111111111111111111111111111111111'
       });
       return null;
     }
@@ -70,6 +87,13 @@ describe('group admin action context', () => {
     expect(confirm).toHaveBeenCalledExactlyOnceWith(
       'Archive this group? New messages will stop. Existing messages and authorized history remain available.'
     );
-    expect(disband).not.toHaveBeenCalled();
+    if (confirmed) {
+      expect(disband).toHaveBeenCalledExactlyOnceWith(4n);
+      expect(onGroupChanged).toHaveBeenCalledOnce();
+      expect(onGroupChanged.mock.invocationCallOrder[0]).toBeGreaterThan(disband.mock.invocationCallOrder[0]);
+    } else {
+      expect(disband).not.toHaveBeenCalled();
+      expect(onGroupChanged).not.toHaveBeenCalled();
+    }
   });
 });

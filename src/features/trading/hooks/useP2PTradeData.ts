@@ -612,6 +612,7 @@ type EnrichMakerPrivateProgress = (
 
 type UseP2PTradeDataArgs = TokenMetadata & {
   enrichMakerPrivateProgress: EnrichMakerPrivateProgress;
+  listDiscoveryEnabled?: boolean;
   resolvedRouteAccessSecret: string;
   routeError: string;
   routeEscrowContract?: string;
@@ -778,6 +779,7 @@ export const __resolveRenderableDetailTradeForTest = resolveRenderableDetailTrad
 
 export default function useP2PTradeData({
   enrichMakerPrivateProgress,
+  listDiscoveryEnabled = true,
   privateRewardTokenDecimals,
   privateRewardTokenSymbol,
   resolvedRouteAccessSecret,
@@ -808,10 +810,10 @@ export default function useP2PTradeData({
     )
   );
   const [publicTrades, setPublicTrades] = useState<TradeSnapshot[]>(() =>
-    reconcileTradeSnapshotsForReadAccounts(initialWarmCache?.publicTrades ?? [], walletReadAccounts, false)
+    reconcileTradeSnapshotsForReadAccounts(listDiscoveryEnabled ? initialWarmCache?.publicTrades ?? [] : [], walletReadAccounts, false)
   );
   const [myTrades, setMyTrades] = useState<TradeSnapshot[]>(() =>
-    reconcileTradeSnapshotsForReadAccounts(initialWarmCache?.myTrades ?? [], walletReadAccounts, true)
+    reconcileTradeSnapshotsForReadAccounts(listDiscoveryEnabled ? initialWarmCache?.myTrades ?? [] : [], walletReadAccounts, true)
   );
   const [detailTrade, setDetailTrade] = useState<TradeSnapshot | null>(() =>
     initialWarmCacheRouteMatches && initialWarmCache?.detailTrade
@@ -829,8 +831,8 @@ export default function useP2PTradeData({
   const [tradeAccessBlocked, setTradeAccessBlocked] = useState(() =>
     initialWarmCacheRouteMatches ? Boolean(initialWarmCache?.tradeAccessBlocked) : false
   );
-  const [publicTradesError, setPublicTradesError] = useState(() => initialWarmCache?.publicTradesError ?? '');
-  const [myTradesError, setMyTradesError] = useState(() => initialWarmCache?.myTradesError ?? '');
+  const [publicTradesError, setPublicTradesError] = useState(() => listDiscoveryEnabled ? initialWarmCache?.publicTradesError ?? '' : '');
+  const [myTradesError, setMyTradesError] = useState(() => listDiscoveryEnabled ? initialWarmCache?.myTradesError ?? '' : '');
   const [detailTradeError, setDetailTradeError] = useState(() =>
     initialWarmCacheRouteMatches ? initialWarmCache?.detailTradeError ?? '' : ''
   );
@@ -846,6 +848,8 @@ export default function useP2PTradeData({
   const latestWalletKeyRef = useRef(walletKey);
   const previousWalletKeyRef = useRef(walletKey);
   const latestEnrichMakerPrivateProgressRef = useRef(enrichMakerPrivateProgress);
+  const listDiscoveryEnabledRef = useRef(listDiscoveryEnabled);
+  listDiscoveryEnabledRef.current = listDiscoveryEnabled;
   const walletReadAccountsKey = buildWalletReadAccountsKey(walletReadAccounts, {
     includePrivateReadState: true
   });
@@ -887,10 +891,12 @@ export default function useP2PTradeData({
       routeEscrowContract,
       resolvedRouteAccessSecret
     );
-    setPublicTrades(reconcileTradeSnapshotsForReadAccounts(cached.publicTrades, walletReadAccounts, false));
-    setMyTrades(reconcileTradeSnapshotsForReadAccounts(cached.myTrades, walletReadAccounts, true));
-    setPublicTradesError(cached.publicTradesError);
-    setMyTradesError(cached.myTradesError);
+    if (listDiscoveryEnabled) {
+      setPublicTrades(reconcileTradeSnapshotsForReadAccounts(cached.publicTrades, walletReadAccounts, false));
+      setMyTrades(reconcileTradeSnapshotsForReadAccounts(cached.myTrades, walletReadAccounts, true));
+      setPublicTradesError(cached.publicTradesError);
+      setMyTradesError(cached.myTradesError);
+    }
     if (routeMatches) {
       const cachedRouteSecretIsValidated = hasValidatedRouteAccessSecret(
         resolvedRouteAccessSecret,
@@ -921,6 +927,7 @@ export default function useP2PTradeData({
     }
     setTradeAccessBlocked(routeMatches ? cached.tradeAccessBlocked : false);
   }, [
+    listDiscoveryEnabled,
     resolvedRouteAccessSecret,
     routeError,
     routeEscrowContract,
@@ -1049,6 +1056,7 @@ export default function useP2PTradeData({
   );
 
   const refreshPublicTrades = useCallback(async (options?: TradeRefreshOptions) => {
+    if (!listDiscoveryEnabledRef.current) return;
     const silent = Boolean(options?.silent);
     if (shouldHoldTradeReadForWalletFlow(silent, publicTradesRef.current.length > 0)) {
       return;
@@ -1069,13 +1077,16 @@ export default function useP2PTradeData({
         }
         try {
           let snapshots = await fetchPublicTradeSnapshotBatch();
+          if (!listDiscoveryEnabledRef.current) return;
           for (
             let retryIndex = 0;
             !silent && snapshots.length === 0 && retryIndex < PUBLIC_TRADE_EMPTY_RETRY_LIMIT;
             retryIndex += 1
           ) {
             await waitForPublicTradeRetry();
+            if (!listDiscoveryEnabledRef.current) return;
             snapshots = await fetchPublicTradeSnapshotBatch();
+            if (!listDiscoveryEnabledRef.current) return;
           }
           if (latestSyncSessionKeyRef.current === requestSessionKey && latestWalletKeyRef.current === requestWalletKey) {
             setPublicTrades((previous) => mergePublicTradeRefresh(snapshots, previous, silent, requestWalletKey));
@@ -1086,6 +1097,7 @@ export default function useP2PTradeData({
             publicTradesRefreshQueuedRef.current = true;
           }
         } catch (cause) {
+          if (!listDiscoveryEnabledRef.current) return;
           if (latestSyncSessionKeyRef.current !== requestSessionKey || latestWalletKeyRef.current !== requestWalletKey) {
             publicTradesRefreshQueuedRef.current = true;
           } else if (!silent) {
@@ -1098,14 +1110,17 @@ export default function useP2PTradeData({
         }
       } while (publicTradesRefreshQueuedRef.current);
 
-      publicTradesRefreshRef.current = null;
     })();
 
-    publicTradesRefreshRef.current = refreshRequest;
-    return refreshRequest;
+    const trackedRefresh = refreshRequest.finally(() => {
+      if (publicTradesRefreshRef.current === trackedRefresh) publicTradesRefreshRef.current = null;
+    });
+    publicTradesRefreshRef.current = trackedRefresh;
+    return trackedRefresh;
   }, [fetchPublicTradeSnapshotBatch, syncSessionKey, walletKey]);
 
   const refreshMyTrades = useCallback(async (options?: TradeRefreshOptions) => {
+    if (!listDiscoveryEnabledRef.current) return;
     const silent = Boolean(options?.silent);
     if (shouldHoldTradeReadForWalletFlow(silent, myTradesRef.current.length > 0)) {
       return;
@@ -1200,6 +1215,7 @@ export default function useP2PTradeData({
               };
             })
           );
+          if (!listDiscoveryEnabledRef.current) return;
           const latestReadAccountsKey =
             latestMyTradesRefreshArgsRef.current.walletReadAccounts.length > 0
               ? buildWalletReadAccountsKey(latestMyTradesRefreshArgsRef.current.walletReadAccounts, {
@@ -1245,6 +1261,7 @@ export default function useP2PTradeData({
             myTradesRefreshQueuedRef.current = true;
           }
         } catch {
+          if (!listDiscoveryEnabledRef.current) return;
           if (!currentSilent) {
             setMyTradesError('Failed to load your trades.');
           }
@@ -1256,11 +1273,13 @@ export default function useP2PTradeData({
         nextSilent = myTradesRefreshQueuedSilentRef.current;
       } while (myTradesRefreshQueuedRef.current);
 
-      myTradesRefreshRef.current = null;
     })();
 
-    myTradesRefreshRef.current = refreshRequest;
-    return refreshRequest;
+    const trackedRefresh = refreshRequest.finally(() => {
+      if (myTradesRefreshRef.current === trackedRefresh) myTradesRefreshRef.current = null;
+    });
+    myTradesRefreshRef.current = trackedRefresh;
+    return trackedRefresh;
   }, [
     enrichMakerPrivateProgressForList,
     privateRewardTokenDecimals,
@@ -1401,11 +1420,12 @@ export default function useP2PTradeData({
   }, []);
 
   const hasActiveListRefresh = useCallback(
-    () => Boolean(publicTradesRefreshRef.current || myTradesRefreshRef.current),
+    () => listDiscoveryEnabledRef.current && Boolean(publicTradesRefreshRef.current || myTradesRefreshRef.current),
     []
   );
 
   useEffect(() => {
+    if (!listDiscoveryEnabled) return;
     let cancelled = false;
     let retryTimer: number | null = null;
     const refreshWhenWalletFlowSettles = () => {
@@ -1427,9 +1447,10 @@ export default function useP2PTradeData({
         window.clearTimeout(retryTimer);
       }
     };
-  }, [refreshPublicTrades]);
+  }, [listDiscoveryEnabled, refreshPublicTrades]);
 
   useEffect(() => {
+    if (!listDiscoveryEnabled) return;
     let cancelled = false;
     let retryTimer: number | null = null;
     const refreshWhenWalletFlowSettles = () => {
@@ -1451,7 +1472,7 @@ export default function useP2PTradeData({
         window.clearTimeout(retryTimer);
       }
     };
-  }, [refreshMyTrades]);
+  }, [listDiscoveryEnabled, refreshMyTrades]);
 
   useEffect(() => {
     if (routeView !== 'trade' || routeTradeId === null) {
@@ -1633,8 +1654,8 @@ export default function useP2PTradeData({
     detailTradeError,
     hasActiveListRefresh,
     loadingDetailTrade,
-    loadingMyTrades,
-    loadingPublicTrades,
+    loadingMyTrades: listDiscoveryEnabled && loadingMyTrades,
+    loadingPublicTrades: listDiscoveryEnabled && loadingPublicTrades,
     mergeTradeSnapshot,
     myTrades: scopedMyTrades,
     myTradesError,

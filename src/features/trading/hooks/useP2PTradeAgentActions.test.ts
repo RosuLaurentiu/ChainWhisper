@@ -1,56 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { RECURRING_OTC_CONTRACT_ADDRESS, type TradeSnapshot } from '../../../lib/appShared';
+import { TRADE_ESCROW_CONTRACT_ADDRESS, type TradeSnapshot } from '../../../lib/appShared';
 import type { TradeAgentResponseAction } from '../../../lib/tradeAgent';
 import type { OtcSwapQuoteCandidate } from '../../../lib/otcSwapQuote';
 import {
-  readRecurringAgentSpreadPercentage,
-  resolveRecurringAgentPairSymbols,
   resolveTradeAgentOpenOrderSnapshot,
   selectBestExecutableTradeAgentQuote
 } from './useP2PTradeAgentActions';
 
-describe('recurring Agent conversation context', () => {
-  const conversation = [
-    {
-      role: 'user' as const,
-      text: 'Draft a recurring order for p.COTI and p.gCOTI with private liquidity at +/-50% around Carbon.'
-    },
-    {
-      role: 'assistant' as const,
-      text: 'Which token is base and what liquidity should each side use?'
-    }
-  ];
-
-  it('keeps private-token intent while a follow-up supplies the base/quote order', () => {
-    expect(resolveRecurringAgentPairSymbols({
-      conversation,
-      knownSymbols: ['COTI', 'gCOTI', 'p.COTI', 'p.gCOTI'],
-      prompt: '40 gCOTI and 40 COTI, gCOTI/COTI'
-    })).toEqual(['p.gCOTI', 'p.COTI']);
-  });
-
-  it('carries the earlier Carbon spread into the follow-up request', () => {
-    expect(readRecurringAgentSpreadPercentage('40 gCOTI and 40 COTI, gCOTI/COTI', conversation)).toBe(50);
-  });
-});
-
-const recurringOrder = {
+const currentOrder = {
   tradeId: 5,
-  escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+  escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS
 } as TradeSnapshot;
 
 describe('resolveTradeAgentOpenOrderSnapshot', () => {
-  it('reuses the cached recurring order selected by the agent', () => {
+  it('reuses the cached current order selected by the agent', () => {
     expect(
       resolveTradeAgentOpenOrderSnapshot(
         {
           type: 'open_order',
           tradeId: 5,
-          escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+          escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS
         },
-        [recurringOrder]
+        [currentOrder]
       )
-    ).toBe(recurringOrder);
+    ).toBe(currentOrder);
   });
 
   it('does not reuse an order with the same contract-local id from another escrow', () => {
@@ -59,9 +32,9 @@ describe('resolveTradeAgentOpenOrderSnapshot', () => {
         {
           type: 'open_order',
           tradeId: 5,
-          escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+          escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS
         },
-        [{ ...recurringOrder, escrowContract: '0x1111111111111111111111111111111111111111' }]
+        [{ ...currentOrder, escrowContract: '0x1111111111111111111111111111111111111111' }]
       )
     ).toBeNull();
   });
@@ -70,7 +43,7 @@ describe('resolveTradeAgentOpenOrderSnapshot', () => {
     expect(
       resolveTradeAgentOpenOrderSnapshot(
         { type: 'open_order', tradeId: 5 } as TradeAgentResponseAction,
-        [recurringOrder, { ...recurringOrder, escrowContract: '0x1111111111111111111111111111111111111111' }]
+        [currentOrder, { ...currentOrder, escrowContract: '0x1111111111111111111111111111111111111111' }]
       )
     ).toBeNull();
   });

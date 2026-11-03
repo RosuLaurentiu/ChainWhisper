@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Interface, JsonRpcSigner, getAddress, toBeHex } from '@coti-io/coti-ethers';
+import { Interface, JsonRpcProvider, JsonRpcSigner, getAddress, toBeHex } from '@coti-io/coti-ethers';
 import { issueCurrentDexSubmissionCapability } from './currentDexSubmissionCapability';
 import { CURRENT_NATIVE_POOL_PROFILE } from '../../lib/currentDexNativePoolPolicy';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE, CURRENT_CHEAP_DEX_CANDIDATE, CURRENT_CHEAP_POOL_TOKENS, CURRENT_SHARED_POOL_CANDIDATE, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, resolveCurrentCheapDexCandidate } from '../../lib/dexV2Deployment';
@@ -14,7 +14,21 @@ import * as tokenProof from '../../lib/currentDexOwnerTokenProof';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI } from '../../lib/currentDexOperation';
 
-const mocks = vi.hoisted(() => ({ issue: vi.fn(), pool: vi.fn(), limit: vi.fn(), graph: vi.fn(), decrypt: vi.fn(), sharedFunding: vi.fn(), sharedFunds: vi.fn(), cheap: vi.fn(), receipt: vi.fn(), archived: vi.fn(), archivedRecover: vi.fn(), fillGraph: null as string | null, fillRead: vi.fn() }));
+const mocks = vi.hoisted(() => ({ issue: vi.fn(), pool: vi.fn(), limit: vi.fn(), graph: vi.fn(), decrypt: vi.fn(), sharedFunding: vi.fn(), sharedFunds: vi.fn(), cheap: vi.fn(), receipt: vi.fn(), archived: vi.fn(), archivedRecover: vi.fn(), fillGraph: null as string | null, fillRead: vi.fn(), foreground: vi.fn() }));
+vi.mock('../../lib/appShared/core', async original => ({ ...await original<typeof import('../../lib/appShared/core')>(),
+  loadCotiStartupReadProvider: mocks.foreground,
+  sendCotiScopedRead: vi.fn((provider: { send: (method: string, params: readonly unknown[]) => Promise<unknown> },
+    guard: { run: (read: () => Promise<unknown>) => Promise<unknown> }, method: string, params: readonly unknown[]) =>
+    guard.run(() => provider.send(method, params))) }));
+vi.mock('../../lib/currentDexCanonicalInclusion', async original => {
+  const actual = await original<typeof import('../../lib/currentDexCanonicalInclusion')>();
+  return { ...actual, verifyCurrentDexCanonicalInclusion: (...args: Parameters<typeof actual.verifyCurrentDexCanonicalInclusion>) => {
+    const boundary = mocks.cheap.mock.calls[mocks.cheap.mock.calls.length - 1]?.[0].transport.verifyCanonicalInclusion;
+    return vi.isMockFunction(boundary)
+      ? (boundary as unknown as (transaction: typeof args[1], receipt: typeof args[2]) => Promise<void>)(args[1], args[2])
+      : actual.verifyCurrentDexCanonicalInclusion(...args);
+  } };
+});
 vi.mock('../../lib/currentDexLimitFillHistory', async original => {
   const actual = await original<typeof import('../../lib/currentDexLimitFillHistory')>();
   return { ...actual, get CURRENT_LIMIT_FILL_HISTORY_GRAPHS() {
@@ -45,7 +59,7 @@ vi.mock('../../lib/currentDexLimitSubmission', async original => {
     return actual.createCurrentLimitSubmissionAdapter(args);
   } };
 });
-vi.mock('./ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: mocks.issue }));
+vi.mock('./ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: mocks.issue }));
 vi.mock('../../lib/currentDexPoolSubmission', async original => {
   const actual = await original<typeof import('../../lib/currentDexPoolSubmission')>();
   return { ...actual, createCurrentPoolSubmissionAdapter: (args: Parameters<typeof actual.createCurrentPoolSubmissionAdapter>[0]) => {
@@ -59,6 +73,23 @@ vi.mock('../../lib/privateUint256', async original => ({ ...await original<typeo
   decryptPrivateUint256Output: mocks.decrypt }));
 
 describe('selected candidate acceptance review metadata', () => {
+  it('shares one installed-SDK network check across parallel transaction and receipt reads', async () => {
+    const provider = new JsonRpcProvider('https://example.invalid', { name: 'fixture', chainId: 7082400 }, { batchMaxCount: 1, batchStallTime: 0 });
+    const methods: string[] = [];
+    vi.spyOn(provider, '_send').mockImplementation(async payload => {
+      const requests = Array.isArray(payload) ? payload : [payload];
+      return requests.map(request => { methods.push(request.method); return { id: request.id, jsonrpc: '2.0',
+        result: request.method === 'eth_chainId' ? '0x6c11a0' : request.method === 'eth_blockNumber' ? '0x64' : null }; });
+    });
+    try {
+      await provider.getNetwork(); await provider.send('eth_blockNumber', []); methods.length = 0;
+      await Promise.all([provider.getTransaction(toBeHex(1n,32)),provider.getTransactionReceipt(toBeHex(1n,32)),
+        provider.getTransaction(toBeHex(2n,32)),provider.getTransactionReceipt(toBeHex(2n,32))]);
+      expect(methods.filter(method=>method==='eth_chainId')).toHaveLength(1);
+      expect(methods.filter(method=>method==='eth_getTransactionByHash')).toHaveLength(2);
+      expect(methods.filter(method=>method==='eth_getTransactionReceipt')).toHaveLength(2);
+    } finally { provider.destroy(); }
+  });
   const fixture = async (key: CurrentCheapDexCandidateKey, inputIndex = 0, outputIndex = 1) => {
     vi.clearAllMocks();
     const c = resolveCurrentCheapDexCandidate(key), owner = `0x${'22'.repeat(20)}`;
@@ -69,6 +100,17 @@ describe('selected candidate acceptance review metadata', () => {
       chainId: BigInt(c.chainId), ownerAddress: owner, readProvider: { send, getLogs }, signer }));
     mocks.graph.mockResolvedValue({ graph: c.graph, packageSha256: c.packageSha256, core: c.core });
     const capability = await issueCurrentDexSubmissionCapability({ candidate: key, admission: null } as never);
+    const pageProvider = { send: async (method: string, params: readonly unknown[]) => {
+      const transport = mocks.cheap.mock.calls[mocks.cheap.mock.calls.length - 1][0].transport;
+      if (method === 'eth_chainId') return `0x${BigInt(c.chainId).toString(16)}`;
+      if (method === 'eth_getBlockByNumber' && params[0] === 'latest') return transport.readHead();
+      if (method === 'eth_getBlockByNumber') return { ...await send(method, params), number: params[0], hash: await transport.readBlockHash(Number(BigInt(params[0] as string))) };
+      if (method === 'eth_getTransactionByHash') return transport.readTransaction(params[0]);
+      if (method === 'eth_getTransactionReceipt') { const value = await transport.waitForReceipt(params[0]); return value && { ...value, effectiveGasPrice: 0n }; }
+      if (method === 'eth_getLogs') { const filter = params[0] as { fromBlock: string; toBlock: string }; return getLogs({ ...filter, fromBlock: Number(BigInt(filter.fromBlock)), toBlock: Number(BigInt(filter.toBlock)) }); }
+      return send(method, params);
+    }, _wrapTransactionResponse: (value: unknown) => value, _wrapTransactionReceipt: (value: unknown) => value, _wrapLog: (value: unknown) => value };
+    mocks.foreground.mockResolvedValue(pageProvider);
     const intent = { candidate: c, chainId: BigInt(c.chainId), core: c.core, principal: owner,
       runtimeHash: c.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2], releaseId: c.releaseId,
       operationId: 7n, contextHash: toBeHex(88n, 32), deadline: now + 600n,
@@ -86,6 +128,57 @@ describe('selected candidate acceptance review metadata', () => {
       releaseId: intent.releaseId, originBlock: block };
     return { c, capability, options, issued, readCurrent, receipt, signer, send, getLogs, assertCurrent };
   };
+  it.each(['head timeout', 'receipt timeout', 'HTTP 503', 'privacy', 'unknown', 'changed network', 'HTTP 403'] as const)(
+    'classifies Activity %s without advancing a failed page or signing', async fault => {
+      const f = await fixture('cheap-history');
+      let aesKey = 'local-fixture'; Object.assign(f.signer, { getUserOnboardInfo: () => ({ aesKey }) });
+      const head = vi.spyOn(f.options.transport, 'readHead').mockResolvedValue({ ...f.receipt.block, gasLimit: 120_000_000n });
+      vi.spyOn(f.options.transport, 'readBlockHash').mockResolvedValue(f.receipt.block.hash);
+      f.send.mockResolvedValue({ number: '0x64', hash: f.receipt.block.hash, timestamp: '0x3e8' });
+      mocks.fillRead.mockResolvedValue({ fills: [], count: 0n, complete: true, nextBefore: 0n });
+      vi.spyOn(f.options.transport, 'waitForReceipt').mockResolvedValue(null);
+      const failure = fault === 'HTTP 503' ? Object.assign(new Error('service unavailable'), { code: 'SERVER_ERROR', response: { statusCode: 503 } })
+        : fault === 'unknown' ? new Error('unknown read error')
+          : fault === 'changed network' ? Object.assign(new Error('network changed'), { code: 'NETWORK_ERROR', event: 'changed' })
+            : fault === 'HTTP 403' ? new Error('COTI RPC reads stopped after HTTP 403. No automatic retry.')
+              : Object.assign(new Error('request timed out'), { code: 'TIMEOUT' });
+      if (fault === 'receipt timeout') vi.spyOn(f.options.transport, 'readTransaction').mockRejectedValue(failure);
+      else head.mockImplementation(async () => { if (fault === 'privacy') aesKey = ''; throw failure; });
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ status: '1', message: 'OK',
+        result: [{ hash: toBeHex(211n, 32), from: f.issued.intent.principal, to: f.c.core, blockNumber: '100' }] }) })));
+      const pending = f.capability.readCurrentDexActivityPage({ cursor: { transactions: 2, nfts: null } });
+      if (['head timeout', 'receipt timeout', 'HTTP 503'].includes(fault))
+        await expect(pending).rejects.toMatchObject({ name: 'CurrentDexActivitySourceError' });
+      else {
+        await expect(pending).rejects.not.toMatchObject({ name: 'CurrentDexActivitySourceError' });
+        await expect(pending).rejects.toThrow(fault === 'privacy' ? 'History owner privacy changed' : failure.message);
+      }
+      expect(f.signer.sendTransaction).not.toHaveBeenCalled(); expect(f.signer.estimateGas).not.toHaveBeenCalled();
+    });
+  it('uses the existing foreground provider and stops Activity inside graph validation when its caller is replaced', async () => {
+    const f = await fixture('cheap-history');
+    Object.assign(f.signer, { getUserOnboardInfo: () => ({ aesKey: 'local-fixture' }) });
+    vi.spyOn(f.options.transport, 'readHead').mockResolvedValue({ ...f.receipt.block, gasLimit: 120_000_000n });
+    const actual = await vi.importActual<typeof import('../../lib/dexV2Chain')>('../../lib/dexV2Chain');
+    mocks.graph.mockImplementation(args => actual.readCurrentSharedPoolDexGraph(args));
+    const provider = await mocks.foreground.getMockImplementation()!();
+    let active = true, release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; }), methods: string[] = [];
+    const send = provider.send;
+    provider.send = async (method: string, params: readonly unknown[]) => { methods.push(method);
+      if (method === 'eth_chainId') await held;
+      return send(method, params);
+    };
+    const pending = f.capability.readCurrentDexActivityPage({ cursor: { transactions: 1, nfts: 1 },
+      assertCurrent: () => { if (!active) throw new Error('Activity caller replaced'); } });
+    await vi.waitFor(() => expect(methods).toContain('eth_chainId')); active = false; release();
+    await expect(pending).rejects.toThrow('Activity caller replaced');
+    expect(methods).toEqual(['eth_getBlockByNumber', 'eth_chainId']);
+    expect(mocks.foreground).toHaveBeenCalledOnce();
+    const { sendCotiScopedRead } = await import('../../lib/appShared/core');
+    expect(vi.mocked(sendCotiScopedRead).mock.calls.every(([value]) => value === provider)).toBe(true);
+    expect(f.signer.sendTransaction).not.toHaveBeenCalled(); expect(f.signer.estimateGas).not.toHaveBeenCalled();
+  });
   it.each([
     ['cheap-async', 1, false, 2000n, 'Preparing Quote', 'none'],
     ['cheap-async', 5, false, 2000n, 'Quote ready', 'none'],
@@ -219,10 +312,24 @@ describe('selected candidate acceptance review metadata', () => {
     const fetcher=vi.fn(async(url:URL)=>({ok:true,json:async()=>({status:'1',message:'OK',result:url.searchParams.get('action')==='txlist'?[{hash,from:owner,to:token,blockNumber:'100'}]:[]})}));
     vi.stubGlobal('fetch',fetcher);const getItem=vi.fn(()=>{throw new Error('History must not read a browser reservation');});
     vi.stubGlobal('window',{sessionStorage:{getItem,setItem:vi.fn(),removeItem:vi.fn()}});mocks.decrypt.mockReturnValue(10_000_000_000n);
+    const provider=await mocks.foreground.getMockImplementation()!(),send=provider.send;
+    const rawTransaction={hash,chainId:toBeHex(f.c.chainId),from:owner,to:token,value:'0x0',input:transaction.data,nonce:'0x4',gas:'0x4c4b40',
+      gasPrice:'0x1',type:'0x0',blockNumber:'0x64',blockHash,transactionIndex:'0x0',v:'0x1b',r:toBeHex(1n,32),s:toBeHex(2n,32)};
+    const rawReceipt={transactionHash:hash,status:'0x1',from:owner,to:token,contractAddress:null,blockNumber:'0x64',blockHash,
+      transactionIndex:'0x0',type:'0x0',gasUsed:'0x5208',cumulativeGasUsed:'0x5208',effectiveGasPrice:'0x1',logsBloom:`0x${'00'.repeat(256)}`,
+      logs:receipt.logs.map((log,index)=>({...log,logIndex:toBeHex(index),transactionHash:hash,transactionIndex:'0x0',blockNumber:'0x64',blockHash,removed:false}))};
+    provider.send=(method:string,params:readonly unknown[])=>method==='eth_getTransactionByHash'?Promise.resolve(rawTransaction)
+      :method==='eth_getTransactionReceipt'?Promise.resolve(rawReceipt):send(method,params);
+    provider._wrapTransactionResponse=JsonRpcProvider.prototype._wrapTransactionResponse;
+    provider._wrapTransactionReceipt=JsonRpcProvider.prototype._wrapTransactionReceipt;
     const page=await f.capability.readCurrentDexActivityPage({cursor:{transactions:1,nfts:1}});
     expect(page).toMatchObject({complete:true,unavailable:[],fills:[],limitFillsState:'not-recorded',rows:[{action:'Token claim',movements:[{token,received:10_000_000_000n}]}]});
     expect(mocks.fillRead).not.toHaveBeenCalled();
     expect(canonical).toHaveBeenCalledTimes(2);expect(getItem).not.toHaveBeenCalled();expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+    expect(canonical.mock.calls[0][0]).toMatchObject({hash,chainId:BigInt(f.c.chainId),data:transaction.data,nonce:4,gasLimit:5_000_000n,blockNumber:100});
+    expect(canonical.mock.calls[0][1]).toMatchObject({hash,status:1,blockNumber:100,logs:[{index:0},{index:1}]});
+    const {sendCotiScopedRead}=await import('../../lib/appShared/core');
+    expect(vi.mocked(sendCotiScopedRead).mock.calls.filter(([, , method])=>method==='eth_chainId')).toHaveLength(1);
   });
   it.each(['cheap-exit','cheap-history']as const)('binds %s fill pages to all market engines, privacy and the saved canonical head', async key => {
     const f=await fixture(key); mocks.fillGraph=f.c.graph; // Synthetic support gate; no deployment or native admission.
@@ -234,21 +341,68 @@ describe('selected candidate acceptance review metadata', () => {
     vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>({status:'1',message:'OK',result:[]})})));
     mocks.fillRead.mockImplementation(async args=>{
       await args.assertCurrent();
+      await args.attest(args.head); await args.assertCurrent();
       return {fills:args.engine===engine?[{engine,record:33n,positionId:7n,blockNumber:95n,blockHash:f.receipt.block.hash,timestamp:f.receipt.block.timestamp-5n,
         soldToken:args.poolTokens[0],receivedToken:args.poolTokens[1],sold:5n,received:10n,readyToSign:false,nativeAdmission:false}]:[],
         count:64n,complete:args.engine!==engine,nextBefore:32n};
     });
-    const page=await f.capability.readCurrentDexActivityPage({cursor:{transactions:1,nfts:1}});
+    const onProgress = vi.fn();
+    const page=await f.capability.readCurrentDexActivityPage({cursor:{transactions:1,nfts:1}, onProgress});
+    expect(onProgress.mock.calls.map(call => call[2])).toEqual(['validation', 'discovery', 'receipts', 'terminals', 'statuses', 'fills', 'finalizing']);
     expect(page).toMatchObject({limitFillsState:'available',complete:false,fills:[{record:33n,positionId:7n}],nextCursor:{limitFills:{[engine]:32n}}});
     expect(mocks.fillRead).toHaveBeenCalledTimes(6);
+    expect(mocks.graph).toHaveBeenCalledTimes(1);
     expect(mocks.fillRead.mock.calls[0][0]).toMatchObject({owner:f.issued.intent.principal,engine,head:f.receipt.block,poolTokens:scope.pairs[0].tokens});
     expect(mocks.fillRead.mock.calls[0][0].decryptBool).toEqual(expect.any(Function));
-    mocks.fillRead.mockClear();mocks.fillRead.mockResolvedValue({fills:[],count:64n,complete:true,nextBefore:0n});
+    mocks.fillRead.mockClear();mocks.fillRead.mockImplementation(async args=>{
+      await args.assertCurrent(); await args.attest(args.head); await args.assertCurrent();
+      return {fills:[],count:64n,complete:true,nextBefore:0n};
+    });
     const older=await f.capability.readCurrentDexActivityPage({cursor:page.nextCursor,head:page.head});
     expect(mocks.fillRead).toHaveBeenCalledTimes(1);expect(mocks.fillRead.mock.calls[0][0]).toMatchObject({engine,before:32n});
     expect(older.complete).toBe(true);expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+    expect(mocks.graph).toHaveBeenCalledTimes(2);
     mocks.fillRead.mockRejectedValueOnce(new Error('RPC unavailable'));
     await expect(f.capability.readCurrentDexActivityPage({cursor:{transactions:null,nfts:null}})).rejects.toThrow('RPC unavailable');
+  });
+  it.each(['none', 'completed', 'graph', 'privacy', 'session', 'reorg'] as const)('attests a saved Activity head only for unfinished fills and preserves %s behavior', async fault => {
+    const f = await fixture('cheap-history'); mocks.fillGraph = f.c.graph;
+    const saved = f.receipt.block, latest = { ...saved, number: 101n, hash: toBeHex(99n, 32), gasLimit: 120_000_000n };
+    let aesKey = '11'.repeat(16);
+    Object.assign(f.signer, { getUserOnboardInfo: () => ({ aesKey }) });
+    vi.spyOn(f.options.transport, 'readHead').mockResolvedValue(latest);
+    const readBlockHash = vi.spyOn(f.options.transport, 'readBlockHash').mockResolvedValue(saved.hash);
+    f.send.mockResolvedValue({ number: '0x64', hash: saved.hash, timestamp: `0x${saved.timestamp.toString(16)}` });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ status: '1', message: 'OK', result: [] }) })));
+    mocks.graph.mockImplementation(async args => {
+      if ((fault === 'graph' || fault === 'completed') && args.blockNumber === saved.number) throw new Error('saved graph unavailable');
+      return { graph: f.c.graph, packageSha256: f.c.packageSha256, core: f.c.core };
+    });
+    const readFillRecords = vi.fn();
+    mocks.fillRead.mockImplementation(async args => {
+      if (fault === 'privacy' && mocks.fillRead.mock.calls.length === 2) aesKey = '22'.repeat(16);
+      if (fault === 'session' && mocks.fillRead.mock.calls.length === 2) f.assertCurrent.mockRejectedValueOnce(new Error('session changed'));
+      if (fault === 'reorg') readBlockHash.mockResolvedValue(toBeHex(98n, 32));
+      await args.attest(args.head); await args.assertCurrent();
+      readFillRecords();
+      return { fills: [], count: 0n, complete: true, nextBefore: 0n };
+    });
+    const limitFills = fault === 'completed'
+      ? Object.fromEntries(resolvePreparedDexScope('cheap-history').candidate.pairs.map(pair => [pair.engine.toLowerCase(), null])) : undefined;
+    const pending = f.capability.readCurrentDexActivityPage({ cursor: { transactions: 1, nfts: 1, limitFills }, head: saved });
+    if (fault === 'none' || fault === 'completed') {
+      expect(await pending).toMatchObject({ complete: true, head: { number: saved.number, hash: saved.hash } });
+      expect(mocks.fillRead).toHaveBeenCalledTimes(fault === 'completed' ? 0 : 6);
+    } else await expect(pending).rejects.toThrow({ graph: 'saved graph unavailable', privacy: 'History owner privacy changed',
+      session: 'session changed', reorg: 'History chain head changed' }[fault]);
+    expect(mocks.graph).toHaveBeenCalledTimes(fault === 'completed' ? 1 : 2);
+    expect(mocks.graph.mock.calls.map(([args]) => [args.blockNumber, args.blockHash])).toEqual(fault === 'completed'
+      ? [[latest.number, latest.hash]] : [[latest.number, latest.hash], [saved.number, saved.hash]]);
+    if (fault === 'graph') {
+      expect(mocks.fillRead).toHaveBeenCalledOnce();
+      expect(readFillRecords).not.toHaveBeenCalled();
+    }
+    expect(f.signer.sendTransaction).not.toHaveBeenCalled();
   });
   it.each(['cheap-exit','cheap-history']as const)('checks %s candidate code while retaining canonical terminal token evidence',async candidate=>{
     const f=await fixture(candidate);Object.assign(f.signer,{getUserOnboardInfo:()=>({aesKey:'11'.repeat(16)})});

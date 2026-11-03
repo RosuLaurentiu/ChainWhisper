@@ -1,7 +1,15 @@
 import { describe,expect,it } from 'vitest';
 import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { currentDexDailyPriceScope,loadCurrentDexDailyPrice } from './useCurrentDexDailyPrice';
+import { getCurrentDexPriceReadProvider } from '../../../lib/currentDexDailyPrice';
+import { CONFIGURED_COTI_NETWORK } from '../../../lib/chainWhisperNetworks';
 describe('Current DEX daily history request scope',()=>{
+  it('keeps one admitted endpoint identity for both price display loaders and refuses another endpoint',()=>{
+    const first=getCurrentDexPriceReadProvider(CONFIGURED_COTI_NETWORK.rpcUrl);
+    expect(getCurrentDexPriceReadProvider(new URL(CONFIGURED_COTI_NETWORK.rpcUrl).toString())).toBe(first);
+    expect(()=>getCurrentDexPriceReadProvider('https://other.invalid')).toThrow('selected COTI RPC endpoint');
+    expect(getCurrentDexPriceReadProvider(CONFIGURED_COTI_NETWORK.rpcUrl)).toBe(first);
+  });
   it('accepts the reverse display pair without rewriting canonical source samples',async()=>{
     const f=makeHistoryFixture(),pair=[f.manifest.symbols[1],f.manifest.symbols[0]] as const;
     const view=await loadCurrentDexDailyPrice({config:f.config,pair,provider:f.provider});

@@ -27,28 +27,27 @@ type EnsureToken = (token: { address: string; kind: 'erc20' | 'private-erc20' })
 export const useCounterTradeV2Activity = ({ runtime, ownerAddress, enabled, ensureTokenInfo }: {
   runtime?: Runtime; ownerAddress: string; enabled: boolean; ensureTokenInfo: EnsureToken;
 }) => {
-  const session = useMemo(() => ({ runtime, owner: ownerAddress.toLowerCase() }), [runtime, ownerAddress]);
+  const session = useMemo(() => ({ runtime, owner: ownerAddress.toLowerCase() }), [runtime, ownerAddress, enabled]);
   const active = useRef<typeof session | null>(null), running = useRef<typeof session | null>(null), ensureRef = useRef(ensureTokenInfo);
   useEffect(() => { ensureRef.current = ensureTokenInfo; }, [ensureTokenInfo]);
   const [state, setState] = useState<{ session: typeof session; snapshot?: CounterTradeV2ActivitySnapshot; busy: boolean; error: string } | null>(null);
-  useEffect(() => { active.current = enabled ? session : null; return () => { if (active.current === session) active.current = null; }; }, [session, enabled]);
-  const refresh = useCallback(async () => {
+  useEffect(() => { active.current = enabled ? session : null; if (!enabled) setState(null);
+    return () => { if (active.current === session) active.current = null; }; }, [session, enabled]);
+  const load = useCallback(async (mode: 'latest' | 'older') => {
     if (!enabled || !runtime || runtime.ownerAddress.toLowerCase() !== session.owner || running.current === session || active.current !== session) return;
     running.current = session;
     setState(previous => ({ session, snapshot: previous?.session === session ? previous.snapshot : undefined, busy: true, error: '' }));
     try {
-      const loaded = new Set<string>();
-      for (let step = 0; step < 4 && active.current === session; step++) {
-        const snapshot = await runtime.syncActivity(); if (active.current !== session) return;
+        const snapshot = await runtime.syncActivity(snapshot => {
+          if (active.current === session) setState({ session, snapshot, busy: true, error: '' });
+        }, mode); if (active.current !== session) return;
         setState({ session, snapshot, busy: true, error: '' });
         const tokens = new Map<string, Parameters<EnsureToken>[0]>();
         for (const row of snapshot.orders) {
           const kind = row.privatePair ? 'private-erc20' : 'erc20';
-          for (const address of [row.offerToken, row.requestToken]) if (!loaded.has(`${kind}:${address}`)) tokens.set(`${kind}:${address}`, { address, kind });
+          for (const address of [row.offerToken, row.requestToken]) tokens.set(`${kind}:${address}`, { address, kind });
         }
-        await Promise.all([...tokens.entries()].map(async ([key, token]) => { try { await ensureRef.current(token); loaded.add(key); } catch { /* Keep unavailable metadata labelled. */ } }));
-        if (snapshot.complete) break;
-      }
+        await Promise.all([...tokens.values()].map(async token => { try { await ensureRef.current(token); } catch { /* Keep unavailable metadata labelled. */ } }));
     } catch {
       if (active.current === session) setState(previous => ({ session, snapshot: previous?.session === session ? previous.snapshot : undefined, busy: false,
         error: 'Counter activity could not refresh. Saved results may be out of date.' }));
@@ -57,9 +56,11 @@ export const useCounterTradeV2Activity = ({ runtime, ownerAddress, enabled, ensu
       setState(previous => previous?.session === session ? { ...previous, busy: false } : previous);
     }
   }, [enabled, runtime, session]);
+  const refresh = useCallback(() => load('latest'), [load]);
+  const loadOlder = useCallback(() => load('older'), [load]);
   useEffect(() => { void refresh(); }, [refresh]);
   const current = enabled && state?.session === session ? state : null;
-  return { snapshot: current?.snapshot, busy: current?.busy ?? false, error: current?.error ?? '', refresh };
+  return { snapshot: current?.snapshot, busy: current?.busy ?? false, error: current?.error ?? '', refresh, loadOlder };
 };
 
 export default function CounterTradeV2Activity({ activity, runtime, lifecycle, activeFilter, tokenInfoByKey, ensureTokenInfo,
@@ -69,6 +70,15 @@ export default function CounterTradeV2Activity({ activity, runtime, lifecycle, a
   search: string; pairFilter: string; typeFilter: string; sortMode: string; actionInProgress: boolean;
   confirmFunding: (input: TradeFundingPreflightInput) => Promise<void>; runWalletFlow: <T>(operation: () => Promise<T>) => Promise<T>; onBusyChange: (busy: boolean) => void;
 }) {
+  const olderSentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onScroll = () => {
+      const bounds = olderSentinel.current?.getBoundingClientRect();
+      if (bounds && bounds.top <= window.innerHeight + 200 && bounds.bottom >= 0 && activity.snapshot && !activity.snapshot.complete && !activity.busy && !activity.error) void activity.loadOlder();
+    };
+    window.addEventListener('scroll', onScroll, true);
+    return () => window.removeEventListener('scroll', onScroll, true);
+  }, [activity.snapshot, activity.busy, activity.error, activity.loadOlder]);
   const view = useRef({ runtime, lifecycle });
   view.current = { runtime, lifecycle };
   const [selection, setSelection] = useState<{ root: Runtime; target: Runtime; reference: Reference; lifecycle: typeof lifecycle } | null>(null);
@@ -110,9 +120,10 @@ export default function CounterTradeV2Activity({ activity, runtime, lifecycle, a
   const labels = ['', 'Created', 'Accepted', 'Cancelled', 'Declined', 'Expired', 'Returned after parent change'];
   return <section className="p2p-management-group-block" aria-label="Counter-offers" aria-busy={activity.busy}>
     <header className="p2p-management-group-head"><strong>Counter-offers</strong>
-      {!activity.snapshot?.complete ? <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.refresh(); }}>{activity.busy ? 'Loading…' : 'Load more'}</button> : null}</header>
+      <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.refresh(); }}>Refresh latest</button></header>
     {activity.error ? <p role="alert">{activity.error}</p> : null}
     {selectionError ? <p role="alert">{selectionError}</p> : null}
+    {!activity.error && activity.snapshot && !activity.snapshot.complete ? <p role="status">History is incomplete. Older trades and events may not be loaded.</p> : null}
     {!activity.busy && !activity.error && activity.snapshot?.complete && rows.length === 0 ? <p>No counter-offers in this view.</p> : null}
     {rows.map(row => <article key={`${counterActivityOrderKey(row)}:${row.key ?? 'order'}`} className="p2p-management-group-block">
       <strong>{meta(row).pair}</strong><span> · {lifecycle === 'active' ? row.expiresAt !== '0' && BigInt(row.expiresAt) <= BigInt(Math.floor(Date.now() / 1000)) ? 'Expired · return available' : row.taker === runtime.ownerAddress.toLowerCase() ? 'To you' : 'Your funded offer' : labels[row.status]}</span>
@@ -126,6 +137,8 @@ export default function CounterTradeV2Activity({ activity, runtime, lifecycle, a
     {selected ? <CounterTradeV2ParticipantControls runtime={selected.target} ownerAddress={selected.target.ownerAddress} proposalId={selected.reference.id} tokenInfoByKey={tokenInfoByKey}
       ensureTokenInfo={ensureTokenInfo} confirmFunding={confirmFunding} runWalletFlow={runWalletFlow}
       onBusyChange={busy => { onBusyChange(busy); if (!busy) void activity.refresh(); }} actionInProgress={actionInProgress} /> : null}
-    {activity.snapshot ? <details><summary>History coverage</summary><p>Through block {activity.snapshot.throughBlock ?? 'not yet loaded'} of {activity.snapshot.safeHead}</p></details> : null}
+    <div ref={olderSentinel} aria-hidden="true" />
+    {!activity.snapshot?.complete ? <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.loadOlder(); }}>{activity.busy ? 'Loading…' : 'Load older'}</button> : null}
+    {activity.snapshot ? <details><summary>History coverage</summary><p>Blocks {activity.snapshot.fromBlock ?? 'not yet loaded'} to {activity.snapshot.throughBlock ?? 'not yet loaded'} of {activity.snapshot.safeHead}</p></details> : null}
   </section>;
 }

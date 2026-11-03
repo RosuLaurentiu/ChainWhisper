@@ -148,6 +148,27 @@ describe('useGroupMessageActions Group Chat V2 routing', () => {
     });
   });
 
+  it.each([8, null])('preserves the new composer after switching from the sending group to %s', async (target) => {
+    const state = createArgs();
+    const receipt = await state.send();
+    let complete!: (value: typeof receipt) => void;
+    state.send.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const pending = useGroupMessageActions(state.args).sendGroupMessage();
+    state.args.activeGroupIdRef.current = target as number;
+    complete(receipt);
+    await expect(pending).resolves.toBe(TX_HASH);
+    expect(state.args.setMessageInput).not.toHaveBeenCalled();
+    expect(state.args.setReplyingToMessage).not.toHaveBeenCalled();
+    const calls = vi.mocked(state.args.setMessagesByGroup).mock.calls;
+    const update = calls[calls.length - 1][0];
+    expect(typeof update).toBe('function');
+    if (typeof update === 'function') {
+      const optimistic = vi.mocked(state.args.setMessagesByGroup).mock.calls[0]![0];
+      const messages = typeof optimistic === 'function' ? optimistic({}) : optimistic;
+      expect(update(messages)['7'][0]).toMatchObject({ deliveryState: 'sent', txHash: TX_HASH });
+    }
+  });
+
   it('fails closed without Group Chat V2 instead of sending a legacy memo', async () => {
     const state = createArgs();
     state.args.groupChatV2Session = null;

@@ -221,12 +221,14 @@ export default function useGroupMessageActions({
             : message
         )
       }));
-      if (typeof overrideMessageText === 'undefined') setMessageInput('');
-      setReplyingToMessage(null);
+      if (activeGroupIdRef.current === groupId) {
+        if (typeof overrideMessageText === 'undefined') setMessageInput('');
+        setReplyingToMessage(null);
+      }
       setWalletBalanceRefreshNonce((previous) => previous + 1);
       return result.transactionHash || undefined;
     } catch (sendError) {
-      if (currentWalletKeyRef.current !== requestedWalletKey) return;
+      if (!isGroupChatV2ScopeCurrent() || currentWalletKeyRef.current !== requestedWalletKey) return;
       setError(getGroupActionErrorMessage(
         sendError,
         getOnChainFailureMessage(sendError, 'Failed to send group message.')

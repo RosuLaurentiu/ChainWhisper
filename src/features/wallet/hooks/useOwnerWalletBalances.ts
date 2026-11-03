@@ -8,7 +8,6 @@ import {
 } from '../../../lib/appHelpers';
 import {
   readCurrentPrivateErc20BalanceWei,
-  readLegacyPrivateRewardBalanceWei
 } from '../../../lib/appChain';
 import {
   COTI_NETWORK,
@@ -40,19 +39,16 @@ const EMPTY_WATCHED_TOKENS: readonly WalletWatchedToken[] = [];
 
 type OwnerPrivateBalanceReaders = {
   readCurrentPrivateBalance?: typeof readCurrentPrivateErc20BalanceWei;
-  readLegacyPrivateBalance?: typeof readLegacyPrivateRewardBalanceWei;
 };
 
 export const loadOwnerPrivateTokenBalances = async ({
   getOwnerReadSigner,
   ownerWalletAddress,
   readCurrentPrivateBalance = readCurrentPrivateErc20BalanceWei,
-  readLegacyPrivateBalance = readLegacyPrivateRewardBalanceWei
 }: {
   getOwnerReadSigner: (requirePrivacy: boolean) => Promise<JsonRpcSigner>;
   ownerWalletAddress: string;
 } & OwnerPrivateBalanceReaders): Promise<{
-  legacyPrivateBalanceWei: bigint | null;
   ownerPrivateSigner: JsonRpcSigner;
   privateBalanceWei: bigint | null;
 }> => {
@@ -62,12 +58,7 @@ export const loadOwnerPrivateTokenBalances = async ({
     ownerWalletAddress,
     ownerPrivateSigner
   ).catch(() => null);
-  const legacyPrivateBalanceWei = await readLegacyPrivateBalance(
-    ownerWalletAddress,
-    ownerPrivateSigner
-  ).catch(() => null);
   return {
-    legacyPrivateBalanceWei,
     ownerPrivateSigner,
     privateBalanceWei
   };
@@ -85,7 +76,6 @@ export default function useOwnerWalletBalances({
   const [ownerNativeBalanceWei, setOwnerNativeBalanceWei] = useState<bigint | null>(null);
   const [ownerRewardTokenBalanceWei, setOwnerRewardTokenBalanceWei] = useState<bigint | null>(null);
   const [ownerPrivateRewardTokenBalanceWei, setOwnerPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
-  const [ownerLegacyPrivateRewardTokenBalanceWei, setOwnerLegacyPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
   const [ownerPrivateRewardBalanceLocked, setOwnerPrivateRewardBalanceLocked] = useState(false);
   const [ownerTokenBalancesLoading, setOwnerTokenBalancesLoading] = useState(false);
   const [ownerCustomTradeTokenInfoByAddress, setOwnerCustomTradeTokenInfoByAddress] = useState<
@@ -128,7 +118,6 @@ export default function useOwnerWalletBalances({
     if (!ownerWalletAddress || !isWalletAddress(ownerWalletAddress) || chainId !== COTI_NETWORK.chainIdDecimal) {
       setOwnerRewardTokenBalanceWei(null);
       setOwnerPrivateRewardTokenBalanceWei(null);
-      setOwnerLegacyPrivateRewardTokenBalanceWei(null);
       setOwnerPrivateRewardBalanceLocked(false);
       setOwnerTokenBalancesLoading(false);
       setOwnerCustomTradeTokenInfoByAddress({});
@@ -187,7 +176,6 @@ export default function useOwnerWalletBalances({
           ).values()
         ) : [];
         let privateBalanceWei: bigint | null = null;
-        let legacyPrivateBalanceWei: bigint | null = null;
 
         if (ownerAesReady) {
           try {
@@ -197,10 +185,8 @@ export default function useOwnerWalletBalances({
             });
             ownerPrivateSigner = privateBalances.ownerPrivateSigner;
             privateBalanceWei = privateBalances.privateBalanceWei;
-            legacyPrivateBalanceWei = privateBalances.legacyPrivateBalanceWei;
           } catch {
             privateBalanceWei = null;
-            legacyPrivateBalanceWei = null;
           }
         }
         if (cancelled) return;
@@ -278,7 +264,6 @@ export default function useOwnerWalletBalances({
         if (!cancelled) {
           setOwnerRewardTokenBalanceWei(typeof rewardBalanceRaw === 'bigint' ? rewardBalanceRaw : null);
           setOwnerPrivateRewardTokenBalanceWei(privateBalanceWei);
-          setOwnerLegacyPrivateRewardTokenBalanceWei(legacyPrivateBalanceWei);
           setOwnerPrivateRewardBalanceLocked(!ownerAesReady);
           setOwnerCustomTradeTokenInfoByAddress(
             Object.fromEntries(
@@ -290,7 +275,6 @@ export default function useOwnerWalletBalances({
         if (!cancelled) {
           setOwnerRewardTokenBalanceWei(null);
           setOwnerPrivateRewardTokenBalanceWei(null);
-          setOwnerLegacyPrivateRewardTokenBalanceWei(null);
           setOwnerPrivateRewardBalanceLocked(!ownerAesReady);
           setOwnerCustomTradeTokenInfoByAddress({});
         }
@@ -318,7 +302,6 @@ export default function useOwnerWalletBalances({
 
   return {
     ownerCustomTradeTokenInfoByAddress,
-    ownerLegacyPrivateRewardTokenBalanceWei,
     ownerNativeBalanceWei,
     ownerPrivateRewardBalanceLocked,
     ownerPrivateRewardTokenBalanceWei,

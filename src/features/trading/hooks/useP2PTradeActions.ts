@@ -106,6 +106,7 @@ export default function useP2PTradeActions({
   mergeTradeSnapshot,
   openTrade,
   rememberTradeTerminalReturn,
+  refreshTradeDataInBackground,
   readTradeDetail,
   runTradeWalletPromptFlow,
   setTradeActionError,
@@ -123,7 +124,7 @@ export default function useP2PTradeActions({
   const requireV2 = useCallback(async (snapshot: TradeSnapshot) => {
     const identity = snapshot.v2;
     if (!identity) {
-      throw new Error('Legacy OTC orders are read-only. Create or use an OTC V2 order.');
+      throw new Error('This order is not supported by the current App.');
     }
     if (!otcV2ActionRuntime || !otcV2ActionRuntime.isCurrent()) {
       throw new Error('This OTC V2 order is unavailable in the current wallet session.');
@@ -131,6 +132,10 @@ export default function useP2PTradeActions({
     const runtime = await otcV2ActionRuntime.forReference?.({ chainId: identity.chainId, contractAddress: identity.contractAddress, orderId: String(snapshot.tradeId) }) ?? otcV2ActionRuntime;
     if (!runtime.isCurrent()) throw new Error('The referenced OTC runtime is closed.');
     const deployment = runtime.deployments[identity.protocol];
+    if (!deployment) throw new Error('This order protocol is not supported by the current App.');
+    if (identity.protocol === 'private-v2' && !isPrivateBookV2RuntimeHash(deployment.runtimeBytecodeHash)) {
+      throw new Error('This private order does not match the current Book deployment.');
+    }
     if (
       identity.chainId !== deployment.chainId ||
       identity.contractAddress.toLowerCase() !== deployment.contractAddress.toLowerCase() ||
@@ -173,7 +178,7 @@ export default function useP2PTradeActions({
       if (!result) return undefined;
       // Execution has returned its confirmed receipt. Display failures cannot undo it.
       let message: string | undefined;
-      for (const refresh of result.refreshDisplay) {
+      for (const refresh of [...result.refreshDisplay, () => refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract)]) {
         try {
           await refresh();
         } catch {
@@ -197,7 +202,7 @@ export default function useP2PTradeActions({
     } finally {
       setProcessingTradeActionId('');
     }
-  }, [notify, runTradeWalletPromptFlow, setTradeActionError]);
+  }, [notify, refreshTradeDataInBackground, runTradeWalletPromptFlow, setTradeActionError]);
 
   const runPrivateBookReview = useCallback(async (
     runtime: OtcV2ActionRuntime, snapshot: TradeSnapshot, action: PrivateBookV2Action, markPending: () => void
@@ -297,18 +302,6 @@ export default function useP2PTradeActions({
             requestAsset: latest.request.kind === 'native'
               ? { assetType: 'native' }
               : { assetType: 'erc20', token: latest.request.tokenAddress }
-          })).transactionHash;
-        } else if (v2.identity.protocol === 'private-v2') {
-          if (!v2.identity.revision || !v2.identity.privateMode) {
-            throw new Error('Private OTC V2 revision or mode is unavailable.');
-          }
-          const terms = v2.identity.privateMode === 'fully-private'
-            ? { mode: 'fully-private' as const, maxRequestAmount: amounts.request, minOfferAmount: amounts.offer }
-            : v2.identity.privateMode === 'private-offer-public-request'
-              ? { mode: 'private-offer-public-request' as const, publicRequestAmount: amounts.request, minPrivateOfferAmount: amounts.offer }
-              : { mode: 'public-offer-private-request' as const, publicOfferAmount: amounts.offer, maxPrivateRequestAmount: amounts.request };
-          transactionHash = (await v2.runtime.privateTrade({
-            kind: 'fill', orderId: latest.tradeId, expectedRevision: v2.identity.revision, terms
           })).transactionHash;
         } else if (latest.request.kind === 'private-erc20') {
           if (!latest.request.tokenAddress) throw new Error('Direct private request token is unavailable.');
@@ -443,19 +436,7 @@ export default function useP2PTradeActions({
               : { assetType: 'erc20', token: latest.request.tokenAddress }
           })).transactionHash;
         } else {
-          if (!v2.identity.revision || !v2.identity.privateMode) {
-            throw new Error('Private OTC V2 revision or mode is unavailable.');
-          }
-          const minimumOffer = (requestedAmount * amounts.offer) / amounts.request;
-          if (minimumOffer <= 0n) throw new Error('This private fill is too small at the current order price.');
-          const terms = v2.identity.privateMode === 'fully-private'
-            ? { mode: 'fully-private' as const, maxRequestAmount: requestedAmount, minOfferAmount: minimumOffer }
-            : v2.identity.privateMode === 'private-offer-public-request'
-              ? { mode: 'private-offer-public-request' as const, publicRequestAmount: requestedAmount, minPrivateOfferAmount: minimumOffer }
-              : { mode: 'public-offer-private-request' as const, publicOfferAmount: minimumOffer, maxPrivateRequestAmount: requestedAmount };
-          transactionHash = (await v2.runtime.privateTrade({
-            kind: 'fill', orderId: latest.tradeId, expectedRevision: v2.identity.revision, terms
-          })).transactionHash;
+          throw new Error('This order does not support a partial fill.');
         }
         return { txHash: transactionHash, refreshDisplay: [
           () => { if (options?.openAfterAction !== false) openTrade(latest.tradeId, undefined, latest.escrowContract); },
@@ -505,9 +486,7 @@ export default function useP2PTradeActions({
         markPending();
         const confirmed = v2.identity.protocol === 'standard-v2'
           ? await v2.runtime.standard({ kind: 'cancel', tradeId: snapshot.tradeId })
-          : v2.identity.protocol === 'private-v2'
-            ? await v2.runtime.privateTrade({ kind: 'cancel', orderId: snapshot.tradeId })
-            : await v2.runtime.direct({ kind: 'cancel', tradeId: snapshot.tradeId });
+          : await v2.runtime.direct({ kind: 'cancel', tradeId: snapshot.tradeId });
         return { txHash: confirmed.transactionHash, refreshDisplay: [
           () => mergeTradeSnapshot({ ...snapshot, status: 'cancelled' }),
           () => refreshOneOffV2Trades?.()

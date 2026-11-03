@@ -53,6 +53,7 @@ import {
   type DirectChatV2Payload
 } from './directChatV2Payload';
 import type { DirectChatV2SyncDependencies } from './directChatV2SyncCoordinator';
+import type { CotiEventHintSubscriber } from './appShared/cotiEventHints';
 
 export type DirectChatV2OwnerCapabilityGetter = (
   requirePrivacy: boolean
@@ -134,7 +135,8 @@ export type DirectChatV2SessionController = {
     onHint: () => void | Promise<void>
   ) => Promise<(() => Promise<void>) | null>;
   watchIncoming: (
-    onHint: (peer: string) => void | Promise<void>
+    onHint: (peer: string) => void | Promise<void>,
+    shouldPause?: () => boolean
   ) => Promise<() => Promise<void>>;
   clearEpochKeys: () => void;
 };
@@ -295,6 +297,7 @@ export const createDirectChatV2Session = ({
   ownerAddress,
   retireNonceAttempt,
   runOwnerTransactionFlow,
+  subscribeEventHints,
   waitForPostConfirmationRead = (delayMs) => new Promise((resolve) => {
     globalThis.setTimeout(resolve, delayMs);
   })
@@ -305,6 +308,7 @@ export const createDirectChatV2Session = ({
   ownerAddress: string;
   retireNonceAttempt: DirectChatV2NonceAttemptRetirer;
   runOwnerTransactionFlow: DirectChatV2TransactionFlow;
+  subscribeEventHints?: CotiEventHintSubscriber;
   waitForPostConfirmationRead?: (delayMs: number) => Promise<void>;
 }): DirectChatV2SessionController => {
   const capturedOwnerAddress = getAddress(ownerAddress.trim());
@@ -393,6 +397,24 @@ export const createDirectChatV2Session = ({
     const pending = epochKeyReadTail.then(operation, operation);
     epochKeyReadTail = pending.then(() => undefined, () => undefined);
     return pending;
+  };
+
+  const runReadWatcherOperation = async <T extends (() => Promise<void>) | null>(
+    capability: DirectChatV2MetaMaskCapability,
+    operation: () => Promise<T>
+  ): Promise<T> => {
+    const acquired: { stop: T | null } = { stop: null };
+    try {
+      return await runReadCapabilityOperation(capability, async () => {
+        const stop = await operation();
+        acquired.stop = stop;
+        return stop;
+      });
+    } catch (error) {
+      // An owner-scope change after registration must not lose the cleanup.
+      if (acquired.stop) { try { await acquired.stop(); } catch { /* Preserve the scope rejection. */ } }
+      throw error;
+    }
   };
 
   const runWriteCapabilityOperation = async <T>(
@@ -587,7 +609,8 @@ export const createDirectChatV2Session = ({
       scope.contractAddress.toLowerCase() !== deployment.contractAddress.toLowerCase() ||
       scope.conversationId.toLowerCase() !== conversation.conversationId.toLowerCase() ||
       scope.deploymentBlock !== deployment.deploymentBlock ||
-      scope.conversationStartBlock !== conversation.createdBlock
+      scope.conversationStartBlock !== conversation.createdBlock ||
+      scope.firstMessageBlock !== (conversation.messageCount > 0n ? conversation.firstMessageBlock : undefined)
     ) {
       throw new Error('Direct-chat V2 history request belongs to a different verified scope.');
     }
@@ -850,12 +873,21 @@ export const createDirectChatV2Session = ({
       if (!lookup.exists) return null;
       const capability = await requireOwnerReadCapability(true);
       const conversation = await readCreatedConversationForHistory({ capability, deployment, peer });
+      if (conversation.messageCount > 0n) {
+        if (conversation.firstMessageBlock < conversation.createdBlock ||
+          conversation.firstMessageBlock > conversation.lastMessageBlock) {
+          throw new Error('Direct-chat V2 message-block anchors are inconsistent.');
+        }
+      } else if (conversation.firstMessageBlock !== 0n || conversation.lastMessageBlock !== 0n) {
+        throw new Error('Direct-chat V2 empty history has non-zero message-block anchors.');
+      }
       const scope = Object.freeze({
         chainId: deployment.chainId,
         contractAddress: deployment.contractAddress,
         conversationId: conversation.conversationId,
         deploymentBlock: deployment.deploymentBlock,
-        conversationStartBlock: conversation.createdBlock
+        conversationStartBlock: conversation.createdBlock,
+        firstMessageBlock: conversation.messageCount > 0n ? conversation.firstMessageBlock : undefined
       });
       const dependencies: DirectChatV2SyncDependencies = Object.freeze({
         getLatestBlockNumber: async (chainId) => {
@@ -1060,21 +1092,24 @@ export const createDirectChatV2Session = ({
     watch: async (peer, onHint) => {
       const capability = await requireOwnerReadCapability(false);
       const deployment = await verifiedDeploymentFor(capability);
-      return runReadCapabilityOperation(capability, () => watchDirectChatV2MessageHints({
+      return runReadWatcherOperation(capability, () => watchDirectChatV2MessageHints({
         capability,
         deployment,
         peer,
-        onHint
+        onHint,
+        ...(subscribeEventHints ? { subscribeEventHints } : {})
       }));
     },
 
-    watchIncoming: async (onHint) => {
+    watchIncoming: async (onHint, shouldPause) => {
       const capability = await requireOwnerReadCapability(false);
       const deployment = await verifiedDeploymentFor(capability);
-      return runReadCapabilityOperation(capability, () => watchDirectChatV2IncomingMessageHints({
+      return runReadWatcherOperation(capability, () => watchDirectChatV2IncomingMessageHints({
         capability,
         deployment,
-        onHint
+        onHint,
+        ...(shouldPause ? { shouldPause } : {}),
+        ...(subscribeEventHints ? { subscribeEventHints } : {})
       }));
     },
 

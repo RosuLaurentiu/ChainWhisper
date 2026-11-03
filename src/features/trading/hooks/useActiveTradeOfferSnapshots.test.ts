@@ -13,21 +13,29 @@ const snapshot = Object.freeze({
 }) as TradeSnapshot;
 
 describe('loadActiveTradeOfferSnapshots', () => {
-  it('hydrates the current and retained escrow but skips unknown addresses', async () => {
-    const retained = { ...offer, escrowContract: '0x2222222222222222222222222222222222222222' };
+  it('hydrates only the current escrow and skips retired or unknown addresses', async () => {
+    const retired = { ...offer, escrowContract: '0x2222222222222222222222222222222222222222' };
     const unknown = { ...offer, escrowContract: '0x3333333333333333333333333333333333333333' };
     const resolve = vi.fn(async (value: TradeOfferMessagePayload) => ({ ...snapshot, escrowContract: value.escrowContract }));
-    const result = await loadActiveTradeOfferSnapshots({ offers: [offer, retained, unknown], privateTermsEnabled: false,
-      supportedEscrowContracts: [offer.escrowContract, retained.escrowContract], resolveTradeSnapshotForOffer: resolve });
-    expect(result.map(value => value.escrowContract)).toEqual([offer.escrowContract, retained.escrowContract]);
-    expect(resolve).toHaveBeenCalledTimes(2);
+    const result = await loadActiveTradeOfferSnapshots({ offers: [offer, retired, unknown], privateTermsEnabled: false,
+      supportedEscrowContract: offer.escrowContract, resolveTradeSnapshotForOffer: resolve });
+    expect(result.map(value => value.escrowContract)).toEqual([offer.escrowContract]);
+    expect(resolve).toHaveBeenCalledOnce();
   });
+  it.each([undefined, []])('does not hydrate without a current escrow scope: %s', async supportedEscrowContracts => {
+    const resolveTradeSnapshotForOffer = vi.fn(async () => snapshot);
+    await expect(loadActiveTradeOfferSnapshots({ offers: [offer], privateTermsEnabled: true,
+      supportedEscrowContracts, resolveTradeSnapshotForOffer })).resolves.toEqual([]);
+    expect(resolveTradeSnapshotForOffer).not.toHaveBeenCalled();
+  });
+
   it('automatically enables participant-private terms after privacy unlock', async () => {
     const resolveTradeSnapshotForOffer = vi.fn(async () => snapshot);
 
     await expect(loadActiveTradeOfferSnapshots({
       offers: [offer],
       privateTermsEnabled: true,
+      supportedEscrowContract: offer.escrowContract,
       resolveTradeSnapshotForOffer
     })).resolves.toEqual([snapshot]);
 
@@ -42,6 +50,7 @@ describe('loadActiveTradeOfferSnapshots', () => {
     await expect(loadActiveTradeOfferSnapshots({
       offers: [offer],
       privateTermsEnabled: false,
+      supportedEscrowContract: offer.escrowContract,
       resolveTradeSnapshotForOffer
     })).resolves.toEqual([snapshot]);
 
@@ -58,6 +67,7 @@ describe('loadActiveTradeOfferSnapshots', () => {
     await expect(loadActiveTradeOfferSnapshots({
       offers: [offer, offer],
       privateTermsEnabled: true,
+      supportedEscrowContract: offer.escrowContract,
       resolveTradeSnapshotForOffer
     })).resolves.toEqual([]);
 
@@ -92,6 +102,7 @@ describe('loadActiveTradeOfferSnapshots', () => {
     await expect(loadActiveTradeOfferSnapshots({
       offers: [offer, secondOffer],
       privateTermsEnabled: true,
+      supportedEscrowContract: offer.escrowContract,
       resolveTradeSnapshotForOffer
     })).resolves.toHaveLength(2);
 

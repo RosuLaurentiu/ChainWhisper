@@ -2,27 +2,17 @@ import type { ReactNode } from 'react';
 import type { TradeAssetPayload, TradeSnapshot } from '../../../lib/appShared';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { P2PActionNoticeSurface } from '../../../lib/p2pActionNotice';
-import {
-  getSnapshotKey,
-  type RecurringTerminalActionSide
-} from '../../../lib/p2pTradeView';
-import {
-  buildMakerControlsKey,
-  type TerminalFillInputSide
-} from './P2PTradingPage.helpers';
-import TradeRecurringTerminal from './TradeRecurringTerminal';
+import type { TerminalFillInputSide } from './P2PTradingPage.helpers';
 import TradeStandardTerminal from './TradeStandardTerminal';
 import {
   TradeTerminalHistoryWindowForTrade,
   buildTerminalHistoryConfig,
-  buildRecurringTerminalHistoryConfig,
   buildStandardTerminalHistoryConfig,
   type TerminalHistoryConfigParams
 } from './tradeTerminalHistoryConfig';
 import { TradeTerminalHistoryContent } from './TradeTerminalHistoryPanel';
 
 type CounterAcceptMode = 'close-related' | 'fill';
-type RecurringStatusAction = 'pause' | 'resume' | 'cancel';
 
 export type TradeTerminalRendererProps = {
   snapshot: TradeSnapshot;
@@ -52,7 +42,6 @@ export type TradeTerminalRendererProps = {
   renderTradeBalanceDisclosure?: (snapshot: TradeSnapshot) => ReactNode;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
   declineTrade: (snapshot: TradeSnapshot) => Promise<void>;
-  fillRecurringOrderSide: (snapshot: TradeSnapshot, side: RecurringTerminalActionSide) => Promise<void>;
   getCarbonReferenceDisplay: (
     baseAsset?: TradeAssetPayload | null,
     quoteAsset?: TradeAssetPayload | null,
@@ -65,15 +54,6 @@ export type TradeTerminalRendererProps = {
   resolveTerminalAssetBalanceLabel: (asset: TradeAssetPayload, maximumFractionDigits?: number) => string;
   toggleMakerControls: (surface: 'terminal', tradeKey: string) => void;
   toggleTradeRateDirection: (tradeId: number, escrowContract?: string) => void;
-  recurringTerminalSide: RecurringTerminalActionSide;
-  recurringBuyFillInput: string;
-  recurringSellFillInput: string;
-  processingRecurringAction: string;
-  setRecurringTerminalSide: (side: RecurringTerminalActionSide) => void;
-  setRecurringBuyFillInput: (value: string) => void;
-  setRecurringSellFillInput: (value: string) => void;
-  beginEditRecurringOrder: (snapshot: TradeSnapshot) => void;
-  updateRecurringOrderStatus: (snapshot: TradeSnapshot, action: RecurringStatusAction) => Promise<void>;
   terminalHistoryConfigParams: TerminalHistoryConfigParams;
   showHistoryControl?: boolean;
 };
@@ -106,7 +86,6 @@ export function TradeTerminalRenderer({
   renderTradeBalanceDisclosure,
   copyWithFeedback,
   declineTrade,
-  fillRecurringOrderSide,
   getCarbonReferenceDisplay,
   partialFillTrade,
   renderActionNotice,
@@ -115,55 +94,9 @@ export function TradeTerminalRenderer({
   resolveTerminalAssetBalanceLabel,
   toggleMakerControls,
   toggleTradeRateDirection,
-  recurringTerminalSide,
-  recurringBuyFillInput,
-  recurringSellFillInput,
-  processingRecurringAction,
-  setRecurringTerminalSide,
-  setRecurringBuyFillInput,
-  setRecurringSellFillInput,
-  beginEditRecurringOrder,
-  updateRecurringOrderStatus,
   terminalHistoryConfigParams,
   showHistoryControl = true
 }: TradeTerminalRendererProps) {
-  if (snapshot.recurringOrder) {
-    return (
-      <TradeRecurringTerminal
-        snapshot={snapshot}
-        walletKey={walletKey}
-        onCotiNetwork={onCotiNetwork}
-        lastCopiedKey={lastCopiedKey}
-        reversedRateTradeIds={reversedRateTradeIds}
-        recurringTerminalSide={recurringTerminalSide}
-        recurringBuyFillInput={recurringBuyFillInput}
-        recurringSellFillInput={recurringSellFillInput}
-        processingRecurringAction={processingRecurringAction}
-        makerControlsExpanded={Boolean(expandedMakerControls[buildMakerControlsKey('terminal', getSnapshotKey(snapshot))])}
-        terminalHistorySheetKey={terminalHistorySheetKey}
-        setRecurringTerminalSide={setRecurringTerminalSide}
-        setRecurringBuyFillInput={setRecurringBuyFillInput}
-        setRecurringSellFillInput={setRecurringSellFillInput}
-        setTerminalHistorySheetKey={setTerminalHistorySheetKey}
-        askAgentAboutOrder={askAgentAboutOrder}
-        beginEditRecurringOrder={beginEditRecurringOrder}
-        buildTradeShareUrl={buildTradeShareUrl}
-        copyWithFeedback={copyWithFeedback}
-        fillRecurringOrderSide={fillRecurringOrderSide}
-        getCarbonReferenceDisplay={getCarbonReferenceDisplay}
-        getRecurringTerminalHistoryConfig={(trade) =>
-          buildRecurringTerminalHistoryConfig(trade, terminalHistoryConfigParams)}
-        renderActionNotice={renderActionNotice}
-        renderTradeConversationButton={renderTradeConversationButton}
-        resolveTerminalAssetBalanceLabel={resolveTerminalAssetBalanceLabel}
-        toggleMakerControls={toggleMakerControls}
-        toggleTradeRateDirection={toggleTradeRateDirection}
-        updateRecurringOrderStatus={updateRecurringOrderStatus}
-        showHistoryControl={showHistoryControl}
-      />
-    );
-  }
-
   return (
     <TradeStandardTerminal
       snapshot={snapshot}

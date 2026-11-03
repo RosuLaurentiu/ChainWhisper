@@ -18,9 +18,9 @@ import { formatTradeRatioLabel, isZeroTradeTakerAddress } from './tradePerspecti
 export const WALLET_STATUS_STORAGE_KEY = 'coti-trade-last-wallet-id';
 const TRADE_ACCESS_SECRET_STORAGE_KEY = 'coti-trade-access-secrets-v1';
 const PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY = 'coti-private-trade-liquidity-v1';
-const PRIVATE_LIQUIDITY_LABEL = 'Private liquidity';
-const PUBLIC_LIQUIDITY_LABEL = 'Public liquidity';
-const HYBRID_LIQUIDITY_LABEL = 'Hybrid liquidity';
+const PRIVATE_LIQUIDITY_LABEL = 'Private tokens';
+const PUBLIC_LIQUIDITY_LABEL = 'Public tokens';
+const HYBRID_LIQUIDITY_LABEL = 'Mixed tokens';
 
 const getTradeLiquidityLabel = (offer: TradeAssetPayload, request: TradeAssetPayload): string => {
   const privateSideCount = [offer, request].filter((asset) => asset.kind === 'private-erc20').length;
@@ -124,7 +124,9 @@ export const getTradeTermsVisibility = (
     return trade.recurringOrder.mode === 'public' ? 'public' : 'hidden-liquidity';
   }
   if (isDirectTradeSnapshot(trade)) {
-    return 'direct-private-terms';
+    return trade.v2?.protocol === 'direct-v2' && trade.v2.amountMode === 'public'
+      ? 'public'
+      : 'direct-private-terms';
   }
   return trade.hiddenLiquidity ? 'hidden-liquidity' : 'public';
 };

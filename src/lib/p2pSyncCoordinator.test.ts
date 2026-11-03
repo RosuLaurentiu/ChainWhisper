@@ -33,4 +33,12 @@ describe('p2p sync coordinator helpers', () => {
     expect(shouldUseSilentP2PSync('wallet-action')).toBe(true);
     expect(shouldUseSilentP2PSync('manual')).toBe(false);
   });
+
+  it.each(['manual', 'wallet-action'] as const)('does not downgrade a queued %s when a poll arrives', reason => {
+    const merged = mergeP2PSyncRequests({ domains: new Set(['balances']), reason }, {
+      domains: new Set(['public-trades']), reason: 'interval'
+    });
+    expect(merged.reason).toBe(reason);
+    expect([...merged.domains]).toEqual(['balances', 'public-trades']);
+  });
 });

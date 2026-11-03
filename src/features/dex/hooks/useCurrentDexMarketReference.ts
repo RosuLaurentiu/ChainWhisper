@@ -3,8 +3,7 @@ import type { Eip1193Provider } from '@coti-io/coti-ethers';
 import { CURRENT_CHEAP_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
 import { CURRENT_DEX_DISPLAY_PAIR } from '../../../lib/currentDexDisplay';
 import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
-import { createPrivateLiquidityHttpProvider } from '../../../lib/privateLiquidityRpc';
-import { CurrentDexDailyPriceError, readCurrentDexPublicReference, type CurrentDexDailyPriceView, type CurrentDexPublicReferenceView } from '../../../lib/currentDexDailyPrice';
+import { CurrentDexDailyPriceError, getCurrentDexPriceReadProvider, isVerifiedCurrentDexPublicReference, readCurrentDexPublicReference, type CurrentDexDailyPriceView, type CurrentDexPublicReferenceView } from '../../../lib/currentDexDailyPrice';
 import { currentNativeDexDailyPriceConfig } from '../../../lib/currentDexNativeDailyPriceTestnet';
 import { currentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
@@ -17,7 +16,7 @@ export async function loadCurrentDexMarketReference({candidate,pair,provider,ass
 }):Promise<ReferenceView>{
   try {
     const snapshot=await readCurrentDexPublicReference({candidate,pair,assertCurrent,
-      provider:provider??createPrivateLiquidityHttpProvider({rpcUrl:COTI_TESTNET_NETWORK.rpcUrl,maxAttempts:1})});
+      provider:provider??getCurrentDexPriceReadProvider(COTI_TESTNET_NETWORK.rpcUrl)});
     return {status:'reference',snapshot};
   } catch(error) {
     return {status:'error',kind:error instanceof CurrentDexDailyPriceError?error.kind:'rpc',
@@ -38,7 +37,8 @@ export default function useCurrentDexMarketReference(active: boolean,candidate:C
   const [settled,setSettled]=useState<{candidate:CurrentCheapDexCandidate;pair:readonly[string,string];epoch:number;view:ReferenceView}|null>(null);
   const refresh=useCallback(()=>{if(direct)setEpoch(v=>v+1);else dailyRefresh();},[direct,dailyRefresh]);
   useEffect(()=>{
-    if(!active||!direct)return;
+    if(!active||!direct){setSettled(null);return;}
+    setSettled(previous=>previous?.candidate===candidate&&previous.pair[0]===base&&previous.pair[1]===quote?previous:null);
     let pending=true;
     const capturedPair=[base,quote] as const;
     const assertCurrent=()=>{const c=current.current;
@@ -48,14 +48,17 @@ export default function useCurrentDexMarketReference(active: boolean,candidate:C
     });
     return()=>{pending=false;};
   },[active,direct,candidate,base,quote,epoch]);
+  const sameScope=settled?.candidate===candidate&&settled.pair[0]===base&&settled.pair[1]===quote;
+  const view:ReferenceView=!active?{status:'unconfigured'}:direct?
+    sameScope&&(settled.epoch===epoch||settled.view.status==='reference'&&isVerifiedCurrentDexPublicReference(settled.view.snapshot))?settled.view:{status:'loading'}:dailyView;
+  const readPending=useRef(false);readPending.current=direct?!sameScope||settled.epoch!==epoch:dailyView.status==='loading';
   const [now,setNow] = useState(() => BigInt(Math.floor(Date.now()/1000)));
   useEffect(() => {
     if (!active) return;
     const expiry = window.setInterval(() => setNow(BigInt(Math.floor(Date.now()/1000))),1000);
-    const read = window.setInterval(refresh,30000);
+    // A slow initial read must finish before an automatic refresh replaces it.
+    const read = window.setInterval(()=>{if(!readPending.current)refresh();},30000);
     return () => { window.clearInterval(expiry); window.clearInterval(read); };
   },[active,refresh]);
-  const view:ReferenceView=!active?{status:'unconfigured'}:direct?
-    settled?.candidate===candidate&&settled.epoch===epoch&&settled.pair[0]===pair[0]&&settled.pair[1]===pair[1]?settled.view:{status:'loading'}:dailyView;
   return currentDexMarketReference(view,pair,now);
 }

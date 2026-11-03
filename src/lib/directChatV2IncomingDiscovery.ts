@@ -1,14 +1,29 @@
 import type {
   DirectChatV2CanonicalBlock,
+  DirectChatV2ConversationPreview,
   DirectChatV2MessageEvent
 } from './directChatV2Chain';
+import { DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC } from './directChatV2Chain';
+import type { CotiEventHintSubscriber, CotiEventHintStatus } from './appShared/cotiEventHints';
 
-const CHECKPOINT_SCHEMA = 'chainwhisper-direct-chat-v2-activity-discovery-v3';
+const CHECKPOINT_SCHEMA = 'chainwhisper-direct-chat-v2-recent-activity-v1';
 const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const BYTES32_PATTERN = /^0x[0-9a-f]{64}$/;
 const DECIMAL_PATTERN = /^(0|[1-9][0-9]*)$/;
-const MAX_PAGES_PER_SCAN = 4;
+const RECENT_BLOCK_SPAN = 2_048n;
 const MAX_PERSISTED_PEERS = 4_096;
+
+/** Memory belongs to one runtime; canonical history still verifies changed anchors. */
+export const rememberDirectChatV2Preview = (
+  seen: Map<string, string>, preview: DirectChatV2ConversationPreview
+): boolean => {
+  const peer = preview.peer.toLowerCase();
+  const anchor = [preview.conversationId, preview.currentEpoch, preview.messageCount,
+    preview.createdBlock, preview.firstMessageBlock, preview.lastMessageBlock, preview.lastMessageAt].join(':');
+  if (seen.get(peer) === anchor) return false;
+  seen.set(peer, anchor);
+  return true;
+};
 
 export type DirectChatV2IncomingDiscoveryScope = Readonly<{
   chainId: bigint;
@@ -28,6 +43,9 @@ export type DirectChatV2IncomingDiscoveryDependencies = Readonly<{
 
 export type DirectChatV2IncomingDiscoveryResult = Readonly<{
   peers: readonly string[];
+  /** Peers with activity in this scan, including previously discovered peers. */
+  changedPeers: readonly string[];
+  /** Recent activity only; complete conversation discovery uses the participant index. */
   hasMore: boolean;
   reorged: boolean;
   scannedFromBlock?: bigint;
@@ -38,7 +56,7 @@ type DirectChatV2IncomingDiscoveryCheckpoint = Readonly<{
   nextBlock: bigint;
   lastScannedBlock: bigint;
   lastScannedBlockHash: string;
-  peers: readonly string[];
+  activityBlocks: Readonly<Record<string, string>>;
 }>;
 
 type SerializedCheckpoint = Readonly<{
@@ -50,7 +68,7 @@ type SerializedCheckpoint = Readonly<{
   nextBlock: string;
   lastScannedBlock: string;
   lastScannedBlockHash: string;
-  peers: readonly string[];
+  activityBlocks: Readonly<Record<string, string>>;
 }>;
 
 export type DirectChatV2IncomingDiscoveryStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -89,6 +107,23 @@ const normalizeScope = (
   ownerAddress: normalizeAddress(scope.ownerAddress, 'Incoming discovery owner'),
   deploymentBlock: normalizeUint(scope.deploymentBlock, 'Incoming discovery deployment block')
 });
+
+/** Observe only this owner's incoming events; canonical discovery still owns data. */
+export const subscribeDirectChatV2DiscoveryHints = async ({ subscribe, scope, isCurrent, onHint, onStatus }: {
+  subscribe: CotiEventHintSubscriber; scope: DirectChatV2IncomingDiscoveryScope; isCurrent: () => boolean;
+  onHint: () => void; onStatus: (status: CotiEventHintStatus) => void;
+}): Promise<() => void> => {
+  if (!isCurrent()) return () => {};
+  const target = normalizeScope(scope);
+  let active = true;
+  const current = () => active && isCurrent();
+  const stop = await subscribe({ address: target.contractAddress,
+    topics: [DIRECT_CHAT_V2_MESSAGE_POSTED_TOPIC, null, null, `0x${target.ownerAddress.slice(2).padStart(64, '0')}`],
+    onHint: () => { if (current()) onHint(); }, onStatus: status => { if (current()) onStatus(status); }
+  });
+  if (!current()) { active = false; stop(); }
+  return () => { if (!active) return; active = false; stop(); };
+};
 
 export const buildDirectChatV2IncomingDiscoveryStorageKey = (
   scope: DirectChatV2IncomingDiscoveryScope
@@ -140,20 +175,18 @@ const loadCheckpoint = ({
       nextBlock !== lastScannedBlock + 1n ||
       lastScannedBlock < scope.deploymentBlock ||
       typeof parsed.lastScannedBlockHash !== 'string' ||
-      !Array.isArray(parsed.peers) ||
-      parsed.peers.length > MAX_PERSISTED_PEERS
+      !parsed.activityBlocks || typeof parsed.activityBlocks !== 'object' || Array.isArray(parsed.activityBlocks) ||
+      Object.keys(parsed.activityBlocks).length > MAX_PERSISTED_PEERS
     ) {
       return null;
     }
-    const peers = parsed.peers.map((peer) => normalizeAddress(
-      peer,
-      'Incoming discovery checkpoint peer'
-    ));
-    if (
-      peers.includes(scope.ownerAddress) ||
-      new Set(peers).size !== peers.length
-    ) {
-      return null;
+    const activityBlocks: Record<string, string> = {};
+    for (const [peer, block] of Object.entries(parsed.activityBlocks)) {
+      const address = normalizeAddress(peer, 'Incoming discovery checkpoint peer');
+      const blockNumber = parseUint(block);
+      if (address !== peer || address === scope.ownerAddress || blockNumber === null ||
+          blockNumber < scope.deploymentBlock || blockNumber > lastScannedBlock) return null;
+      activityBlocks[address] = blockNumber.toString();
     }
     return Object.freeze({
       nextBlock,
@@ -162,7 +195,7 @@ const loadCheckpoint = ({
         parsed.lastScannedBlockHash,
         'Incoming discovery checkpoint block hash'
       ),
-      peers: Object.freeze(peers)
+      activityBlocks: Object.freeze(activityBlocks)
     });
   } catch {
     return null;
@@ -179,7 +212,7 @@ const saveCheckpoint = ({
   storage: DirectChatV2IncomingDiscoveryStorage | null;
 }): void => {
   if (!storage) return;
-  if (checkpoint.peers.length > MAX_PERSISTED_PEERS) {
+  if (Object.keys(checkpoint.activityBlocks).length > MAX_PERSISTED_PEERS) {
     clearCheckpoint({ scope, storage });
     return;
   }
@@ -192,7 +225,7 @@ const saveCheckpoint = ({
     nextBlock: checkpoint.nextBlock.toString(),
     lastScannedBlock: checkpoint.lastScannedBlock.toString(),
     lastScannedBlockHash: checkpoint.lastScannedBlockHash,
-    peers: checkpoint.peers
+    activityBlocks: checkpoint.activityBlocks
   };
   try {
     storage.setItem(
@@ -261,7 +294,7 @@ export const createDirectChatV2IncomingDiscovery = ({
     if (safeHead < normalizedScope.deploymentBlock) {
       memoryCheckpoint = null;
       clearCheckpoint({ scope: normalizedScope, storage });
-      return Object.freeze({ peers: Object.freeze([]), hasMore: false, reorged: false });
+      return Object.freeze({ peers: Object.freeze([]), changedPeers: Object.freeze([]), hasMore: false, reorged: false });
     }
 
     let checkpoint = memoryCheckpoint ?? loadCheckpoint({ scope: normalizedScope, storage });
@@ -269,7 +302,7 @@ export const createDirectChatV2IncomingDiscovery = ({
     if (checkpoint) {
       const boundary = await dependencies.readCanonicalBlock(checkpoint.lastScannedBlock);
       assertCurrent(shouldContinue);
-      if (!boundary || boundary.hash.toLowerCase() !== checkpoint.lastScannedBlockHash) {
+      if (checkpoint.lastScannedBlock > safeHead || !boundary || boundary.hash.toLowerCase() !== checkpoint.lastScannedBlockHash) {
         checkpoint = null;
         memoryCheckpoint = null;
         reorged = true;
@@ -277,12 +310,17 @@ export const createDirectChatV2IncomingDiscovery = ({
       }
     }
 
-    let fromBlock = checkpoint?.nextBlock ?? normalizedScope.deploymentBlock;
+    // Old conversations and messages remain reachable through their own indexed pages.
+    const recentStart = safeHead >= RECENT_BLOCK_SPAN - 1n ? safeHead - RECENT_BLOCK_SPAN + 1n : 0n;
+    const floor = recentStart > normalizedScope.deploymentBlock ? recentStart : normalizedScope.deploymentBlock;
+    let fromBlock = checkpoint && checkpoint.nextBlock > floor ? checkpoint.nextBlock : floor;
     const firstScannedBlock = fromBlock;
-    const peers = new Set<string>(checkpoint?.peers ?? []);
+    const activityBlocks = Object.fromEntries(Object.entries(checkpoint?.activityBlocks ?? {})
+      .filter(([, block]) => BigInt(block) >= floor));
+    const changedPeers = new Set<string>();
     let lastScannedBlock: bigint | undefined;
-    for (let page = 0; page < MAX_PAGES_PER_SCAN && fromBlock <= safeHead; page += 1) {
-      const toBlock = fromBlock + 2_047n < safeHead ? fromBlock + 2_047n : safeHead;
+    if (fromBlock <= safeHead) {
+      const toBlock = safeHead;
       const before = await dependencies.readCanonicalBlock(toBlock);
       assertCurrent(shouldContinue);
       if (!before) throw new Error('Incoming discovery page boundary is unavailable.');
@@ -306,13 +344,17 @@ export const createDirectChatV2IncomingDiscovery = ({
         ) {
           throw new Error('Chat activity discovery received an invalid canonical message event.');
         }
-        peers.add(ownerIsSender ? recipient : sender);
+        const peer = ownerIsSender ? recipient : sender;
+        if (!activityBlocks[peer] || event.blockNumber > BigInt(activityBlocks[peer])) {
+          activityBlocks[peer] = event.blockNumber.toString();
+        }
+        changedPeers.add(peer);
       }
       checkpoint = Object.freeze({
         nextBlock: toBlock + 1n,
         lastScannedBlock: toBlock,
         lastScannedBlockHash: normalizeHash(after.hash, 'Incoming discovery page hash'),
-        peers: Object.freeze([...peers])
+        activityBlocks: Object.freeze(activityBlocks)
       });
       lastScannedBlock = toBlock;
       fromBlock = toBlock + 1n;
@@ -324,7 +366,8 @@ export const createDirectChatV2IncomingDiscovery = ({
       saveCheckpoint({ checkpoint, scope: normalizedScope, storage });
     }
     return Object.freeze({
-      peers: Object.freeze([...peers]),
+      peers: Object.freeze(Object.keys(activityBlocks)),
+      changedPeers: Object.freeze([...changedPeers]),
       hasMore: fromBlock <= safeHead,
       reorged,
       ...(lastScannedBlock === undefined

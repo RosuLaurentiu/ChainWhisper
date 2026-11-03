@@ -1,5 +1,10 @@
 import { Interface, keccak256, toUtf8Bytes, type Eip1193Provider } from '@coti-io/coti-ethers';
 import { describe, expect, it, vi } from 'vitest';
+import { createElement, Fragment } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { TradeSnapshot } from './appShared';
+import { aggregateVisibleTradeTransactionHistoryRows, buildTradeTransactionHistoryRows } from './tradeHistory';
+import { buildStandardTerminalHistoryConfig } from '../features/trading/components/tradeTerminalHistoryConfig';
 import {
   attestTradeHistoryV2Deployment,
   bindTradeHistoryV2ReadCapability,
@@ -22,13 +27,17 @@ import {
 } from './tradeHistoryV2Materialize';
 import {
   syncTradeHistoryV2PipelineRange,
+  resetTradeHistoryV2Projection,
   type TradeHistoryV2PipelineReadDependencies
 } from './tradeHistoryV2Pipeline';
 import {
+  getTradeHistoryV2LedgerRevision,
   createTradeHistoryV2LedgerState,
+  replaceTradeHistoryV2Range,
   projectTradeHistoryV2Rows
 } from './tradeHistoryV2Ledger';
 import { createTradeHistoryV2SyncState } from './tradeHistoryV2Sync';
+import { DIRECT_TRADE_V2_ACTION_ABI } from './directTradeV2Actions';
 import currentArtifact from '../../tests/fixtures/validation-ChainWhisperPrivateOTCEscrowV2.json';
 
 const address = (pair: string): string => `0x${pair.repeat(20)}`;
@@ -76,6 +85,7 @@ const METADATA = new Interface([
 type RpcLog = Record<string, unknown>;
 
 class Provider implements Pick<Eip1193Provider, 'request'> {
+  intercept?: (input: { method: string; params?: readonly unknown[] }) => Promise<unknown>;
   readonly protocol: TradeHistoryV2EventProtocol;
   logs: RpcLog[] = [];
   blocks = new Map<string, { hash: string; transactions: string[] }>();
@@ -145,6 +155,8 @@ class Provider implements Pick<Eip1193Provider, 'request'> {
   }
 
   async request({ method, params = [] }: { method: string; params?: readonly unknown[] }): Promise<unknown> {
+    const intercepted = await this.intercept?.({ method, params });
+    if (intercepted !== undefined) return intercepted;
     if (method === 'eth_chainId') return quantity(CHAIN_ID);
     if (method === 'eth_blockNumber') return quantity(LATEST);
     if (method === 'eth_getBlockByNumber') return this.block(BigInt(String(params[0])));
@@ -219,6 +231,127 @@ const pipelineReads = (provider: Provider): TradeHistoryV2PipelineReadDependenci
 });
 
 describe('tradeHistoryV2Materialize', () => {
+  it('shows a recent Direct acceptance on an old trade without loading its opening history', async () => {
+    const context = await setup('direct-v2');
+    const accepted = context.provider.addLog({ eventName: 'DirectTradeStatusChanged',
+      args: [3n, MAKER, FILLER, 1, 2, FILLER, 3n, 1_700_000_003n],
+      blockNumber: 190n, transactionHash: hash('b2'), logIndex: 1 });
+    const abi = new Interface(DIRECT_TRADE_V2_ACTION_ABI);
+    const ranges: { fromBlock: string; toBlock: string }[] = [];
+    let termsReads = 0;
+    context.provider.intercept = async input => {
+      const params = input.params ?? [];
+      if (input.method === 'eth_getLogs') {
+        const range = params[0] as { fromBlock: string; toBlock: string }; ranges.push(range);
+        return BigInt(range.fromBlock) <= 190n && BigInt(range.toBlock) >= 190n ? [accepted] : [];
+      }
+      if (input.method === 'eth_call' && (params[0] as { data: string }).data.startsWith(abi.getFunction('getTradeView')!.selector)) {
+        termsReads++;
+        return abi.encodeFunctionResult('getTradeView', [[
+          [MAKER, FILLER, 2, 0, [0, ZERO_ADDRESS], [1, OTHER_CONTRACT], 1, 999999, 0, 3, 0, false, hash('00'), hash('00')],
+          [75, 120], 2, 0, 0, 0
+        ]]);
+      }
+      return undefined;
+    };
+    let state = { sync: createTradeHistoryV2SyncState(createTradeHistoryV2LedgerState()), materialization: createTradeHistoryV2MaterializationState() };
+    const scope = { chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, deploymentBlock: DEPLOYMENT_BLOCK.toString() };
+    const read = async (mode: 'latest' | 'older', rebuildProjection = false) => {
+      const result = await syncTradeHistoryV2PipelineRange({ previous: state, ...context, scope,
+        mode, rebuildProjection, viewer: MAKER, confirmationDepth: FINALITY_LAG, maxBlockSpan: 20n, overlapBlocks: 2n,
+        expectedLedgerRevision: getTradeHistoryV2LedgerRevision({ state: state.sync.ledger, ...scope }),
+        expectedMaterializationRevision: getTradeHistoryV2MaterializationRevision({ state: state.materialization, ...scope }),
+        reads: { getLatestBlockNumber: async () => LATEST.toString(),
+          readCanonicalBlock: async (_chain, number) => ({ number, hash: blockHash(BigInt(number)) }) } });
+      state = result.state; return result;
+    };
+    expect((await read('latest')).hasMore).toBe(true);
+    expect(ranges.map(r => [BigInt(r.fromBlock), BigInt(r.toBlock)])).toEqual([[176n, 195n]]);
+    expect(projectTradeHistoryV2Rows({ state: state.sync.ledger, viewerAddress: MAKER })).toHaveLength(1);
+    expect(termsReads).toBe(1);
+    await read('older');
+    expect(ranges.map(r => [BigInt(r.fromBlock), BigInt(r.toBlock)])).toEqual([[176n, 195n], [156n, 175n]]);
+    state = resetTradeHistoryV2Projection(state);
+    await read('latest', true);
+    expect(ranges).toHaveLength(2);
+    expect(termsReads).toBe(1);
+    expect(projectTradeHistoryV2Rows({ state: state.sync.ledger, viewerAddress: MAKER })).toHaveLength(1);
+  });
+  it('rebuilds private Direct history from verified public pages without another log or receipt scan', async () => {
+    const context = await setup('direct-v2');
+    const opened = context.provider.addLog({ eventName: 'DirectTradeOpened',
+      args: [9n, MAKER, FILLER, ZERO_ADDRESS, 0n, 9n, 0, 2, OTHER_CONTRACT, 2, CONTRACT, 1, 0n, 0n, 1n, 999999n],
+      blockNumber: 110n, transactionHash: hash('c9'), logIndex: 1 });
+    const accepted = context.provider.addLog({ eventName: 'DirectTradeStatusChanged',
+      args: [9n, MAKER, FILLER, 1, 2, FILLER, 9n, 1_700_000_009n],
+      blockNumber: 170n, transactionHash: hash('d9'), logIndex: 1 });
+    context.provider.logs = [opened];
+    const scope = { chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, deploymentBlock: '100' };
+    const args = { scope, capability: context.capability, deployment: context.deployment,
+      confirmationDepth: FINALITY_LAG, maxBlockSpan: 50n, overlapBlocks: 1n,
+      reads: pipelineReads(context.provider), viewer: MAKER };
+    const openingPage = await syncTradeHistoryV2PipelineRange({ ...args,
+      previous: { sync: createTradeHistoryV2SyncState(createTradeHistoryV2LedgerState()),
+        materialization: createTradeHistoryV2MaterializationState() },
+      expectedLedgerRevision: 0, expectedMaterializationRevision: 0 });
+    expect(openingPage.hasMore).toBe(true);
+    context.provider.logs = [accepted];
+    const initial = await syncTradeHistoryV2PipelineRange({ ...args, previous: openingPage.state,
+      expectedLedgerRevision: 1, expectedMaterializationRevision: 1 });
+    expect(initial.hasMore).toBe(false);
+    expect(projectTradeHistoryV2Rows({ state: initial.state.sync.ledger, viewerAddress: MAKER }))
+      .toMatchObject([{ source: 'private-marker', amounts: {} }]);
+    const request = vi.spyOn(context.provider, 'request');
+    const resolve = vi.fn(async () => ({ offerAmount: '55', requestAmount: '89' }));
+    const unlocked = await syncTradeHistoryV2PipelineRange({ ...args, previous: resetTradeHistoryV2Projection(initial.state),
+      expectedLedgerRevision: 0, expectedMaterializationRevision: 0,
+      rebuildProjection: true, resolveDirectPrivateAmounts: resolve });
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(request.mock.calls.some(([call]) => ['eth_getLogs', 'eth_getTransactionReceipt'].includes(call.method))).toBe(false);
+    expect(projectTradeHistoryV2Rows({ state: unlocked.state.sync.ledger, viewerAddress: MAKER }))
+      .toMatchObject([{ source: 'participant-receipt', amounts: { offerAmount: '55', requestAmount: '89' } }]);
+    expect(unlocked.state.sync.checkpointsByScope).toEqual(initial.state.sync.checkpointsByScope);
+    // Locking must remove plaintext even though the public checkpoint has not moved.
+    const locked = await syncTradeHistoryV2PipelineRange({ ...args, previous: unlocked.state,
+      expectedLedgerRevision: getTradeHistoryV2LedgerRevision({ state: unlocked.state.sync.ledger, ...scope }),
+      expectedMaterializationRevision: getTradeHistoryV2MaterializationRevision({ state: unlocked.state.materialization, ...scope }),
+      rebuildProjection: true });
+    expect(projectTradeHistoryV2Rows({ state: locked.state.sync.ledger, viewerAddress: MAKER }))
+      .toMatchObject([{ source: 'private-marker', amounts: {} }]);
+    expect(request.mock.calls.every(([call]) => call.method === 'eth_getBlockByNumber')).toBe(true);
+    const replay = { ...args, previous: locked.state, rebuildProjection: true,
+      expectedLedgerRevision: getTradeHistoryV2LedgerRevision({ state: locked.state.sync.ledger, ...scope }),
+      expectedMaterializationRevision: getTradeHistoryV2MaterializationRevision({ state: locked.state.materialization, ...scope }) };
+    await expect(syncTradeHistoryV2PipelineRange({ ...replay,
+      resolveDirectPrivateAmounts: async () => {
+        context.provider.blocks.set('195', { hash: blockHash(195n, 1n), transactions: [] });
+        return { offerAmount: '55', requestAmount: '89' };
+      }
+    })).rejects.toThrow(/checkpoint changed/);
+    context.provider.blocks.delete('195');
+    let latest = LATEST.toString();
+    await expect(syncTradeHistoryV2PipelineRange({ ...replay,
+      reads: { ...args.reads, getLatestBlockNumber: async () => latest },
+      resolveDirectPrivateAmounts: async () => { latest = '199'; return { offerAmount: '55', requestAmount: '89' }; }
+    })).rejects.toThrow(/no longer finalized/);
+    let current = true;
+    await expect(syncTradeHistoryV2PipelineRange({ ...replay, shouldContinue: () => current,
+      resolveDirectPrivateAmounts: async () => { current = false; return { offerAmount: '55', requestAmount: '89' }; }
+    })).rejects.toThrow(/scope changed/);
+    const other = await setup('direct-v2');
+    await expect(syncTradeHistoryV2PipelineRange({ ...replay, deployment: other.deployment }))
+      .rejects.toThrow(/another attested deployment/);
+    const failedRead = vi.fn(async () => { throw new Error('RPC failure'); });
+    await expect(syncTradeHistoryV2PipelineRange({ ...replay, reads: { ...args.reads, readCanonicalBlock: failedRead } }))
+      .rejects.toThrow('RPC failure');
+    expect(failedRead).toHaveBeenCalledOnce();
+    const rolledBack = await syncTradeHistoryV2PipelineRange({ ...replay,
+      reads: { ...args.reads, getLatestBlockNumber: async () => '99' }, resolveDirectPrivateAmounts: resolve });
+    expect(rolledBack.reorged).toBe(true);
+    expect(rolledBack.state.sync.checkpointsByScope).toEqual({});
+    expect(projectTradeHistoryV2Rows({ state: rolledBack.state.sync.ledger, viewerAddress: MAKER })).toEqual([]);
+    expect(resolve).toHaveBeenCalledOnce();
+  });
   it('retains canonical opening and replacement linkage in log order', async () => {
     const context = await setup('standard-v2');
     const transactionHash = hash('70');
@@ -307,7 +440,7 @@ describe('tradeHistoryV2Materialize', () => {
     });
   });
 
-  it('joins a viewer receipt emitted before its private fill marker and ignores the other recipient', async () => {
+  it('joins a viewer receipt before its private fill marker through wallet History and terminal display', async () => {
     const context = await setup('private-v2');
     const tx = hash('a1');
     const makerReceipt = context.provider.addLog({
@@ -362,6 +495,99 @@ describe('tradeHistoryV2Materialize', () => {
       sequence: '2',
       amounts: { offerAmount: '100', requestAmount: '200' }
     });
+
+    // Current-artifact modeled receipts and decryption; this is not a native wallet trial.
+    const snapshot: TradeSnapshot = {
+      tradeId: 1, escrowContract: CONTRACT, maker: MAKER, taker: ZERO_ADDRESS,
+      hiddenLiquidity: true, status: 'open', createdAt: 1, expiresAt: 0,
+      offer: { kind: 'private-erc20', tokenAddress: address('55'), symbol: 'pAAA', decimals: 0, amount: '900' },
+      request: { kind: 'private-erc20', tokenAddress: address('66'), symbol: 'pBBB', decimals: 0, amount: '1800' },
+      v2: { protocol: 'private-v2', chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, revision: '3' }
+    };
+    for (const viewer of [MAKER, FILLER, OUTSIDER]) {
+      resolver.mockClear();
+      const materialized = await materializeCanonicalTradeHistoryV2Range({
+        previous: createTradeHistoryV2MaterializationState(), canonicalPage: page,
+        chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, expectedRevision: 0,
+        viewer, resolvePrivateReceiptAmounts: resolver
+      });
+      expect(resolver).toHaveBeenCalledTimes(viewer === OUTSIDER ? 0 : 1);
+      if (viewer !== OUTSIDER) {
+        expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ recipient: viewer }));
+      }
+      let ledger = replaceTradeHistoryV2Range({ previous: createTradeHistoryV2LedgerState(),
+        page: materialized.page, expectedRevision: 0 });
+      const canonicalRows = projectTradeHistoryV2Rows({ state: ledger, viewerAddress: viewer });
+      const rows = buildTradeTransactionHistoryRows([snapshot], viewer, canonicalRows);
+      const config = buildStandardTerminalHistoryConfig(snapshot, {
+        walletAddress: viewer, walletReadAccounts: [], canonicalV2Rows: canonicalRows,
+        canonicalV2LifecycleEvents: [], historyLifecycleTxHashes: {}, historyTransactionTxHashes: {},
+        historyTransactionTimestamps: {}, swapFillNotes: [],
+        getTransactionLinkFeedbackProps: () => ({ className: '', label: 'View Tx', title: 'View transaction', onClick: () => {} })
+      });
+      const html = renderToStaticMarkup(createElement(Fragment, null, config.children));
+      const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+      if (viewer === OUTSIDER) {
+        expect(canonicalRows).toEqual([]);
+        expect(rows).toEqual([]);
+        expect(aggregateVisibleTradeTransactionHistoryRows(rows)).toBeUndefined();
+        expect(html).toBe('');
+      } else {
+        const bought = viewer === MAKER ? snapshot.request : snapshot.offer;
+        const sold = viewer === MAKER ? snapshot.offer : snapshot.request;
+        const boughtAmount = viewer === MAKER ? '200' : '100';
+        const soldAmount = viewer === MAKER ? '100' : '200';
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          amountVisibility: 'private-revealed', sequence: 2, txHash: tx,
+          bought: { tokenAddress: bought.tokenAddress, amount: boughtAmount, visible: true },
+          sold: { tokenAddress: sold.tokenAddress, amount: soldAmount, visible: true }
+        });
+        expect(aggregateVisibleTradeTransactionHistoryRows(rows)).toMatchObject({
+          bought: { amount: boughtAmount }, sold: { amount: soldAmount }
+        });
+        expect(text).toContain(`+${boughtAmount} ${bought.symbol}`);
+        expect(text).toContain(`-${soldAmount} ${sold.symbol}`);
+        expect(text).not.toContain('900 pAAA');
+        expect(text).not.toContain('1800 pBBB');
+        expect(html).toContain(tx);
+      }
+      ledger = replaceTradeHistoryV2Range({ previous: ledger, page: materialized.page, expectedRevision: 1 });
+      expect(buildTradeTransactionHistoryRows([snapshot], viewer,
+        projectTradeHistoryV2Rows({ state: ledger, viewerAddress: viewer }))).toEqual(rows);
+      ledger = replaceTradeHistoryV2Range({ previous: ledger,
+        page: { ...materialized.page, observations: [] }, expectedRevision: 2 });
+      expect(buildTradeTransactionHistoryRows([snapshot], viewer,
+        projectTradeHistoryV2Rows({ state: ledger, viewerAddress: viewer }))).toEqual([]);
+    }
+
+    const scope = { chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, deploymentBlock: '100' };
+    const args = { scope, capability: context.capability, deployment: context.deployment,
+      confirmationDepth: FINALITY_LAG, maxBlockSpan: 100n, overlapBlocks: 1n,
+      reads: pipelineReads(context.provider), viewer: FILLER };
+    const locked = await syncTradeHistoryV2PipelineRange({ ...args,
+      previous: { sync: createTradeHistoryV2SyncState(createTradeHistoryV2LedgerState()),
+        materialization: createTradeHistoryV2MaterializationState() },
+      expectedLedgerRevision: 0, expectedMaterializationRevision: 0 });
+    const request = vi.spyOn(context.provider, 'request');
+    resolver.mockClear();
+    const unlocked = await syncTradeHistoryV2PipelineRange({ ...args,
+      previous: resetTradeHistoryV2Projection(locked.state), rebuildProjection: true,
+      expectedLedgerRevision: 0, expectedMaterializationRevision: 0, resolvePrivateReceiptAmounts: resolver });
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ recipient: FILLER }));
+    expect(projectTradeHistoryV2Rows({ state: unlocked.state.sync.ledger, viewerAddress: FILLER }))
+      .toMatchObject([{ source: 'participant-receipt', amounts: { offerAmount: '100', requestAmount: '200' } }]);
+    expect(request.mock.calls.every(([call]) => call.method === 'eth_getBlockByNumber')).toBe(true);
+    await expect(syncTradeHistoryV2PipelineRange({ ...args, previous: { ...locked.state },
+      expectedLedgerRevision: 1, expectedMaterializationRevision: 1, rebuildProjection: true }))
+      .rejects.toThrow(/missing its verified public pages/);
+    await expect(syncTradeHistoryV2PipelineRange({ ...args, previous: locked.state,
+      expectedLedgerRevision: 1, expectedMaterializationRevision: 1, rebuildProjection: true,
+      resolvePrivateReceiptAmounts: async () => { throw new Error('Invalid receipt'); }
+    })).rejects.toThrow('Invalid receipt');
+    expect(projectTradeHistoryV2Rows({ state: locked.state.sync.ledger, viewerAddress: FILLER }))
+      .toMatchObject([{ source: 'private-marker', amounts: {} }]);
   });
 
   it('does not turn creation or maintenance snapshots into executions without an exact marker', async () => {
@@ -728,7 +954,8 @@ describe('tradeHistoryV2Materialize', () => {
       overlapBlocks: 1n,
       reads: pipelineReads(context.provider),
       expectedLedgerRevision: 1,
-      expectedMaterializationRevision: 1
+      expectedMaterializationRevision: 1,
+      rebuildProjection: true
     });
     expect(replayed.reorged).toBe(true);
     expect(projectTradeHistoryV2Rows({ state: replayed.state.sync.ledger, viewerAddress: MAKER })).toEqual([]);
@@ -815,7 +1042,8 @@ describe('tradeHistoryV2Materialize', () => {
       expectedLedgerRevision: 1,
       expectedMaterializationRevision: 1,
       viewer: MAKER,
-      resolveDirectPrivateAmounts: async () => ({ offerAmount: '34', requestAmount: '55' })
+      resolveDirectPrivateAmounts: async () => ({ offerAmount: '34', requestAmount: '55' }),
+      rebuildProjection: true
     });
     const rows = projectTradeHistoryV2Rows({
       state: replayed.state.sync.ledger,

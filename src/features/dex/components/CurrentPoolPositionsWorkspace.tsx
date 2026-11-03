@@ -80,7 +80,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     const captured=scope.current,terms=actionTerms.current;inFlight.current = true; setBusy(true);
     try{
       if(preparedCandidate){assertCurrentPoolPositionNativeAdmission(candidate,'snapshot',snapshot?.value.status===4n);
-        assertCurrentAppPoolAuthority(candidate.graph,{owner:context.owner!,action:'snapshot',positionId:parseCurrentTrialAtoms(id,true)});}
+        if(candidateKey!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph,{owner:context.owner!,action:'snapshot',positionId:parseCurrentTrialAtoms(id,true)});}
       const capability=preparedCandidate?await getPositions!(BigInt(candidate.chainId),{candidate:preparedScope!.key}):await getPositions!(BigInt(candidate.chainId));assertScope(captured);
       const prepared=await capability.prepareSnapshot({positionId:parseCurrentTrialAtoms(id,true),confirm:async review=>{
         assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed. Review them again.');
@@ -103,7 +103,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     const captured=scope.current,terms=actionTerms.current,before=snapshot.value;inFlight.current=true;setBusy(true);
     try{
       assertCurrentPoolPositionNativeAdmission(candidate,'withdraw',false,'preview');
-      assertCurrentAppPoolAuthority(candidate.graph,{owner:context.owner!,action:'withdraw',positionId:before.positionId});
+      if(candidateKey!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph,{owner:context.owner!,action:'withdraw',positionId:before.positionId});
       const fraction=currentPoolWithdrawalFraction(percentage);
       const capability=await getPositions!(BigInt(candidate.chainId),{candidate:preparedScope!.key});assertScope(captured);
       const prepared=await capability.prepareExitPreview({positionId:before.positionId,expectedContext:before.context,fraction,
@@ -129,7 +129,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     const captured=scope.current,terms=actionTerms.current,before=snapshot.value;inFlight.current = true; setBusy(true);
     try{
       if(preparedCandidate){assertCurrentPoolPositionNativeAdmission(candidate,action,false,action==='withdraw'&&exitCandidate?'withdrawal':undefined);
-        assertCurrentAppPoolAuthority(candidate.graph,{owner:context.owner!,action,positionId:before.positionId,...(action==='transfer'?{recipient}:{})});
+        if(candidateKey!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph,{owner:context.owner!,action,positionId:before.positionId,...(action==='transfer'?{recipient}:{})});
         if(action!=='close'&&!(exitCandidate&&['withdraw','transfer','activate','resume'].includes(action)))throw new Error('This prepared Pool action is awaiting integration.');}
       if(exitCandidate&&action==='withdraw'&&!validExitPreview)throw new Error('Check a private preview for this position and withdrawal percentage first.');
       if(nativeTrial&&action!=='close')throw new Error('Only full exit of the admitted new Testnet claim is available.');

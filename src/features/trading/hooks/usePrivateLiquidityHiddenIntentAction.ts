@@ -13,7 +13,10 @@ import type {
   AttestedPrivateLiquidityDeployment,
   CompleteCanonicalPrivateLiquidityPositionSnapshot
 } from '../../../lib/privateLiquidityChain';
-import { buildPrivateLiquidityHiddenIntentSettlementRoutes } from '../../../lib/privateLiquidityHiddenIntents';
+import {
+  buildPrivateLiquidityHiddenIntentSettlementRoutes,
+  getPrivateLiquidityHiddenIntentSettlementLimit
+} from '../../../lib/privateLiquidityHiddenIntents';
 import {
   preparePrivateLiquidityHiddenIntentFlow,
   type PrivateLiquidityHiddenIntentDraft
@@ -241,9 +244,10 @@ export default function usePrivateLiquidityHiddenIntentAction({
         }));
         return;
       }
+      const settlementLimit = getPrivateLiquidityHiddenIntentSettlementLimit(routes.activePositionCount);
       if (!await requestConfirmation(Object.freeze({
         title: 'Settle ready hidden intents',
-        message: 'The contract, not this caller, selects up to four queued intents. Both complete public price routes are submitted, so no private side, limit, or intent ID is exposed in the request.',
+        message: `The contract, not this caller, selects up to ${settlementLimit} queued intent${settlementLimit === 1 ? '' : 's'} per call. Both complete public price routes are submitted, so no private side, limit, or intent ID is exposed in the request.`,
         primaryLabel: 'Settle next queue entries',
         summaryRows: [
           { label: 'Open queue', value: pairStatus.openIntentCount },
@@ -254,7 +258,7 @@ export default function usePrivateLiquidityHiddenIntentAction({
         stats: [
           { label: 'COTI private inputs', value: '0' },
           { label: 'Wallet transactions', value: '1' },
-          { label: 'Max intents processed', value: '4' }
+          { label: 'Max intents processed', value: String(settlementLimit) }
         ]
       }))) {
         setState(IDLE);

@@ -20,6 +20,7 @@ import type {
 type UseP2PSyncQueueArgs = {
   flushQueuedTradeDataRefreshRef: MutableRefObject<() => void>;
   getTradeWalletFlowInput: () => WalletTransactionSessionInput;
+  hasActiveListRefresh: () => boolean;
   refreshAllTradingBalances: (options?: WalletBalanceRefreshOptions) => Promise<unknown>;
   refreshMyTrades: (options?: { silent?: boolean }) => Promise<unknown>;
   refreshPublicTrades: (options?: { silent?: boolean }) => Promise<unknown>;
@@ -41,6 +42,7 @@ export type ScheduleP2PSyncInput = {
 export default function useP2PSyncQueue({
   flushQueuedTradeDataRefreshRef,
   getTradeWalletFlowInput,
+  hasActiveListRefresh,
   refreshAllTradingBalances,
   refreshMyTrades,
   refreshPublicTrades,
@@ -64,7 +66,7 @@ export default function useP2PSyncQueue({
       const silent = shouldUseSilentP2PSync(request.reason);
       void Promise.allSettled([
         domains.has('balances')
-          ? refreshAllTradingBalances({ reason: request.reason === 'manual' ? 'manual' : 'trade-action', signer: request.signer, silent })
+          ? refreshAllTradingBalances({ reason: request.reason, signer: request.signer, silent })
           : Promise.resolve(),
         domains.has('wallet-trades') && walletConnected
           ? refreshMyTrades({ silent })
@@ -89,6 +91,10 @@ export default function useP2PSyncQueue({
     if (!queued) {
       return;
     }
+    if (queued.reason !== 'manual' && hasActiveListRefresh()) {
+      if (queued.reason === 'interval') queuedTradeDataRefreshRef.current = null;
+      return;
+    }
     if (
       queued.reason !== 'manual' &&
       (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive())
@@ -98,10 +104,12 @@ export default function useP2PSyncQueue({
     }
     queuedTradeDataRefreshRef.current = null;
     runP2PSyncRequest(queued);
-  }, [getTradeWalletFlowInput, runP2PSyncRequest]);
+  }, [getTradeWalletFlowInput, hasActiveListRefresh, runP2PSyncRequest]);
 
   const scheduleP2PSync = useCallback(
     (request: ScheduleP2PSyncInput) => {
+      // A busy poll tick carries no missed event and must not keep refreshing itself.
+      if (request.reason === 'interval' && hasActiveListRefresh()) return;
       mergeQueuedP2PSync({
         domains: new Set(request.domains),
         escrowContract: request.escrowContract,
@@ -128,7 +136,7 @@ export default function useP2PSyncQueue({
         flushQueuedP2PSync();
       }, REALTIME_SYNC_DEBOUNCE_MS);
     },
-    [flushQueuedP2PSync, getTradeWalletFlowInput, mergeQueuedP2PSync]
+    [flushQueuedP2PSync, getTradeWalletFlowInput, hasActiveListRefresh, mergeQueuedP2PSync]
   );
 
   const refreshTradeDataInBackground = useCallback(

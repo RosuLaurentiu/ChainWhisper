@@ -49,7 +49,8 @@ export type DirectChatV2ReadCursorDurability = 'durable' | 'memory-only';
 export type DirectChatV2ReadCursorCanonicalContext = {
   canonicalMessageCount: bigint;
   readCanonicalMessageAnchor: (
-    messageId: bigint
+    messageId: bigint,
+    candidateAnchor?: DirectChatV2ReadCursorAnchor
   ) => Promise<DirectChatV2ReadCursorAnchor | null>;
 };
 

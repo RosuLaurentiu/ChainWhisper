@@ -1,5 +1,4 @@
-import { lazy, Suspense, type KeyboardEventHandler } from 'react';
-import { moveFocusWithin } from '../../../shared/components/a11y';
+import { lazy, Suspense } from 'react';
 import { formatTokenAmount } from '../../../lib/appShared/core';
 import type { PrivateLiquidityWorkspaceModel } from '../../../lib/privateLiquidityWorkspaceModel';
 import { buildPrivateLiquidityPositionKey } from '../../../lib/privateLiquidity';
@@ -22,6 +21,8 @@ const PrivateLiquidityDailyPriceChart = lazy(() => import('./PrivateLiquidityDai
 
 type PrivateLiquidityWorkspaceProps = {
   activeView: PrivateLiquidityWorkspaceView;
+  recoveryOnly?: boolean;
+  intentMode?: 'create' | 'manage';
   deploymentReady: boolean;
   walletReady: boolean;
   loading?: boolean;
@@ -47,8 +48,8 @@ type PrivateLiquidityWorkspaceProps = {
   dailyPriceChart?: PrivateLiquidityDailyPriceChartProps;
   selectedDailyPricePairKey?: string;
   routeError?: string;
-  onChangeView: (view: PrivateLiquidityWorkspaceView) => void;
-  onBackToSwap: () => void;
+  onTradeMarket?: (baseToken: string, quoteToken: string) => void;
+  onCreatePosition?: () => void;
   onBackToPositions?: () => void;
   onOpenPosition?: (positionId: string) => void;
   onPositionAction?: (intent: PrivateLiquidityPositionActionIntent) => void;
@@ -62,15 +63,10 @@ type PrivateLiquidityWorkspaceProps = {
   onRefresh?: () => void;
 };
 
-const workspaceViews = [
-  ['discover', 'Discover'],
-  ['mine', 'My positions'],
-  ['create', 'Create'],
-  ['intents', 'Hidden limit intents']
-] as const;
-
 export default function PrivateLiquidityWorkspace({
   activeView,
+  recoveryOnly = false,
+  intentMode = 'create',
   deploymentReady,
   walletReady,
   loading = false,
@@ -96,8 +92,8 @@ export default function PrivateLiquidityWorkspace({
   dailyPriceChart,
   selectedDailyPricePairKey,
   routeError = '',
-  onChangeView,
-  onBackToSwap,
+  onTradeMarket,
+  onCreatePosition,
   onBackToPositions,
   onOpenPosition,
   onPositionAction,
@@ -128,6 +124,9 @@ export default function PrivateLiquidityWorkspace({
     ? ownerPrivateHistory.positionTotals.find((totals) => totals.positionKey === managedPositionKey)
     : selection?.totals;
   const traderHistoryRows = ownerPrivateHistory?.traderRows ?? [];
+  const tokenLabel = (address: string): string =>
+    positionTokens.find((token) => token.address.toLowerCase() === address.toLowerCase())?.symbol
+    ?? `${address.slice(0, 8)}…`;
   const formatTraderAmount = (value: string, tokenAddress: string | undefined, fallback: string): string => {
     const token = tokenAddress
       ? positionTokens.find((candidate) => candidate.address === tokenAddress)
@@ -136,56 +135,21 @@ export default function PrivateLiquidityWorkspace({
       ? `${formatTokenAmount(BigInt(value), token.decimals, 8)} ${token.symbol}`
       : `${value} ${fallback} units`;
   };
-  const handleKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (!moveFocusWithin(event, { orientation: 'horizontal', selector: '[role="tab"]' })) return;
-    const nextView = (
-      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
-    )?.dataset.privateLiquidityView as PrivateLiquidityWorkspaceView | undefined;
-    if (nextView && nextView !== activeView) onChangeView(nextView);
-  };
-
   return (
     <section className="standalone-trades-section p2p-trade-workspace-panel p2p-private-liquidity-workspace">
-      <div className="standalone-trades-section-head">
+      <div className="p2p-order-section-head">
         <div>
-          <p className="landing-eyebrow">Legacy recurring limit strategies</p>
-          <h2>Legacy Position NFT workspace</h2>
-          <p>Manage fixed bid/ask strategies, encrypted inventory, and private hidden-limit intents.</p>
+          <h3>{recoveryOnly ? activeView === 'intents' ? 'Hidden limit refunds' : 'Existing strategy funds' : activeView === 'intents' ? intentMode === 'manage' ? 'My hidden limits' : 'Create hidden limit'
+            : activeView === 'create' ? 'Create bid/ask strategy' : 'Bid/ask strategies'}</h3>
+          {!recoveryOnly && activeView === 'create' ? <p>Set a bid and ask for repeated fills. Your inventory stays private.</p> : null}
         </div>
-        <button type="button" className="standalone-trade-secondary-btn" onClick={onBackToSwap}>
-          Back to swap
-        </button>
-      </div>
-
-      <div
-        className="p2p-trade-mode-tabs p2p-private-liquidity-workspace-tabs"
-        role="tablist"
-        aria-label="Recurring limit strategy workspace"
-        onKeyDown={handleKeyDown}
-      >
-        {workspaceViews.map(([view, label]) => (
-          <button
-            key={view}
-            type="button"
-            role="tab"
-            aria-selected={activeView === view}
-            tabIndex={activeView === view ? 0 : -1}
-            className={activeView === view ? 'active' : undefined}
-            data-private-liquidity-view={view}
-            onClick={() => onChangeView(view)}
-          >
-            {label}
-          </button>
-        ))}
       </div>
 
       {!deploymentReady ? (
         <div className="p2p-swap-order-empty p2p-private-liquidity-notice" role="status">
-          <strong>Reviewed deployment required</strong>
-          <p>
-            Position discovery and mutations remain disabled until the exact chain, address, deployment block,
-            and runtime hash are pinned and attested.
-          </p>
+          <strong>{recoveryOnly ? 'Recovery unavailable' : 'Strategies unavailable'}</strong>
+          <p>{recoveryOnly ? 'The current deployment could not be verified. Recovery actions are disabled.'
+            : 'The current deployment could not be verified. Trading is disabled.'}</p>
         </div>
       ) : null}
 
@@ -204,8 +168,8 @@ export default function PrivateLiquidityWorkspace({
         </div>
       ) : null}
 
-      {activeView === 'discover' ? (
-        <div className="p2p-private-liquidity-workspace-card" role="tabpanel">
+      {!recoveryOnly && activeView === 'discover' ? (
+        <div className="p2p-private-liquidity-workspace-card">
           {dailyPriceChart ? (
             <Suspense fallback={<div className="p2p-private-liquidity-price-state" role="status">Loading daily price chart…</div>}>
               <PrivateLiquidityDailyPriceChart {...dailyPriceChart} />
@@ -232,13 +196,17 @@ export default function PrivateLiquidityWorkspace({
                     disabled={!onSelectDailyPricePair}
                     onClick={() => onSelectDailyPricePair?.(market.pairKey)}
                   >
-                    <strong>{market.baseToken.slice(0, 8)}… / {market.quoteToken.slice(0, 8)}…</strong>
+                    <strong>{tokenLabel(market.baseToken)} / {tokenLabel(market.quoteToken)}</strong>
                     <small>{market.pairKey.slice(0, 10)}…</small>
                   </button>
                   <span>{market.bestBid ? `${market.bestBid.terms.quoteAmount} / ${market.bestBid.terms.baseAmount}` : '—'}</span>
                   <span>{market.bestAsk ? `${market.bestAsk.terms.quoteAmount} / ${market.bestAsk.terms.baseAmount}` : '—'}</span>
                   <span>{market.crossed ? 'Crossed' : market.spreadBps !== undefined ? `${market.spreadBps} bps` : '—'}</span>
-                  <span>{market.activePositionCount}</span>
+                  <span>{market.activePositionCount}
+                    {onTradeMarket ? <button type="button" className="standalone-trade-secondary-btn"
+                      disabled={!deploymentReady || loading || market.activePositionCount === 0 || positionActionBusy || hiddenIntentBusy}
+                      onClick={() => onTradeMarket(market.baseToken, market.quoteToken)}>Trade</button> : null}
+                  </span>
                 </article>
               ))}
             </div>
@@ -252,9 +220,10 @@ export default function PrivateLiquidityWorkspace({
       ) : null}
 
       {activeView === 'mine' ? (
-        <div className="p2p-private-liquidity-workspace-card" role="tabpanel">
+        <div className="p2p-private-liquidity-workspace-card">
           {managedPosition ? (
             <PrivateLiquidityPositionManager
+              recoveryOnly={recoveryOnly}
               position={managedPosition}
               baseToken={managedBaseToken}
               quoteToken={managedQuoteToken}
@@ -290,7 +259,7 @@ export default function PrivateLiquidityWorkspace({
                 <article key={position.identity.positionId}>
                   <div>
                     <strong>Position NFT #{position.identity.positionId}</strong>
-                    <span>{position.baseToken.slice(0, 8)}… / {position.quoteToken.slice(0, 8)}…</span>
+                    <span>{tokenLabel(position.baseToken)} / {tokenLabel(position.quoteToken)}</span>
                     <small>Revision {position.revision} · {position.status}</small>
                   </div>
                   <button type="button" onClick={() => onOpenPosition?.(position.identity.positionId)}>Manage</button>
@@ -304,7 +273,7 @@ export default function PrivateLiquidityWorkspace({
                 Public terms and status are indexed without a signature. Live base/quote inventories are revealed only
                 to the current NFT owner through COTI privacy.
               </p>
-              <button type="button" onClick={() => onChangeView('create')}>Create a position</button>
+              {!recoveryOnly ? <button type="button" disabled={!onCreatePosition} onClick={onCreatePosition}>Create a strategy</button> : null}
             </div>
           )}
 
@@ -360,25 +329,8 @@ export default function PrivateLiquidityWorkspace({
         </div>
       ) : null}
 
-      {activeView === 'create' ? (
-        <div className="p2p-private-liquidity-workspace-card" role="tabpanel">
-          <div className="p2p-private-liquidity-create-grid">
-            <div>
-              <span>1. Pair</span>
-              <strong>Two verified private tokens</strong>
-              <small>Canonical base/quote orientation is derived by the app and contract.</small>
-            </div>
-            <div>
-              <span>2. Market setup</span>
-              <strong>Starting price and spread</strong>
-              <small>The app derives the public bid and ask automatically.</small>
-            </div>
-            <div>
-              <span>3. Budget</span>
-              <strong>Balanced encrypted inventory</strong>
-              <small>Enter either token amount; the matching side is calculated for you.</small>
-            </div>
-          </div>
+      {!recoveryOnly && activeView === 'create' ? (
+        <div className="p2p-private-liquidity-workspace-card">
           <PrivateLiquidityPositionCreateForm
             tokens={positionTokens}
             deploymentReady={deploymentReady && Boolean(onPositionAction)}
@@ -392,20 +344,12 @@ export default function PrivateLiquidityWorkspace({
       ) : null}
 
       {activeView === 'intents' ? (
-        <div className="p2p-private-liquidity-workspace-card" role="tabpanel">
-          <div className="standalone-trades-section-head">
-            <div>
-              <p className="landing-eyebrow">Private recurring limit orders</p>
-              <h3>Hidden limit order</h3>
-              <p>
-                Create it like a normal limit order. Your side, amount, price, and fills remain private while
-                settlement checks the complete bounded Position NFT market.
-              </p>
-            </div>
-          </div>
+        <div className="p2p-private-liquidity-workspace-card">
           <PrivateLiquidityHiddenIntentPanel
+            recoveryOnly={recoveryOnly}
+            mode={recoveryOnly ? 'manage' : intentMode}
             tokens={positionTokens}
-            deploymentReady={deploymentReady && Boolean(onCreateHiddenIntent)}
+            deploymentReady={deploymentReady && (recoveryOnly || Boolean(onCreateHiddenIntent))}
             walletReady={walletReady}
             busy={hiddenIntentBusy}
             message={hiddenIntentMessage}

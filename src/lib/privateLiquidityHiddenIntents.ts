@@ -17,6 +17,15 @@ export const PRIVATE_LIQUIDITY_HIDDEN_V2_MAX_ACTIVE_POSITIONS = 8;
 export const PRIVATE_LIQUIDITY_HIDDEN_V2_MAX_INTENTS_PER_SETTLEMENT = 4;
 export const PRIVATE_LIQUIDITY_HIDDEN_V2_MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
 
+export const getPrivateLiquidityHiddenIntentSettlementLimit = (activePositionCount: number): number => {
+  if (!Number.isSafeInteger(activePositionCount) || activePositionCount < 1 ||
+      activePositionCount > PRIVATE_LIQUIDITY_HIDDEN_V2_MAX_ACTIVE_POSITIONS) {
+    throw new Error('Hidden-intent settlement position count is out of range.');
+  }
+  return Math.min(PRIVATE_LIQUIDITY_HIDDEN_V2_MAX_INTENTS_PER_SETTLEMENT,
+    Math.max(1, Math.floor(6 / activePositionCount)));
+};
+
 const UINT32_MAX = (1n << 32n) - 1n;
 const UINT64_MAX = (1n << 64n) - 1n;
 const UINT127_MAX = (1n << 127n) - 1n;

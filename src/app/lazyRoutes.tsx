@@ -1,4 +1,5 @@
 import { lazy } from 'react';
+import { getSessionTradingPage } from '../shell/routing';
 
 export const QuickActionsModal = lazy(() => import('../features/chat/components/QuickActionsModal'));
 
@@ -66,6 +67,11 @@ export const preloadSwapPage = () => {
 
 export const preloadDexV2Page = () => {
   void loadDexV2Page();
+};
+
+export const preloadTradingPage = () => {
+  if (getSessionTradingPage() === 'trades') preloadTradesPage();
+  else preloadDexV2Page();
 };
 
 export const DirectChatPanel = lazy(loadDirectChatPanel);

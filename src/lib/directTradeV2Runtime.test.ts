@@ -8,7 +8,8 @@ import {
   createDirectTradeV2Runtime,
   listCanonicalIncomingDirectTradeV2Openings,
   listNewIncomingDirectTradeV2Openings,
-  reconcileDirectTradeV2ChatMessages
+  reconcileDirectTradeV2ChatMessages,
+  resolveDirectTradeV2RuntimeReference
 } from './directTradeV2Runtime';
 
 const address = (pair: string): string => `0x${pair.repeat(20)}`;
@@ -28,6 +29,119 @@ const METADATA = new Interface([
 const APP_WALLET_FEATURE = keccak256(toUtf8Bytes('APP_WALLET_EXECUTOR')).toLowerCase();
 const quantity = (value: bigint): string => `0x${value.toString(16)}`;
 const blockHash = (value: bigint): string => `0x${value.toString(16).padStart(64, '0')}`;
+
+const notificationRuntime = async () => {
+  let latestBlock = 10_005n;
+  const logs: Array<Record<string, unknown>> = [];
+  const receipts = new Map<string, Record<string, unknown>>();
+  const hashes = new Map<bigint, string>();
+  const addOpening = (tradeId: bigint, blockNumber: bigint) => {
+    const transactionHash = blockHash(tradeId + 1_000_000n);
+    const encoded = ACTIONS.encodeEventLog(ACTIONS.getEvent('DirectTradeOpened')!, [tradeId, PEER, VIEWER,
+      address('00'), 0n, tradeId, 0n, 1n, TOKEN_A, 1n, TOKEN_B, 0n, 10n, 25n,
+      1_700_000_000n + blockNumber, 1_800_000_000n]);
+    const log = { ...encoded, address: CONTRACT, blockNumber: quantity(blockNumber),
+      blockHash: hashes.get(blockNumber) ?? blockHash(blockNumber), transactionHash,
+      transactionIndex: '0x0', logIndex: '0x0', removed: false };
+    logs.push(log);
+    receipts.set(transactionHash, { status: '0x1', blockNumber: log.blockNumber, blockHash: log.blockHash,
+      transactionHash, transactionIndex: '0x0', logs: [{ ...log, removed: undefined }] });
+    return log;
+  };
+  const getOwnerCapability = vi.fn(async () => { throw new Error('Read-only notifications must not acquire a signer.'); });
+  const provider = { request: vi.fn(async ({ method, params = [] }: { method: string; params?: readonly unknown[] }) => {
+    if (method === 'eth_chainId') return quantity(CHAIN_ID);
+    if (method === 'eth_blockNumber') return quantity(latestBlock);
+    if (method === 'eth_getCode') return CODE;
+    if (method === 'eth_getLogs') {
+      const range = params[0] as { fromBlock: string; toBlock: string };
+      return logs.filter(log => BigInt(String(log.blockNumber)) >= BigInt(range.fromBlock) &&
+        BigInt(String(log.blockNumber)) <= BigInt(range.toBlock));
+    }
+    if (method === 'eth_getTransactionReceipt') return receipts.get(String(params[0])) ?? null;
+    if (method === 'eth_getBlockByNumber') {
+      const number = BigInt(String(params[0]));
+      return { number: quantity(number), hash: hashes.get(number) ?? blockHash(number),
+        transactions: logs.filter(log => BigInt(String(log.blockNumber)) === number).map(log => log.transactionHash) };
+    }
+    if (method === 'eth_call') {
+      const parsed = METADATA.parseTransaction(params[0] as { data: string });
+      if (!parsed) throw new Error('Unknown getter.');
+      return METADATA.encodeFunctionResult(parsed.name, [parsed.name === 'contractVersion'
+        ? 'ChainWhisperDirectOTCEscrowV2' : String(parsed.args[0]).toLowerCase() !== APP_WALLET_FEATURE]);
+    }
+    throw new Error(`Unexpected RPC ${method}.`);
+  }) };
+  const runtime = await createDirectTradeV2Runtime({ config: { status: 'active', manifest: {
+    protocol: 'direct-v2', chainId: CHAIN_ID.toString(), contractAddress: CONTRACT,
+    deploymentBlock: '100', runtimeBytecodeHash: keccak256(CODE)
+  }, finalityLagBlocks: 5n, rpcUrl: 'https://example.invalid/', fingerprint: 'recent-notifications' },
+    ownerAddress: VIEWER, provider, assertCurrent: () => undefined, getOwnerCapability,
+    runOwnerTransactionFlow: async operation => operation() });
+  return { runtime, provider, addOpening, receipts, hashes, getOwnerCapability,
+    setHead: (head: bigint) => { latestBlock = head; },
+    ranges: () => provider.request.mock.calls.filter(([request]) => request.method === 'eth_getLogs')
+      .map(([request]) => request.params?.[0] as { address: string; fromBlock: string; toBlock: string }) };
+};
+
+describe('directTradeV2Runtime recent notification polling', () => {
+  it('reads one current window, suppresses initial alerts and reaches new events without draining its archive', async () => {
+    const source = await notificationRuntime();
+    source.addOpening(1n, 105n);
+    source.addOpening(2n, 9_999n);
+    const first = await source.runtime.sync();
+    expect(source.ranges().map(range => [BigInt(range.fromBlock), BigInt(range.toBlock)])).toEqual([[9_489n, 10_000n]]);
+    expect(first).toMatchObject({ hasMore: false, historyComplete: false, newIncomingOpenings: [], incomingContacts: [] });
+    expect(first.canonicalIncomingOpenings.map(entry => entry.message.directTradeV2?.tradeId)).toEqual(['2']);
+    const normal: ChatMessage = { id: 'regular', direction: 'incoming', text: 'Preserve normal chat.' };
+    const applied = first.apply({ [PEER]: [normal] });
+    expect(applied[PEER]).toContainEqual(normal);
+    expect(applied[PEER]).toHaveLength(2);
+    await source.runtime.sync();
+    expect(source.ranges()).toHaveLength(1);
+    source.setHead(10_007n);
+    source.addOpening(3n, 10_001n);
+    const next = await source.runtime.sync();
+    expect(next.newIncomingOpenings.map(entry => entry.message.directTradeV2?.tradeId)).toEqual(['3']);
+    expect(next.historyComplete).toBe(false);
+    expect(source.ranges().map(range => [BigInt(range.fromBlock), BigInt(range.toBlock)])).toEqual([
+      [9_489n, 10_000n], [9_491n, 10_002n]
+    ]);
+    source.hashes.set(10_002n, hash('99'));
+    expect(await source.runtime.sync()).toMatchObject({ reorged: true, newIncomingOpenings: [], hasMore: false });
+    expect(source.ranges().every(range => range.address.toLowerCase() === CONTRACT && BigInt(range.fromBlock) >= 9_489n)).toBe(true);
+    expect(source.getOwnerCapability).not.toHaveBeenCalled();
+    source.runtime.close();
+  });
+
+  it('keeps receipt checks and does not consume an unverified recent page', async () => {
+    const source = await notificationRuntime();
+    const log = source.addOpening(2n, 9_999n);
+    const receipt = source.receipts.get(log.transactionHash)!;
+    source.receipts.set(log.transactionHash, { ...receipt, blockHash: hash('98') });
+    await expect(source.runtime.sync()).rejects.toThrow(/receipt|canonical|block hash/i);
+    source.receipts.set(log.transactionHash, receipt);
+    const result = await source.runtime.sync();
+    expect(source.ranges()[0]).toEqual(source.ranges()[1]);
+    expect(result.canonicalIncomingOpenings).toHaveLength(1);
+    expect(result.newIncomingOpenings).toEqual([]);
+    source.runtime.close();
+  });
+
+  it('does not alert for a fresh recent baseline after a long idle gap', async () => {
+    const source = await notificationRuntime();
+    await source.runtime.sync();
+    source.setHead(20_005n);
+    source.addOpening(4n, 19_999n);
+    const result = await source.runtime.sync();
+    expect(result.canonicalIncomingOpenings).toHaveLength(1);
+    expect(result.newIncomingOpenings).toEqual([]);
+    expect(source.ranges().map(range => [BigInt(range.fromBlock), BigInt(range.toBlock)])).toEqual([
+      [9_489n, 10_000n], [19_489n, 20_000n]
+    ]);
+    source.runtime.close();
+  });
+});
 
 const projected = (
   id: string,
@@ -175,7 +289,6 @@ describe('directTradeV2Runtime public card hydration', () => {
 
   it('does not acquire an owner signer capability for public trade terms', async () => {
     const retainedContract = address('88');
-    let failRetained = true;
     const provider = {
       request: vi.fn(async ({ method, params = [] }: { method: string; params?: readonly unknown[] }) => {
         if (method === 'eth_chainId') return quantity(CHAIN_ID);
@@ -186,8 +299,6 @@ describe('directTradeV2Runtime public card hydration', () => {
         }
         if (method === 'eth_getCode') return CODE;
         if (method === 'eth_getLogs') {
-          const filter = params[0] as { address: string };
-          if (filter.address.toLowerCase() === retainedContract && failRetained) { failRetained = false; throw new Error('retained scope unavailable'); }
           return [];
         }
         if (method === 'eth_call') {
@@ -230,8 +341,7 @@ describe('directTradeV2Runtime public card hydration', () => {
         },
         finalityLagBlocks: 5n,
         rpcUrl: 'https://example.invalid/',
-        fingerprint: 'test-direct-trade-v2',
-        retainedManifests: [{ protocol: 'direct-v2', chainId: CHAIN_ID.toString(), contractAddress: retainedContract, deploymentBlock: '90', runtimeBytecodeHash: keccak256(CODE) }]
+        fingerprint: 'test-direct-trade-v2'
       },
       ownerAddress: VIEWER,
       provider,
@@ -249,21 +359,27 @@ describe('directTradeV2Runtime public card hydration', () => {
       requestAmount: '25'
     });
     expect(getOwnerCapability).not.toHaveBeenCalled();
-    const old = await runtime.forReference!({ chainId: CHAIN_ID.toString(), contractAddress: retainedContract, orderId: '7' });
-    expect(old.contractAddress).toBe(retainedContract);
-    await expect(old.readTradeTerms(7n, { decryptPrivateAmounts: false })).resolves.toMatchObject({ tradeId: '7', offerAmount: '10' });
+    await expect(resolveDirectTradeV2RuntimeReference(runtime, {
+      chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, orderId: '7'
+    })).resolves.toBe(runtime);
+    for (const reference of [
+      { chainId: CHAIN_ID.toString(), contractAddress: retainedContract, orderId: '7' },
+      { chainId: '1', contractAddress: CONTRACT, orderId: '7' },
+      { chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, orderId: '0' },
+      { chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, orderId: (1n << 256n).toString() }
+    ]) {
+      await expect(resolveDirectTradeV2RuntimeReference(runtime, reference)).rejects.toThrow(/reference/);
+    }
+    expect(await runtime.sync()).toMatchObject({ hasMore: false, historyComplete: true });
+    const logCalls = provider.request.mock.calls.filter(([value]) => value.method === 'eth_getLogs');
+    expect(logCalls.length).toBeGreaterThan(0);
+    for (const [value] of logCalls) expect((value.params?.[0] as { address: string }).address.toLowerCase()).toBe(CONTRACT);
     expect(getOwnerCapability).not.toHaveBeenCalled();
-    await expect(runtime.forReference!({ chainId: '1', contractAddress: retainedContract, orderId: '7' })).rejects.toThrow(/reference/);
-    await expect(runtime.forReference!({ chainId: CHAIN_ID.toString(), contractAddress: address('99'), orderId: '7' })).rejects.toThrow(/reference/);
-    await expect(runtime.sync()).rejects.toThrow();
-    const callsBefore = provider.request.mock.calls.filter(([value]) => value.method === 'eth_getLogs');
-    await runtime.sync();
-    const callsAfter = provider.request.mock.calls.filter(([value]) => value.method === 'eth_getLogs');
-    const currentRanges = callsAfter.filter(([value]) => (value.params?.[0] as { address?: string })?.address?.toLowerCase() === CONTRACT);
-    expect(callsAfter.length).toBe(callsBefore.length + 2);
-    expect((currentRanges[0][0].params?.[0] as { fromBlock: string }).fromBlock).toBe((currentRanges[1][0].params?.[0] as { fromBlock: string }).fromBlock);
     runtime.close();
-    expect(old.isCurrent()).toBe(false);
-    await expect(old.readTradeTerms(7n)).rejects.toThrow(/closed/);
+    expect(runtime.isCurrent()).toBe(false);
+    await expect(runtime.readTradeTerms(7n)).rejects.toThrow(/closed/);
+    await expect(resolveDirectTradeV2RuntimeReference(runtime, {
+      chainId: CHAIN_ID.toString(), contractAddress: CONTRACT, orderId: '7'
+    })).rejects.toThrow(/Reconnect/);
   });
 });

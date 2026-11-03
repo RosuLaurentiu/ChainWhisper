@@ -65,6 +65,18 @@ const productionSources = listProductionSourceFiles(SRC_ROOT).map((path) => ({
 }));
 
 describe('browser-wallet-only architecture boundary', () => {
+  it('keeps former Group viewport acknowledgement separate from current incoming coverage', () => {
+    const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
+    const visible = app.slice(app.indexOf('const markLatestGroupV2MessageVisible ='), app.indexOf('    chatMessagesRef: setChatMessagesContainerRef,', app.indexOf('const markLatestGroupV2MessageVisible =')));
+    expect(visible.includes("message.groupV2?.contentState === 'available'")).toBe(true);
+    expect(visible.includes('group.id === selectedGroupId && group.membershipEnded')).toBe(true);
+    expect(visible.includes('!runtime.isCurrent()')).toBe(true);
+    expect(visible.includes("message.groupV2?.finality !== 'finalized'")).toBe(true);
+    expect(visible.includes('&& !visibleHistoricalMessage')).toBe(true);
+    expect(visible.includes('await runtime.readCursors.advanceVisible(scope, message, context)')).toBe(true);
+    expect(app.includes('if (group.membershipEnded) delete nextUnreadGroups[String(group.id)];')).toBe(true);
+    expect(app.includes('groupChatV2DiscoveryCaughtUpRef.current[String(selectedGroupId)] = true')).toBe(false);
+  });
   it('keeps every retired app-wallet runtime module deleted', () => {
     for (const path of retiredRuntimePaths) {
       expect(existsSync(join(APP_ROOT, path)), `${path} must stay deleted`).toBe(false);
@@ -73,12 +85,6 @@ describe('browser-wallet-only architecture boundary', () => {
 
   it('keeps retired chat contracts read-only and behind an explicit compatibility boundary', () => {
     const expectedLegacyReaders = [
-      'src/features/chat/hooks/useDirectConversationRealtimeSync.ts',
-      'src/features/chat/hooks/useDirectConversationSync.ts',
-      'src/features/groups/hooks/useGroupDataSync.ts',
-      'src/features/groups/hooks/useGroupRealtimeSync.ts',
-      'src/features/tokenTools/useRewardTokenMetrics.ts',
-      'src/lib/appLookup.ts',
       'src/lib/chatGc.ts'
     ];
     const legacyImporters = productionSources
@@ -145,51 +151,42 @@ describe('browser-wallet-only architecture boundary', () => {
       join(SRC_ROOT, 'app/components/AppErrorBoundary.tsx'),
       'utf8'
     );
-    const directSync = readFileSync(
-      join(SRC_ROOT, 'features/chat/hooks/useDirectConversationSync.ts'),
-      'utf8'
-    );
     const mobileConnect = readFileSync(join(SRC_ROOT, 'lib/metamaskConnectMobile.ts'), 'utf8');
 
     expect(errorBoundary).toContain('getProviderErrorMessage(error,');
     expect(errorBoundary).not.toContain("console.error('[AppErrorBoundary]', error");
-    expect(directSync).toContain(
-      "getProviderErrorMessage(syncError, 'Legacy chat history synchronization failed.')"
-    );
-    expect(directSync).not.toContain("console.error('[sync] ChatGC error', syncError)");
     expect(mobileConnect).toContain(
       "getProviderErrorMessage(error, 'MetaMask Connect initialization failed.')"
     );
     expect(mobileConnect).not.toContain('message: error instanceof Error ? error.message');
   });
 
-  it('clears owner chat and group state only when the canonical wallet address changes', () => {
+  it('clears owner Chat private state when the wallet or privacy session changes', () => {
     const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
 
     expect(app).toContain(
       'const browserOwnerDataScopeKey = buildBrowserOwnerDataScopeKey(walletAddress);'
     );
     expect(app).toMatch(
-      /setContacts\(\[\]\);[\s\S]*?\}, \[browserOwnerDataScopeKey\]\);/u
+      /setContacts\(\[\]\);[\s\S]*?messagesByContactRef\.current = \{\};[\s\S]*?\}, \[directChatV2DiscoveryScope\]\);/u
     );
     expect(app).toMatch(
-      /setGroups\(\[\]\);[\s\S]*?setMessagesByGroup\(\{\}\);[\s\S]*?\}, \[browserOwnerDataScopeKey, resetGroupFeeCaches\]\);/u
+      /setGroups\(\[\]\);[\s\S]*?setMessagesByGroup\(\{\}\);[\s\S]*?\}, \[browserOwnerDataScopeKey\]\);/u
     );
     expect(app).toContain('const nextWallet = browserOwnerDataScopeKey;');
+    expect(app).toContain('directChatV2PrivateScopeRef.current = directChatV2DiscoveryScope;');
+    expect(app.match(/createdRuntime = bindBrowserWalletRuntimePrivacyScope\(createdRuntime, isPrivateScopeCurrent\);/gu)).toHaveLength(2);
+    expect(app).toContain('[directChatV2RuntimeScopeKey, browserOwnerDataScopeKey, ownerAesKey, ownerAesReady]');
+    expect(app).toContain('if (!isPrivateScopeCurrent()) return;');
+    expect(app).toContain('directChatPrivateDisplayScope === directChatV2DiscoveryScope');
+    expect(app).toContain('hasAesReady={chatPrivateDisplayReady}');
+    expect(app).toContain('chatPrivateDisplayReady && activeContact');
   });
 
   it('keeps chat, group, token, OTC, and liquidity loaders on canonical owner keys', () => {
     const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
-    const readState = readFileSync(
-      join(SRC_ROOT, 'features/chat/hooks/useConversationReadStateActions.ts'),
-      'utf8'
-    );
     const sidebar = readFileSync(
       join(SRC_ROOT, 'features/chat/hooks/useConversationSidebarState.ts'),
-      'utf8'
-    );
-    const groupSync = readFileSync(
-      join(SRC_ROOT, 'features/groups/hooks/useGroupDataSync.ts'),
       'utf8'
     );
     const groupThread = readFileSync(
@@ -208,10 +205,6 @@ describe('browser-wallet-only architecture boundary', () => {
       join(SRC_ROOT, 'features/trading/hooks/useOneOffTradeV2Data.ts'),
       'utf8'
     );
-    const recurring = readFileSync(
-      join(SRC_ROOT, 'features/trading/hooks/useRecurringTradeV2Data.ts'),
-      'utf8'
-    );
     const balances = readFileSync(
       join(SRC_ROOT, 'features/trading/hooks/useP2PTradeTokenData.ts'),
       'utf8'
@@ -227,12 +220,8 @@ describe('browser-wallet-only architecture boundary', () => {
 
     expect(app).toContain('const browserOwnerDataScopeKey = buildBrowserOwnerDataScopeKey(walletAddress);');
     expect(app).not.toMatch(/setMessagesByContact, walletAddress\]\);/u);
-    expect(readState).toContain('const ownerDataScopeKey = walletAddress.trim().toLowerCase();');
-    expect(readState).not.toMatch(/unreadMapRef,\s*walletAddress\s*\]/u);
     expect(sidebar).toContain('const walletScopeKey = walletAddress.trim().toLowerCase();');
     expect(sidebar).not.toMatch(/sortedContacts, walletAddress\]\);/u);
-    expect(groupSync).toContain('const walletScopeKey = walletAddress.trim().toLowerCase();');
-    expect(groupSync).not.toMatch(/syncGroupDataRef, walletAddress\]\);/u);
     expect(groupThread).toContain('const walletScopeKey = walletAddress.trim().toLowerCase();');
     expect(groupThread).not.toMatch(/onChainNicknameCacheRef, walletAddress\]\);/u);
     expect(reactions).toContain('const walletScopeKey = walletAddress.trim().toLowerCase();');
@@ -241,8 +230,6 @@ describe('browser-wallet-only architecture boundary', () => {
     expect(watchlist).not.toMatch(/\}, \[chainId, walletAddress\]\);/u);
     expect(oneOff).toContain('const walletScopeKey = walletAddress.trim().toLowerCase();');
     expect(oneOff).not.toMatch(/runtime, walletAddress\]\);/u);
-    expect(recurring).toContain('const walletScopeKey = walletAddress.trim().toLowerCase();');
-    expect(recurring).not.toMatch(/runtime, walletAddress\]\);/u);
     expect(balances).toContain('const normalizedWalletAddress = walletAddress.trim().toLowerCase();');
     expect(balances).not.toMatch(/readCurrentPrivateBalanceState, walletAddress/u);
     expect(liquidity).toContain(
@@ -253,10 +240,17 @@ describe('browser-wallet-only architecture boundary', () => {
     expect(tradingPage).not.toMatch(/sharedWalletSession\?\.walletReadAccounts, walletAddress,/u);
   });
 
-  it('never writes legacy on-chain read-state backup messages', () => {
-    const source = readFileSync(join(APP_ROOT, 'src/app/hooks/useStateBackupSync.ts'), 'utf8');
-    expect(source).not.toMatch(/encryptValue|LEGACY_CHAT_BACKUP|runWalletTransactionFlow|\.submit\s*\(/u);
-    expect(source).toContain('localStorage');
+  it('keeps retired Chat and Group readers out of current App entry paths', () => {
+    const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
+    const retired = ['useDirectConversationSync', 'useDirectConversationRealtimeSync',
+      'useGroupDataSync', 'useGroupRealtimeSync', 'useStateBackupSync', 'useConversationReadStateActions'];
+    for (const name of retired) expect(app).not.toContain(name);
+    expect(app).not.toContain('markAllLegacyConversationsAsRead');
+    expect(app).not.toContain('loadOlderMessagesForActiveContact');
+    const scroll = readFileSync(join(SRC_ROOT, 'features/chat/hooks/useChatThreadScroll.ts'), 'utf8');
+    expect(scroll).not.toContain('loadOlderMessagesForActiveContact');
+    expect(app).toContain('markAllV2ConversationsAsRead');
+    expect(app).toContain('activeGroupIdRef.current = groupId;');
   });
 
   it('keeps human signing on a selected browser-wallet lease and limits choices to MetaMask or CipherTrade', () => {
@@ -336,6 +330,39 @@ describe('browser-wallet-only architecture boundary', () => {
     }
   });
 
+  it('does not repeat public OTC admission when privacy readiness changes', () => {
+    const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
+    const start = app.indexOf('const otcV2RuntimeScopeKey = useMemo(');
+    const end = app.indexOf('const handleOtcV2InitialDiscoverySettled', start);
+    const binding = app.slice(start, end);
+    expect(binding).toContain("variant: 'public-identity'");
+    expect(binding).not.toContain("variant: hasAesReady ? 'private' : 'public'");
+    expect(binding).toContain('resolveBrowserWalletPrivacyReadScope(');
+    expect(binding).toContain('otcV2DiscoveryScopeKey');
+  });
+
+  it('defers unused cold OTC admission outside its P2P screens without disabling Chat trades', () => {
+    const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
+    const scopeStart = app.indexOf('const otcV2StartupScopeKey =');
+    expect(scopeStart).toBeGreaterThan(-1);
+    const scope = app.slice(scopeStart, scopeStart + 550);
+    expect(scope).toContain('resolveBrowserRuntimeStartupScope(');
+    expect(scope).toContain('otcV2RuntimeScopeKey, otcV2StartupScopeRef.current,');
+    expect(scope).toContain("activePage !== 'trades' && !(activePage === 'dex' && navigationPath === '/dex/agent')");
+    expect(scope).toContain('otcV2StartupScopeRef.current = otcV2StartupScopeKey;');
+    const setupStart = app.indexOf('    let createdRuntime: OtcTradeHistoryV2Runtime | null = null;');
+    const setupEnd = app.indexOf('  }, [otcV2RuntimeScopeKey, otcV2StartupScopeKey]);', setupStart);
+    expect(setupEnd).toBeGreaterThan(setupStart);
+    const setup = app.slice(setupStart, setupEnd);
+    const guard = setup.indexOf('if (!otcV2StartupScopeKey)');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(setup.indexOf("import('./lib/otcTradeHistoryV2Runtime')"));
+    const chatTradeStart = app.indexOf('useInChatTradeActions({');
+    const chatTrade = app.slice(chatTradeStart, chatTradeStart + 1_500);
+    expect(chatTrade).toContain('directTradeV2Runtime,');
+    expect(chatTrade).not.toContain('otcV2ActionRuntime');
+  });
+
   it('does not unlock OTC private history from a background sync before privacy is ready', () => {
     const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
     const runtimeStart = app.indexOf('createOtcTradeHistoryV2Runtime({');
@@ -344,15 +371,23 @@ describe('browser-wallet-only architecture boundary', () => {
     const runtimeBinding = app.slice(runtimeStart, runtimeEnd);
 
     expect(runtimeStart).toBeGreaterThan(-1);
-    expect(app).toContain(
-      'const privateReadsEnabled = browserRuntimeDependenciesRef.current.hasAesReady;'
-    );
     expect(runtimeBinding).toMatch(
-      /getOwnerCapability:\s*privateReadsEnabled\s*\?[\s\S]*?:\s*undefined/u
+      /getOwnerCapability:\s*\(\) => \{[\s\S]*?const privacyScope = otcV2PrivacyReadScopeRef\.current;[\s\S]*?assertPrivateReadCurrent\(\);\s*return issueOtcV2MetaMaskCapability/u
     );
+    expect(runtimeBinding).toContain('assertBrowserWalletPrivacyReadScopeCurrent(privacyScope, otcV2PrivacyReadScopeRef.current)');
+    expect(runtimeBinding).toContain('assertCapabilityCurrent: assertPrivateReadCurrent');
+    expect(runtimeBinding).toMatch(/assertLeaseCurrent: async \(currentLease\) =>\s*browserRuntimeDependenciesRef\.current\.assertBrowserWalletSignerLeaseSnapshotCurrent\(currentLease\)/u);
+    expect(runtimeBinding).toMatch(/assertLeaseSnapshotCurrent:\s*browserRuntimeDependenciesRef\.current\.assertBrowserWalletSignerLeaseSnapshotCurrent/u);
     expect(runtimeBinding).toMatch(
-      /assertCurrent:\s*\(\)\s*=>\s*dependencies\.assertBrowserWalletSignerLeaseSnapshotCurrent\(lease\)/u
+      /assertCurrent:\s*guard\.assertCurrent/u
     );
+    const setupBinding = app.slice(app.lastIndexOf('useEffect(() => {', runtimeStart), runtimeEnd);
+    expect(setupBinding).toContain('createBrowserWalletRuntimeReadGuard(() => dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent(lease))');
+    expect(setupBinding).toContain('await guard.run(() => loadCotiStartupReadProvider())');
+    expect(runtimeBinding).toMatch(/const foregroundStartup = \(!startupAdmissionComplete \|\| participantReadPriorityRef\.current\) &&\s*activePageRef\.current === 'trades' && !isWalletTransactionPromptActive\(\);/u);
+    expect(app).toContain('participantReadPriorityRef.current = deferP2PReadPass;');
+    expect(runtimeBinding).toMatch(/return sendCotiScopedRead\(foregroundStartup \? startupReadProvider : readProvider,\s*guard, method/u);
+    expect(app.slice(runtimeEnd - 180, runtimeEnd + 220)).toMatch(/startupAdmissionComplete = true;[\s\S]*?setOtcV2Runtime\(createdRuntime\)/u);
     expect(runtimeBinding).not.toContain('assertCurrent: () => undefined');
   });
 
@@ -370,7 +405,7 @@ describe('browser-wallet-only architecture boundary', () => {
     expect(accountSigners).toContain('cached: sessionOnboardInfoRef.current[cacheKey],');
   });
 
-  it('captures the Direct Trade owner lease only when an explicit capability is requested', () => {
+  it('guards Direct Trade setup reads separately and acquires the owner signer only through the capability callback', () => {
     const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
     const runtimeStart = app.indexOf('createDirectTradeV2Runtime({');
     const runtimeSetup = app.slice(runtimeStart, runtimeStart + 2_500);
@@ -381,6 +416,10 @@ describe('browser-wallet-only architecture boundary', () => {
     );
     expect(runtimeSetup).toContain('expectedOwnerAddress: ownerAddress');
     expect(runtimeSetup.match(/captureBrowserWalletSignerLease\(\)/gu)).toHaveLength(1);
+    expect(runtimeSetup).toContain('assertCurrent: guard.assertCurrent');
+    const setup = app.slice(app.lastIndexOf('useEffect(() => {', runtimeStart), runtimeStart);
+    expect(setup).toContain('createBrowserWalletRuntimeReadGuard(() => dependencies.assertBrowserWalletSignerLeaseSnapshotCurrent(lease))');
+    expect(setup).toContain('await guard.run(() => loadCotiReadProvider(true))');
   });
 
   it('does not initialize or synchronize Group Chat V2 before privacy is ready', () => {
@@ -390,17 +429,17 @@ describe('browser-wallet-only architecture boundary', () => {
       /const groupChatV2RuntimeScopeKey = useMemo\([\s\S]*?GROUP_CHAT_V2_DEPLOYMENT_CONFIG\.status === 'active' && hasAesReady[\s\S]*?buildBrowserWalletRuntimeScopeKey[\s\S]*?if \(GROUP_CHAT_V2_DEPLOYMENT_CONFIG\.status !== 'active' \|\| !groupChatV2RuntimeScopeKey\)[\s\S]*?createGroupChatV2Runtime/u
     );
     expect(app).toMatch(
-      /const runtime = groupChatV2Runtime;\s*if \(!runtime\?\.enabled \|\| !hasAesReady\) return;\s*let disposed = false;[\s\S]*?runtime\.discovery\.sync\(\)/u
+      /const runtime = groupChatV2Runtime;\s*if \(!runtime\?\.enabled \|\| !hasAesReady \|\| deferChatBackgroundStartup\) return;\s*let disposed = false;[\s\S]*?runtime\.discovery\.sync\(retry, publishOverview, \(\) => chatReadDeferredRef.current, \{/u
     );
     expect(app).toMatch(
-      /useGroupChatV2History\(\{\s*runtime: groupChatV2Runtime,\s*activeGroupId,\s*activeGroupIdRef,\s*hasAesReady,[\s\S]*?setEpochSyncRequest: setGroupChatV2EpochSyncRequest/u
+      /useGroupChatV2History\(\{\s*runtime: activePage === 'chat' \? groupChatV2Runtime : null,\s*activeGroupId,\s*activeGroupIdRef,\s*hasAesReady,[\s\S]*?setEpochSyncRequest: setGroupChatV2EpochSyncRequest/u
     );
     const groupHistory = readFileSync(join(SRC_ROOT, 'features/groups/hooks/useGroupChatV2History.ts'), 'utf8');
     expect(groupHistory).toMatch(
       /const selectedGroupId = activeGroupId;\s*if \(!runtime\?\.enabled \|\| !hasAesReady \|\| selectedGroupId === null\) \{\s*setEpochSyncRequest\(null\);\s*return;\s*\}[\s\S]*?runtime\.history\.sync/u
     );
     expect(groupHistory).toMatch(/const isCurrent = \(\) =>[\s\S]*?view\.current\.hasAesReady/u);
-    expect(groupHistory).toMatch(/if \(!isCurrent\(\)\) return;\s*const result = await runtime\.history\.sync/u);
+    expect(groupHistory).toMatch(/if \(!isCurrent\(\)\) return;\s*const result = await \(older \? runtime\.history\.loadOlder : runtime\.history\.sync\)/u);
     expect(app).toMatch(
       /const privacyLocked =\s*GROUP_CHAT_V2_DEPLOYMENT_CONFIG\.status === 'active' && !hasAesReady;[\s\S]*?setGroups\(\[\]\);[\s\S]*?setMessagesByGroup\(\{\}\)/u
     );
@@ -430,8 +469,85 @@ describe('browser-wallet-only architecture boundary', () => {
     const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
 
     expect(app).toMatch(
-      /const discoverKnownConversations = async \(\) => \{[\s\S]*?!ownerAesReady[\s\S]*?runtime\.session\.listConversations\(beforeIndexExclusive, 32n\)[\s\S]*?mergeUniqueContacts\(previous, peers\)[\s\S]*?rememberIncomingPeer\(peer, false\)/u
+      /const discoverKnownConversations = async \(older = false\) => \{[\s\S]*?!ownerAesReady[\s\S]*?runtime\.session\.listConversations\(beforeIndexExclusive, 32n\)[\s\S]*?mergeUniqueContacts\(previous, peers\)[\s\S]*?if \(rememberDirectChatV2Preview\(seenPreviews, preview\)\) rememberIncomingPeer\(preview.peer, false, true\)/u
     );
+  });
+
+  it('gives initial Chat/DEX reads priority without deferring their own discovery', () => {
+    const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
+    expect(app).toMatch(/const deferNotificationStartup = useInitialReadPriority\([\s\S]*?selectedReadPending[\s\S]*?\) \|\| deferP2PReadPass/u);
+    expect(app).toContain('directTradeV2RuntimeScopeKey, directTradeStartupScopeRef.current, deferNotificationStartup || !ownerAesReady');
+    expect(app).toMatch(/chatReactionsV1RuntimeScopeKey, reactionsStartupScopeRef.current,\s*deferNotificationStartup \|\| !ownerAesReady \|\| activePage !== 'chat'/u);
+    expect(app).toContain('!browserOwnerDataScopeKey || !ownerAesReady || deferChatBackgroundStartup');
+    expect(app).toContain("activePage === 'dex' ? currentMarketReference.status === 'loading'");
+    expect(app).toContain('const continueBackground = () => shouldContinue()');
+    expect(app).toContain('for (const peer of result.changedPeers) rememberIncomingPeer(peer, false, true)');
+    expect(app).toContain('activeContactRef.current === selectedContact && activeGroupIdRef.current === selectedGroup');
+    expect(app).toMatch(/useChatReactionsV1Runtime\(\{[\s\S]*?deferSync: deferNotificationStartup \|\| !ownerAesReady \|\| activePage !== 'chat'/u);
+    expect(app).toContain('directTradeReadDeferredRef.current = deferNotificationStartup;');
+    const tradePolling = app.slice(app.indexOf('const runtime = directTradeV2Runtime;'), app.indexOf('const requestChainWhisperFundingAfterError'));
+    expect(tradePolling).toContain('if (!runtime || !runtime.isCurrent() || !browserOwnerDataScopeKey || !ownerAesReady) return;');
+    expect(tradePolling).toContain('canonicalComplete: batch.historyComplete');
+    expect(tradePolling).toMatch(/if \(directTradeReadDeferredRef.current\) \{\s*schedule\(1_000\);\s*return;\s*\}\s*try \{\s*const batch = await runtime.sync\(\);\s*if \(!shouldContinue\(\)\) return/u);
+    // A pause must not dispose an in-flight result after runtime.sync commits it.
+    expect(tradePolling.slice(tradePolling.lastIndexOf('}, ['))).not.toContain('deferNotificationStartup');
+    expect(app).toMatch(/useRewardTokenMetrics\(\{[\s\S]*?bridgeEnabled: activePage === 'swap'/u);
+  });
+
+  it('pauses new background Chat work during selected DEX reads without dropping committed results', () => {
+    const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
+    expect(app).toContain("chatReadDeferredRef.current = deferSelectedGroupHistory || (activePage !== 'chat' && deferNotificationStartup);");
+    const groupPolling = app.slice(app.indexOf('    const runtime = groupChatV2Runtime;'),
+      app.indexOf('  const { historyUnavailable: groupChatV2HistoryUnavailable,'));
+    const groupSync = groupPolling.slice(groupPolling.indexOf('const sync = async () => {'));
+    expect(groupSync).toMatch(/if \(!isCurrent\(\) \|\| inFlight\) return;\s*if \(chatReadDeferredRef.current\) \{\s*schedule\(1_000\);\s*return;\s*\}\s*inFlight = true/u);
+    expect(groupSync).toMatch(/const result = await runtime.discovery.sync\(retry, publishOverview, \(\) => chatReadDeferredRef.current, \{[\s\S]*?\}\);\s*if \(!isCurrent\(\)\) return;\s*publishOverview\(result\)/u);
+    expect(groupSync.includes("const older = olderRequested || (hasOlderGroups && activePageRef.current === 'chat');")).toBe(true);
+    expect(groupSync.includes('hasOlderGroups = result.hasOlder;')).toBe(true);
+    expect(groupSync).toMatch(/catch \(cause\) \{\s*const \{ isGroupChatV2DiscoveryYield \} = await import\('\.\/lib\/groupChatV2DiscoveryRuntime'\);\s*if \(isGroupChatV2DiscoveryYield\(cause\)\) \{\s*retryFailed \|\|= retry;\s*olderRequested \|\|= older;\s*schedule\(1_000\);\s*return;\s*\}\s*failed = true/u);
+    expect(groupSync).not.toContain("schedule(result.complete ? pollDelay() : activePageRef.current === 'chat' ? 0 : 1_000)");
+    expect(groupSync).toContain('result.incomingCompleteGroupIds.map(String)');
+    expect(app).toContain('onLoadOlderHistory={() => { void loadOlderGroupHistory(); }}');
+    expect(app.includes('onLoadOlderGroups=')).toBe(false);
+    expect(/const forceSyncAllData = async \(\) => \{[\s\S]*?if \(directChatV2Runtime\?\.enabled\) \{\s*refreshDirectChatV2\(\);\s*if \(selectedDirectDiscovery\?\.hasOlder\) directChatV2LoadOlderContactsRef\.current\?\.\(\);\s*\}[\s\S]*?refreshGroupChatV2\(groupChatV2DiscoveryView\?\.runtime === groupChatV2Runtime && groupChatV2DiscoveryView\.hasOlder === true\)/u.test(app)).toBe(true);
+    expect(/const refreshGroupChatV2 = \(older = false\) => \{\s*if \(older\) groupChatV2LoadOlderRef\.current\?\.\(\);\s*else groupChatV2RefreshRef\.current\?\.\(\);\s*setGroupChatV2HistoryRefreshNonce\(previous => previous \+ 1\)/u.test(app)).toBe(true);
+    expect(groupPolling.slice(groupPolling.lastIndexOf('}, ['))).not.toContain('deferNotificationStartup');
+
+    const directPolling = app.slice(app.indexOf('    let backgroundSyncInFlight = false;'),
+      app.indexOf('  const directChatV2ContactSettingsScope'));
+    const peerSync = directPolling.slice(directPolling.indexOf('const synchronizePeer = async'),
+      directPolling.indexOf('const rememberIncomingPeer ='));
+    expect(peerSync).toMatch(/if \(chatReadDeferredRef.current\) \{\s*schedulePeer\(peer, 1_000\);\s*return;\s*\}[\s\S]*?const batch = await runtime.history.sync/u);
+    expect(peerSync.slice(peerSync.indexOf('const continueBackground ='), peerSync.indexOf('      try {')))
+      .not.toContain('chatReadDeferredRef');
+    expect(peerSync).toMatch(/if \(!continueBackground\(\)\) \{[^\n]*\}\s*messagesByContactRef.current = batch.apply/u);
+    const previews = directPolling.slice(directPolling.indexOf('const discoverKnownConversations ='),
+      directPolling.indexOf('const discoverIncoming ='));
+    expect(previews.includes('previewsOlderRequested ||= older;')).toBe(true);
+    expect(/if \(previewsInFlight\) \{ previewsWakeRequested = true; return; \}\s*if \(chatReadDeferredRef.current\) \{\s*scheduleConversationPreviews\(1_000\);\s*return;\s*\}/u.test(previews)).toBe(true);
+    expect(/older = \(older \|\| previewsOlderRequested\) && olderConversationCursor !== undefined && olderConversationCursor > 0n;\s*previewsOlderRequested = false;/u.test(previews)).toBe(true);
+    expect(/catch \(error\) \{\s*previewsOlderRequested = false;/u.test(previews)).toBe(true);
+    expect(/if \(shouldContinue\(\) && \(previewsWakeRequested \|\| previewsOlderRequested\)\) \{/u.test(previews)).toBe(true);
+    expect(previews.slice(previews.indexOf('} finally {')).includes('previewsWakeRequested = false')).toBe(false);
+    expect(/previewsInFlight = true;\s*if \(!older\) previewsWakeRequested = false;/u.test(previews)).toBe(true);
+    expect(/const requestDiscoveryRefresh = \(\) => \{[\s\S]*?previewsWakeRequested = true;\s*scheduleConversationPreviews\(0\);/u.test(directPolling)).toBe(true);
+    expect(previews).not.toContain('for (let pageIndex');
+    expect(previews).toContain('const beforeIndexExclusive = older ? olderConversationCursor : undefined');
+    const incoming = directPolling.slice(directPolling.indexOf('const discoverIncoming ='));
+    expect(incoming).toMatch(/if \(discoveryInFlight\) \{ discoveryWakeRequested = true; return; \}\s*if \(chatReadDeferredRef.current\) \{\s*scheduleDiscovery\(1_000\);\s*return;\s*\}/u);
+    expect(incoming).toMatch(/const result = await runtime.history.discoverIncoming\(\(\) => shouldContinue\(\) && !chatReadDeferredRef.current\);\s*if \(!shouldContinue\(\)\) return;\s*for \(const peer of result.peers\)/u);
+    expect(directPolling.slice(directPolling.lastIndexOf('}, ['))).not.toContain('deferNotificationStartup');
+  });
+
+  it('gives selected Group first content a bounded turn without pausing its history reader', () => {
+    const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
+    expect(app).toMatch(/const deferSelectedGroupHistory = useInitialReadPriority\([\s\S]*?activePage === 'chat' && groupChatV2RuntimeScopeKey && activeGroupId !== null[\s\S]*?hasAesReady && activeGroupMessageLoadPhase === 'initial' && activeGroupId !== null &&\s*!messagesByGroup\[String\(activeGroupId\)\]\?\.length/u);
+    expect(app).toContain(') || deferP2PReadPass || deferSelectedGroupHistory;');
+    const selectedHistory = readFileSync(join(SRC_ROOT, 'features/groups/hooks/useGroupChatV2History.ts'), 'utf8');
+    expect(selectedHistory).not.toContain('chatReadDeferred');
+    expect(selectedHistory).not.toContain('deferSelectedGroupHistory');
+    expect(app.includes('groupHistoryReadPriorityRef.current = deferSelectedGroupHistory;')).toBe(true);
+    expect(/issueGroupChatV2MetaMaskCapability\(\{\s*shouldPrioritizeRead: \(groupId\) => !disposed && createdRuntime\?\.isCurrent\(\) === true &&\s*activePageRef.current === 'chat' && groupHistoryReadPriorityRef.current &&\s*groupId === BigInt\(activeGroupIdRef.current \?\? 0\)/u.test(app)).toBe(true);
   });
 
   it('does not poll MetaMask for active chat, trading, token, or liquidity receipts after broadcast', () => {
@@ -471,11 +587,14 @@ describe('browser-wallet-only architecture boundary', () => {
         /wait: readProvider === browserProvider[\s\S]*?readProvider\.getTransactionReceipt\(transactionHash\)/u
       );
     }
-    for (const trade of [directTrade, standardTrade, privateTrade, recurringTrade, privateRecurringTrade]) {
+    for (const trade of [standardTrade, privateTrade, recurringTrade, privateRecurringTrade]) {
       expect(trade).toMatch(
         /binding\.readProvider\s*\?[\s\S]*?waitForOwnerTradeV2Receipt\(binding, hash\)/u
       );
     }
+    expect(directTrade).toMatch(
+      /binding\.readProvider\s*\?[\s\S]*?waitForOwnerTradeV2Receipt\(binding, hash, \{\s*finalityLagBlocks: BigInt\(deployment\.finalityLagBlocks\)\s*\}\)/u
+    );
     expect(privateLiquidity).toMatch(
       /wait: binding\?\.readProvider[\s\S]*?waitForPublicTransactionReceipt\(\{[\s\S]*?readProvider: binding\.readProvider/u
     );
@@ -483,7 +602,8 @@ describe('browser-wallet-only architecture boundary', () => {
       /transactionEnvelope\(rawTransaction, \{[\s\S]*?\}, 'Private-liquidity swap', binding\)/u
     );
     expect(tokenSwapActions).not.toMatch(/transaction\.wait\(/u);
-    expect(tokenSwapActions).toMatch(/waitForPublicTransactionReceipt\(\{[\s\S]*?transactionHash,[\s\S]*?timeoutMs: 180_000/u);
+    expect(tokenSwapActions).toContain('executeChainWhisperWispBridgeConversion');
+    expect(appChain).toContain("waitForReceipt: (submitted) => waitForAppChainReceipt(submitted, 'ChainWhisper WISP conversion')");
     expect(wispBridge).not.toMatch(/transaction\.wait\(/u);
     expect(wispBridge).toContain('const receipt = await waitForReceipt(transaction);');
     expect(walletFunds).not.toMatch(/tx\.wait\(/u);

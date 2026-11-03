@@ -123,6 +123,8 @@ export type ChatReactionSource = Readonly<{
   conversationId?: string;
   groupId?: string;
   messageId: string;
+  /** Finalized source block for read coverage; not part of the write anchor. */
+  blockNumber?: string;
   blockHash: string;
   transactionHash: string;
   logIndex: number;

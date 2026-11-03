@@ -5,6 +5,7 @@ import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } fro
 import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
 import { formatDexCandidateTokenAmount, readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { readCurrentDexActivityPage, buildCurrentDexActivityEntries } from '../../../lib/currentDexActivity';
+import { CurrentDexActivitySourceError } from '../../../lib/currentDexActivityDiscovery';
 import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
 import { CURRENT_LIMIT_FILL_HISTORY_GRAPHS } from '../../../lib/currentDexLimitFillHistory';
 
@@ -28,25 +29,48 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
   type Page = Awaited<ReturnType<typeof readCurrentDexActivityPage>>;
   type Data = Page & { deployments: Partial<Record<CurrentCheapDexCandidateKey, Page>>;
     failures: Partial<Record<CurrentCheapDexCandidateKey, string>> };
-  type View = { scope: typeof scope; refresh: number; older: number; checkedAt?: number; state: 'loading' | 'empty' | 'error' | 'ready'; data?: Data; message?: string; checked?: number; total?: number };
+  type View = { scope: typeof scope; refresh: number; older: number; checkedAt?: number; state: 'loading' | 'empty' | 'error' | 'ready' | 'stale'; data?: Data; message?: string; checked?: number; total?: number; phase?: string; phaseAt?: number };
   const [view, setView] = useState<View | null>(null), [older, setOlder] = useState(0), viewRef = useRef(view);
   const [filter, setFilter] = useState('All');
+  const olderButtonRef = useRef<HTMLButtonElement | null>(null), requestedPageRef = useRef(-1);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   viewRef.current = view;
   const connected = Boolean(context.owner && context.chain === Number(candidate.chainId));
+  const loadOlder = (explicitRetry = false) => {
+    const current = viewRef.current;
+    if (!visibleRef.current || !connected || !scope.privacyReady || scopeRef.current !== scope || current?.scope !== scope ||
+        current.refresh !== refresh || current.older !== older || !(current.state === 'ready' || explicitRetry && current.state === 'stale') ||
+        !current.data || current.data.complete || requestedPageRef.current === older) return;
+    requestedPageRef.current = older;
+    setOlder(value => value + 1);
+  };
+  useEffect(() => {
+    if (!visible || !connected || !scope.privacyReady) return;
+    const onScroll = () => {
+      const bounds = olderButtonRef.current?.getBoundingClientRect();
+      if (bounds && bounds.bottom > 0 && bounds.top <= window.innerHeight + 160) loadOlder();
+    };
+    // Only a scroll event loads more; a visible button on mount must not drain history.
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener('scroll', onScroll, true);
+  }, [scope, connected, visible, refresh, older]);
   useEffect(() => {
     const session = sessionRef.current;
     if (!session || !connected || !scope.privacyReady) { setView(null); return; }
     if (!visible) return;
     const retained = viewRef.current?.scope === scope && viewRef.current.refresh === refresh ? viewRef.current : undefined;
-    const returning = retained?.older === older && (retained.state === 'ready' || retained.state === 'empty');
+    const returning = retained?.older === older && (retained.state === 'ready' || retained.state === 'empty' || retained.state === 'stale');
+    if (returning && retained.state === 'stale') return;
     // Brief tab changes reuse this session's page; older pages and explicit Refresh still read the chain.
     if (returning && retained.checkedAt && Date.now() - retained.checkedAt < 30_000) return;
     const previous = returning ? undefined : retained?.data;
     let active = true;
     const assertCurrent = () => { if (!active || scopeRef.current !== scope) throw new Error('Activity wallet or privacy session changed.'); };
-    setView({ scope, refresh, older, state: 'loading', data: retained?.data });
+    let phase = 'capability', phaseAt = Date.now();
+    setView({ scope, refresh, older, checkedAt: retained?.checkedAt, state: 'loading', data: retained?.data, phase, phaseAt });
     void (async () => {
-      const keys: CurrentCheapDexCandidateKey[] = candidateKey === 'cheap-history' ? ['cheap-history', 'cheap-exit'] : [candidateKey];
+      const keys: CurrentCheapDexCandidateKey[] = [candidateKey];
       const deployments = { ...previous?.deployments }, failures: Data['failures'] = {};
       let head = previous?.head;
       for (const key of keys) {
@@ -55,7 +79,11 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
         try {
           const page = await readCurrentDexActivityPage(session, key, assertCurrent, {
             cursor: prior?.nextCursor ?? { transactions: 1, nfts: 1 }, head,
-            onProgress: (checked,total) => { assertCurrent(); setView({scope,refresh,older,state:'loading',data:retained?.data,checked,total}); }
+            onProgress: (checked,total,nextPhase = 'receipts') => {
+              assertCurrent();
+              if (phase !== nextPhase) { phase = nextPhase; phaseAt = Date.now(); }
+              setView({scope,refresh,older,checkedAt:retained?.checkedAt,state:'loading',data:retained?.data,checked,total,phase,phaseAt});
+            }
           });
           assertCurrent();
           if (head && (page.head.number !== head.number || page.head.hash.toLowerCase() !== head.hash.toLowerCase()))
@@ -69,7 +97,7 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
             unavailable: [...new Set([...(prior?.unavailable ?? []),...page.unavailable])].filter(hash => !rows.has(hash)) };
         } catch (error) {
           assertCurrent();
-          delete deployments[key];
+          if (!(prior && error instanceof CurrentDexActivitySourceError)) delete deployments[key];
           const message = error instanceof Error ? error.message : 'Private activity is unavailable.';
           failures[key] = /missing trie node/i.test(message) ? 'This RPC cannot read the requested state. Activity is unavailable.' : message;
         }
@@ -83,11 +111,12 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
         rows: [...rows.values()].sort((a,b)=>b.blockNumber-a.blockNumber||a.hash.localeCompare(b.hash)), fills: [...fills.values()],
         complete: keys.every(key => deployments[key]?.complete) && !Object.keys(failures).length,
         unavailable: [...new Set(pages.flatMap(page => page.unavailable))].filter(hash => !rows.has(hash)) };
-      setView({ scope, refresh, older, checkedAt: Date.now(), state: !data.rows.length && !data.fills.length && !data.unavailable.length && data.complete ? 'empty' : 'ready', data });
+      const stale = Object.keys(failures).length > 0;
+      setView({ scope, refresh, older, checkedAt: stale ? retained?.checkedAt : Date.now(), state: stale ? 'stale' : !data.rows.length && !data.fills.length && !data.unavailable.length && data.complete ? 'empty' : 'ready', data });
     })().catch(error => {
       if (active && scopeRef.current === scope) {
         const message = error instanceof Error ? error.message : 'Private activity is unavailable.';
-        setView({ scope, refresh, older, state: 'error', message: /missing trie node/i.test(message)
+        setView({ scope, refresh, older, state: 'error', phase, phaseAt, message: /missing trie node/i.test(message)
           ? 'This RPC cannot read the requested state. Activity is unavailable.' : message });
       }
     });
@@ -109,7 +138,8 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
   const group = (action: string) => /swap|quote/i.test(action) ? 'Swaps' : /pool|liquidity|position/i.test(action) ? 'Liquidity' : /limit/i.test(action) ? 'Orders' : 'Funding';
   const entries = data ? buildCurrentDexActivityEntries(data.rows, data.fills) : [];
   const shown = entries.filter(row => filter === 'All' || group(row.action) === filter);
-  return <section className="dex-v2-activity-card" aria-label="Trade history">
+  return <section className="dex-v2-activity-card" aria-label="Trade history"
+    data-dex-activity-state={currentView?.state} data-dex-activity-phase={currentView?.phase} data-dex-activity-phase-at={currentView?.phaseAt}>
     <header className="dex-owner-heading"><div><h2>History</h2><p>Your DEX activity. Open a row for details.</p>{currentView?.checkedAt?<p>Last checked {new Date(currentView.checkedAt).toLocaleTimeString()} · Refresh for new activity.</p>:null}</div><button type="button" disabled={!connected || !privacyReady || currentView?.state === 'loading'} onClick={() => setRefresh(value => value + 1)}>{currentView?.state === 'loading' ? 'Checking…' : 'Refresh history'}</button></header>
     {storageError ? <p role="alert">{storageError}</p> : null}
     {pending ? <aside className="dex-v2-pending-card"><h3>Action needs a status check</h3>
@@ -154,9 +184,9 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
       </div>
     </> : null}
     {data?.unavailable.map(hash=><p role="alert" key={hash}>Receipt or private amounts unavailable. <a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${hash}`} target="_blank" rel="noreferrer">View transaction</a></p>)}
-    {data ? Object.entries(data.failures).map(([key,message]) => <p role="alert" key={key}>History is incomplete. {key === 'cheap-exit' ? 'Previous DEX deployment' : 'Selected DEX deployment'}: {message}</p>) : null}
-    {data && !data.complete ? <button type="button" disabled={currentView?.state === 'loading'} onClick={()=>setOlder(value=>value+1)}>Load older activity</button> : null}
-    <details className="dex-owner-footer"><summary>History coverage</summary>{data ? <p>Snapshot block {data.head.number.toString()}. Refresh history for current status.</p> : null}<p>{candidateKey === 'cheap-history' ? 'Current and previous DEX deployments' : 'Current DEX deployment'}, read from chain after reconnect or on another device. Load older activity for earlier pages. Private amounts come from canonical owner token receipts.
+    {data ? Object.entries(data.failures).map(([,message]) => <p role="alert" key={candidateKey}>History is stale and incomplete. Selected DEX deployment: {message}</p>) : null}
+    {data && !data.complete ? <button ref={olderButtonRef} type="button" disabled={currentView?.state === 'loading'} onClick={() => loadOlder(true)}>{currentView?.state === 'stale' ? 'Retry older activity' : 'Load older activity'}</button> : null}
+    <details className="dex-owner-footer"><summary>History coverage</summary>{data ? <p>Snapshot block {data.head.number.toString()}. Refresh history for current status.</p> : null}<p>Selected DEX deployment, read from chain after reconnect or on another device. Load older activity for earlier pages. Private amounts come from canonical owner token receipts.
       {candidateKey === 'cheap-history' && data?.failures['cheap-history'] ? ' Selected-deployment Limit fills are unavailable.' :
         data?.limitFillsState==='available'?' Private Limit fills use saved-owner execution records. Fills from before these records were introduced are unavailable.':
           CURRENT_LIMIT_FILL_HISTORY_GRAPHS.includes(candidate.graph)?' Private Limit fills require a verified History read.':' Individual Limit fills are not recorded by this deployment.'}

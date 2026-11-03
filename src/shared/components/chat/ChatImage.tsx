@@ -7,6 +7,7 @@ import {
   isPastChatImageRetentionWindow
 } from '../../../lib/imagePull';
 import type { ParsedImageTag } from '../../../lib/imagePull';
+import { useModalA11y } from '../../hooks/useModalA11y';
 
 type Props = { tag: string; parsed?: ParsedImageTag; messageTimestamp?: number };
 type LoadImageUrl = (signal: AbortSignal) => Promise<string>;
@@ -90,8 +91,7 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   const [expired, setExpired] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
-  const imageTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const lightboxCloseRef = useRef<HTMLButtonElement | null>(null);
+  const lightboxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -148,20 +148,8 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   }, [tag, parsed, messageTimestamp, retryNonce]);
 
   const openLightbox = useCallback(() => setLightboxOpen(true), []);
-  const closeLightbox = useCallback(() => {
-    setLightboxOpen(false);
-    window.requestAnimationFrame(() => imageTriggerRef.current?.focus());
-  }, []);
-
-  useEffect(() => {
-    if (!lightboxOpen) return;
-    window.requestAnimationFrame(() => lightboxCloseRef.current?.focus());
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeLightbox();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [lightboxOpen, closeLightbox]);
+  const closeLightbox = useCallback(() => setLightboxOpen(false), []);
+  useModalA11y({ dialogRef: lightboxRef, isOpen: lightboxOpen, onClose: closeLightbox });
 
   if (expired) return <div className="chat-image-expired">This image expired after 24 hours.</div>;
   if (error) {
@@ -185,7 +173,6 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   return (
     <>
       <button
-        ref={imageTriggerRef}
         type="button"
         className="chat-image-button"
         onClick={openLightbox}
@@ -195,15 +182,16 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
       </button>
       {lightboxOpen ? (
         <div
+          ref={lightboxRef}
           className="image-lightbox-backdrop"
           onClick={closeLightbox}
           role="dialog"
           aria-modal="true"
           aria-label="Image preview"
+          tabIndex={-1}
         >
           <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
             <button
-              ref={lightboxCloseRef}
               type="button"
               className="image-lightbox-close"
               onClick={closeLightbox}

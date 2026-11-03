@@ -30,6 +30,28 @@ const terminalLog = (operationId = 53n, stage = 7, blockNumber = 5000, address: 
 };
 
 describe('readCurrentDexActivityDiscoveryPage', () => {
+  it('marks only an explorer transport failure as a retryable source error', async () => {
+    const read = (fetcher: typeof fetch, assertCurrent: () => void = () => {}) => readCurrentDexActivityDiscoveryPage({
+      owner, candidate: 'cheap-history', headNumber: 20n, cursor: { transactions: 2, nfts: null }, fetcher, assertCurrent });
+    for (const failure of [vi.fn().mockResolvedValue({ ok: false, status: 503 }),
+      vi.fn().mockResolvedValue({ ok: false, status: 408 }),
+      vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+      vi.fn().mockRejectedValue(new DOMException('Timed out', 'TimeoutError')),
+      vi.fn().mockResolvedValue({ ok: true, json: async () => { throw new TypeError('Failed to fetch body'); } })]) {
+      await expect(read(failure)).rejects.toMatchObject({ name: 'CurrentDexActivitySourceError' });
+      expect(failure).toHaveBeenCalledOnce();
+    }
+    for (const failure of [vi.fn().mockResolvedValue({ ok: false, status: 403 }),
+      vi.fn().mockResolvedValue(response([], '0', 'Invalid API key')),
+      vi.fn().mockResolvedValue(response([tx(txHash, 'bad-owner')])),
+      vi.fn().mockResolvedValue({ ok: true, json: async () => { throw new SyntaxError('Invalid JSON'); } }),
+      vi.fn().mockRejectedValue(new Error('unknown error'))]) {
+      await expect(read(failure)).rejects.not.toMatchObject({ name: 'CurrentDexActivitySourceError' });
+    }
+    let active = true;
+    const fetcher = vi.fn(async () => { active = false; throw new TypeError('Failed to fetch'); });
+    await expect(read(fetcher, () => { if (!active) throw new Error('privacy changed'); })).rejects.toThrow('privacy changed');
+  });
   it('uses the new Core and NFT without selecting old Core transactions', async () => {
     const nft = historyCandidate.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
     const fetcher = vi.fn().mockResolvedValueOnce(response([tx(txHash, owner, historyCandidate.core), tx(nftHash)]))
@@ -56,15 +78,55 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
   });
 
   it('advances only full pages and rejects blocks above the captured head', async () => {
-    const rows = Array.from({ length: 100 }, (_, i) => tx(`0x${i.toString(16).padStart(64, '0')}`, owner, core, i === 0 ? '21' : '20'));
+    const rows = Array.from({ length: 5 }, (_, i) => tx(`0x${i.toString(16).padStart(64, '0')}`, owner, core, i === 0 ? '21' : '20'));
     const fetcher = vi.fn()
       .mockResolvedValueOnce(response(rows))
       .mockResolvedValueOnce(response([] , '0', 'No transactions found'));
     const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
       cursor: { transactions: 4, nfts: 2 }, fetcher, assertCurrent: () => undefined });
-    expect(page.hashes).toHaveLength(99);
+    expect(page.hashes).toHaveLength(4);
     expect(page.nextCursor).toEqual({ transactions: 5, nfts: null });
     expect(page.complete).toBe(false);
+  });
+
+  it('bounds each recent page to five raw hints per source and reaches all older hints without draining', async () => {
+    const hash = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
+    const unrelated = '0x2222222222222222222222222222222222222222';
+    const transactions = [tx(hash(1)), tx(hash(2)), tx(hash(3), owner, unrelated), tx(hash(4)), tx(hash(5)),
+      tx(hash(6)), tx(hash(7)), tx(hash(8)), tx(hash(9)), tx(hash(10)), tx(hash(11))];
+    const nfts = [tx(hash(1), unrelated, owner), tx(hash(12), unrelated, owner), tx(hash(12), unrelated, owner),
+      tx(hash(13), unrelated, owner), tx(hash(14), unrelated, owner), tx(hash(15), unrelated, owner)];
+    const fetcher = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input)), offset = Number(url.searchParams.get('offset'));
+      expect(offset).toBe(5); expect(url.searchParams.get('sort')).toBe('desc');
+      expect(url.searchParams.get('endblock')).toBe('20');
+      const rows = url.searchParams.get('action') === 'txlist' ? transactions : nfts;
+      const start = (Number(url.searchParams.get('page')) - 1) * offset;
+      return response(rows.slice(start, start + offset));
+    });
+    const read = (cursor: Parameters<typeof readCurrentDexActivityDiscoveryPage>[0]['cursor']) =>
+      readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n, cursor, fetcher, assertCurrent: () => undefined });
+    const first = await read({ transactions: 1, nfts: 1 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(first.hashes.length).toBeLessThanOrEqual(10);
+    expect(first.hashes).toEqual([hash(1),hash(2),hash(4),hash(5),hash(12),hash(13),hash(14)]);
+    expect(first.nextCursor).toEqual({ transactions: 2, nfts: 2 });
+    const second = await read(first.nextCursor);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(second.nextCursor).toEqual({ transactions: 3, nfts: null });
+    const third = await read(second.nextCursor);
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(third).toMatchObject({ complete: true, nextCursor: { transactions: null, nfts: null } });
+    expect(new Set([...first.hashes,...second.hashes,...third.hashes])).toEqual(
+      new Set([1,2,4,5,6,7,8,9,10,11,12,13,14,15].map(hash)));
+  });
+
+  it('rejects an oversized explorer page without truncating it or advancing a cursor', async () => {
+    const fetcher = vi.fn().mockResolvedValue(response(Array.from({ length: 6 }, (_, index) =>
+      tx(`0x${(index + 1).toString(16).padStart(64, '0')}`))));
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+      cursor: { transactions: 1, nfts: null }, fetcher, assertCurrent: () => undefined })).rejects.toThrow('page exceeded its limit');
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it('rejects an explorer API error instead of treating it as empty history', async () => {

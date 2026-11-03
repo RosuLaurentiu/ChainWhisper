@@ -24,10 +24,8 @@ describe('loadOwnerPrivateTokenBalances', () => {
     await expect(loadOwnerPrivateTokenBalances({
       getOwnerReadSigner,
       ownerWalletAddress: walletAddress,
-      readCurrentPrivateBalance: vi.fn(async () => 7n),
-      readLegacyPrivateBalance: vi.fn(async () => 8n)
+      readCurrentPrivateBalance: vi.fn(async () => 7n)
     })).resolves.toMatchObject({
-      legacyPrivateBalanceWei: 8n,
       ownerPrivateSigner: signer,
       privateBalanceWei: 7n
     });
@@ -64,16 +62,10 @@ describe('loadOwnerPrivateTokenBalances', () => {
       const aesKey = signer.getUserOnboardInfo()?.aesKey;
       return aesKey ? decryptUint256() : null;
     });
-    const readLegacyPrivateBalance = vi.fn(async (
-      _ownerAddress: string,
-      signer: JsonRpcSigner | Wallet
-    ) => signer.decryptValue('legacy-ciphertext' as never) as Promise<bigint>);
-
     const loading = loadOwnerPrivateTokenBalances({
       getOwnerReadSigner: async () => leasedSigner,
       ownerWalletAddress: walletAddress,
-      readCurrentPrivateBalance,
-      readLegacyPrivateBalance
+      readCurrentPrivateBalance
     });
     await vi.waitFor(() => expect(readCurrentPrivateBalance).toHaveBeenCalledTimes(1));
 
@@ -81,12 +73,10 @@ describe('loadOwnerPrivateTokenBalances', () => {
     balanceRpc.resolve();
 
     await expect(loading).resolves.toMatchObject({
-      legacyPrivateBalanceWei: null,
       privateBalanceWei: null
     });
     expect(decryptUint256).not.toHaveBeenCalled();
     expect(rawGetUserOnboardInfo).not.toHaveBeenCalled();
     expect(rawDecryptValue).not.toHaveBeenCalled();
-    expect(readLegacyPrivateBalance).toHaveBeenCalledTimes(1);
   });
 });

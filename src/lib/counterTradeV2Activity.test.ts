@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Interface, toBeHex } from '@coti-io/coti-ethers';
+import { createElement, type ComponentProps } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import CounterTradeV2Activity from '../features/trading/components/CounterTradeV2Activity';
+import type { TradeCustomTokenInfo } from './appHelpers';
 import { COUNTER_TRADE_V2_ABI } from './counterTradeV2Abi';
 import { createCounterTradeV2ActivityReader, mergeCounterTradeV2ActivitySnapshots, type CounterTradeV2ActivitySnapshot } from './counterTradeV2Activity';
 import type { TradeHistoryV2RawLog } from './tradeHistoryV2Events';
 import { TradeHistoryV2RangeLimitError } from './tradeHistoryV2Chain';
-const m = vi.hoisted(() => ({ latest: vi.fn(), block: vi.fn(), range: vi.fn(), binding: vi.fn(), current: vi.fn(), decrypt: vi.fn() }));
+const m = vi.hoisted(() => ({ latest: vi.fn(), block: vi.fn(), range: vi.fn(), participant: vi.fn(), view: vi.fn(), binding: vi.fn(), current: vi.fn(), decrypt: vi.fn() }));
 vi.mock('./tradeHistoryV2Chain', () => {
   class TradeHistoryV2RangeLimitError extends Error {}
   return { TradeHistoryV2RangeLimitError, TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS: 2_048n,
     TRADE_HISTORY_V2_MAX_PARTICIPANT_LOG_RANGE_BLOCKS: 100_000n,
     assertAttestedTradeHistoryV2Deployment: vi.fn(), readTradeHistoryV2LatestBlockNumber: m.latest,
-    readTradeHistoryV2CanonicalBlock: m.block, readCanonicalTradeV2RawLogRange: m.range };
+    readTradeHistoryV2CanonicalBlock: m.block, readCanonicalTradeV2RawLogRange: m.range,
+    readCanonicalCounterTradeV2ParticipantRange: m.participant, readAttestedTradeHistoryV2View: m.view };
 });
 vi.mock('./ownerTradeV2Capability', () => ({ getOwnerTradeV2CapabilityBinding: m.binding, assertOwnerTradeV2CapabilityCurrent: m.current }));
 vi.mock('./privateUint256', () => ({ decryptPrivateUint256Output: m.decrypt }));
@@ -48,6 +53,22 @@ const fixture = (privatePair = true, bookParent: boolean | 'standard' = false) =
       safeHead: { number: '38', hash: hash(38 + fork) }, checkedBlocks: [], logs,
       receiptLogs: Object.fromEntries(logs.map(v => [v.transactionHash, receipts[v.transactionHash] ?? [v]])) };
   });
+  m.participant.mockImplementation(async (input) => {
+    const opened = ABI.getEvent('CounterOpened')!.topicHash, ownerTopic = toBeHex(BigInt(input.ownerAddress), 32);
+    const maker = await m.range({ ...input, topics: [opened, null, ownerTopic] });
+    const taker = await m.range({ ...input, topics: [opened, null, null, ownerTopic] });
+    return { ...maker, logs: [...maker.logs, ...taker.logs], receiptLogs: { ...maker.receiptLogs, ...taker.receiptLogs } };
+  });
+  m.view.mockImplementation(async ({ data, from }) => {
+    const call = ABI.parseTransaction({ data })!, key = call.args[0].toString();
+    const source = events.map(log => ABI.parseLog({ topics: [...log.topics], data: log.data })!).find(event => event.name === 'CounterOpened' && event.args.id.toString() === key)!.args;
+    if (call.name === 'getTermsForAccount') {
+      expect(from).toBe(owner);
+      return ABI.encodeFunctionResult('getTermsForAccount', [[true, ut(4n, true), ut(5n, true)]]);
+    }
+    return ABI.encodeFunctionResult('getCounter', [[source.maker, source.taker, source.offerToken, source.requestToken, hash(91), hash(92), source.rootKey,
+      source.parentProposal, source.expiresAt, source.depth, 3n, source.privatePair, false], [source.publicOffer, source.publicRequest], 3n]);
+  });
   const input = { capability: {} as never, deployment: { chainId: '7082400', contractAddress: escrow, deploymentBlock: '10', finalityLagBlocks: '2' } as never,
     parentDeployment: { protocol: 'link-v2', chainId: '7082400', contractAddress: parent } as never,
     ...(bookParent ? { parentDeployments: [{ protocol: bookParent === 'standard' ? 'standard-v2' : 'private-v2', chainId: '7082400', contractAddress: book } as never] } : {}), ownerAddress: owner };
@@ -56,6 +77,28 @@ const fixture = (privatePair = true, bookParent: boolean | 'standard' = false) =
 };
 beforeEach(() => vi.resetAllMocks());
 describe('Counter participant discovery/history over the reused canonical boundary; chain/decryption modelled', () => {
+  it.each([false, true])('joins Counter reader amounts to displayed history with token decimals, private=%s', async privatePair => {
+    const result = await fixture(privatePair).reader.sync({} as never);
+    const kind = privatePair ? 'private-erc20' : 'erc20';
+    const tokenInfoByKey: Record<string, TradeCustomTokenInfo> = Object.fromEntries(([[a, 'TOKEN_A', 2], [b, 'TOKEN_B', 3]] as const).map(([address, symbol, decimals]) =>
+      [`${kind}:${address}`, { kind, address, symbol, decimals, balanceWei: null, loading: false }]));
+    const props: ComponentProps<typeof CounterTradeV2Activity> = {
+      activity: { snapshot: result, busy: false, error: '', refresh: async () => {}, loadOlder: async () => {} },
+      runtime: { ownerAddress: owner } as never, lifecycle: 'history', activeFilter: 'all', tokenInfoByKey,
+      ensureTokenInfo: async () => {}, search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest',
+      confirmFunding: async () => {}, runWalletFlow: async operation => operation(), onBusyChange: () => {}, actionInProgress: false,
+    };
+    const html = renderToStaticMarkup(createElement(CounterTradeV2Activity, props));
+    expect(html).toContain('Received 0.004 TOKEN_B · Paid 0.05 TOKEN_A · Returned 0.07 TOKEN_A');
+    expect(html).toContain('Returned 0.04 TOKEN_A');
+    expect(html).not.toContain('Amount unavailable');
+    for (const metadata of [{}, Object.fromEntries(Object.entries(tokenInfoByKey).map(([key, token]) => [key, { ...token, error: 'Metadata unavailable.' }]))]) {
+      const unavailable = renderToStaticMarkup(createElement(CounterTradeV2Activity, { ...props, tokenInfoByKey: metadata }));
+      expect(unavailable).toContain('Received Amount unavailable · Paid Amount unavailable · Returned Amount unavailable');
+      expect(unavailable).toContain('Returned Amount unavailable');
+      expect(unavailable).not.toMatch(/(?:Received|Paid|Returned) 0(?:[ .<])/);
+    }
+  });
   it('tags every order and history event with its attested deployment identity', async () => {
     const result = await fixture(false).reader.sync({} as never);
     for (const row of [...result.orders, ...result.history]) expect(row).toMatchObject({ chainId: '7082400', escrow });
@@ -77,27 +120,96 @@ describe('Counter participant discovery/history over the reused canonical bounda
     expect(result.orders).toMatchObject([{ id: incoming, status: 2 }, { id, status: 3 }]);
     expect(result.history.find(v => v.id === incoming && v.status === 2)).toMatchObject({ role: 'taker', payment: '5', received: '4', refund: '7' });
     expect(result.history.find(v => v.id === id && v.status === 3)).toMatchObject({ role: 'maker', refund: '4' });
-    expect(m.range.mock.calls[0][0].topics[2]).toBe(toBeHex(BigInt(owner), 32)); expect(m.range.mock.calls[1][0].topics[3]).toBe(toBeHex(BigInt(owner), 32));
+    expect(m.range.mock.calls[0][0].topics).toEqual([[ABI.getEvent('CounterOpened')!.topicHash, ABI.getEvent('CounterClosed')!.topicHash]]);
     expect(await f.create().sync({} as never)).toEqual(result);
   });
-  it('keeps 2048-block pages and at most 64 IDs in each closure query without a wallet quota', async () => {
+  it('keeps 2048-block recent-first pages without an order quota or per-order closure query', async () => {
     const f = fixture(false); f.events.splice(0);
     for (let i = 1; i <= 65; i++) f.events.push(f.open(String(i), owner, other, 12, i));
-    expect(await f.reader.sync({} as never)).toMatchObject({ complete: false, orders: [] });
     expect((await f.reader.sync({} as never)).orders).toHaveLength(65);
-    expect(m.range.mock.calls.filter(([r]) => r.topics[0] === ABI.getEvent('CounterClosed')!.topicHash).map(([r]) => r.topics[1].length)).toEqual([64, 1]);
+    expect(m.range).toHaveBeenCalledOnce();
     const paged = fixture(false); m.latest.mockResolvedValue('5000');
-    expect(await paged.reader.sync({} as never)).toMatchObject({ throughBlock: '2057', complete: false });
-    expect(await paged.reader.sync({} as never)).toMatchObject({ throughBlock: '4105', complete: false });
+    expect(await paged.reader.sync({} as never)).toMatchObject({ fromBlock: '2951', throughBlock: '4998', complete: false });
+    expect(await paged.reader.sync({} as never, 'older')).toMatchObject({ fromBlock: '903', throughBlock: '4998', complete: false });
+    expect((await paged.reader.sync({} as never, 'older')).complete).toBe(true);
   });
   it('covers an empty 85000-block gap with one 100000-block page for both participant roles', async () => {
     const f = fixture(false); f.events.splice(0); m.latest.mockResolvedValue('85010');
     const reader = f.create({ pageRangeBlocks: 100_000n });
     const result = await reader.sync({} as never);
     expect(result).toMatchObject({ complete: true, throughBlock: '85008', safeHead: '85008', orders: [], history: [] });
-    expect(m.range.mock.calls.map(([input]) => [input.fromBlock, input.toBlock])).toEqual([[10n, 85008n], [10n, 85008n]]);
+    expect(m.range.mock.calls.map(([input]) => [input.fromBlock, input.toBlock])).toEqual([[10n, 85008n]]);
   });
-  it('falls back after an oversized second-role range while keeping committed rows and cursor', async () => {
+  it.each([false, true])('shows recent closure of an old counter with exact amounts before loading its creation, private=%s', async privatePair => {
+    const f = fixture(privatePair), reader = f.create({ pageRangeBlocks: 20n });
+    const recent = await reader.sync({} as never);
+    expect(recent).toMatchObject({ fromBlock: '19', throughBlock: '38', complete: false });
+    expect(recent.history).toHaveLength(2);
+    expect(recent.history.find(row => row.id === id)).toMatchObject({ status: 3, refund: '4' });
+    expect(recent.history.find(row => row.id === incoming)).toMatchObject({ status: 2, payment: '5', received: '4', refund: '7' });
+    const all = await reader.sync({} as never, 'older');
+    expect(all).toMatchObject({ fromBlock: '10', throughBlock: '38', complete: true });
+    expect(all.history).toHaveLength(4); expect(new Set(all.history.map(row => row.key)).size).toBe(4);
+    expect(await reader.sync({} as never)).toEqual(all);
+  });
+  it('decrypts cached old-counter terms again with the current privacy capability', async () => {
+    const f = fixture(true), reader = f.create({ pageRangeBlocks: 20n });
+    // Isolate participant terms: these canonical closure receipts have no usable token transfers.
+    for (const block of [20, 22]) f.receipts[hash(block + 100)] = f.receipts[hash(block + 100)].filter(log => log.address === escrow);
+    const firstSigner = {}, replacementSigner = {};
+    m.binding.mockReturnValue({ ownerAddress: owner, chainId: 7082400n, signer: firstSigner });
+    const committed = await reader.sync({} as never);
+    expect(committed.history).toHaveLength(2);
+    expect(committed.orders.every(order => order.offer === '4' && order.request === '5')).toBe(true);
+    m.binding.mockReturnValue({ ownerAddress: owner, chainId: 7082400n, signer: replacementSigner });
+    m.decrypt.mockImplementation(() => { throw new Error('Replacement privacy capability cannot decrypt.'); });
+    await expect(reader.sync({} as never)).rejects.toThrow('Replacement privacy capability cannot decrypt.');
+    expect(m.decrypt).toHaveBeenLastCalledWith(replacementSigner, expect.anything());
+    m.decrypt.mockImplementation((signer, value) => { expect(signer).toBe(replacementSigner); return BigInt(value.ciphertextLow); });
+    expect(await reader.sync({} as never)).toEqual(committed);
+    expect(m.range).toHaveBeenCalledOnce();
+    expect(m.view).toHaveBeenCalledTimes(4);
+  });
+  it('shrinks a dense default window without an automatic retry', async () => {
+    const f = fixture(false); m.latest.mockResolvedValue('5000');
+    m.range.mockRejectedValueOnce(new TradeHistoryV2RangeLimitError());
+    expect(await f.reader.sync({} as never)).toMatchObject({ complete: false, fromBlock: undefined });
+    expect(m.range).toHaveBeenCalledOnce();
+    expect(await f.reader.sync({} as never)).toMatchObject({ fromBlock: '3975', throughBlock: '4998', complete: false });
+  });
+  it('finishes older pages at the retained safe head when newer blocks arrive', async () => {
+    const f = fixture(false), reader = f.create({ pageRangeBlocks: 20n });
+    await reader.sync({} as never); m.latest.mockResolvedValue('5000');
+    expect(await reader.sync({} as never, 'older')).toMatchObject({ complete: true, fromBlock: '10', throughBlock: '38', safeHead: '38' });
+    expect(m.range.mock.calls.map(([page]) => [page.fromBlock, page.toBlock])).toEqual([[19n, 38n], [10n, 18n]]);
+  });
+  it('excludes unrelated global closures without reading their private participant terms', async () => {
+    const f = fixture(true), reader = f.create({ pageRangeBlocks: 20n });
+    f.events.push(f.open('3', address('77'), address('88'), 15), log('CounterClosed', [3, 3n, address('77')], 30));
+    const result = await reader.sync({} as never);
+    expect(result.history).toHaveLength(2); expect(result.history.some(row => row.id === '3')).toBe(false);
+    const privateReads = m.view.mock.calls.map(([input]) => ABI.parseTransaction({ data: input.data })!)
+      .filter(call => call.name === 'getTermsForAccount').map(call => call.args[0].toString());
+    expect(privateReads.sort()).toEqual([id, incoming].sort());
+  });
+  it('extends a short latest refresh and retains a long refresh gap until older pages fill it', async () => {
+    const f = fixture(false), reader = f.create({ pageRangeBlocks: 20n });
+    await reader.sync({} as never); m.latest.mockResolvedValue('46');
+    expect(await reader.sync({} as never)).toMatchObject({ fromBlock: '19', throughBlock: '44', complete: false });
+    expect(await reader.sync({} as never, 'older')).toMatchObject({ fromBlock: '10', throughBlock: '44', complete: true });
+    f.events.push(f.open('3', owner, other, 50), log('CounterClosed', [3, 3n, owner], 60));
+    f.receipts[hash(160)] = [f.events[f.events.length - 1], f.transfer(a, escrow, owner, 4n, 60, 1)];
+    m.latest.mockResolvedValue('100');
+    expect(await reader.sync({} as never)).toMatchObject({ fromBlock: '79', throughBlock: '98', complete: false });
+    expect(await reader.sync({} as never, 'older')).toMatchObject({ fromBlock: '59', complete: false });
+    expect(await reader.sync({} as never, 'older')).toMatchObject({ fromBlock: '39', complete: false });
+    expect(await reader.sync({} as never, 'older')).toMatchObject({ fromBlock: '19', complete: false });
+    const all = await reader.sync({} as never, 'older');
+    expect(all).toMatchObject({ fromBlock: '10', throughBlock: '98', complete: true });
+    expect(all.history).toHaveLength(6); expect(new Set(all.history.map(row => row.key)).size).toBe(6);
+    expect(all.history.find(row => row.id === '3' && row.status === 3)?.refund).toBe('4');
+  });
+  it('falls back after an oversized range while keeping committed rows and cursor', async () => {
     const f = fixture(false), reader = f.create({ pageRangeBlocks: 100_000n });
     const committed = await reader.sync({} as never);
     expect(committed.complete).toBe(true);
@@ -106,28 +218,52 @@ describe('Counter participant discovery/history over the reused canonical bounda
     const defaultRange = m.range.getMockImplementation()!;
     m.range.mockImplementation(async (input: { fromBlock: bigint; toBlock: bigint; topics: unknown[] }) => {
       calls.push(input);
-      if (input.toBlock - input.fromBlock + 1n > 2048n && input.topics.length === 4) {
+      if (input.toBlock - input.fromBlock + 1n > 2048n) {
         throw new TradeHistoryV2RangeLimitError();
       }
       return defaultRange(input);
     });
     const fallback = await reader.sync({} as never);
-    expect(calls.slice(0, 2).map(input => [input.fromBlock, input.toBlock])).toEqual([[39n, 85008n], [39n, 85008n]]);
+    expect(calls.map(input => [input.fromBlock, input.toBlock])).toEqual([[39n, 85008n]]);
     expect(fallback).toMatchObject({ complete: false, throughBlock: '38', safeHead: '85008' });
     expect(fallback.orders).toEqual(committed.orders);
     expect(fallback.history).toEqual(committed.history);
     const next = await reader.sync({} as never);
-    expect(calls.slice(2).length).toBeGreaterThanOrEqual(2);
-    expect(calls.slice(2).every(input => input.fromBlock === 39n && input.toBlock === 2086n)).toBe(true);
-    expect(next.throughBlock).toBe('2086');
+    expect(calls[1]).toMatchObject({ fromBlock: 82961n, toBlock: 85008n });
+    expect(next).toMatchObject({ fromBlock: '82961', throughBlock: '85008', complete: false });
     expect(next.orders).toEqual(committed.orders);
     expect(next.history).toEqual(committed.history);
+  });
+  it('keeps the committed snapshot and retries the same uncommitted page if the event filter fails', async () => {
+    const f = fixture(false);
+    const committed = await f.reader.sync({} as never);
+    f.events.push(f.open('3', owner, other, 50));
+    m.latest.mockResolvedValue('80');
+    const original = m.range.getMockImplementation()!;
+    m.range.mockRejectedValueOnce(new Error('Participant filter failed.'));
+    await expect(f.reader.sync({} as never)).rejects.toThrow('Participant filter failed.');
+    m.range.mockImplementation(original);
+    m.range.mockClear();
+    const recovered = await f.reader.sync({} as never);
+    expect(recovered).toMatchObject({ complete: true, throughBlock: '78' });
+    expect(recovered.orders).toHaveLength(3);
+    expect(recovered.history.filter(row => row.id !== '3')).toEqual(committed.history);
+    expect(m.range.mock.calls[0][0]).toMatchObject({ fromBlock: 39n, toBlock: 78n });
   });
   it('removes orphan activity and rebuilds after the committed block changes', async () => {
     const f = fixture(); await f.reader.sync({} as never);
     f.events.splice(f.events.findIndex(v => v.topics[0] === ABI.getEvent('CounterClosed')!.topicHash && BigInt(v.blockNumber) === 20n), 1); f.fork();
     const next = await f.reader.sync({} as never); expect(next.orders.find(v => v.id === id)?.status).toBe(1);
     expect(next.history.some(v => v.id === id && v.status === 3)).toBe(false);
+  });
+  it('rejects a shared page if the final activity commit block changes and replays it on retry', async () => {
+    const f = fixture(false);
+    m.block.mockResolvedValueOnce({ number: '38', hash: hash(999) });
+    await expect(f.reader.sync({} as never)).rejects.toThrow('reorganized before commit');
+    const recovered = await f.reader.sync({} as never);
+    expect(recovered).toMatchObject({ complete: true, throughBlock: '38' });
+    expect(recovered.history).toHaveLength(4);
+    expect(m.range.mock.calls.map(([input]) => input.fromBlock)).toEqual([10n, 10n]);
   });
   it('does not commit an invalid payment page and permits an explicit clean retry', async () => {
     const f = fixture(); const original = f.receipts[hash(122)][2]; f.receipts[hash(122)][2] = f.transfer(a, owner, other, 6n, 22, 2);

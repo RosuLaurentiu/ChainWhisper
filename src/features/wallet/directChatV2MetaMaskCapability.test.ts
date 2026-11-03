@@ -1,8 +1,17 @@
 import { type OnboardInfo } from '@coti-io/coti-ethers';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const snapMocks = vi.hoisted(() => ({
   getCotiSnapOwnerAesKeyResult: vi.fn()
+}));
+
+const readMocks = vi.hoisted(() => ({
+  request: vi.fn(async () => { throw new Error('Unexpected independent RPC in Direct issuer fixture'); })
+}));
+
+vi.mock('../../lib/appShared', async original => ({
+  ...await original<typeof import('../../lib/appShared')>(),
+  loadCotiReadProvider: vi.fn(async () => Object.freeze({ request: readMocks.request }))
 }));
 
 vi.mock('../../lib/cotiSnap', async (importOriginal) => ({
@@ -151,6 +160,9 @@ const issueFromFixture = (
 });
 
 describe('Direct Chat V2 MetaMask capability issuer', () => {
+  afterEach(() => {
+    expect(readMocks.request).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     snapMocks.getCotiSnapOwnerAesKeyResult.mockResolvedValue({

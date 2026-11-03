@@ -34,9 +34,6 @@ type UseP2PTradeTerminalRouteEffectsArgs = {
   routeEscrowContract?: string;
   routeTradeId: number | null;
   routeView: string;
-  setRecurringBuyFillInput: (value: string) => void;
-  setRecurringSellFillInput: (value: string) => void;
-  setRecurringTerminalSide: (side: 'buy' | 'sell') => void;
   setTerminalBuyInput: (value: string) => void;
   setTerminalFillInputSide: (side: TerminalFillInputSide) => void;
   setTerminalHistorySheetKey: (value: string) => void;
@@ -56,9 +53,6 @@ export default function useP2PTradeTerminalRouteEffects({
   routeEscrowContract,
   routeTradeId,
   routeView,
-  setRecurringBuyFillInput,
-  setRecurringSellFillInput,
-  setRecurringTerminalSide,
   setTerminalBuyInput,
   setTerminalFillInputSide,
   setTerminalHistorySheetKey,
@@ -206,19 +200,9 @@ export default function useP2PTradeTerminalRouteEffects({
       setTerminalFillInputSide(intent.terminalInput.inputSide === 'buy' ? 'buy' : 'pay');
       setTerminalBuyInput(intent.terminalInput.inputSide === 'buy' ? input : '');
       setTerminalPayInput(intent.terminalInput.inputSide === 'pay' ? input : '');
-    } else if (detailTrade.recurringOrder) {
-      const recurring = detailTrade.recurringOrder;
-      const decimals =
-        intent.terminalInput.fillSide === 'buy' ? recurring.baseAsset.decimals : recurring.quoteAsset.decimals;
-      const input = formatExactTokenAmountInput(amountWei, decimals);
-      setRecurringTerminalSide(intent.terminalInput.displayAction);
-      if (intent.terminalInput.fillSide === 'buy') {
-        setRecurringBuyFillInput(input);
-        setRecurringSellFillInput('');
-      } else {
-        setRecurringSellFillInput(input);
-        setRecurringBuyFillInput('');
-      }
+    } else {
+      clearPendingOtcSwapIntent();
+      return;
     }
     clearPendingOtcSwapIntent();
   }, [
@@ -226,9 +210,6 @@ export default function useP2PTradeTerminalRouteEffects({
     detailTrade,
     detailTradeResetKey,
     routeView,
-    setRecurringBuyFillInput,
-    setRecurringSellFillInput,
-    setRecurringTerminalSide,
     setTerminalBuyInput,
     setTerminalFillInputSide,
     setTerminalPayInput

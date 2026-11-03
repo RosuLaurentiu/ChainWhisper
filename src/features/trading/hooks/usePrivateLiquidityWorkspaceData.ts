@@ -79,6 +79,7 @@ export type PrivateLiquidityWorkspaceData = Readonly<{
   totalPositionCount?: string;
   historyPages: readonly CanonicalPrivateLiquidityLogRange[];
   historyLoading: boolean;
+  historyError?: string;
   refresh: () => void;
   retryDeployment: () => void;
 }>;
@@ -290,6 +291,7 @@ export default function usePrivateLiquidityWorkspaceData({
     if (!enabled || !context || !current || context.fingerprint !== activeFingerprint) return;
     let cancelled = false;
     const shouldContinue = () => !cancelled && context.token.active && contextRef.current === context;
+    setView((previous) => Object.freeze({ ...previous, historyError: undefined }));
     void (async () => {
       let currentWorkspace: Awaited<ReturnType<typeof loadCurrentWorkspace>> | null = null;
       try {
@@ -357,6 +359,7 @@ export default function usePrivateLiquidityWorkspaceData({
             model: currentWorkspace.model,
             completeSnapshot: currentWorkspace.snapshot,
             error: '',
+            historyError: getProviderErrorMessage(error, 'Private-liquidity history loading failed.'),
             hydratedPositionCount: currentWorkspace.snapshot.positions.length,
             totalPositionCount: currentWorkspace.snapshot.positionCount
           }));
@@ -388,7 +391,7 @@ export default function usePrivateLiquidityWorkspaceData({
       }).pages
     : EMPTY_HISTORY_PAGES;
   const historyLoading = Boolean(
-    enabled && view.deploymentReady && view.status === 'ready' && coordinatorRef.current &&
+    enabled && view.deploymentReady && view.status === 'ready' && !view.historyError && coordinatorRef.current &&
     !getPrivateLiquidityHistorySyncScope({
       state: coordinatorRef.current.historySync,
       deployment: view.deployment!

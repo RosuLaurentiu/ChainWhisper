@@ -16,6 +16,7 @@ import {
 import {
   createGroupChatV2Session,
   type GroupChatV2OwnerCapabilityGetter,
+  type GroupChatV2ReadObserver,
   type GroupChatV2SessionController,
   type GroupChatV2TransactionFlow
 } from './groupChatV2Session';
@@ -134,6 +135,7 @@ export const createGroupChatV2Runtime = ({
   deploymentConfig,
   getOwnerCapability,
   nonceRetirementFactory = createIndexedDbGroupChatV2NonceAttemptRetirer,
+  onReadPhase,
   ownerAddress,
   readCursorStore,
   runOwnerTransactionFlow
@@ -141,6 +143,7 @@ export const createGroupChatV2Runtime = ({
   deploymentConfig: GroupChatV2DeploymentConfig;
   getOwnerCapability: GroupChatV2OwnerCapabilityGetter;
   nonceRetirementFactory?: () => NonceRetirement;
+  onReadPhase?: GroupChatV2ReadObserver;
   ownerAddress: string;
   readCursorStore?: GroupChatV2ReadCursorStore;
   runOwnerTransactionFlow: GroupChatV2TransactionFlow;
@@ -173,6 +176,7 @@ export const createGroupChatV2Runtime = ({
       getOwnerCapability: capabilityCache.get,
       invalidateOwnerCapabilities: capabilityCache.invalidate,
       manifest: deploymentConfig.manifest,
+      onReadPhase,
       ownerAddress: owner,
       retireNonceAttempt: nonceRetirement.retire,
       runOwnerTransactionFlow
@@ -180,12 +184,14 @@ export const createGroupChatV2Runtime = ({
     history = createGroupChatV2HistoryRuntime({
       confirmationDepth: deploymentConfig.finalityLagBlocks,
       isCurrent: () => current,
+      onReadPhase,
       ownerAddress: owner,
       session
     });
     discovery = createGroupChatV2DiscoveryRuntime({
       confirmationDepth: deploymentConfig.finalityLagBlocks,
       isCurrent: () => current,
+      onReadPhase,
       session
     });
     readCursors = readCursorStore ?? createGroupChatV2ReadCursorStore();

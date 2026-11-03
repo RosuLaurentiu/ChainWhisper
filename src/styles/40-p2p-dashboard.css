@@ -427,12 +427,17 @@
 
 .p2p-private-liquidity-workspace {
   display: grid;
-  gap: 16px;
+  grid-column: 1 / -1;
+  min-width: 0;
+  gap: 12px;
 }
 
-.p2p-private-liquidity-workspace-tabs {
-  justify-self: start;
-}
+.p2p-order-section-head h3 { margin: 0; font-size: 1rem; }
+.p2p-order-section-head p { margin: 4px 0 0; font-size: 0.8rem; color: #aaa6bc; }
+
+.p2p-fund-recovery { grid-column: 1 / -1; padding: 8px 16px; font-size: 0.8rem; }
+.p2p-fund-recovery summary { cursor: pointer; }
+.p2p-fund-recovery button { margin: 4px 8px 4px 0; }
 
 .p2p-private-liquidity-workspace-card {
   display: grid;

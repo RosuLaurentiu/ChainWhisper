@@ -74,6 +74,7 @@ const DEX_AGENT_ROUTE = '/dex/agent';
 const DEX_ORDERS_ROUTE = '/dex/orders';
 const LEGACY_DEX_STRATEGIES_ROUTE = '/dex/strategies';
 const LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE = '/otc/pools';
+const PRIVATE_LIQUIDITY_WORKSPACE_ROUTE = '/otc/liquidity';
 const OTC_DESK_ROUTE = '/otc';
 const OTC_DESK_AGENT_ROUTE = '/otc/agent';
 const OTC_DESK_PUBLIC_ROUTE = '/otc/desk';
@@ -130,14 +131,14 @@ const createPrivateLiquidityWorkspaceRoute = (
   privateLiquidityView: PrivateLiquidityWorkspaceView = 'discover',
   privateLiquidityPositionId?: string
 ): TradeRouteState => ({
-  view: 'pools',
+  view: privateLiquidityView === 'discover' ? 'public' : privateLiquidityView === 'mine' ? 'mine' : 'create',
   privateLiquidityView,
   ...(privateLiquidityPositionId ? { privateLiquidityPositionId } : {}),
   tradeId: null,
   accessSecret: '',
   routeFamily: 'desk',
   routeError: '',
-  tradeProduct: 'dex'
+  tradeProduct: 'otc'
 });
 const createEmptyComposerRoute = (
   tradeMode: Exclude<TradeEntryMode, 'swap'> = 'limit',
@@ -333,6 +334,7 @@ export const resolvePendingTradeTerminalRoutePath = (
   const normalizedCurrentPath = normalizeTradePathname(currentPath.split('?')[0]?.split('#')[0] ?? currentPath);
   if (
     route.view !== 'public' ||
+    Boolean(route.privateLiquidityView) ||
     (
       normalizedCurrentPath !== '/trades' &&
       normalizedCurrentPath !== OTC_DESK_PUBLIC_ROUTE &&
@@ -393,9 +395,34 @@ export const resolveTradeRouteFromParts = (
   const lowerPathname = pathname.toLowerCase();
   const routeFamily = resolveTradeRouteFamilyFromPath(pathname);
   const escrowContract = resolveRouteEscrowContract(searchValue);
+  const params = new URLSearchParams(normalizeTradeSearch(searchValue));
+  const type = params.get('type');
+  if (lowerPathname === OTC_DESK_MY_TRADES_ROUTE && (type === 'strategy' || type === 'hidden-limit')) {
+    if (type === 'hidden-limit') return { ...createPrivateLiquidityWorkspaceRoute('intents'), view: 'mine' };
+    const rawPosition = params.get('position');
+    if (rawPosition === null) return createPrivateLiquidityWorkspaceRoute('mine');
+    const positionId = normalizePrivateLiquidityPositionId(rawPosition);
+    return positionId ? createPrivateLiquidityWorkspaceRoute('mine', positionId) : {
+      ...createPrivateLiquidityWorkspaceRoute('mine'),
+      routeError: 'This private-liquidity position id is not valid.'
+    };
+  }
 
   if (lowerPathname === DEX_ROUTE) {
     return createEmptySwapRoute(routeFamily, 'private-liquidity');
+  }
+  if (lowerPathname === PRIVATE_LIQUIDITY_WORKSPACE_ROUTE ||
+      lowerPathname === `${PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/swap` ||
+      lowerPathname === LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE) {
+    return createEmptyPublicRoute(routeFamily);
+  }
+  if (lowerPathname === `${PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/create` ||
+      lowerPathname === `${LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/create`) {
+    return createEmptyComposerRoute('limit', routeFamily);
+  }
+  if (lowerPathname === `${PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/intents` ||
+      lowerPathname === `${LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/intents`) {
+    return { ...createPrivateLiquidityWorkspaceRoute('intents'), view: 'mine' };
   }
 
   if (lowerPathname === DEX_AGENT_ROUTE) {
@@ -410,12 +437,12 @@ export const resolveTradeRouteFromParts = (
   }
   if (
     lowerPathname === DEX_DESK_ROUTE ||
-    lowerPathname === LEGACY_DEX_STRATEGIES_ROUTE ||
-    lowerPathname === LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE
+    lowerPathname === LEGACY_DEX_STRATEGIES_ROUTE
   ) {
     return createPrivateLiquidityWorkspaceRoute('discover');
   }
   if (
+    lowerPathname === `${PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/mine` ||
     lowerPathname === DEX_ORDERS_ROUTE ||
     lowerPathname === `${LEGACY_DEX_STRATEGIES_ROUTE}/mine` ||
     lowerPathname === `${LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/mine`
@@ -424,19 +451,17 @@ export const resolveTradeRouteFromParts = (
   }
   if (
     lowerPathname === `${DEX_DESK_ROUTE}/create` ||
-    lowerPathname === `${LEGACY_DEX_STRATEGIES_ROUTE}/create` ||
-    lowerPathname === `${LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/create`
+    lowerPathname === `${LEGACY_DEX_STRATEGIES_ROUTE}/create`
   ) {
     return createPrivateLiquidityWorkspaceRoute('create');
   }
   if (
     lowerPathname === `${DEX_DESK_ROUTE}/intents` ||
-    lowerPathname === `${LEGACY_DEX_STRATEGIES_ROUTE}/intents` ||
-    lowerPathname === `${LEGACY_PRIVATE_LIQUIDITY_WORKSPACE_ROUTE}/intents`
+    lowerPathname === `${LEGACY_DEX_STRATEGIES_ROUTE}/intents`
   ) {
     return createPrivateLiquidityWorkspaceRoute('intents');
   }
-  const privateLiquidityPositionMatch = pathname.match(/^\/(?:dex\/(?:orders|strategies)|otc\/pools)\/position\/([^/]+)$/i);
+  const privateLiquidityPositionMatch = pathname.match(/^\/(?:dex\/(?:orders|strategies)|otc\/(?:pools|liquidity))\/position\/([^/]+)$/i);
   if (privateLiquidityPositionMatch) {
     const positionId = normalizePrivateLiquidityPositionId(privateLiquidityPositionMatch[1]);
     return positionId
@@ -744,11 +769,13 @@ export const buildTradeOrderPath = (
 export const buildTradeTerminalPath = buildTradeOrderPath;
 
 export const buildPrivateLiquidityWorkspacePath = (
-  view: PrivateLiquidityWorkspaceView = 'discover'
+  view: PrivateLiquidityWorkspaceView = 'discover',
+  _surface: 'create' | 'mine' = 'create'
 ): string => {
-  if (view === 'mine') return DEX_ORDERS_ROUTE;
-  if (view === 'discover') return DEX_DESK_ROUTE;
-  return `${DEX_DESK_ROUTE}/${view}`;
+  if (view === 'discover') return OTC_DESK_PUBLIC_ROUTE;
+  if (view === 'create') return OTC_DESK_CREATE_ROUTE;
+  if (view === 'mine') return `${OTC_DESK_MY_TRADES_ROUTE}?type=strategy`;
+  return `${OTC_DESK_MY_TRADES_ROUTE}?type=hidden-limit`;
 };
 
 export const buildPrivateLiquidityPositionPath = (
@@ -756,14 +783,14 @@ export const buildPrivateLiquidityPositionPath = (
 ): string => {
   const normalized = normalizePrivateLiquidityPositionId(positionId);
   if (!normalized) throw new Error('Private-liquidity position ID must be a positive uint256.');
-  return `${DEX_ORDERS_ROUTE}/position/${normalized}`;
+  return `${OTC_DESK_MY_TRADES_ROUTE}?type=strategy&position=${normalized}`;
 };
 
 export const buildTradeSurfacePath = (
   view: TradeSurfaceView,
   routeFamily: TradeRouteFamily = 'desk',
   tradeMode?: TradeEntryMode,
-  swapVenue: TradeSwapVenue = 'otc'
+  _swapVenue: TradeSwapVenue = 'otc'
 ): string => {
   if (routeFamily === 'trades') {
     if (view === 'public') {
@@ -810,17 +837,15 @@ export const buildTradeSurfacePath = (
   if (view === 'create') {
     return OTC_DESK_CREATE_ROUTE;
   }
-  return swapVenue === 'private-liquidity'
-    ? DEX_ROUTE
-    : OTC_DESK_PUBLIC_ROUTE;
+  return OTC_DESK_PUBLIC_ROUTE;
 };
 
 export const buildTradeRoutePath = (route: TradeRouteState, routeFamily: TradeRouteFamily = route.routeFamily): string => {
-  if (route.view === 'pools') {
+  if (route.privateLiquidityView || route.view === 'pools') {
     if (route.privateLiquidityPositionId) {
       return buildPrivateLiquidityPositionPath(route.privateLiquidityPositionId);
     }
-    return buildPrivateLiquidityWorkspacePath(route.privateLiquidityView);
+    return buildPrivateLiquidityWorkspacePath(route.privateLiquidityView, route.view === 'mine' ? 'mine' : 'create');
   }
   if (route.view === 'create') {
     return buildTradeSurfacePath(route.view, routeFamily, route.tradeMode);

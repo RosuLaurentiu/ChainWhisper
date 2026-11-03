@@ -7,7 +7,7 @@ import {
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from '../../lib/appHelpers';
-import type { TradeFeeModeSelection, TradeSnapshot } from '../../lib/appShared';
+import type { TradeFeeModeSelection } from '../../lib/appShared';
 import { resolveStateUpdate, type StateUpdate } from '../../shared/state/storeUtils';
 
 type InChatTradeState = {
@@ -27,7 +27,6 @@ type InChatTradeState = {
   tradeHidePrivateLiquidity: boolean;
   tradeCounterParentId: number | null;
   tradeCounterContext: PendingTradeCounterContext | null;
-  tradeSnapshotsById: Record<string, TradeSnapshot>;
   setTradeComposerOpen: (next: StateUpdate<boolean>) => void;
   setCreatingTrade: (next: StateUpdate<boolean>) => void;
   setProcessingTradeActionId: (next: StateUpdate<string>) => void;
@@ -44,7 +43,6 @@ type InChatTradeState = {
   setTradeHidePrivateLiquidity: (next: StateUpdate<boolean>) => void;
   setTradeCounterParentId: (next: StateUpdate<number | null>) => void;
   setTradeCounterContext: (next: StateUpdate<PendingTradeCounterContext | null>) => void;
-  setTradeSnapshotsById: (next: StateUpdate<Record<string, TradeSnapshot>>) => void;
 };
 
 export const useInChatTradeStore = create<InChatTradeState>((set) => ({
@@ -68,7 +66,6 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
   tradeHidePrivateLiquidity: false,
   tradeCounterParentId: null,
   tradeCounterContext: null,
-  tradeSnapshotsById: {},
   setTradeComposerOpen: (next) =>
     set((state) => ({ tradeComposerOpen: resolveStateUpdate(next, state.tradeComposerOpen) })),
   setCreatingTrade: (next) => set((state) => ({ creatingTrade: resolveStateUpdate(next, state.creatingTrade) })),
@@ -103,7 +100,5 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
   setTradeCounterParentId: (next) =>
     set((state) => ({ tradeCounterParentId: resolveStateUpdate(next, state.tradeCounterParentId) })),
   setTradeCounterContext: (next) =>
-    set((state) => ({ tradeCounterContext: resolveStateUpdate(next, state.tradeCounterContext) })),
-  setTradeSnapshotsById: (next) =>
-    set((state) => ({ tradeSnapshotsById: resolveStateUpdate(next, state.tradeSnapshotsById) }))
+    set((state) => ({ tradeCounterContext: resolveStateUpdate(next, state.tradeCounterContext) }))
 }));

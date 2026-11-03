@@ -1,18 +1,9 @@
 import './CurrentDexOwnerViews.css';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatEther, parseUnits } from '@coti-io/coti-ethers';
 import {
   ArrowDownUp,
   ArrowRight,
-  ChartNoAxesCombined,
-  CircleDollarSign,
-  ChevronDown,
-  Clock3,
-  Coins,
-  Database,
-  Info,
-  LockKeyhole,
-  Plus,
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
@@ -33,13 +24,7 @@ import { CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM } from '../../../lib/currentShared
 import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
 import { CURRENT_DEX_DISPLAY_PAIR, parseCurrentDexTokenAmount, readCurrentDexDisplay, currentDexDisplayPair,
   parseDexCandidateTokenAmount, formatDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
-import { successorPairReferencePrice, type TradingPair } from '../../../app/components/TradingProductSwitch';
-import {
-  formatDexV2LotsAsTokenAmount,
-  formatDexV2TickPrice,
-  parseDexV2TokenAmountToLots,
-  type DexV2SwapDirection
-} from '../../../lib/dexV2Terms';
+import type { TradingPair } from '../../../app/components/TradingProductSwitch';
 import {
   type SharedWalletSession,
   resolveBrowserWalletPrivacyState
@@ -55,17 +40,13 @@ import { CurrentDexPrivateReceiptError, type CurrentCheapDexIssuedQuote, type Cu
 import type { CurrentCheapDexProfile } from '../../../lib/currentDexOperation';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 import { CurrentDexQuoteProtectionError, DEFAULT_CURRENT_DEX_SLIPPAGE_PERCENT, parseCurrentDexSlippagePercent } from '../../../lib/currentDexQuoteReview';
-import { currentDexPriceImpact } from '../../../lib/currentDexPriceImpact';
+import { currentDexPriceImpact, currentDexQuoteAveragePrice } from '../../../lib/currentDexPriceImpact';
 import { currentDexEstimatedReceive, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
-import { successorDexAdmissionAvailable } from '../../../lib/appChain';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import CurrentSwapProgress from './CurrentSwapProgress';
 import { DexViewTabs, type DexView } from '../../trading/components/TradeDeskTabs';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
-import useSuccessorStrategyAction from '../hooks/useSuccessorStrategyAction';
-import useDexV2TokenBalances from '../hooks/useDexV2TokenBalances';
 import useCurrentTrialBalances from '../hooks/useCurrentTrialBalances';
-import type { SuccessorDexRuntimeState } from '../hooks/useSuccessorDexDeployment';
 import useVisualViewportKeyboardOpen from '../../../shared/hooks/useVisualViewportKeyboardOpen';
 import {
   resolveCanonicalTradeActionSide,
@@ -76,7 +57,6 @@ import { resolveCanonicalTradingPath } from '../../../shell/routing';
 import { CurrentSwapJourneyTiming, currentSwapTimingVisible } from './currentSwapJourneyTiming';
 
 type DexMode = Exclude<DexView, 'agent' | 'recurring'>;
-type DexStrategyMode = 'pool' | 'limit' | 'recurring';
 const trialChain = BigInt(CURRENT_CHEAP_DEX_CANDIDATE.chainId);
 export const parseCurrentSwapAmount = parseCurrentDexTokenAmount;
 export const parseCurrentSwapFillPercent = (value: string, maximum: bigint) => {
@@ -208,15 +188,19 @@ export function CurrentSwapWorkspace({
   priceDisplayInverted,
   selectedPair,
   marketReference,
+  referenceDisplayInverted,
   sharedWalletSession,
   onPriceDisplayInvertedChange,
+  onReferenceDisplayInvertedChange,
   candidateKey = 'cheap-current', visible = true
 }: {
   priceDisplayInverted: boolean;
   selectedPair: TradingPair;
   marketReference?: CurrentDexMarketReference;
+  referenceDisplayInverted?: boolean;
   sharedWalletSession?: SharedWalletSession;
   onPriceDisplayInvertedChange?: (inverted: boolean) => void;
+  onReferenceDisplayInvertedChange?: (inverted: boolean | undefined) => void;
   candidateKey?: CurrentCheapDexCandidateKey;
   visible?: boolean;
 }) {
@@ -246,7 +230,7 @@ export function CurrentSwapWorkspace({
   const [transactionHash, setTransactionHash] = useState('');
   const [existingTransactionHash, setExistingTransactionHash] = useState('');
   const [result, setResult] = useState<{ text: string; scope: object; operationId: string; transactionHash: string | null } | null>(null);
-  const balances = useCurrentTrialBalances(sharedWalletSession, result?.text ?? '', { candidate, tokens: selectedTokens });
+  const balances = useCurrentTrialBalances(sharedWalletSession, result?.text ?? '', { candidate, tokens: selectedTokens }, visible);
   const [timings, setTimings] = useState<TrialTiming[]>([]);
   const journey = useRef<CurrentSwapJourneyTiming | null>(null);
   const [, updateTimingDisplay] = useState(0);
@@ -265,6 +249,8 @@ export function CurrentSwapWorkspace({
   const [slippagePercent, setSlippagePercent] = useState(DEFAULT_CURRENT_DEX_SLIPPAGE_PERCENT);
   const [customSlippage, setCustomSlippage] = useState(false);
   const [quoteReview, setQuoteReview] = useState<{ model: TradeActionConfirmModel; scope: object } | null>(null);
+  const currentMarketReference = useRef(marketReference);
+  currentMarketReference.current = marketReference;
   const displayedProfile = issued?.intent.profile ?? profile;
   const restoredQuote = issued !== null && capturedTerms === '';
   const displayedSlippage = restoredQuote ? String((issued.intent.toleranceBps ?? 0) / 100) : slippagePercent;
@@ -272,6 +258,12 @@ export function CurrentSwapWorkspace({
   const termsKey = [candidate.graph, candidate.core, candidate.packageSha256, ...selectedTokens, selectedPair.join('/'), profile, canonicalSide, priceDisplayInverted, maximumInput, minimumInput, minimumOutput, priceLimit, quoteProtocol, slippagePercent].join(':');
   const inputIndex = canonicalSide === 'buy' ? 1 : 0;
   const outputIndex = canonicalSide === 'buy' ? 0 : 1;
+  const referencePairKey = trialTokens.join('/');
+  useEffect(() => {
+    if (!onReferenceDisplayInvertedChange) return;
+    onReferenceDisplayInvertedChange(visible ? inputIndex === 1 : undefined);
+    return () => onReferenceDisplayInvertedChange(undefined);
+  }, [onReferenceDisplayInvertedChange, inputIndex, visible, candidateKey, referencePairKey]);
   const parseInput = (value: string, field: string, positive = false) => parseDexCandidateTokenAmount(candidate, selectedTokens[inputIndex], value, field, positive);
   const parseOutput = (value: string, field: string) => parseDexCandidateTokenAmount(candidate, selectedTokens[outputIndex], value, field);
   const formatInput = (amount: bigint) => formatDexCandidateTokenAmount(candidate, selectedTokens[inputIndex], amount);
@@ -350,7 +342,9 @@ export function CurrentSwapWorkspace({
     finally { setChecking(false); }
   };
   const selectSide = (side: TradeActionSide) => {
-    setCanonicalSide(resolveCanonicalTradeActionSide(side, priceDisplayInverted));
+    const nextSide = resolveCanonicalTradeActionSide(side, priceDisplayInverted);
+    setCanonicalSide(nextSide);
+    onReferenceDisplayInvertedChange?.(nextSide === 'buy');
     setMaximumInput('');
     setMinimumOutput('0');
     setPriceLimit('');
@@ -574,7 +568,10 @@ export function CurrentSwapWorkspace({
           if (issued && (attempt.phase !== 'accept' || attempt.operationId !== issued.operationId)) return;
         }
       }
-      if (!activeIssued) { setMessage('No pending current DEX attempt was found for this owner session.'); return; }
+      if (!activeIssued) {
+        if (stage !== 'error') setMessage('No pending current DEX attempt was found for this owner session.');
+        return;
+      }
       const current = await activeIssued.readCurrent();
       if (currentWallet.current !== capturedWallet.current) throw new Error('Wallet changed during the operation check.');
       setIssued(current);
@@ -610,7 +607,7 @@ export function CurrentSwapWorkspace({
     try {
       // Prepared App writes stay held before the legacy funding path can run.
       const maximum = parseInput(maximumInput, 'You send', true);
-      if (preparedCandidate) assertCurrentSwapCandidate(candidate,{principal:attemptWallet.address!,destination:attemptWallet.address!,profile,inputToken:selectedTokens[inputIndex],outputToken:selectedTokens[outputIndex],maximumInput:maximum});
+      if (preparedCandidate && candidateKey !== 'cheap-history') assertCurrentSwapCandidate(candidate,{principal:attemptWallet.address!,destination:attemptWallet.address!,profile,inputToken:selectedTokens[inputIndex],outputToken:selectedTokens[outputIndex],maximumInput:maximum});
       if(preparedCandidate&&candidateKey!=='cheap-exit'&&candidateKey!=='cheap-history')throw new Error('Prepared-candidate swap approval is not supported. Its App swap admission remains held.');
       const minimum = parseCurrentSwapFillPercent(minimumInput, maximum);
       const output = parseOutput(minimumOutput, 'You receive at least');
@@ -717,9 +714,16 @@ export function CurrentSwapWorkspace({
         confirm: async model => {
           if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during quote review.');
           if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during quote review.');
-          setQuoteReview({ model: model as TradeActionConfirmModel, scope: currentReviewScope });
           clock?.bindOperation(quote.operationId.toString());
-          const reviewedModel = model as TradeActionConfirmModel;
+          const originalModel = model as TradeActionConfirmModel;
+          const reviewedModel = { ...originalModel, summaryRows: [
+            ...originalModel.summaryRows.map(row => row.label === 'Average price' ? { ...row,
+              value: currentDexQuoteAveragePrice({ model: originalModel, pair: trialTokens, inputIndex: inputIndex as 0 | 1,
+                priceDisplayInverted: referenceDisplayInverted ?? priceDisplayInverted }) } : row),
+            { label: 'Price impact (net)', value: currentDexPriceImpact({ model: originalModel, reference: currentMarketReference.current,
+              pair: trialTokens, inputIndex: inputIndex as 0 | 1, now: BigInt(Math.floor(Date.now() / 1000)) }) }
+          ] };
+          setQuoteReview({ model: reviewedModel, scope: currentReviewScope });
           const accepted = await timedConfirmation({ ...reviewedModel,
             stats: [...reviewedModel.stats, ...feeLimitStats(quote.intent.candidate, quote.intent.profile)]
           }, 'Accept review request to decision');
@@ -830,12 +834,7 @@ export function CurrentSwapWorkspace({
     if (result?.scope === currentReviewScope) observed = activeJourney.deliveryDisplayed(result.operationId, result.transactionHash) || observed;
     if (observed) updateTimingDisplay(value => value + 1);
   }, [activeJourney, visibleQuote, quoteOutput, issued, result, currentReviewScope, documentVisible, visible]);
-  const impactFor = (model: TradeActionConfirmModel | null) => currentDexPriceImpact({ model, reference: marketReference,
-    pair: trialTokens, inputIndex: inputIndex as 0 | 1, now: BigInt(Math.floor(Date.now() / 1000)) });
-  const quoteImpact = impactFor(visibleQuote);
-  const displayedConfirmation = confirmation?.summaryRows.some(row => row.label === 'You pay')
-    ? { ...confirmation, summaryRows: [...confirmation.summaryRows, { label: 'Price impact (net)', value: impactFor(confirmation) }] }
-    : confirmation;
+  const quoteImpact = visibleQuote?.summaryRows.find(row => row.label === 'Price impact (net)')?.value ?? 'Unavailable';
   const swapStatus = candidateChanged ? 'This operation belongs to the previous contract candidate. Return to its original view to check it.'
     : walletChanged ? 'Wallet or network changed. Reconnect and reconcile the pending action.'
       : changed ? 'Terms changed. This Quote cannot be accepted; inspect or cancel it.'
@@ -845,6 +844,28 @@ export function CurrentSwapWorkspace({
           : null);
   const progressVisible = Boolean(canInspect || swapStatus || result || fundingRecovery || issued || transactionHash ||
     publicAttempt?.status === 'observed-mined' || ['error', 'reconciling'].includes(stage));
+  const newQuoteEligible = (['settled', 'released', 'observed-expired'].includes(stage) ||
+    (stage === 'expired' && issued?.intent.profile === 'fast-pool') || (stage === 'reverted' && !issued)) && !pending;
+  const startNewQuote = () => {
+    setIssued(null); setSubmission(null); setCapturedTerms(''); setTransactionHash(''); setResult(null); setQuoteReview(null);
+    setPublicAttempt(null); setExistingTransactionHash(''); setTimings([]);
+    journey.current = null; updateTimingDisplay(value => value + 1);
+    setMessage(''); setStage('idle'); capturedWallet.current = wallet; capturedCandidate.current = candidateKey;
+  };
+  const cancelFastQuote = async () => {
+    if (!enabled || issued?.intent.profile !== 'fast-pool' || !submission || busy || checking || pending || savedActionPending || fundingRecovery) return;
+    const attemptWallet = currentWallet.current, attemptScope = currentReviewScope;
+    setChecking(true); setMessage('Cancelling quote…');
+    try {
+      await submission.discardCurrentFastQuote(issued);
+      if (currentWallet.current !== attemptWallet || reviewScope.current !== attemptScope) {
+        throw new Error('Wallet, pair or privacy session changed while cancelling this quote.');
+      }
+      startNewQuote();
+      setMessage('Quote cancelled. Change the amount and get a new quote.');
+    } catch (cause) { error(cause); }
+    finally { setChecking(false); }
+  };
   const connectWallet = async () => {
     if (!sharedWalletSession?.actions?.connectBrowserWallet || connecting) return;
     setConnecting(true);
@@ -929,7 +950,7 @@ export function CurrentSwapWorkspace({
       </div>
     </details>
     {visibleQuote ? <details className="dex-v2-current-advanced"><summary>Quote details</summary><div>
-      <p>Quotes do not reserve liquidity. Price impact includes spread and fees and uses the current rounded Pool reference.</p>
+      <p>Quotes do not reserve liquidity. Average price includes fees. Price impact uses the Pool reference captured for this review; the live header can change.</p>
       <dl className="dex-v2-current-facts">{visibleQuote.summaryRows.map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
     </div></details> : null}
     <div className="dex-v2-execution-choice">
@@ -941,7 +962,7 @@ export function CurrentSwapWorkspace({
     </div>
     {unlockRequired ? <p className="dex-v2-current-unlock-note">Unlock to view balances and request a quote.</p> : null}
     <div className="dex-v2-current-actions">
-      {!wallet.address && sharedWalletSession?.actions?.connectBrowserWallet ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking} onClick={() => { void connectWallet(); }}>{connecting ? 'Connecting…' : 'Connect wallet'}</button> : unlockRequired ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking || walletChanged} onClick={() => { void unlockPrivacy(); }}>{connecting ? 'Unlocking…' : 'Unlock privacy'}</button> : !issued ? <button className="dex-v2-review-button" type="button" disabled={!connected || walletChanged || busy || checking || Boolean(pending) || savedActionPending || unknownOrigin} onClick={() => { void getQuote(); }}><span>{fundingRecovery ? 'Check funding and continue' : 'Get Quote'}</span><ArrowRight size={20} aria-hidden="true" /></button> :
+      {!wallet.address && sharedWalletSession?.actions?.connectBrowserWallet ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking} onClick={() => { void connectWallet(); }}>{connecting ? 'Connecting…' : 'Connect wallet'}</button> : unlockRequired ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking || walletChanged} onClick={() => { void unlockPrivacy(); }}>{connecting ? 'Unlocking…' : 'Unlock privacy'}</button> : newQuoteEligible ? <button className="dex-v2-review-button" type="button" disabled={checking || savedActionPending} onClick={startNewQuote}><span>New Quote</span><ArrowRight size={20} aria-hidden="true" /></button> : !issued ? <button className="dex-v2-review-button" type="button" disabled={!connected || walletChanged || busy || checking || Boolean(pending) || savedActionPending || unknownOrigin} onClick={() => { void getQuote(); }}><span>{fundingRecovery ? 'Check funding and continue' : 'Get Quote'}</span><ArrowRight size={20} aria-hidden="true" /></button> :
       <button className="dex-v2-review-button" type="button" disabled={!enabled || checking || savedActionPending || changed || stage !== 'ready' ||
         BigInt(Math.floor(Date.now() / 1000)) >= (issued?.intent.deadline ?? 0n)}
       onClick={() => { void accept(); }}><span>Review and Accept</span><ArrowRight size={20} aria-hidden="true" /></button>}
@@ -954,20 +975,15 @@ export function CurrentSwapWorkspace({
           ? { id: publicAttempt.operationId.toString(), publicState: publicAttempt.operation.phase, privateAccountingUnverified: true } : null}>
     <div className="dex-v2-progress-actions">
     {canInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button> : null}
+    {issued?.intent.profile === 'fast-pool' && issued.operation.ready && !newQuoteEligible && !pending && !savedActionPending && !fundingRecovery &&
+      ['ready', 'expired', 'error'].includes(stage) ? <button type="button" disabled={!enabled || busy || checking}
+      onClick={() => { void cancelFastQuote(); }}>Cancel quote</button> : null}
     {issued?.intent.profile === 'cheap-async' && currentCheapDexOwnerActionEligible(issued.intent.candidate, issued.operation.stage, 'cancel') && !pending &&
       !['settlement-pending', 'settled', 'released'].includes(stage) ? <button type="button" disabled={!enabled || busy || checking}
       onClick={() => { void ownerAction('cancel'); }}>Cancel swap</button> : null}
     {issued?.intent.profile === 'cheap-async' && currentCheapDexOwnerActionEligible(issued.intent.candidate, issued.operation.stage, 'recover') && !pending &&
       !['settled', 'released'].includes(stage) ? <button type="button" disabled={!enabled || busy || checking}
       onClick={() => { void ownerAction('recover'); }}>Recover swap</button> : null}
-    {(['settled', 'released', 'observed-expired'].includes(stage) || (stage === 'expired' && issued?.intent.profile === 'fast-pool') || (stage === 'reverted' && !issued)) && !pending ? <button type="button" onClick={() => {
-      setIssued(null); setSubmission(null); setCapturedTerms(''); setTransactionHash(''); setResult(null); setQuoteReview(null);
-      setPublicAttempt(null);
-      setExistingTransactionHash('');
-      setTimings([]);
-      journey.current = null; updateTimingDisplay(value => value + 1);
-      setMessage(''); setStage('idle'); capturedWallet.current = wallet; capturedCandidate.current = candidateKey;
-    }}>New Quote</button> : null}
     </div>
     {(['error', 'reconciling'].includes(stage) || (!issued && publicAttempt?.status === 'observed-mined')) && !fundingRecovery ? <details className="dex-v2-recovery-details"><summary>DEX recovery details</summary><div className="dex-v2-current-fields" style={{ gridTemplateColumns: '1fr' }}><label>
       Transaction hash (optional)
@@ -1008,31 +1024,13 @@ export function CurrentSwapWorkspace({
       <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(timings, null, 2)}</pre>
     </details> : null}
     </div></details> : null}
-    <TradeActionConfirmModal confirmation={displayedConfirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)}
+    <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)}
       details={confirmation?.summaryRows.some(row => row.label === 'You pay') ? <details className="trade-action-confirm-details">
         <summary>Price and slippage</summary>
-        <p>Price impact compares the net Quote rate with the rounded Pool reference, including spread and fees. Slippage protects the Quote net rate.</p>
+        <p>Price impact includes spread and fees and uses the Pool reference captured for this review. The live header can change. Slippage protects the Quote net rate.</p>
       </details> : null} />
   </section>;
 }
-
-const STRATEGY_MODES: ReadonlyArray<{
-  id: DexStrategyMode;
-  label: string;
-  detail: string;
-  Icon: typeof ArrowDownUp;
-}> = [
-  { id: 'pool', label: 'Pool', detail: 'Shared four-bin liquidity', Icon: Database },
-  { id: 'limit', label: 'Limit', detail: 'One private side at an exact tick', Icon: Clock3 },
-  { id: 'recurring', label: 'Recurring', detail: 'Two private sides that replenish', Icon: RefreshCw }
-];
-
-const TICKS = Array.from({ length: 16 }, (_, index) => index);
-const RECURRING_PRICE_PRESETS = Object.freeze([
-  Object.freeze({ id: 'tight', label: '±1%', distance: 0.01 }),
-  Object.freeze({ id: 'balanced', label: '±5%', distance: 0.05 }),
-  Object.freeze({ id: 'wide', label: '±10%', distance: 0.1 })
-]);
 
 export const resolveDexModeFromPath = (path: string): DexMode => {
   const canonicalPath = resolveCanonicalTradingPath(path).toLowerCase();
@@ -1043,80 +1041,6 @@ export const resolveDexModeFromPath = (path: string): DexMode => {
   if (canonicalPath.endsWith('/liquidity')) return 'liquidity';
   if (canonicalPath.endsWith('/activity')) return 'activity';
   return 'swap';
-};
-
-const normalizeAmountInput = (value: string): string => {
-  if (!/^\d*(?:\.\d{0,6})?$/.test(value)) return '';
-  return value.replace(/^0+(?=\d)/, '');
-};
-
-export const isExactSuccessorStrategyBudget = (
-  value: string,
-  token: Readonly<{ decimals: number; lotSizeRaw: string }>,
-  allowZero = false
-): boolean => {
-  try {
-    if (allowZero && /^0(?:\.0+)?$/u.test(value)) return true;
-    const lots = parseDexV2TokenAmountToLots(value, token.decimals, BigInt(token.lotSizeRaw));
-    return (allowZero ? lots >= 0n : lots > 0n) && lots <= 1_048_575n;
-  } catch {
-    return false;
-  }
-};
-
-export type PoolRangeSelection = '0.5' | '1' | '5' | '10' | 'full' | 'custom';
-
-export type PoolRangePreview = Readonly<{
-  selection: PoolRangeSelection;
-  lowerPrice: number;
-  upperPrice: number;
-}>;
-
-export const DEFAULT_POOL_RANGE_PREVIEW: PoolRangePreview = Object.freeze({
-  selection: 'custom',
-  lowerPrice: 2 / Math.sqrt(1.003),
-  upperPrice: 2 * Math.sqrt(1.003)
-});
-
-export const getDisplayedPoolRange = (
-  range: PoolRangePreview,
-  priceDisplayInverted = false
-): Readonly<{ lowerPrice: number; upperPrice: number }> => {
-  if (!priceDisplayInverted) {
-    return Object.freeze({ lowerPrice: range.lowerPrice, upperPrice: range.upperPrice });
-  }
-  return Object.freeze({
-    lowerPrice: 1 / range.upperPrice,
-    upperPrice: 1 / range.lowerPrice
-  });
-};
-
-export const formatDexV2DisplayedPrice = (
-  tickRank: number,
-  priceDisplayInverted = false
-): string => {
-  const forward = formatDexV2TickPrice(tickRank);
-  if (!priceDisplayInverted) return forward;
-  const numeric = Number(forward);
-  return numeric > 0 ? (1 / numeric).toFixed(4) : '—';
-};
-
-export const resolveDexV2SwapTickRank = (
-  canonicalBoundary: number,
-  direction: DexV2SwapDirection
-): number | null => {
-  if (!Number.isFinite(canonicalBoundary) || canonicalBoundary <= 0) return null;
-  const prices = TICKS.map((rank) => Number(formatDexV2TickPrice(rank)));
-  if (direction === 'quote-to-base') {
-    for (let rank = prices.length - 1; rank >= 0; rank -= 1) {
-      if (prices[rank] <= canonicalBoundary) return rank;
-    }
-    return null;
-  }
-  for (let rank = 0; rank < prices.length; rank += 1) {
-    if (prices[rank] >= canonicalBoundary) return rank;
-  }
-  return null;
 };
 
 export function ModeNavigation({ activeMode, onOpenAgent, onSelect }: { activeMode: DexMode; onOpenAgent?: () => void; onSelect: (mode: DexMode) => void }) {
@@ -1135,1152 +1059,12 @@ export function ModeNavigation({ activeMode, onOpenAgent, onSelect }: { activeMo
   );
 }
 
-export function StrategyNavigation({
-  activeStrategyMode,
-  onSelect
-}: {
-  activeStrategyMode: DexStrategyMode;
-  onSelect: (mode: DexStrategyMode) => void;
-}) {
-  return (
-    <nav className="dex-v2-strategy-nav" aria-label="Strategy types">
-      <div role="tablist" aria-label="DEX strategies">
-        {STRATEGY_MODES.map(({ id, label }) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={activeStrategyMode === id}
-            className={activeStrategyMode === id ? 'active' : undefined}
-            onClick={() => onSelect(id)}
-          >
-            <span>{label}</span>
-          </button>
-        ))}
-      </div>
-    </nav>
-  );
-}
-
-export function MarketSummary({ selectedPair, successor }: { selectedPair: TradingPair; successor: SuccessorDexRuntimeState }) {
-  const pair = successor.status === 'ready'
-    ? successor.manifest.pairs.find(({ displayPair }) => displayPair === selectedPair.join('/'))
-    : undefined;
-  const referencePrice = successorPairReferencePrice(selectedPair);
-  return (
-    <section className="dex-v2-market-summary" aria-label="Current DEX market">
-      <div className="dex-v2-market-pair">
-        <span><i className="usdc">{selectedPair[0][0]}</i><i className="usdt">{selectedPair[1][0]}</i></span>
-        <p><strong>{selectedPair.join(' / ')}</strong><small>COTI Testnet private pair</small></p>
-      </div>
-      <dl>
-        <div><dt>Reference price</dt><dd>1 {selectedPair[0]} = {referencePrice.toFixed(4)} {selectedPair[1]}</dd></div>
-        <div><dt>Direct sources</dt><dd>{pair?.sourceCount ?? '—'}</dd></div>
-        <div><dt>Profile</dt><dd>{pair?.seedProfile ?? 'Verifying'}</dd></div>
-        <div><dt>Execution</dt><dd>{pair?.sourceCount ? 'Unified same-pair' : 'P2 fallback test'}</dd></div>
-      </dl>
-    </section>
-  );
-}
-function TokenAmountField({
-  balanceLabel,
-  errorMessage,
-  label,
-  symbol,
-  displaySymbol: displaySymbolOverride,
-  amount,
-  readOnly,
-  onBalanceAction,
-  onBlur,
-  onAmountChange,
-  onMaxAmount,
-  maxDisabled = false
-}: {
-  balanceLabel?: string;
-  errorMessage?: string;
-  label: string;
-  symbol: string;
-  displaySymbol?: string;
-  amount: string;
-  readOnly?: boolean;
-  onBalanceAction?: () => void;
-  onBlur?: () => void;
-  onAmountChange?: (value: string) => void;
-  onMaxAmount?: () => void;
-  maxDisabled?: boolean;
-}) {
-  const isUsdc = symbol === 'pUSDC';
-  const displaySymbol = displaySymbolOverride ?? symbol;
-  const errorId = useId();
-  return (
-    <div className="dex-v2-token-field">
-      <span className="dex-v2-field-label">
-        <span>{label}</span>
-        <span className="dex-v2-field-tools">
-          {balanceLabel ? (onBalanceAction
-            ? <button type="button" className="dex-v2-balance-action" onClick={onBalanceAction}>{balanceLabel}</button>
-            : <small>{balanceLabel}</small>) : null}
-          {onMaxAmount ? <button type="button" onClick={onMaxAmount} disabled={maxDisabled}>Max</button> : null}
-        </span>
-      </span>
-      <div className="dex-v2-token-field-row">
-        <span className="dex-v2-token-context" aria-label={`${label} token ${displaySymbol}`}>
-          <span className={`dex-v2-token-icon ${isUsdc ? 'usdc' : 'usdt'}`}>
-            {isUsdc ? <CircleDollarSign size={20} aria-hidden="true" /> : <Coins size={20} aria-hidden="true" />}
-          </span>
-          <strong>{displaySymbol}</strong>
-        </span>
-        {readOnly ? (
-          <output className="dex-v2-amount-output" aria-label={`${label} amount`}>{amount}</output>
-        ) : (
-          <input
-            inputMode="decimal"
-            aria-label={`${label} amount`}
-            aria-describedby={errorMessage ? errorId : undefined}
-            aria-invalid={Boolean(errorMessage)}
-            value={amount}
-            placeholder="0.00"
-            onChange={(event) => onAmountChange?.(normalizeAmountInput(event.target.value))}
-            onBlur={onBlur}
-          />
-        )}
-      </div>
-      {errorMessage ? <small className="dex-v2-field-error" id={errorId} role="alert">{errorMessage}</small> : null}
-    </div>
-  );
-}
-
-function PoolAmountField({
-  amount,
-  balanceLabel,
-  label,
-  onAmountChange,
-  onMaxAmount,
-  maxDisabled,
-  onRevealBalance,
-  symbol
-}: {
-  amount: string;
-  balanceLabel: string;
-  label: string;
-  onAmountChange: (value: string) => void;
-  onMaxAmount: () => void;
-  maxDisabled: boolean;
-  onRevealBalance: () => void;
-  symbol: string;
-}) {
-  const isUsdc = symbol === 'pUSDC';
-  const displaySymbol = symbol;
-  return (
-    <div className="dex-v2-pool-amount-field">
-      <div className="dex-v2-pool-amount-meta">
-        <span>{label}</span>
-        <span className="dex-v2-pool-amount-tools">
-          <button type="button" onClick={onRevealBalance}>Available: {balanceLabel} {displaySymbol}</button>
-          <button type="button" onClick={onMaxAmount} disabled={maxDisabled}>Max</button>
-        </span>
-      </div>
-      <div className="dex-v2-pool-amount-input">
-        <span className="dex-v2-pool-token-context" aria-label={`${label} token ${displaySymbol}`}>
-          <span className={`dex-v2-token-icon ${isUsdc ? 'usdc' : 'usdt'}`}>
-            {isUsdc ? <CircleDollarSign size={20} aria-hidden="true" /> : <Coins size={20} aria-hidden="true" />}
-          </span>
-          <strong>{displaySymbol}</strong>
-        </span>
-        <input
-          aria-label={`${label} amount`}
-          inputMode="decimal"
-          value={amount}
-          onChange={(event) => onAmountChange(normalizeAmountInput(event.target.value))}
-        />
-      </div>
-    </div>
-  );
-}
-
-function StrategyPreview({
-  title,
-  rows,
-  note
-}: {
-  title: string;
-  rows: ReadonlyArray<readonly [string, string]>;
-  note: string;
-}) {
-  return (
-    <aside className="dex-v2-strategy-preview">
-      <header><span>ORDER PREVIEW</span><h2>{title}</h2></header>
-      <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-      <p><LockKeyhole size={17} aria-hidden="true" />{note}</p>
-    </aside>
-  );
-}
-
-export function PoolWorkspace({
-  onRangePreviewChange,
-  onSuccessorRefresh = () => undefined,
-  priceDisplayInverted = false,
-  rangePreview: _rangePreview,
-  selectedPair = ['BCN', 'HBR'],
-  successor = Object.freeze({ status: 'loading' } as const),
-  sharedWalletSession
-}: {
-  onRangePreviewChange: (range: PoolRangePreview) => void;
-  onSuccessorRefresh?: () => void;
-  priceDisplayInverted?: boolean;
-  rangePreview: PoolRangePreview;
-  selectedPair?: TradingPair;
-  successor?: SuccessorDexRuntimeState;
-  sharedWalletSession?: SharedWalletSession;
-}) {
-  const marketReference = successorPairReferencePrice(selectedPair);
-  const pairKey = selectedPair.join('/');
-  const [canonicalStartingPrice, setCanonicalStartingPrice] = useState(marketReference);
-  const [startingPriceInput, setStartingPriceInput] = useState(() =>
-    (priceDisplayInverted ? 1 / marketReference : marketReference).toFixed(4));
-  const [spreadInput, setSpreadInput] = useState('0.30');
-  const [baseAmount, setBaseAmount] = useState('900');
-  const [quoteAmount, setQuoteAmount] = useState('900');
-  const { confirmation, requestConfirmation, resolveConfirmation } = useTradeActionConfirmationState();
-  const balances = useDexV2TokenBalances({ runtime: successor, selectedPair, sharedWalletSession });
-  const strategyAction = useSuccessorStrategyAction({ runtime: successor, sharedWalletSession, refresh: onSuccessorRefresh });
-  const successorPair = successor.status === 'ready'
-    ? successor.manifest.pairs.find((pair) => pair.displayPair === pairKey)
-    : null;
-  const baseToken = successor.status === 'ready'
-    ? successor.manifest.tokens.find(({ symbol }) => symbol === selectedPair[0])
-    : null;
-  const quoteToken = successor.status === 'ready'
-    ? successor.manifest.tokens.find(({ symbol }) => symbol === selectedPair[1])
-    : null;
-  const successorSupported = successor.status === 'ready' &&
-    successorDexAdmissionAvailable(successor.snapshot, pairKey, 'Aggregate');
-  const displayedBaseSymbol = priceDisplayInverted ? selectedPair[1] : selectedPair[0];
-  const displayedQuoteSymbol = priceDisplayInverted ? selectedPair[0] : selectedPair[1];
-  const numericStartingPrice = Number(startingPriceInput);
-  const numericSpread = Number(spreadInput);
-  const validStartingPrice = Number.isFinite(numericStartingPrice) && numericStartingPrice > 0;
-  const validSpread = Number.isFinite(numericSpread) && numericSpread >= 0 && numericSpread <= 20;
-  const validAmountText = (value: string) => /^\d+(?:\.\d{1,6})?$/.test(value) && Number(value) > 0;
-  const validBudgets = baseToken && quoteToken
-    ? isExactSuccessorStrategyBudget(baseAmount, baseToken) && isExactSuccessorStrategyBudget(quoteAmount, quoteToken)
-    : validAmountText(baseAmount) && validAmountText(quoteAmount);
-  const spreadFactor = validSpread ? Math.sqrt(1 + numericSpread / 100) : 1;
-  const canonicalBid = canonicalStartingPrice / spreadFactor;
-  const canonicalAsk = canonicalStartingPrice * spreadFactor;
-  const displayedBid = priceDisplayInverted ? 1 / canonicalAsk : canonicalBid;
-  const displayedAsk = priceDisplayInverted ? 1 / canonicalBid : canonicalAsk;
-  const displayedMarket = priceDisplayInverted ? 1 / marketReference : marketReference;
-  const maxBudget = (raw: bigint | null, selected: typeof baseToken) => {
-    if (raw === null || !selected) return '';
-    const lots = raw / BigInt(selected.lotSizeRaw);
-    return formatDexV2LotsAsTokenAmount(
-      lots > 1_048_575n ? 1_048_575n : lots,
-      selected.decimals,
-      BigInt(selected.lotSizeRaw)
-    );
-  };
-
-  useEffect(() => {
-    setCanonicalStartingPrice(marketReference);
-    setStartingPriceInput((priceDisplayInverted ? 1 / marketReference : marketReference).toFixed(4));
-    setSpreadInput('0.30');
-    setBaseAmount('900');
-    setQuoteAmount('900');
-  }, [marketReference, pairKey, priceDisplayInverted]);
-
-  useEffect(() => {
-    if (!validStartingPrice || !validSpread) return;
-    onRangePreviewChange({ selection: 'custom', lowerPrice: canonicalBid, upperPrice: canonicalAsk });
-  }, [canonicalAsk, canonicalBid, onRangePreviewChange, validSpread, validStartingPrice]);
-
-  const updateStartingPrice = (rawValue: string) => {
-    const value = normalizeAmountInput(rawValue);
-    setStartingPriceInput(value);
-    const displayed = Number(value);
-    if (Number.isFinite(displayed) && displayed > 0) {
-      setCanonicalStartingPrice(priceDisplayInverted ? 1 / displayed : displayed);
-    }
-  };
-  const useMarketPrice = () => {
-    setCanonicalStartingPrice(marketReference);
-    setStartingPriceInput(displayedMarket.toFixed(4));
-  };
-  const reviewPoolDesign = async () => {
-    if (!successorPair || successor.status !== 'ready' || !validStartingPrice || !validSpread || !validBudgets) return;
-    const accepted = await requestConfirmation(Object.freeze({
-      title: 'Review private pool',
-      message: 'Starting price, spread, and both budgets are authenticated private inputs. The protocol fee is separate and cannot be selected by the maker.',
-      primaryLabel: 'Create private pool',
-      secondaryLabel: null,
-      fundingMoves: [],
-      summaryRows: [
-        { label: 'Starting price', value: `1 ${displayedBaseSymbol} = ${numericStartingPrice.toFixed(4)} ${displayedQuoteSymbol}` },
-        { label: `Sell ${displayedBaseSymbol} marginal`, value: `${displayedBid.toFixed(4)} ${displayedQuoteSymbol}` },
-        { label: `Buy ${displayedBaseSymbol} marginal`, value: `${displayedAsk.toFixed(4)} ${displayedQuoteSymbol}` },
-        { label: 'Total spread', value: `${numericSpread.toFixed(2)}%` },
-        { label: `${selectedPair[0]} budget`, value: baseAmount },
-        { label: `${selectedPair[1]} budget`, value: quoteAmount }
-      ],
-      stats: [
-        { label: 'Terms', value: 'Private' },
-        { label: 'Pricing', value: 'Inventory-aware' },
-        { label: 'Ownership', value: 'Position NFT' }
-      ]
-    }));
-    if (!accepted) return;
-    await strategyAction.create({
-      family: 'Aggregate',
-      pair: successorPair,
-      amountBySymbol: { [selectedPair[0]]: baseAmount, [selectedPair[1]]: quoteAmount },
-      startingPrice: canonicalStartingPrice,
-      totalSpreadPercent: numericSpread
-    });
-  };
-
-  return (
-    <>
-      <section className="dex-v2-pool-composer" aria-label="Private Pool creation">
-        <section className="dex-v2-pool-section dex-v2-pool-range-section">
-          <header><h2>Starting price</h2><span>{displayedQuoteSymbol} per {displayedBaseSymbol}</span></header>
-          <label className="dex-v2-limit-price-field">
-            <span><span>Reference price</span><button type="button" onClick={useMarketPrice}>Use market</button></span>
-            <input
-              aria-label={`Starting price (${displayedQuoteSymbol} per ${displayedBaseSymbol})`}
-              aria-invalid={!validStartingPrice}
-              inputMode="decimal"
-              value={startingPriceInput}
-              onChange={(event) => updateStartingPrice(event.target.value)}
-            />
-            <div className="dex-v2-limit-price-summary">
-              <strong>Market reference {displayedMarket.toFixed(4)}</strong>
-              <span>Editable before creation and through owner reprice.</span>
-            </div>
-          </label>
-          {!validStartingPrice ? <p className="dex-v2-pool-error">Enter a starting price above 0.</p> : null}
-        </section>
-        <section className="dex-v2-pool-section dex-v2-pool-fee-section">
-          <header><h2>Pool spread</h2><Info size={15} aria-label="Total private maker spread" /></header>
-          <div className="dex-v2-pool-fee-row">
-            <div className="dex-v2-pool-segmented" role="group" aria-label="Total pool spread">
-              {['0', '0.30', '0.50', '1.00'].map((spread) => <button key={spread} type="button" className={spreadInput === spread ? 'active' : undefined} aria-pressed={spreadInput === spread} onClick={() => setSpreadInput(spread)}>{spread}%</button>)}
-            </div>
-            <label className="dex-v2-pool-custom-fee active">
-              <span>Custom</span>
-              <input aria-label="Custom total spread" aria-invalid={!validSpread} inputMode="decimal" value={spreadInput} onChange={(event) => setSpreadInput(normalizeAmountInput(event.target.value))} />
-              <b>%</b>
-            </label>
-          </div>
-          {validSpread && validStartingPrice ? <dl className="dex-v2-position-overview-grid">
-            <div><dt>Sell {displayedBaseSymbol} marginal</dt><dd>{displayedBid.toFixed(4)} {displayedQuoteSymbol}</dd></div>
-            <div><dt>Buy {displayedBaseSymbol} marginal</dt><dd>{displayedAsk.toFixed(4)} {displayedQuoteSymbol}</dd></div>
-          </dl> : <p className="dex-v2-pool-error">Spread must be between 0% and 20%.</p>}
-          <p className="dex-v2-activation-note">Spread is maker economics. The protocol fee is applied separately by the Core.</p>
-        </section>
-        <section className="dex-v2-pool-section dex-v2-pool-amounts-section">
-          <header><h2>Private budgets</h2><Info size={15} aria-label="Initial private token budgets" /></header>
-          <PoolAmountField amount={quoteAmount} balanceLabel={balances.quoteLabel} label="Initial budget" onAmountChange={setQuoteAmount} onMaxAmount={() => setQuoteAmount(maxBudget(balances.quoteBalanceWei, quoteToken))} maxDisabled={balances.status !== 'ready'} onRevealBalance={() => { void balances.reveal(); }} symbol={selectedPair[1]} />
-          <span className="dex-v2-pool-plus"><Plus size={15} aria-hidden="true" /></span>
-          <PoolAmountField amount={baseAmount} balanceLabel={balances.baseLabel} label="Initial budget" onAmountChange={setBaseAmount} onMaxAmount={() => setBaseAmount(maxBudget(balances.baseBalanceWei, baseToken))} maxDisabled={balances.status !== 'ready'} onRevealBalance={() => { void balances.reveal(); }} symbol={selectedPair[0]} />
-          {!validBudgets ? <p className="dex-v2-pool-error">Enter a positive amount in the token's exact settlement-lot increment.</p> : null}
-        </section>
-        <div className="dex-v2-limit-privacy"><LockKeyhole size={21} aria-hidden="true" /><span><strong>Private by design</strong><small>Price, spread, budgets, and inventory stay encrypted.</small></span><ShieldCheck size={20} aria-hidden="true" /></div>
-        <button className="dex-v2-review-button" type="button" disabled={!validStartingPrice || !validSpread || !validBudgets || !successorSupported || strategyAction.busy} onClick={() => { void reviewPoolDesign(); }}><span>Review private pool</span><ArrowRight size={21} aria-hidden="true" /></button>
-        <p className="dex-v2-activation-note" role="status">{strategyAction.message || balances.message || (successorSupported ? 'Ready for the corrected Aggregate admission ABI.' : 'No verified Aggregate admission capacity remains for this pair.')}</p>
-      </section>
-      <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} />
-    </>
-  );
-}
-
-
-export function LimitWorkspace({
-  limitCanonicalPrice,
-  onLimitPriceChange,
-  onSuccessorRefresh = () => undefined,
-  onShowMarketChart,
-  priceDisplayInverted = false,
-  selectedPair = ['BCN', 'HBR'],
-  successor = Object.freeze({ status: 'loading' } as const),
-  sharedWalletSession
-}: {
-  limitCanonicalPrice: number;
-  onLimitPriceChange: (canonicalPrice: number) => void;
-  onSuccessorRefresh?: () => void;
-  onShowMarketChart?: () => void;
-  priceDisplayInverted?: boolean;
-  selectedPair?: TradingPair;
-  successor?: SuccessorDexRuntimeState;
-  sharedWalletSession?: SharedWalletSession;
-}) {
-  const [orderFamily, setOrderFamily] = useState<'Fixed' | 'Range'>('Fixed');
-  const [makerSide, setMakerSide] = useState<'sell-base' | 'sell-quote'>('sell-quote');
-  const [minimumFillPercent, setMinimumFillPercent] = useState('25');
-  const [inventoryAmount, setInventoryAmount] = useState('900');
-  const [inventoryTouched, setInventoryTouched] = useState(false);
-  const [limitPriceTouched, setLimitPriceTouched] = useState(false);
-  const [reviewStatus] = useState('');
-  const balances = useDexV2TokenBalances({ runtime: successor, selectedPair, sharedWalletSession });
-  const strategyAction = useSuccessorStrategyAction({ runtime: successor, sharedWalletSession, refresh: onSuccessorRefresh });
-  const successorPair = successor.status === 'ready' ? successor.manifest.pairs.find((pair) => pair.displayPair === selectedPair.join('/')) : null;
-  const successorSupported = successor.status === 'ready' &&
-    successorDexAdmissionAvailable(successor.snapshot, selectedPair.join('/'), orderFamily);
-  const { confirmation, requestConfirmation, resolveConfirmation } = useTradeActionConfirmationState();
-  const sellSymbol = makerSide === 'sell-base' ? selectedPair[0] : selectedPair[1];
-  const receiveSymbol = makerSide === 'sell-base' ? selectedPair[1] : selectedPair[0];
-  const buyBase = makerSide === 'sell-quote';
-  const canonicalSide: TradeActionSide = buyBase ? 'buy' : 'sell';
-  const displayedSide = resolveDisplayedTradeActionSide(canonicalSide, priceDisplayInverted);
-  const displayedPrice = priceDisplayInverted ? 1 / limitCanonicalPrice : limitCanonicalPrice;
-  const displayedBaseSymbol = priceDisplayInverted ? selectedPair[1] : selectedPair[0];
-  const displayedQuoteSymbol = priceDisplayInverted ? selectedPair[0] : selectedPair[1];
-  const formattedDisplayedPrice = displayedPrice.toFixed(4);
-  const referencePrice = successorPairReferencePrice(selectedPair);
-  const displayedReferencePrice = priceDisplayInverted ? 1 / referencePrice : referencePrice;
-  const [limitPriceDraft, setLimitPriceDraft] = useState(formattedDisplayedPrice);
-  const [limitPriceEditing, setLimitPriceEditing] = useState(false);
-  const [rangeEndCanonicalPrice, setRangeEndCanonicalPrice] = useState(limitCanonicalPrice);
-  const [rangeEndPriceDraft, setRangeEndPriceDraft] = useState(formattedDisplayedPrice);
-  const limitPriceContextId = useId();
-  const limitPriceErrorId = useId();
-  const numericInventory = Number(inventoryAmount);
-  const numericLimitPriceDraft = Number(limitPriceDraft);
-  const successorSoldToken = successor.status === 'ready'
-    ? successor.manifest.tokens.find(({ symbol }) => symbol === sellSymbol)
-    : null;
-  const inventoryNumericValid = Number.isFinite(numericInventory) && numericInventory > 0;
-  const inventoryValid = inventoryNumericValid && (
-    !successorSoldToken || isExactSuccessorStrategyBudget(inventoryAmount, successorSoldToken)
-  );
-  const inventoryError = !inventoryNumericValid
-    ? 'Enter an amount greater than 0.'
-    : successorSoldToken && !inventoryValid
-      ? `Enter an exact ${successorSoldToken.symbol} settlement-lot multiple.`
-      : undefined;
-  const limitPriceValid = Number.isFinite(numericLimitPriceDraft) && numericLimitPriceDraft > 0;
-  const rangeEndPriceValid = Number.isFinite(Number(rangeEndPriceDraft)) && Number(rangeEndPriceDraft) > 0;
-  const receiveAmount = inventoryValid
-    ? (buyBase ? numericInventory / limitCanonicalPrice : numericInventory * limitCanonicalPrice).toFixed(2)
-    : '—';
-  const marketDistance = (displayedPrice / displayedReferencePrice - 1) * 100;
-  const marketRelation = Math.abs(marketDistance) < 0.005
-    ? 'At market'
-    : `${Math.abs(marketDistance).toFixed(2)}% ${marketDistance > 0 ? 'above' : 'below'} market`;
-  const balanceAmount = sellSymbol === selectedPair[0] ? balances.baseLabel : balances.quoteLabel;
-  const balanceActionLabel = balances.status === 'ready'
-    ? `Available: ${balanceAmount} ${sellSymbol}`
-    : balances.status === 'loading'
-      ? 'Reading balance…'
-      : balances.status === 'error'
-        ? 'Try balance again'
-        : sharedWalletSession?.walletAddress.trim()
-          ? 'Unlock balance'
-          : 'Connect to view balance';
-
-  useEffect(() => {
-    if (!limitPriceEditing && limitPriceValid) setLimitPriceDraft(formattedDisplayedPrice);
-  }, [formattedDisplayedPrice, limitPriceEditing, limitPriceValid]);
-
-  const defaultRangeEnd = (sold: string, start = limitCanonicalPrice) => {
-    if (!successorPair || successor.status !== 'ready') return start;
-    const soldAddress = successor.manifest.tokens.find(({ symbol }) => symbol === sold)?.address.toLowerCase();
-    const displayBaseAddress = successor.manifest.tokens.find(({ symbol }) => symbol === selectedPair[0])?.address.toLowerCase();
-    if (!soldAddress || !displayBaseAddress) return start;
-    const increases = (displayBaseAddress === successorPair.token0.toLowerCase()) ===
-      (soldAddress === successorPair.token1.toLowerCase());
-    return start * (increases ? 1.05 : 0.95);
-  };
-  const setDefaultRangeEnd = (sold: string, start = limitCanonicalPrice) => {
-    const canonical = defaultRangeEnd(sold, start);
-    setRangeEndCanonicalPrice(canonical);
-    setRangeEndPriceDraft((priceDisplayInverted ? 1 / canonical : canonical).toFixed(4));
-  };
-  const rangeDirectionValid = (() => {
-    const expected = defaultRangeEnd(sellSymbol, 1) > 1 ? 'increase' : 'decrease';
-    return expected === 'increase'
-      ? rangeEndCanonicalPrice >= limitCanonicalPrice
-      : rangeEndCanonicalPrice <= limitCanonicalPrice;
-  })();
-
-  const updateLimitPrice = (nextDraft: string) => {
-    setLimitPriceDraft(nextDraft);
-    const nextDisplayedPrice = Number(nextDraft);
-    if (Number.isFinite(nextDisplayedPrice) && nextDisplayedPrice > 0) {
-      onLimitPriceChange(priceDisplayInverted ? 1 / nextDisplayedPrice : nextDisplayedPrice);
-    }
-  };
-  const commitLimitPrice = () => {
-    const nextDisplayedPrice = Number(limitPriceDraft);
-    if (Number.isFinite(nextDisplayedPrice) && nextDisplayedPrice > 0) {
-      const canonical = priceDisplayInverted ? 1 / nextDisplayedPrice : nextDisplayedPrice;
-      onLimitPriceChange(canonical);
-      setLimitPriceDraft(nextDisplayedPrice.toFixed(4));
-      if (orderFamily === 'Range') setDefaultRangeEnd(sellSymbol, canonical);
-    }
-    setLimitPriceTouched(true);
-    setLimitPriceEditing(false);
-  };
-  const selectSide = (nextDisplayedSide: TradeActionSide) => {
-    const nextCanonicalSide = resolveCanonicalTradeActionSide(nextDisplayedSide, priceDisplayInverted);
-    const nextMakerSide = nextCanonicalSide === 'buy' ? 'sell-quote' : 'sell-base';
-    setMakerSide(nextMakerSide);
-    setInventoryAmount('900');
-    setInventoryTouched(false);
-    if (orderFamily === 'Range') {
-      const nextSold = nextMakerSide === 'sell-base' ? selectedPair[0] : selectedPair[1];
-      setDefaultRangeEnd(nextSold);
-    }
-  };
-  const updateRangeEndPrice = (value: string) => {
-    setRangeEndPriceDraft(value);
-    const displayed = Number(value);
-    if (Number.isFinite(displayed) && displayed > 0) {
-      setRangeEndCanonicalPrice(priceDisplayInverted ? 1 / displayed : displayed);
-    }
-  };
-  const reviewLimit = async () => {
-    const accepted = await requestConfirmation(Object.freeze({
-      title: `Review private ${orderFamily.toLowerCase()}`,
-      message: 'Partial fills leave the remaining liquidity in the order. Your wallet signs the encrypted admission after review.',
-      primaryLabel: `Create private ${orderFamily.toLowerCase()}`,
-      secondaryLabel: null,
-      fundingMoves: [],
-      summaryRows: [
-        { label: 'Action', value: `${displayedSide === 'buy' ? 'Buy' : 'Sell'} ${displayedBaseSymbol}` },
-        { label: 'Fund', value: `${inventoryAmount || '0'} ${sellSymbol}` },
-        { label: 'Limit price', value: `${displayedPrice.toFixed(4)} ${displayedQuoteSymbol} per ${displayedBaseSymbol}` },
-        ...(orderFamily === 'Range' ? [{ label: 'End marginal price', value: `${Number(rangeEndPriceDraft).toFixed(4)} ${displayedQuoteSymbol} per ${displayedBaseSymbol}` }] : []),
-        { label: 'Receive at full fill', value: `${receiveAmount} ${receiveSymbol}` },
-        { label: 'Minimum fill', value: minimumFillPercent === '0' ? 'Any executable amount' : `At least ${minimumFillPercent}%` }
-      ],
-      stats: [
-        { label: 'Status', value: 'Ready to create' },
-        { label: 'Privacy', value: 'Price + amount private' },
-        { label: 'Wallet', value: 'Signature required' }
-      ]
-    }));
-    if (accepted && successorPair && successor.status === 'ready') {
-      const common = {
-        pair: successorPair,
-        soldSymbol: sellSymbol,
-        inventory: inventoryAmount || '0',
-        minimumOutputPercent: Number(minimumFillPercent) as 0 | 25 | 50 | 100
-      } as const;
-      await strategyAction.create(orderFamily === 'Fixed'
-        ? { ...common, family: 'Fixed', price: limitCanonicalPrice }
-        : { ...common, family: 'Range', startPrice: limitCanonicalPrice, endPrice: rangeEndCanonicalPrice });
-    }
-  };
-
-  return (
-    <>
-      <section className="dex-v2-limit-composer" aria-label="Private Limit creation">
-        <header className="dex-v2-composer-heading">
-          <span className="dex-v2-composer-eyebrow">Private Limit</span>
-          <h1>{displayedSide === 'buy' ? 'Buy' : 'Sell'} {displayedBaseSymbol}</h1>
-          <p>Fund {sellSymbol} · receive {receiveSymbol} at your limit.</p>
-        </header>
-        <div className="dex-v2-buy-sell-tabs" role="tablist" aria-label="Limit strategy type">
-          {(['Fixed', 'Range'] as const).map((family) => <button
-            key={family}
-            type="button"
-            role="tab"
-            aria-selected={orderFamily === family}
-            className={orderFamily === family ? 'active' : undefined}
-            onClick={() => {
-              setOrderFamily(family);
-              if (family === 'Range') setDefaultRangeEnd(sellSymbol);
-            }}
-          >{family}</button>)}
-        </div>
-        <div className="dex-v2-buy-sell-tabs" role="tablist" aria-label="Limit direction">
-          <button type="button" role="tab" aria-selected={displayedSide === 'buy'} className={displayedSide === 'buy' ? 'active' : undefined} onClick={() => selectSide('buy')}>Buy {displayedBaseSymbol}</button>
-          <button type="button" role="tab" aria-selected={displayedSide === 'sell'} className={displayedSide === 'sell' ? 'active' : undefined} onClick={() => selectSide('sell')}>Sell {displayedBaseSymbol}</button>
-        </div>
-        <div className="dex-v2-limit-fields">
-          <TokenAmountField
-            balanceLabel={balanceActionLabel}
-            errorMessage={inventoryTouched ? inventoryError : undefined}
-            label="Fund"
-            symbol={sellSymbol}
-            amount={inventoryAmount}
-            onBalanceAction={balances.status === 'loading' ? undefined : () => { void balances.reveal(); }}
-            onBlur={() => setInventoryTouched(true)}
-            onAmountChange={setInventoryAmount}
-            onMaxAmount={() => setInventoryAmount(balanceAmount)}
-            maxDisabled={balances.status !== 'ready'}
-          />
-          <label className="dex-v2-limit-price-field">
-            <span><span>Limit price</span><small>{displayedQuoteSymbol} per {displayedBaseSymbol}</small></span>
-            <input
-              aria-label="Limit price"
-              aria-describedby={limitPriceTouched && !limitPriceValid ? `${limitPriceContextId} ${limitPriceErrorId}` : limitPriceContextId}
-              aria-invalid={limitPriceTouched && !limitPriceValid}
-              inputMode="decimal"
-              value={limitPriceDraft}
-              onFocus={() => setLimitPriceEditing(true)}
-              onChange={(event) => updateLimitPrice(event.target.value)}
-              onBlur={commitLimitPrice}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-            />
-            <div className="dex-v2-limit-price-summary" id={limitPriceContextId}>
-              <strong>1 {displayedBaseSymbol} = {displayedPrice.toFixed(4)} {displayedQuoteSymbol}</strong>
-              <span>{marketRelation}</span>
-            </div>
-            {limitPriceTouched && !limitPriceValid
-              ? <small className="dex-v2-field-error" id={limitPriceErrorId} role="alert">Enter a price greater than 0.</small>
-              : null}
-            {onShowMarketChart ? (
-              <button className="dex-v2-limit-chart-link" type="button" onClick={onShowMarketChart}>
-                <ChartNoAxesCombined size={16} aria-hidden="true" />
-                <span>Show market chart</span>
-              </button>
-            ) : null}
-          </label>
-          {orderFamily === 'Range' ? <label className="dex-v2-limit-price-field">
-            <span><span>End marginal price</span><small>{displayedQuoteSymbol} per {displayedBaseSymbol}</small></span>
-            <input
-              aria-label="Range end marginal price"
-              aria-invalid={!rangeEndPriceValid || !rangeDirectionValid}
-              inputMode="decimal"
-              value={rangeEndPriceDraft}
-              onChange={(event) => updateRangeEndPrice(event.target.value)}
-              onBlur={() => {
-                const displayed = Number(rangeEndPriceDraft);
-                if (Number.isFinite(displayed) && displayed > 0) setRangeEndPriceDraft(displayed.toFixed(4));
-              }}
-            />
-            <div className="dex-v2-limit-price-summary">
-              <strong>Private range boundary</strong>
-              <span>{rangeDirectionValid ? 'Valid for the funded side' : 'Move the end price in the opposite direction'}</span>
-            </div>
-          </label> : null}
-          <TokenAmountField
-            balanceLabel="Indicative · partial fills possible"
-            label="Receive if fully filled"
-            symbol={receiveSymbol}
-            amount={receiveAmount}
-            readOnly
-          />
-        </div>
-        <details className="dex-v2-limit-advanced">
-          <summary><span>Advanced</span><span>Minimum fill · {minimumFillPercent === '0' ? 'Any' : `${minimumFillPercent}%`} <ChevronDown size={17} aria-hidden="true" /></span></summary>
-          <label>
-            <span>Minimum fill</span>
-            <select value={minimumFillPercent} onChange={(event) => setMinimumFillPercent(event.target.value)}>
-              <option value="0">Any executable amount</option>
-              <option value="25">25%</option>
-              <option value="50">50%</option>
-              <option value="100">100%</option>
-            </select>
-          </label>
-
-        </details>
-        <div className="dex-v2-limit-privacy">
-          <LockKeyhole size={21} aria-hidden="true" />
-          <span><strong>Private by design</strong><small>Price, amount, and activity stay private.</small></span>
-          <ShieldCheck size={20} aria-hidden="true" />
-        </div>
-        <button
-          className="dex-v2-review-button"
-          type="button"
-          disabled={!inventoryValid || !limitPriceValid || (orderFamily === 'Range' && (!rangeEndPriceValid || !rangeDirectionValid)) || !successorSupported || strategyAction.busy}
-          onClick={() => { void reviewLimit(); }}
-        >
-          <span>Review private {orderFamily.toLowerCase()}</span>
-          <ArrowRight size={21} aria-hidden="true" />
-        </button>
-        <p className="dex-v2-activation-note" role="status">{strategyAction.message || reviewStatus || balances.message || (successorSupported ? 'Ready to create on COTI Testnet.' : `No verified ${orderFamily} admission capacity remains for this pair.`)}</p>
-      </section>
-      <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} />
-    </>
-  );
-}
-
-export function RecurringWorkspace({
-  onPricePreviewChange,
-  onSuccessorRefresh = () => undefined,
-  onShowMarketChart,
-  priceDisplayInverted = false,
-  selectedPair = ['BCN', 'HBR'],
-  successor = Object.freeze({ status: 'loading' } as const),
-  sharedWalletSession
-}: {
-  onPricePreviewChange?: (preview: { buyPrice: number; sellPrice: number }) => void;
-  onSuccessorRefresh?: () => void;
-  onShowMarketChart?: () => void;
-  priceDisplayInverted?: boolean;
-  selectedPair?: TradingPair;
-  successor?: SuccessorDexRuntimeState;
-  sharedWalletSession?: SharedWalletSession;
-}) {
-  const formatDisplayedRecurringPrice = (canonicalPrice: number, inverted = priceDisplayInverted) =>
-    (inverted ? 1 / canonicalPrice : canonicalPrice).toFixed(4);
-  const referencePrice = successorPairReferencePrice(selectedPair);
-  const displayedReferencePrice = priceDisplayInverted ? 1 / referencePrice : referencePrice;
-  const [recurringClass, setRecurringClass] = useState<'LL' | 'RR'>('LL');
-  const [buyPriceInput, setBuyPriceInput] = useState(() => formatDisplayedRecurringPrice(referencePrice * 0.95));
-  const [sellPriceInput, setSellPriceInput] = useState(() => formatDisplayedRecurringPrice(referencePrice * 1.05));
-  const [buyEndPriceInput, setBuyEndPriceInput] = useState(() => formatDisplayedRecurringPrice(referencePrice));
-  const [sellEndPriceInput, setSellEndPriceInput] = useState(() => formatDisplayedRecurringPrice(referencePrice));
-  const committedBuyPriceInput = useRef(buyPriceInput);
-  const committedSellPriceInput = useRef(sellPriceInput);
-  const committedBuyEndPriceInput = useRef(buyEndPriceInput);
-  const committedSellEndPriceInput = useRef(sellEndPriceInput);
-  const [baseAmount, setBaseAmount] = useState('900');
-  const [quoteAmount, setQuoteAmount] = useState('900');
-  const [baseAmountTouched, setBaseAmountTouched] = useState(false);
-  const [quoteAmountTouched, setQuoteAmountTouched] = useState(false);
-  const [customBand, setCustomBand] = useState(false);
-  const [reviewStatus] = useState('');
-  const balances = useDexV2TokenBalances({ runtime: successor, selectedPair, sharedWalletSession });
-  const strategyAction = useSuccessorStrategyAction({ runtime: successor, sharedWalletSession, refresh: onSuccessorRefresh });
-  const successorPair = successor.status === 'ready' ? successor.manifest.pairs.find((pair) => pair.displayPair === selectedPair.join('/')) : null;
-  const successorSupported = successor.status === 'ready' &&
-    successorDexAdmissionAvailable(successor.snapshot, selectedPair.join('/'), 'Recurring');
-  const priceInputsAreInverted = useRef(priceDisplayInverted);
-  const inventoryHelpId = useId();
-  const { confirmation, requestConfirmation, resolveConfirmation } = useTradeActionConfirmationState();
-  const displayedBuyPrice = Number(buyPriceInput);
-  const displayedSellPrice = Number(sellPriceInput);
-  const displayedBuyEndPrice = Number(buyEndPriceInput);
-  const displayedSellEndPrice = Number(sellEndPriceInput);
-  const buyPrice = priceInputsAreInverted.current ? 1 / displayedBuyPrice : displayedBuyPrice;
-  const sellPrice = priceInputsAreInverted.current ? 1 / displayedSellPrice : displayedSellPrice;
-  const buyEndPrice = priceInputsAreInverted.current ? 1 / displayedBuyEndPrice : displayedBuyEndPrice;
-  const sellEndPrice = priceInputsAreInverted.current ? 1 / displayedSellEndPrice : displayedSellEndPrice;
-  const displayedBaseSymbol = priceDisplayInverted ? selectedPair[1] : selectedPair[0];
-  const displayedQuoteSymbol = priceDisplayInverted ? selectedPair[0] : selectedPair[1];
-  const displayedBuyLegSide = resolveDisplayedTradeActionSide('buy', priceDisplayInverted);
-  const displayedSellLegSide = resolveDisplayedTradeActionSide('sell', priceDisplayInverted);
-  const buyLegLabel = `${displayedBuyLegSide === 'buy' ? 'Buy' : 'Sell'} ${displayedBaseSymbol}`;
-  const sellLegLabel = `${displayedSellLegSide === 'buy' ? 'Buy' : 'Sell'} ${displayedBaseSymbol}`;
-  const ratioLabel = displayedQuoteSymbol + ' per ' + displayedBaseSymbol;
-  const activeBandPreset = customBand ? 'custom' : RECURRING_PRICE_PRESETS.find((preset) => {
-    const expectedBuy = Number(formatDisplayedRecurringPrice(referencePrice * (1 - preset.distance)));
-    const expectedSell = Number(formatDisplayedRecurringPrice(referencePrice * (1 + preset.distance)));
-    return Math.abs(displayedBuyPrice - expectedBuy) < 0.00005 && Math.abs(displayedSellPrice - expectedSell) < 0.00005;
-  })?.id ?? 'custom';
-  const quoteInventoryRole = displayedBuyLegSide === 'buy' ? 'Buy budget' : 'Sell inventory';
-  const baseInventoryRole = displayedSellLegSide === 'buy' ? 'Buy budget' : 'Sell inventory';
-  const numericQuoteAmount = Number(quoteAmount);
-  const numericBaseAmount = Number(baseAmount);
-  const successorBaseToken = successor.status === 'ready'
-    ? successor.manifest.tokens.find(({ symbol }) => symbol === selectedPair[0])
-    : null;
-  const successorQuoteToken = successor.status === 'ready'
-    ? successor.manifest.tokens.find(({ symbol }) => symbol === selectedPair[1])
-    : null;
-  const quoteAmountValid = quoteAmount === '' || (successorQuoteToken
-    ? isExactSuccessorStrategyBudget(quoteAmount, successorQuoteToken, true)
-    : Number.isFinite(numericQuoteAmount) && numericQuoteAmount >= 0);
-  const baseAmountValid = baseAmount === '' || (successorBaseToken
-    ? isExactSuccessorStrategyBudget(baseAmount, successorBaseToken, true)
-    : Number.isFinite(numericBaseAmount) && numericBaseAmount >= 0);
-  const inventoryFieldsValid = quoteAmountValid && baseAmountValid;
-  const hasStartingInventory = (Number.isFinite(numericQuoteAmount) && numericQuoteAmount > 0) ||
-    (Number.isFinite(numericBaseAmount) && numericBaseAmount > 0);
-  const pricesAreValid = Number.isFinite(buyPrice) && buyPrice > 0 && buyPrice < referencePrice &&
-    Number.isFinite(sellPrice) && sellPrice > referencePrice && buyPrice < sellPrice;
-  const buyPriceIsValid = Number.isFinite(buyPrice) && buyPrice > 0 && buyPrice < referencePrice && buyPrice < sellPrice;
-  const sellPriceIsValid = Number.isFinite(sellPrice) && sellPrice > referencePrice && buyPrice < sellPrice;
-  const buyEndPriceIsValid = Number.isFinite(buyEndPrice) && buyEndPrice > 0 && buyEndPrice >= buyPrice;
-  const sellEndPriceIsValid = Number.isFinite(sellEndPrice) && sellEndPrice > 0 && sellEndPrice <= sellPrice;
-  const rangePricesAreValid = recurringClass === 'LL' || (buyEndPriceIsValid && sellEndPriceIsValid);
-  const quoteReceivePreview = Number.isFinite(numericQuoteAmount) && numericQuoteAmount > 0 && buyPriceIsValid
-    ? (numericQuoteAmount / buyPrice).toFixed(2)
-    : '—';
-  const baseReceivePreview = Number.isFinite(numericBaseAmount) && numericBaseAmount > 0 && sellPriceIsValid
-    ? (numericBaseAmount * sellPrice).toFixed(2)
-    : '—';
-  const buyMarketDistance = Number.isFinite(displayedBuyPrice) ? (displayedBuyPrice / displayedReferencePrice - 1) * 100 : 0;
-  const sellMarketDistance = Number.isFinite(displayedSellPrice) ? (displayedSellPrice / displayedReferencePrice - 1) * 100 : 0;
-  const inventoryTouched = quoteAmountTouched || baseAmountTouched;
-  const inventoryError = !inventoryFieldsValid
-    ? 'Enter exact settlement-lot multiples for both tokens.'
-    : inventoryTouched && !hasStartingInventory
-      ? 'Fund at least one side to start the strategy.'
-      : '';
-  const balanceActionText = (balanceLabel: string, symbol: string) => balances.status === 'ready'
-    ? `Available: ${balanceLabel} ${symbol}`
-    : balances.status === 'error'
-      ? 'Try balance again'
-      : sharedWalletSession?.walletAddress.trim()
-        ? 'Unlock balance'
-        : 'Connect to view balance';
-  const balanceActionAriaLabel = (symbol: string) => balances.status === 'ready'
-    ? `Refresh ${symbol} balance`
-    : balances.status === 'error'
-      ? `Retry ${symbol} balance`
-      : sharedWalletSession?.walletAddress.trim()
-        ? `Unlock ${symbol} balance`
-        : `Connect wallet to view ${symbol} balance`;
-
-  useEffect(() => {
-    if (priceInputsAreInverted.current === priceDisplayInverted) return;
-    const invertInput = (value: string) => {
-      const numeric = Number(value);
-      return Number.isFinite(numeric) && numeric > 0 ? (1 / numeric).toFixed(4) : value;
-    };
-    const nextBuy = invertInput(committedBuyPriceInput.current);
-    const nextSell = invertInput(committedSellPriceInput.current);
-    const nextBuyEnd = invertInput(committedBuyEndPriceInput.current);
-    const nextSellEnd = invertInput(committedSellEndPriceInput.current);
-    committedBuyPriceInput.current = nextBuy;
-    committedSellPriceInput.current = nextSell;
-    committedBuyEndPriceInput.current = nextBuyEnd;
-    committedSellEndPriceInput.current = nextSellEnd;
-    setBuyPriceInput(nextBuy);
-    setSellPriceInput(nextSell);
-    setBuyEndPriceInput(nextBuyEnd);
-    setSellEndPriceInput(nextSellEnd);
-    setCustomBand(true);
-    priceInputsAreInverted.current = priceDisplayInverted;
-  }, [priceDisplayInverted]);
-
-  useEffect(() => {
-    if (pricesAreValid) onPricePreviewChange?.({ buyPrice, sellPrice });
-  }, [buyPrice, onPricePreviewChange, pricesAreValid, sellPrice]);
-
-  useEffect(() => {
-    const nextBuy = formatDisplayedRecurringPrice(referencePrice * 0.95);
-    const nextSell = formatDisplayedRecurringPrice(referencePrice * 1.05);
-    const nextRangeEnd = formatDisplayedRecurringPrice(referencePrice);
-    committedBuyPriceInput.current = nextBuy;
-    committedSellPriceInput.current = nextSell;
-    committedBuyEndPriceInput.current = nextRangeEnd;
-    committedSellEndPriceInput.current = nextRangeEnd;
-    setBuyPriceInput(nextBuy);
-    setSellPriceInput(nextSell);
-    setBuyEndPriceInput(nextRangeEnd);
-    setSellEndPriceInput(nextRangeEnd);
-    setCustomBand(false);
-  }, [referencePrice]);
-
-  const applyPricePreset = (distance: number) => {
-    const nextBuy = formatDisplayedRecurringPrice(referencePrice * (1 - distance));
-    const nextSell = formatDisplayedRecurringPrice(referencePrice * (1 + distance));
-    const nextRangeEnd = formatDisplayedRecurringPrice(referencePrice);
-    committedBuyPriceInput.current = nextBuy;
-    committedSellPriceInput.current = nextSell;
-    committedBuyEndPriceInput.current = nextRangeEnd;
-    committedSellEndPriceInput.current = nextRangeEnd;
-    setBuyPriceInput(nextBuy);
-    setSellPriceInput(nextSell);
-    setBuyEndPriceInput(nextRangeEnd);
-    setSellEndPriceInput(nextRangeEnd);
-    priceInputsAreInverted.current = priceDisplayInverted;
-    setCustomBand(false);
-  };
-
-  const normalizeRecurringPrice = (value: string) => {
-    if (!/^\d*(?:\.\d{0,6})?$/.test(value)) return null;
-    return value.replace(/^0+(?=\d)/, '');
-  };
-  const rememberValidRecurringPair = (nextBuyInput: string, nextSellInput: string) => {
-    const nextDisplayedBuy = Number(nextBuyInput);
-    const nextDisplayedSell = Number(nextSellInput);
-    const nextBuy = priceDisplayInverted ? 1 / nextDisplayedBuy : nextDisplayedBuy;
-    const nextSell = priceDisplayInverted ? 1 / nextDisplayedSell : nextDisplayedSell;
-    if (
-      Number.isFinite(nextBuy) && nextBuy > 0 && nextBuy < referencePrice &&
-      Number.isFinite(nextSell) && nextSell > referencePrice && nextBuy < nextSell
-    ) {
-      committedBuyPriceInput.current = nextBuyInput;
-      committedSellPriceInput.current = nextSellInput;
-    }
-  };
-  const commitRecurringPricePair = () => {
-    if (!pricesAreValid) return;
-    const nextBuy = displayedBuyPrice.toFixed(4);
-    const nextSell = displayedSellPrice.toFixed(4);
-    committedBuyPriceInput.current = nextBuy;
-    committedSellPriceInput.current = nextSell;
-    setBuyPriceInput(nextBuy);
-    setSellPriceInput(nextSell);
-  };
-  const reviewRecurring = async () => {
-    const recurringLabel = recurringClass === 'LL' ? 'Fixed-price recurring' : 'Range recurring';
-    const accepted = await requestConfirmation(Object.freeze({
-      title: `Review ${recurringLabel.toLowerCase()}`,
-      message: `${recurringLabel} moves received liquidity to the opposite leg after each fill. Your wallet signs the encrypted admission after review.`,
-      primaryLabel: `Create ${recurringLabel.toLowerCase()}`,
-      secondaryLabel: null,
-      fundingMoves: [],
-      summaryRows: [
-        { label: `${buyLegLabel} ${recurringClass === 'LL' ? 'at' : 'range'}`, value: recurringClass === 'LL'
-          ? `${displayedBuyPrice.toFixed(4)} ${ratioLabel}`
-          : `${displayedBuyPrice.toFixed(4)} → ${displayedBuyEndPrice.toFixed(4)} ${ratioLabel}` },
-        { label: `${sellLegLabel} ${recurringClass === 'LL' ? 'at' : 'range'}`, value: recurringClass === 'LL'
-          ? `${displayedSellPrice.toFixed(4)} ${ratioLabel}`
-          : `${displayedSellPrice.toFixed(4)} → ${displayedSellEndPrice.toFixed(4)} ${ratioLabel}` },
-        { label: quoteInventoryRole, value: `${quoteAmount || '0'} ${displayedQuoteSymbol}` },
-        { label: baseInventoryRole, value: `${baseAmount || '0'} ${displayedBaseSymbol}` }
-      ],
-      stats: [
-        { label: 'Pricing', value: recurringLabel },
-        { label: 'Privacy', value: 'Prices + inventory private' },
-        { label: 'Wallet', value: 'Signature required' }
-      ]
-    }));
-    if (accepted && successorPair && successor.status === 'ready') {
-      const common = { family: 'Recurring', pair: successorPair, baseSymbol: selectedPair[0], quoteSymbol: selectedPair[1], baseInventory: baseAmount || '0', quoteInventory: quoteAmount || '0', buyPrice, sellPrice } as const;
-      await strategyAction.create(recurringClass === 'LL'
-        ? { ...common, recurringClass: 'LL' }
-        : { ...common, recurringClass: 'RR', buyEndPrice, sellEndPrice });
-    }
-  };
-
-  return (
-    <>
-      <section className="dex-v2-recurring-composer" aria-label="Private Recurring creation">
-        <header className="dex-v2-composer-heading">
-          <div className="dex-v2-recurring-title-row">
-            <h1>Private recurring strategy</h1>
-            <span>{recurringClass === 'LL' ? 'Fixed-price cycle' : 'Range-backed cycle'}</span>
-          </div>
-          <p>Choose fixed prices or price ranges for the two private recurring legs.</p>
-        </header>
-        <div className="dex-v2-buy-sell-tabs" role="tablist" aria-label="Recurring price model">
-          <button type="button" role="tab" aria-selected={recurringClass === 'LL'} className={recurringClass === 'LL' ? 'active' : undefined} onClick={() => setRecurringClass('LL')}>Fixed prices (LL)</button>
-          <button type="button" role="tab" aria-selected={recurringClass === 'RR'} className={recurringClass === 'RR' ? 'active' : undefined} onClick={() => setRecurringClass('RR')}>Range prices (RR)</button>
-        </div>
-        <section className="dex-v2-recurring-band" aria-label="Recurring private limit prices">
-          <header>
-            <span><strong>{recurringClass === 'LL' ? 'Two recurring limit prices' : 'Two recurring price ranges'}</strong><small>{recurringClass === 'LL' ? 'Choose both private prices' : 'Choose start and end prices for both legs'} · {ratioLabel}</small></span>
-            <span>Market reference <strong>{displayedReferencePrice.toFixed(4)}</strong></span>
-          </header>
-          <div className="dex-v2-recurring-presets" role="group" aria-label="Recurring price spacing preset">
-            {RECURRING_PRICE_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                className={activeBandPreset === preset.id ? 'active' : undefined}
-                aria-pressed={activeBandPreset === preset.id}
-                onClick={() => applyPricePreset(preset.distance)}
-              >
-                {preset.label}
-              </button>
-            ))}
-            <button type="button" className={activeBandPreset === 'custom' ? 'active' : undefined} aria-pressed={activeBandPreset === 'custom'} onClick={() => setCustomBand(true)}>Custom</button>
-          </div>
-          <div className="dex-v2-recurring-price-grid">
-            <label className={displayedBuyLegSide}>
-              <span><strong>{buyLegLabel}</strong><small>Spend {displayedQuoteSymbol} · receive {displayedBaseSymbol}</small></span>
-              <div className={`dex-v2-recurring-price-input${buyPriceIsValid ? '' : ' invalid'}`}>
-                <input
-                  aria-label={`${buyLegLabel} recurring ${recurringClass === 'RR' ? 'start ' : ''}price`}
-                  aria-describedby="dex-v2-recurring-price-guidance"
-                  aria-invalid={!buyPriceIsValid}
-                  inputMode="decimal"
-                  value={buyPriceInput}
-                  onChange={(event) => {
-                    const next = normalizeRecurringPrice(event.target.value);
-                    if (next !== null) {
-                      setBuyPriceInput(next);
-                      rememberValidRecurringPair(next, sellPriceInput);
-                      priceInputsAreInverted.current = priceDisplayInverted;
-                      setCustomBand(true);
-                    }
-                  }}
-                  onBlur={commitRecurringPricePair}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') event.currentTarget.blur();
-                  }}
-                />
-                <span>{displayedQuoteSymbol}</span>
-              </div>
-              <em>{buyPriceIsValid ? `${buyMarketDistance > 0 ? '+' : ''}${buyMarketDistance.toFixed(2)}% from market` : 'Must remain on its side of market'}</em>
-              {recurringClass === 'RR' ? <>
-                <div className={`dex-v2-recurring-price-input${buyEndPriceIsValid ? '' : ' invalid'}`}>
-                  <input
-                    aria-label={`${buyLegLabel} recurring end price`}
-                    aria-describedby="dex-v2-recurring-price-guidance"
-                    aria-invalid={!buyEndPriceIsValid}
-                    inputMode="decimal"
-                    value={buyEndPriceInput}
-                    onChange={(event) => {
-                      const next = normalizeRecurringPrice(event.target.value);
-                      if (next !== null) {
-                        committedBuyEndPriceInput.current = next;
-                        setBuyEndPriceInput(next);
-                        priceInputsAreInverted.current = priceDisplayInverted;
-                      }
-                    }}
-                    onBlur={() => {
-                      if (!Number.isFinite(displayedBuyEndPrice) || displayedBuyEndPrice <= 0) return;
-                      const next = displayedBuyEndPrice.toFixed(4);
-                      committedBuyEndPriceInput.current = next;
-                      setBuyEndPriceInput(next);
-                    }}
-                  />
-                  <span>{displayedQuoteSymbol}</span>
-                </div>
-                <em>{buyEndPriceIsValid ? 'Valid end marginal price' : 'End must move toward a higher canonical price'}</em>
-              </> : null}
-            </label>
-            <label className={displayedSellLegSide}>
-              <span><strong>{sellLegLabel}</strong><small>Spend {displayedBaseSymbol} · receive {displayedQuoteSymbol}</small></span>
-              <div className={`dex-v2-recurring-price-input${sellPriceIsValid ? '' : ' invalid'}`}>
-                <input
-                  aria-label={`${sellLegLabel} recurring ${recurringClass === 'RR' ? 'start ' : ''}price`}
-                  aria-describedby="dex-v2-recurring-price-guidance"
-                  aria-invalid={!sellPriceIsValid}
-                  inputMode="decimal"
-                  value={sellPriceInput}
-                  onChange={(event) => {
-                    const next = normalizeRecurringPrice(event.target.value);
-                    if (next !== null) {
-                      setSellPriceInput(next);
-                      rememberValidRecurringPair(buyPriceInput, next);
-                      priceInputsAreInverted.current = priceDisplayInverted;
-                      setCustomBand(true);
-                    }
-                  }}
-                  onBlur={commitRecurringPricePair}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') event.currentTarget.blur();
-                  }}
-                />
-                <span>{displayedQuoteSymbol}</span>
-              </div>
-              <em>{sellPriceIsValid ? `${sellMarketDistance > 0 ? '+' : ''}${sellMarketDistance.toFixed(2)}% from market` : 'Must remain on its side of market'}</em>
-              {recurringClass === 'RR' ? <>
-                <div className={`dex-v2-recurring-price-input${sellEndPriceIsValid ? '' : ' invalid'}`}>
-                  <input
-                    aria-label={`${sellLegLabel} recurring end price`}
-                    aria-describedby="dex-v2-recurring-price-guidance"
-                    aria-invalid={!sellEndPriceIsValid}
-                    inputMode="decimal"
-                    value={sellEndPriceInput}
-                    onChange={(event) => {
-                      const next = normalizeRecurringPrice(event.target.value);
-                      if (next !== null) {
-                        committedSellEndPriceInput.current = next;
-                        setSellEndPriceInput(next);
-                        priceInputsAreInverted.current = priceDisplayInverted;
-                      }
-                    }}
-                    onBlur={() => {
-                      if (!Number.isFinite(displayedSellEndPrice) || displayedSellEndPrice <= 0) return;
-                      const next = displayedSellEndPrice.toFixed(4);
-                      committedSellEndPriceInput.current = next;
-                      setSellEndPriceInput(next);
-                    }}
-                  />
-                  <span>{displayedQuoteSymbol}</span>
-                </div>
-                <em>{sellEndPriceIsValid ? 'Valid end marginal price' : 'End must move toward a lower canonical price'}</em>
-              </> : null}
-            </label>
-          </div>
-          <p id="dex-v2-recurring-price-guidance" className={pricesAreValid && rangePricesAreValid ? 'dex-v2-recurring-price-guidance' : 'dex-v2-recurring-price-guidance invalid'} role="status">
-            {!pricesAreValid
-              ? 'Place one start price below market and the other above it without crossing the two legs.'
-              : recurringClass === 'RR' && !rangePricesAreValid
-                ? 'Each end price must move in the valid direction for its funded token.'
-                : recurringClass === 'RR'
-                  ? 'Both private ranges are valid. Edit any boundary or use a spacing shortcut.'
-                  : 'One below market · one above market. Edit either price or use a shortcut.'}
-          </p>
-          {onShowMarketChart ? (
-            <button className="dex-v2-limit-chart-link dex-v2-recurring-chart-link" type="button" onClick={onShowMarketChart}>
-              <ChartNoAxesCombined size={16} aria-hidden="true" />
-              <span>Show market chart</span>
-            </button>
-          ) : null}
-        </section>
-        <section className="dex-v2-recurring-inventory" aria-label="Starting recurring inventory" aria-describedby={inventoryError ? inventoryHelpId : undefined}>
-          <header><strong>Starting inventory</strong><small>Fund either side or both.</small></header>
-          <div>
-            <label>
-              <span>{quoteInventoryRole} <small>
-                {balances.status === 'loading'
-                  ? <span>Reading balance…</span>
-                  : <button type="button" className="dex-v2-recurring-balance-action" aria-label={balanceActionAriaLabel(displayedQuoteSymbol)} onClick={() => { void balances.reveal(); }}>{balanceActionText(balances.quoteLabel, displayedQuoteSymbol)}</button>}
-                <button type="button" disabled={balances.status !== 'ready'} onClick={() => { setQuoteAmount(balances.quoteLabel); setQuoteAmountTouched(true); }}>Max</button>
-              </small></span>
-              <div className="dex-v2-recurring-inventory-input">
-                <input
-                  aria-label={`${quoteInventoryRole} amount`}
-                  aria-describedby={inventoryError ? inventoryHelpId : undefined}
-                  aria-invalid={quoteAmountTouched && !quoteAmountValid}
-                  value={quoteAmount}
-                  inputMode="decimal"
-                  onBlur={() => setQuoteAmountTouched(true)}
-                  onChange={(event) => setQuoteAmount(normalizeAmountInput(event.target.value))}
-                />
-                <span>{displayedQuoteSymbol}</span>
-              </div>
-              <em>Receive ≈ <strong>{quoteReceivePreview} {displayedBaseSymbol}</strong></em>
-            </label>
-            <label>
-              <span>{baseInventoryRole} <small>
-                {balances.status === 'loading'
-                  ? <span>Reading balance…</span>
-                  : <button type="button" className="dex-v2-recurring-balance-action" aria-label={balanceActionAriaLabel(displayedBaseSymbol)} onClick={() => { void balances.reveal(); }}>{balanceActionText(balances.baseLabel, displayedBaseSymbol)}</button>}
-                <button type="button" disabled={balances.status !== 'ready'} onClick={() => { setBaseAmount(balances.baseLabel); setBaseAmountTouched(true); }}>Max</button>
-              </small></span>
-              <div className="dex-v2-recurring-inventory-input">
-                <input
-                  aria-label={`${baseInventoryRole} amount`}
-                  aria-describedby={inventoryError ? inventoryHelpId : undefined}
-                  aria-invalid={baseAmountTouched && !baseAmountValid}
-                  value={baseAmount}
-                  inputMode="decimal"
-                  onBlur={() => setBaseAmountTouched(true)}
-                  onChange={(event) => setBaseAmount(normalizeAmountInput(event.target.value))}
-                />
-                <span>{displayedBaseSymbol}</span>
-              </div>
-              <em>Receive ≈ <strong>{baseReceivePreview} {displayedQuoteSymbol}</strong></em>
-            </label>
-          </div>
-          {inventoryError ? <p className="dex-v2-field-error" id={inventoryHelpId} role="alert">{inventoryError}</p> : null}
-        </section>
-        <div className="dex-v2-recurring-cycle-note">
-          <RefreshCw size={17} aria-hidden="true" />
-          <span><strong>How it repeats</strong><small>After {buyLegLabel}, received {displayedBaseSymbol} funds {sellLegLabel}. After {sellLegLabel}, received {displayedQuoteSymbol} funds {buyLegLabel}.</small></span>
-        </div>
-        <div className="dex-v2-limit-privacy">
-          <LockKeyhole size={18} aria-hidden="true" />
-          <span><strong>Private by design</strong><small>Prices, inventory, fills, and the active side stay private.</small></span>
-          <ShieldCheck size={18} aria-hidden="true" />
-        </div>
-        <button className="dex-v2-review-button" type="button" disabled={!pricesAreValid || !rangePricesAreValid || !inventoryFieldsValid || !hasStartingInventory || !successorSupported || strategyAction.busy} onClick={() => { void reviewRecurring(); }}><span>Review {recurringClass === 'LL' ? 'fixed-price' : 'Range'} recurring</span><ArrowRight size={21} aria-hidden="true" /></button>
-        <p className="dex-v2-activation-note" role="status">{strategyAction.message || reviewStatus || balances.message || (successorSupported ? 'Ready to create on COTI Testnet.' : 'No verified Recurring admission capacity remains for this pair.')}</p>
-        <details className="dex-v2-recurring-summary">
-          <summary>Strategy summary <ChevronDown size={17} aria-hidden="true" /></summary>
-          <StrategyPreview
-            title="A private two-sided liquidity cycle"
-            rows={[
-              [buyLegLabel, buyPriceIsValid && buyEndPriceIsValid && recurringClass === 'RR'
-                ? `${displayedBuyPrice.toFixed(4)} → ${displayedBuyEndPrice.toFixed(4)} ${ratioLabel}`
-                : buyPriceIsValid ? `${displayedBuyPrice.toFixed(4)} ${ratioLabel}` : '—'],
-              [quoteInventoryRole, `${quoteAmount || '0'} ${displayedQuoteSymbol}`],
-              [sellLegLabel, sellPriceIsValid && sellEndPriceIsValid && recurringClass === 'RR'
-                ? `${displayedSellPrice.toFixed(4)} → ${displayedSellEndPrice.toFixed(4)} ${ratioLabel}`
-                : sellPriceIsValid ? `${displayedSellPrice.toFixed(4)} ${ratioLabel}` : '—'],
-              [baseInventoryRole, `${baseAmount || '0'} ${displayedBaseSymbol}`]
-            ]}
-            note="Filled inventory moves to the opposite side so the strategy can trade back later."
-          />
-          <p className="dex-v2-recurring-ratio-note">Reversing the shared price ratio relabels Buy and Sell for the displayed base asset without moving the underlying inventories.</p>
-          <p className="dex-v2-recurring-ratio-note">Fixed prices (LL) use two private prices. Range prices (RR) add a private end marginal price to each leg.</p>
-        </details>
-      </section>
-      <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} />
-    </>
-  );
-}
-
 const DEFAULT_DEX_PAIR: TradingPair = ['BCN', 'HBR'];
 
 export default function DexV2Page({
   priceDisplayInverted = false, selectedPair = DEFAULT_DEX_PAIR, sharedWalletSession,
   onPriceDisplayInvertedChange, onOpenAgent, onNavigateMode, dailyPriceConfig, dailyPriceProvider, marketReference,
+  referenceDisplayInverted, onReferenceDisplayInvertedChange,
   swapCandidate = 'cheap-current'
 }: {
   priceDisplayInverted?: boolean; selectedPair?: TradingPair; sharedWalletSession?: SharedWalletSession;
@@ -2288,6 +1072,8 @@ export default function DexV2Page({
   onNavigateMode?: (mode: DexMode) => void; dailyPriceConfig?: CurrentDexDailyPriceConfig;
   dailyPriceProvider?: Pick<Eip1193Provider, 'request'>;
   marketReference?: CurrentDexMarketReference;
+  referenceDisplayInverted?: boolean;
+  onReferenceDisplayInvertedChange?: (inverted: boolean | undefined) => void;
   swapCandidate?: CurrentCheapDexCandidateKey;
 } = {}) {
   const [activeMode, setActiveMode] = useState<DexMode>(() => typeof window === 'undefined' ? 'swap' : resolveDexModeFromPath(window.location.pathname));
@@ -2313,7 +1099,8 @@ export default function DexV2Page({
       <div className="dex-v2-content-grid">
         <div className="dex-market-chart-host">
           <DexMarketChart baseSymbol={chartPair[0]} quoteSymbol={chartPair[1]} history={dailyHistory.view}
-            onHistoryRefresh={dailyHistory.refresh} illustrative priceDisplayInverted={priceDisplayInverted} />
+            onHistoryRefresh={dailyHistory.refresh} illustrative
+            priceDisplayInverted={priceDisplayInverted} />
         </div>
         <div className="dex-v2-form-column">
           {trade ? <nav className="dex-v2-section-tabs" aria-label="Trade type">
@@ -2327,10 +1114,11 @@ export default function DexV2Page({
           {/* Keep transaction origins and private result scopes alive when users change views. */}
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'swap'}>
             <CurrentSwapWorkspace onPriceDisplayInvertedChange={onPriceDisplayInvertedChange} priceDisplayInverted={priceDisplayInverted}
+            referenceDisplayInverted={referenceDisplayInverted} onReferenceDisplayInvertedChange={onReferenceDisplayInvertedChange}
               selectedPair={selectedPair} sharedWalletSession={sharedWalletSession} marketReference={marketReference} candidateKey={swapCandidate} visible={activeMode === 'swap'} />
           </div>
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'limit' && !(activeMode === 'activity' && activityView === 'orders')}>
-            <CurrentLimitWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted} candidateKey={swapCandidate} selectedPair={selectedPair} view={activeMode === 'activity' ? 'manage' : 'create'} />
+            <CurrentLimitWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted} candidateKey={swapCandidate} selectedPair={selectedPair} view={activeMode === 'activity' ? 'manage' : 'create'} visible={activeMode === 'limit' || activeMode === 'activity' && activityView === 'orders'} />
           </div>
           <div className="dex-v2-workspace-panel" hidden={!liquidity || activeMode === 'positions'}><CurrentPoolWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted}
             candidateKey={swapCandidate} selectedPair={selectedPair} /></div>

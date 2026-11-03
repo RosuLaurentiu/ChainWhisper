@@ -1,5 +1,5 @@
 import type { JsonRpcSigner } from '@coti-io/coti-ethers';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   formatTokenAmount,
   formatTradeAssetDisplayText,
@@ -24,6 +24,8 @@ import type { TradeTransactionHistoryRow } from '../../../lib/tradeHistory';
 import type { RecurringPriceDeskDisplay } from '../../../lib/tradePerspective';
 import type { TradePricingField } from '../../../lib/tradePricing';
 import type { SharedWalletSession } from '../../../lib/walletSession';
+import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
+import type { TradeBalanceDisclosureV2Runtime } from '../../../lib/tradeBalanceDisclosureV2';
 import type { ResolvedTradeToken, TradeTokenPresetKey } from '../../../lib/appHelpers';
 import type { TradeComposerModel } from '../../../lib/tradeComposer';
 export { bytesEqual, mergeOnboardInfoByAddress, onboardInfoEqual } from '../../../lib/appShared';
@@ -40,6 +42,26 @@ export const formatCompactTradeTimestamp = (timestamp?: number): string => {
 };
 
 export type TradeVisibility = 'public' | 'unlisted' | 'direct';
+export type TerminalBalanceSelection = {
+  root: SharedWalletSession['otcV2ActionRuntime'];
+  owner: string;
+  key: string;
+  runtime: TradeBalanceDisclosureV2Runtime;
+};
+export const selectTerminalBalance = (
+  previous: TerminalBalanceSelection | null,
+  next: TerminalBalanceSelection | null
+): TerminalBalanceSelection | null => previous?.root === next?.root && previous?.owner === next?.owner &&
+  previous?.key === next?.key && previous?.runtime === next?.runtime ? previous : next;
+
+export const PendingTradeRecoveryDisclosure = ({ children }: { children: ReactNode }) => {
+  // Folding must not retire an active recovery operation after the first opening.
+  const [mounted, setMounted] = useState(false);
+  return <details className="p2p-fund-recovery" onToggle={event => { if (event.currentTarget.open) setMounted(true); }}>
+    <summary>Recover pending trades</summary>
+    {mounted ? children : null}
+  </details>;
+};
 export type MyTradeGroupView = 'received' | 'active' | 'history';
 export type P2PEmptyStateTone = 'default' | 'error' | 'loading' | 'locked';
 export type TradeCreateMode = 'one-off' | 'recurring';
@@ -207,6 +229,9 @@ export type TerminalHistoryPanelConfig = {
   count: number;
   emptyCopy: string;
   children?: ReactNode;
+  complete?: boolean;
+  loading?: boolean;
+  onLoadOlder?: () => void;
 };
 
 export const buildOtcV2DataScopeKey = ({
@@ -239,9 +264,9 @@ export const getRecurringFillSideForDisplayAction = (
 export const OPEN_TERMINAL_LABEL = 'Open order';
 export const SHARE_LABEL = 'Share';
 export const UNLISTED_ORDER_LABEL = 'Unlisted';
-export const PRIVATE_LIQUIDITY_LABEL = 'Private liquidity';
-export const PUBLIC_LIQUIDITY_LABEL = 'Public liquidity';
-export const HYBRID_LIQUIDITY_LABEL = 'Hybrid liquidity';
+export const PRIVATE_LIQUIDITY_LABEL = 'Private tokens';
+export const PUBLIC_LIQUIDITY_LABEL = 'Public tokens';
+export const HYBRID_LIQUIDITY_LABEL = 'Mixed tokens';
 export const VISIBLE_LIQUIDITY_LABEL = PUBLIC_LIQUIDITY_LABEL;
 export const MY_TRADES_EMPTY_PREVIEW_GROUPS = [
   {
@@ -250,7 +275,7 @@ export const MY_TRADES_EMPTY_PREVIEW_GROUPS = [
   },
   {
     label: 'Active',
-    description: 'Offers you created and reusable liquidity you manage.'
+    description: 'Open offers you created.'
   },
   {
     label: 'History',
@@ -340,7 +365,22 @@ export type P2PTradingHeaderContext = Readonly<{
   reference: CarbonPairReferenceDisplay | null;
 }>;
 
+export const isP2PParticipantReadPassPending = ({ selected, privacyReady, setupPending, setupError, sources }: {
+  selected: boolean; privacyReady: boolean; setupPending: boolean; setupError: string;
+  sources: readonly ({ busy: boolean; snapshot?: unknown; error: string } | null)[];
+}): boolean => selected && privacyReady && !setupError &&
+  (setupPending || sources.some(source => source && (source.busy || !source.snapshot && !source.error)));
+
+export const shouldLoadP2PTradeHistory = ({ view, publicDiscoverySettled, ownerDiscoverySettled, selectedTrade, setupFailed, participantReadPassPending }: {
+  view: string; publicDiscoverySettled: boolean; ownerDiscoverySettled: boolean; selectedTrade: boolean;
+  setupFailed: boolean; participantReadPassPending: boolean;
+}): boolean => !(view === 'mine' && participantReadPassPending && !selectedTrade && !setupFailed) &&
+  ((view === 'public' || view === 'swap' ? publicDiscoverySettled
+    : view !== 'mine' || selectedTrade || ownerDiscoverySettled) || setupFailed);
+
 export type P2PTradingPageProps = {
+  onInitialOwnerDiscoverySettled?: (runtime: OtcV2ActionRuntime) => void;
+  onParticipantReadPassChange?: (runtime: OtcV2ActionRuntime | null, pending: boolean) => void;
   renderTradingHeader?: (context: P2PTradingHeaderContext) => ReactNode;
   isMobileNav?: boolean;
   priceDisplayInverted?: boolean;
@@ -461,15 +501,17 @@ export const getVisibleOfferLiquiditySummary = (trade: TradeSnapshot): TradeProg
     const remainingRequestAmount = getRemainingRequestAmount(trade);
     const returnedCancelledLiquidity =
       trade.status === 'cancelled' && !trade.acceptedTxHash && remainingOfferAmount === 0n && filledOfferAmount > 0n;
+    const refundedDirectTerms = trade.v2?.protocol === 'direct-v2' &&
+      ['cancelled', 'declined', 'superseded', 'replaced'].includes(trade.status);
     const totalOfferAmount = filledOfferAmount + remainingOfferAmount;
     if (totalOfferAmount <= 0n) {
       return null;
     }
 
     const displayFilledOfferAmount = returnedCancelledLiquidity ? 0n : filledOfferAmount;
-    const displayRemainingOfferAmount = returnedCancelledLiquidity ? 0n : remainingOfferAmount;
+    const displayRemainingOfferAmount = returnedCancelledLiquidity || refundedDirectTerms ? 0n : remainingOfferAmount;
     const displayFilledRequestAmount = returnedCancelledLiquidity ? 0n : filledRequestAmount;
-    const displayRemainingRequestAmount = returnedCancelledLiquidity ? 0n : remainingRequestAmount;
+    const displayRemainingRequestAmount = returnedCancelledLiquidity || refundedDirectTerms ? 0n : remainingRequestAmount;
     const rawPercent = Number((displayFilledOfferAmount * 10_000n) / totalOfferAmount) / 100;
     const percent =
       displayFilledOfferAmount <= 0n

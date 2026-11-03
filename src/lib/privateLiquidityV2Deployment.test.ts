@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import current from './currentPrivateLiquidityBinding.json';
 import {
   PRIVATE_LIQUIDITY_V2_ENV_KEYS,
   parsePrivateLiquidityV2DeploymentConfig,
@@ -31,6 +32,34 @@ const activeEnv = (overrides: Readonly<Record<string, unknown>> = {}) => ({
 });
 
 describe('privateLiquidityV2Deployment', () => {
+  it('uses the qualified current graph instead of old suite components or provenance', () => {
+    const config = resolvePrivateLiquidityV2DeploymentConfig(activeEnv(), {
+      status: 'active', chainId: current.chainId, owner: current.owner,
+      components: {}, finalityLagBlocks: 5n, rpcUrl: 'https://testnet.coti.io/rpc', fingerprint: 'old-suite'
+    } as never);
+    expect(config.status).toBe('active');
+    if (config.status !== 'active') throw new Error('expected current graph');
+    expect(config.manifest.book.address).toBe('0x71cc34b610e18faf8223e60068b86dfed4cfb8f7');
+    expect(config.manifest.hiddenIntentModule.address).toBe('0x68aee211d41c22070acad9fd4787b2884c8d02ee');
+    expect(config.manifest.positionToken.address).toBe('0x40810e1a0aad12679f6ef6cb9f4ce1d59389fe10');
+    expect(config.manifest.book.address).toBe(current.manifest.book.address.toLowerCase());
+    expect(config.manifest.hiddenIntentModule.runtimeBytecodeHash).toBe(current.manifest.hiddenIntentModule.runtimeBytecodeHash);
+    expect(config.manifest.positionToken.creationTransactionHash).toBe(current.manifest.book.creationTransactionHash);
+    expect(config.fingerprint).not.toContain('old-suite');
+  });
+
+  it('does not fall back to environment contracts when current candidate admission is inactive or invalid', () => {
+    expect(resolvePrivateLiquidityV2DeploymentConfig(activeEnv(), { status: 'inactive' })).toEqual({ status: 'inactive' });
+    expect(resolvePrivateLiquidityV2DeploymentConfig(activeEnv(), { status: 'invalid', error: 'bad' }).status).toBe('invalid');
+  });
+
+  it.each([{ chainId: '1' }, { owner: address('41') }])('rejects a different admitted chain or administrator: %s', (change) => {
+    expect(resolvePrivateLiquidityV2DeploymentConfig(activeEnv(), {
+      status: 'active', chainId: current.chainId, owner: current.owner,
+      finalityLagBlocks: 5n, rpcUrl: 'https://testnet.coti.io/rpc', ...change
+    } as never).status).toBe('invalid');
+  });
+
   it('stays inactive unless activation is exact and explicit', () => {
     expect(parsePrivateLiquidityV2DeploymentConfig({})).toEqual({ status: 'inactive' });
     expect(parsePrivateLiquidityV2DeploymentConfig({
@@ -121,24 +150,9 @@ describe('privateLiquidityV2Deployment', () => {
     expect(() => parsePrivateLiquidityV2DeploymentConfig(activeEnv({
       [PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenAddress]: address('11')
     }))).toThrow(/addresses must be distinct/);
-    expect(resolvePrivateLiquidityV2DeploymentConfig(activeEnv({
+    expect(() => parsePrivateLiquidityV2DeploymentConfig(activeEnv({
       [PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenCreationTransactionHash]: hash('99')
-    }), {
-      status: 'active',
-      chainId: '7082400',
-      owner: address('41'),
-      components: {
-        privateLiquidityBookV2: { address: address('11'), deploymentBlock: '125', runtimeBytecodeHash: hash('12') },
-        privateLiquidityHiddenIntentV2: { address: address('21'), deploymentBlock: '123', runtimeBytecodeHash: hash('22') },
-        privateLiquidityPositionNftV2: { address: address('31'), deploymentBlock: '125', runtimeBytecodeHash: hash('32') }
-      },
-      finalityLagBlocks: 5n,
-      rpcUrl: 'https://testnet.coti.io/rpc',
-      fingerprint: 'candidate'
-    } as never)).toEqual({
-      status: 'invalid',
-      error: 'Private Liquidity V2 testnet candidate is invalid.'
-    });
+    }))).toThrow(/provenance must match/);
   });
 
   it('rejects the hidden-intent runtime disproven by the live COTI journey', () => {
@@ -158,8 +172,7 @@ describe('privateLiquidityV2Deployment', () => {
     expect(resolvePrivateLiquidityV2DeploymentConfig({
       [PRIVATE_LIQUIDITY_V2_ENV_KEYS.enabled]: 'true'
     })).toEqual({
-      status: 'invalid',
-      error: 'Private Liquidity V2 deployment configuration is invalid.'
+      status: 'inactive'
     });
   });
 });

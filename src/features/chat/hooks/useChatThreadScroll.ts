@@ -35,7 +35,6 @@ type UseChatThreadScrollArgs = {
   isConnected: boolean;
   walletAddress: string;
   hasAesReady: boolean;
-  loadOlderMessagesForActiveContact: () => Promise<void>;
   onLatestDirectMessageVisible?: (message: ChatMessage) => void | Promise<void>;
   onLatestGroupMessageVisible?: (message: ChatMessage) => void | Promise<void>;
   setHighlightedMessageId: (next: StateUpdate<string | null>) => void;
@@ -55,7 +54,6 @@ export default function useChatThreadScroll({
   isConnected,
   walletAddress,
   hasAesReady,
-  loadOlderMessagesForActiveContact,
   onLatestDirectMessageVisible,
   onLatestGroupMessageVisible,
   setHighlightedMessageId
@@ -312,9 +310,6 @@ export default function useChatThreadScroll({
         return;
       }
 
-      if (activeContact) {
-        loadOlderMessagesForActiveContact().catch(() => {});
-      }
     };
 
     stickToBottomRef.current = isNearBottom(container);
@@ -330,8 +325,7 @@ export default function useChatThreadScroll({
     hasAesReady,
     activeThreadMessages.length,
     visibleThreadMessageCount,
-    chatMessagesViewportVersion,
-    loadOlderMessagesForActiveContact
+    chatMessagesViewportVersion
   ]);
 
   useEffect(() => {

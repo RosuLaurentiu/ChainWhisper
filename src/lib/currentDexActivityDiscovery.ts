@@ -5,6 +5,13 @@ import { CURRENT_SHARED_TOKEN_DISTRIBUTION } from './currentSharedDexTokenDistri
 import { CURRENT_CHEAP_DEX_QUOTE_ABI } from './currentDexOperation';
 import type { CurrentDexActivityRow } from './currentDexActivityReceipt';
 
+export class CurrentDexActivitySourceError extends Error {
+  constructor(source: 'Explorer' | 'RPC') {
+    super(`${source} activity source is temporarily unavailable. No automatic retry.`);
+    this.name = 'CurrentDexActivitySourceError';
+  }
+}
+
 export type CurrentDexActivityCursor = Readonly<{ transactions: number | null; nfts: number | null;
   limitFills?: Readonly<Record<string, bigint | null>>;
   asyncTerminals?: Readonly<Record<string, number>> }>;
@@ -16,6 +23,7 @@ export type CurrentDexActivityDiscoveryPage = Readonly<{
 }>;
 
 const PAGE_SIZE = 100;
+const EXPLORER_PAGE_SIZE = 5;
 const HASH = /^0x[0-9a-f]{64}$/i;
 const ADDRESS = /^0x[0-9a-f]{40}$/i;
 const DECIMAL = /^(0|[1-9][0-9]*)$/;
@@ -40,13 +48,26 @@ const readPage = async ({ action, owner, page, headNumber, assertCurrent, fetche
 }): Promise<readonly unknown[]> => {
   const url = new URL('/api', COTI_TESTNET_NETWORK.blockExplorerUrl);
   url.search = new URLSearchParams({ module: 'account', action, address: owner, startblock: '0',
-    endblock: headNumber.toString(), page: String(page), offset: String(PAGE_SIZE), sort: 'desc',
+    endblock: headNumber.toString(), page: String(page), offset: String(EXPLORER_PAGE_SIZE), sort: 'desc',
     ...(contractAddress ? { contractaddress: contractAddress } : {}) }).toString();
   await assertCurrent();
-  const response = await fetcher(url, { signal: AbortSignal.timeout(15_000) });
+  const signal = AbortSignal.timeout(15_000);
+  const readSource = async <T>(read: () => Promise<T>): Promise<T> => {
+    try { return await read(); }
+    catch (error) {
+      await assertCurrent();
+      if (error instanceof TypeError || error instanceof DOMException && error.name === 'TimeoutError' ||
+          signal.aborted && signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError')
+        throw new CurrentDexActivitySourceError('Explorer');
+      throw error;
+    }
+  };
+  const response = await readSource(() => fetcher(url, { signal }));
   await assertCurrent();
+  if (response.status >= 500 && response.status <= 599 || response.status === 408)
+    throw new CurrentDexActivitySourceError('Explorer');
   if (!response.ok) throw new Error('DEX activity explorer request failed.');
-  const body: unknown = await response.json();
+  const body: unknown = await readSource(() => response.json());
   await assertCurrent();
   if (!isRecord(body) || typeof body.status !== 'string' || typeof body.message !== 'string')
     throw new Error('Invalid DEX activity explorer response.');
@@ -163,7 +184,7 @@ export const readCurrentDexActivityDiscoveryPage = async ({ owner, candidate, he
   const hashBlocks = new Map<string, bigint>();
   const collect = (rows: readonly unknown[] | null, origin: 'transactions' | 'nfts') => {
     if (!rows) return cursor[origin] === null ? null : cursor[origin];
-    if (rows.length > PAGE_SIZE) throw new Error('DEX activity explorer page exceeded its limit.');
+    if (rows.length > EXPLORER_PAGE_SIZE) throw new Error('DEX activity explorer page exceeded its limit.');
     for (const raw of rows) {
       const row = parseRow(raw);
       if (row.blockNumber > headNumber) continue;
@@ -181,7 +202,7 @@ export const readCurrentDexActivityDiscoveryPage = async ({ owner, candidate, he
       if (!related) continue;
       if (!known.has(row.hash)) { known.add(row.hash); hashes.push(row.hash); }
     }
-    return rows.length === PAGE_SIZE ? (cursor[origin] as number) + 1 : null;
+    return rows.length === EXPLORER_PAGE_SIZE ? (cursor[origin] as number) + 1 : null;
   };
   const nextCursor = Object.freeze({ transactions: collect(transactions, 'transactions'), nfts: collect(nfts, 'nfts') });
   return Object.freeze({ hashes: Object.freeze(hashes), nextCursor,

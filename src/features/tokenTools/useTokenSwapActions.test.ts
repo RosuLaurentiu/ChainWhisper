@@ -1,76 +1,63 @@
-import { describe, expect, it, vi } from 'vitest';
-import {
-  assertLegacyWispRecoveryDeployment,
-  submitLegacyWispRecoveryTransaction
-} from './useTokenSwapActions';
+import { createElement } from 'react';
+import { renderToString } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import useTokenSwapActions from './useTokenSwapActions';
+import { useTokenToolsStore } from './tokenToolsStore';
+import type { SwapDirection } from '../../lib/appShared';
 
-describe('assertLegacyWispRecoveryDeployment', () => {
-  it('accepts both exact reviewed vault deployments', () => {
-    expect(() => assertLegacyWispRecoveryDeployment({
-      contractAddress: '0x5C35CD3659991051F4Fb04F2C4120643739b7BdE',
-      direction: 'legacy-unshield',
-      runtimeHash: '0x35eebd4f535eb366b9ef29bfc11aea32def0e5257ca15926de244cc2946449de'
-    })).not.toThrow();
-    expect(() => assertLegacyWispRecoveryDeployment({
-      contractAddress: '0xAE80B55D78A88dD65AFB692DFf5BF3e71ab9fE7a',
-      direction: 'legacy-unshield-earlier',
-      runtimeHash: '0x98e9da6216143afc65f5b0c1bf32c01d7c3ba8c6ae3e6eeee09b0dd33348eeb5'
-    })).not.toThrow();
+const execute = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/appChain', () => ({ executeChainWhisperWispBridgeConversion: execute }));
+
+const owner = `0x${'11'.repeat(20)}`;
+const hash = `0x${'22'.repeat(32)}`;
+const create = (direction: SwapDirection = 'shield', balance: bigint | null = 2_000000n) => {
+  const setError = vi.fn(), getSwapSigner = vi.fn(async () => ({ cacheKey: owner,
+    signer: { getUserOnboardInfo: () => ({}) } as never }));
+  let actions!: ReturnType<typeof useTokenSwapActions>;
+  function Harness() {
+    actions = useTokenSwapActions({ activeSwapVaultContractAddress: `0x${'33'.repeat(20)}`,
+      currentSwapDirectionEnabled: true, getSwapSigner, onCotiNetwork: true,
+      runSwapTransactionFlow: async operation => operation(), setError, setSessionOnboardInfo: vi.fn(),
+      setWalletBalanceRefreshNonce: vi.fn(), shieldVaultTokenBalanceWei: 3_000000n,
+      swapAmountInput: '1', swapDirection: direction, swapInputDecimals: 6, swapInputSymbol: direction === 'shield' ? 'WISP' : 'pWISP',
+      swapPrivateRewardTokenBalanceWei: balance, swapPrivateRewardTokenDecimals: 6,
+      swapPrivateRewardTokenSymbol: 'pWISP', walletAddress: owner });
+    return null;
+  }
+  renderToString(createElement(Harness));
+  return { actions, setError, getSwapSigner };
+};
+
+describe('current WISP conversion actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useTokenToolsStore.setState({ swapStatusMessage: '', swapTransactionHash: '', swapActionStage: null, swappingTokens: false });
+    execute.mockResolvedValue({ quote: { feeWei: 1n }, transactionHash: hash });
   });
-
-  it('rejects an address, direction, or runtime mismatch before submission', () => {
-    expect(() => assertLegacyWispRecoveryDeployment({
-      contractAddress: '0xAE80B55D78A88dD65AFB692DFf5BF3e71ab9fE7a',
-      direction: 'legacy-unshield',
-      runtimeHash: '0x98e9da6216143afc65f5b0c1bf32c01d7c3ba8c6ae3e6eeee09b0dd33348eeb5'
-    })).toThrow('No transaction was submitted.');
+  it.each(['shield', 'unshield'] as const)('uses the current bridge for %s and retains its confirmed result', async direction => {
+    const { actions, getSwapSigner } = create(direction);
+    await actions.swapRewardTokens();
+    expect(execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ownerAddress: owner, direction, amountWei: 1_000000n }));
+    expect(getSwapSigner).toHaveBeenCalledOnce();
+    expect(useTokenToolsStore.getState()).toMatchObject({ swapTransactionHash: hash, swapFeeWei: 1n, swappingTokens: false });
   });
-});
-
-describe('submitLegacyWispRecoveryTransaction', () => {
-  it('uses the newer legacy vault native-only payment mode', async () => {
-    const unshieldWithMode = vi.fn(async () => ({ hash: `0x${'11'.repeat(32)}` }));
-    const unshield = vi.fn();
-
-    await submitLegacyWispRecoveryTransaction({
-      amountWei: 12_000000n,
-      contract: { unshield, unshieldWithMode },
-      direction: 'legacy-unshield',
-      nativeFeeWei: 500_000_000_000_000n
-    });
-
-    expect(unshieldWithMode).toHaveBeenCalledWith(
-      12_000000n,
-      1,
-      { value: 500_000_000_000_000n }
-    );
-    expect(unshield).not.toHaveBeenCalled();
+  it('rejects an obsolete direction before acquiring the signer', async () => {
+    const { actions, getSwapSigner, setError } = create('legacy-unshield' as SwapDirection);
+    await actions.swapRewardTokens();
+    expect(getSwapSigner).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+    expect(setError).toHaveBeenLastCalledWith('The selected WISP conversion direction is unavailable.');
   });
-
-  it('uses the earlier legacy vault unshield ABI', async () => {
-    const unshieldWithMode = vi.fn();
-    const unshield = vi.fn(async () => ({ hash: `0x${'22'.repeat(32)}` }));
-
-    await submitLegacyWispRecoveryTransaction({
-      amountWei: 12_000000n,
-      contract: { unshield, unshieldWithMode },
-      direction: 'legacy-unshield-earlier',
-      nativeFeeWei: 500_000_000_000_000n
-    });
-
-    expect(unshield).toHaveBeenCalledWith(
-      12_000000n,
-      { value: 500_000_000_000_000n }
-    );
-    expect(unshieldWithMode).not.toHaveBeenCalled();
+  it.each([null, 500000n])('keeps unshield unavailable when the current private balance is %s', async balance => {
+    const { actions, getSwapSigner } = create('unshield', balance);
+    await actions.swapRewardTokens();
+    expect(getSwapSigner).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
   });
-
-  it('fails closed instead of calling a mismatched vault ABI', async () => {
-    await expect(submitLegacyWispRecoveryTransaction({
-      amountWei: 1n,
-      contract: { unshieldWithMode: vi.fn() },
-      direction: 'legacy-unshield-earlier',
-      nativeFeeWei: 1n
-    })).rejects.toThrow('Earlier legacy vault unshield method is unavailable.');
+  it('does not retry or select an old vault after a current bridge failure', async () => {
+    execute.mockRejectedValue(new Error('Current conversion unavailable'));
+    const { actions, getSwapSigner, setError } = create();
+    await actions.swapRewardTokens();
+    expect(execute).toHaveBeenCalledOnce(); expect(getSwapSigner).toHaveBeenCalledOnce();
+    expect(setError.mock.lastCall?.[0]).toContain('Current conversion unavailable');
+    expect(useTokenToolsStore.getState()).toMatchObject({ swappingTokens: false, swapStatusMessage: '' });
   });
 });

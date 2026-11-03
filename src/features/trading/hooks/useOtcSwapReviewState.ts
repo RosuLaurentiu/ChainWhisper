@@ -54,12 +54,6 @@ type CarbonReferenceContext = {
 type UseOtcSwapReviewStateArgs = {
   activeTerminalSwapIntentRef: MutableRefObject<OtcSwapIntent | null>;
   combinedBalanceByAssetKey: Record<string, ComposerCombinedBalance>;
-  fillRecurringOrderSide: (
-    snapshot: TradeSnapshot,
-    side: 'buy' | 'sell',
-    amountInputOverride?: string,
-    options?: TradeFillActionOptions
-  ) => Promise<void>;
   getCarbonReferenceContext: (
     baseAsset?: CarbonPriceAsset | null,
     quoteAsset?: CarbonPriceAsset | null,
@@ -77,7 +71,6 @@ type UseOtcSwapReviewStateArgs = {
     amountInput: string,
     options?: TradeFillActionOptions
   ) => Promise<void>;
-  processingRecurringAction: string;
   processingTradeActionId: string;
   setSwapPinnedTradeKey: (key: string) => void;
   swapActionMode: OtcSwapInputMode;
@@ -107,13 +100,11 @@ const buildSwapVerifyUrl = (
 export default function useOtcSwapReviewState({
   activeTerminalSwapIntentRef,
   combinedBalanceByAssetKey,
-  fillRecurringOrderSide,
   getCarbonReferenceContext,
   getCarbonReferenceDisplay,
   lastAppliedSwapPinnedTradeKeyRef,
   openTradeSnapshot,
   partialFillTrade,
-  processingRecurringAction,
   processingTradeActionId,
   setSwapPinnedTradeKey,
   swapActionMode,
@@ -183,7 +174,7 @@ export default function useOtcSwapReviewState({
   const swapBuyVerifyUrl = buildSwapVerifyUrl(swapBuyToken, swapBuyTokenSelection);
   const buildSwapQuoteIntent = useCallback(
     (quote: OtcSwapQuoteCandidate): OtcSwapIntent | null => {
-      if (!swapSellToken || !swapBuyToken || swapInputAmountWei <= 0n) {
+      if (!swapSellToken || !swapBuyToken || swapInputAmountWei <= 0n || quote.terminalPrefill.kind !== 'standard') {
         return null;
       }
       return {
@@ -201,16 +192,7 @@ export default function useOtcSwapReviewState({
         requestedSellAmountWei: quote.estimatedSellAmountWei.toString(),
         requestedBuyAmountWei: quote.estimatedBuyAmountWei.toString(),
         terminalInputAmountWei: quote.terminalPrefill.amountWei.toString(),
-        terminalInput: quote.terminalPrefill.kind === 'standard'
-          ? {
-              kind: 'standard',
-              inputSide: quote.terminalPrefill.inputSide
-            }
-          : {
-              kind: 'recurring',
-              displayAction: quote.terminalPrefill.displayAction,
-              fillSide: quote.terminalPrefill.fillSide
-            },
+        terminalInput: { kind: 'standard', inputSide: quote.terminalPrefill.inputSide },
         privateLiquidity: quote.availability.kind === 'terminal',
         timestamp: Date.now()
       };
@@ -288,21 +270,9 @@ export default function useOtcSwapReviewState({
       return;
     }
 
-    const recurring = quote.trade.recurringOrder;
-    if (!recurring) {
-      return;
-    }
-    const inputDecimals =
-      quote.terminalPrefill.fillSide === 'buy' ? recurring.baseAsset.decimals : recurring.quoteAsset.decimals;
-    await fillRecurringOrderSide(
-      quote.trade,
-      quote.terminalPrefill.fillSide,
-      formatExactTokenAmountInput(quote.terminalPrefill.amountWei, inputDecimals),
-      confirmationOptions
-    );
+    return;
   }, [
     buildSwapActionSummary,
-    fillRecurringOrderSide,
     partialFillTrade,
     rememberSwapQuoteIntent,
     swapActionMode,
@@ -314,9 +284,7 @@ export default function useOtcSwapReviewState({
   ]);
   const swapActionProcessing = Boolean(
     swapBestQuote &&
-      (processingTradeActionId === swapBestQuote.tradeKey ||
-        (swapBestQuote.terminalPrefill.kind === 'recurring' &&
-          processingRecurringAction === `${swapBestQuote.tradeKey}:${swapBestQuote.terminalPrefill.fillSide}`))
+      processingTradeActionId === swapBestQuote.tradeKey
   );
   const swapReviewDisabled = !swapBestQuote || swapInputAmountWei <= 0n || swapSameTokenSelected || swapActionProcessing;
   const swapReviewLabel =

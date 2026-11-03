@@ -13,31 +13,16 @@ const mocks = vi.hoisted(() => ({
   createActivity: vi.fn(), syncActivity: vi.fn(), closeActivity: vi.fn(),
   readLinkOwner: vi.fn(), executeLinkOwner: vi.fn(), cleanupLink: vi.fn(), reconcileLinkOwner: vi.fn(), retryLinkOwner: vi.fn(),
   confirmDirect: vi.fn(),
-  confirmPrivateRecurring: vi.fn(),
-  confirmRecurring: vi.fn(),
   confirmStandard: vi.fn(),
-  executePrivate: vi.fn(),
   executeBook: vi.fn(), cleanupBook: vi.fn(), reconcileBook: vi.fn(), readBookPrepared: vi.fn(), listBook: vi.fn(), readBook: vi.fn(), readBookAccount: vi.fn(),
   ensureDirect: vi.fn(),
   ensureStandard: vi.fn(),
   listDirect: vi.fn(),
-  listPrivateTrade: vi.fn(),
   listStandard: vi.fn(),
-  listPrivateRecurring: vi.fn(),
-  listRecurring: vi.fn(),
-  quoteRecurring: vi.fn(),
   quoteStandard: vi.fn(),
   readDirect: vi.fn(),
-  readPrivateTrade: vi.fn(),
-  readPrivateTradeAccount: vi.fn(),
-  readPrivateRecurring: vi.fn(),
-  readPrivateRecurringInventory: vi.fn(),
-  readPrivateRecurringReceipt: vi.fn(),
-  readRecurring: vi.fn(),
   readStandard: vi.fn(),
   submitDirect: vi.fn(),
-  submitPrivateRecurring: vi.fn(),
-  submitRecurring: vi.fn(),
   submitStandard: vi.fn()
 }));
 vi.mock('./ownerTradeV2Capability', () => ({
@@ -63,7 +48,7 @@ vi.mock('./tradeHistoryV2Chain', () => ({ assertAttestedTradeHistoryV2Deployment
     const { manifests, ...rest } = args;
     return Promise.all(manifests.map(manifest => mocks.attest({ ...rest, manifest })));
   },
-  TRADE_HISTORY_V2_MAX_PARTICIPANT_LOG_RANGE_BLOCKS: 100_000n }));
+  TRADE_HISTORY_V2_MAX_PARTICIPANT_LOG_RANGE_BLOCKS: 100_000n, TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS: 2_048n }));
 vi.mock('./linkTradeV2CreationJournal', () => ({ createLinkTradeV2CreationJournal: mocks.createJournal, createPrivateBookV2Journal: mocks.createBookJournal }));
 
 vi.mock('./privateBookV2Actions', async (importOriginal) => ({ ...await importOriginal<typeof import('./privateBookV2Actions')>(), executePrivateBookV2Action: mocks.executeBook, cleanupPrivateBookV2Preparation: mocks.cleanupBook, reconcilePrivateBookV2Action: mocks.reconcileBook, readPrivateBookV2PreparedAction: mocks.readBookPrepared, readPrivateBookV2OrderIds: mocks.listBook, readPrivateBookV2OrderView: mocks.readBook, readPrivateBookV2AccountSnapshot: mocks.readBookAccount }));
@@ -78,27 +63,7 @@ vi.mock('./directTradeV2Actions', () => ({
   readDirectTradeV2TradeTerms: mocks.readDirect,
   submitDirectTradeV2Action: mocks.submitDirect
 }));
-vi.mock('./privateTradeV2Actions', () => ({
-  executePrivateTradeV2Action: mocks.executePrivate,
-  readPrivateTradeV2AccountSnapshot: mocks.readPrivateTradeAccount,
-  readPrivateTradeV2OrderIds: mocks.listPrivateTrade,
-  readPrivateTradeV2OrderView: mocks.readPrivateTrade
-}));
-vi.mock('./privateRecurringTradeV2Actions', () => ({
-  confirmPrivateRecurringTradeV2Action: mocks.confirmPrivateRecurring,
-  readPrivateRecurringTradeV2ExecutionReceipt: mocks.readPrivateRecurringReceipt,
-  readPrivateRecurringTradeV2MakerInventory: mocks.readPrivateRecurringInventory,
-  readPrivateRecurringTradeV2OrderIds: mocks.listPrivateRecurring,
-  readPrivateRecurringTradeV2OrderView: mocks.readPrivateRecurring,
-  submitPrivateRecurringTradeV2Action: mocks.submitPrivateRecurring
-}));
-vi.mock('./recurringTradeV2Actions', () => ({
-  confirmRecurringTradeV2Action: mocks.confirmRecurring,
-  quoteRecurringTradeV2Execution: mocks.quoteRecurring,
-  readRecurringTradeV2OrderIds: mocks.listRecurring,
-  readRecurringTradeV2OrderView: mocks.readRecurring,
-  submitRecurringTradeV2Action: mocks.submitRecurring
-}));
+
 vi.mock('./standardTradeV2Actions', async importOriginal => ({
   ...(await importOriginal<typeof import('./standardTradeV2Actions')>()),
   confirmStandardTradeV2Action: mocks.confirmStandard,
@@ -111,14 +76,17 @@ vi.mock('./standardTradeV2Actions', async importOriginal => ({
 
 import { createOtcV2ActionRuntime, createOtcV2ActionRuntimeFromCatalog, assertOtcV2ActionRuntime } from './otcV2ActionRuntime';
 
-const deployment = (protocol: string) => Object.freeze({ protocol });
+const deployment = (protocol: string) => Object.freeze({ protocol,
+  ...(protocol === 'private-v2'
+    ? { chainId: CURRENT_P2P_BINDING.deployments['private-v2'].chainId,
+        contractAddress: CURRENT_P2P_BINDING.deployments['private-v2'].contractAddress,
+        runtimeBytecodeHash: CURRENT_P2P_BINDING.deployments['private-v2'].runtimeBytecodeHash }
+    : {}) });
 const history = Object.freeze({
   deployments: Object.freeze({
     'standard-v2': deployment('standard-v2'),
     'private-v2': deployment('private-v2'),
-    'direct-v2': deployment('direct-v2'),
-    'recurring-v2': deployment('recurring-v2'),
-    'private-recurring-v2': deployment('private-recurring-v2')
+    'direct-v2': deployment('direct-v2')
   }),
   readDirectTerms: mocks.readDirect,
   isCurrent: () => true
@@ -132,7 +100,6 @@ const deferred = <T,>() => {
 };
 const createActivityRuntime = (options: {
   runOwnerTransactionFlow?: <T>(operation: () => Promise<T>) => Promise<T>;
-  readRetainedLinkActivity?: () => Promise<readonly unknown[]>;
 } = {}) => {
   const ownerAddress = `0x${'44'.repeat(20)}`;
   const capability = Object.freeze({});
@@ -149,12 +116,78 @@ const createActivityRuntime = (options: {
       journal: { read: async () => null, close: vi.fn() } as never },
     counterCreation: { deployment: CURRENT_P2P_BINDING.deployments['counter-v2'] as never,
       journal: { read: async () => null, close: vi.fn() } as never },
-    ...(options.readRetainedLinkActivity ? { readRetainedLinkActivity: options.readRetainedLinkActivity as never } : {})
   });
   return { runtime, getOwnerCapability };
 };
 
 describe('OTC V2 action runtime', () => {
+  it('observes activity phases without recording private results or changing failures', async () => {
+    const setAttribute = vi.fn();
+    vi.stubGlobal('document', { documentElement: { setAttribute } });
+    const { runtime } = createActivityRuntime();
+    const snapshot = { orders: [], history: ['private-result'], complete: true };
+    mocks.syncActivity.mockResolvedValueOnce(snapshot).mockRejectedValueOnce(new Error('private-error'));
+    try {
+      await expect(runtime.link!.syncActivity()).resolves.toBe(snapshot);
+      expect(setAttribute.mock.calls.map(call => JSON.parse(call[1]).stage))
+        .toEqual(['queued', 'capability', 'owner-acquired', 'capability-bound', 'scan', 'completed']);
+      await expect(runtime.link!.syncActivity()).rejects.toThrow('private-error');
+      expect(JSON.parse(setAttribute.mock.calls[setAttribute.mock.calls.length - 1][1]).stage).toBe('failed');
+      for (const [attribute, value] of setAttribute.mock.calls) {
+        expect(attribute).toBe('data-p2p-link-activity');
+        expect(Object.keys(JSON.parse(value))).toEqual(['stage', 'at', 'phases']);
+        expect(value).not.toMatch(/private-result|private-error/);
+      }
+      setAttribute.mockImplementation(() => { throw new Error('diagnostic sink unavailable'); });
+      mocks.syncActivity.mockResolvedValueOnce(snapshot);
+      await expect(runtime.link!.syncActivity()).resolves.toBe(snapshot);
+    } finally { runtime.close(); vi.unstubAllGlobals(); }
+  });
+
+  it.each(['link', 'counter'] as const)('separates the %s owner queue wait from capability binding without extra reads', async source => {
+    const setAttribute = vi.fn();
+    vi.stubGlobal('document', { documentElement: { setAttribute } });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
+    const heldRead = deferred<{ tradeIds: string[]; nextOffset: string }>();
+    const heldCapability = deferred<never>();
+    const { runtime, getOwnerCapability } = createActivityRuntime();
+    const snapshot = { orders: [], history: [], complete: true };
+    const scan = source === 'link' ? mocks.syncActivity : mocks.syncCounterActivity;
+    scan.mockResolvedValue(snapshot);
+    mocks.listStandard.mockImplementationOnce(() => heldRead.promise);
+    const ownerRead = runtime.listStandard('maker');
+    let activity: Promise<unknown> | undefined;
+    const latest = () => JSON.parse(setAttribute.mock.calls[setAttribute.mock.calls.length - 1][1]);
+    try {
+      await oneMacrotask();
+      getOwnerCapability.mockImplementationOnce(() => heldCapability.promise);
+      activity = runtime[source]!.syncActivity();
+      await oneMacrotask();
+      expect(latest().phases).toEqual({ queued: 100, capability: 100 });
+      expect(getOwnerCapability).toHaveBeenCalledOnce();
+      expect(scan).not.toHaveBeenCalled();
+
+      clock.mockReturnValue(200);
+      heldRead.resolve({ tradeIds: [], nextOffset: '0' });
+      await ownerRead; await oneMacrotask();
+      expect(latest().phases).toEqual({ queued: 100, capability: 100, 'owner-acquired': 200 });
+      expect(getOwnerCapability.mock.calls).toEqual([[false], [true]]);
+      expect(scan).not.toHaveBeenCalled();
+
+      clock.mockReturnValue(300);
+      heldCapability.resolve({} as never);
+      await expect(activity).resolves.toBe(snapshot);
+      expect(latest().phases).toEqual({ queued: 100, capability: 100, 'owner-acquired': 200,
+        'capability-bound': 300, scan: 300, completed: 300 });
+      expect(scan).toHaveBeenCalledOnce();
+      expect(getOwnerCapability).toHaveBeenCalledTimes(2);
+    } finally {
+      heldRead.resolve({ tradeIds: [], nextOffset: '0' }); heldCapability.resolve({} as never);
+      await Promise.allSettled([ownerRead, ...(activity ? [activity] : [])]);
+      runtime.close(); clock.mockRestore(); vi.unstubAllGlobals();
+    }
+  });
+
   it('passes scoped public permissions through the owner queue without privacy prompts or unrelated writes', async () => {
     const direct = CURRENT_P2P_BINDING.deployments['direct-v2'];
     const current = { ...history, deployments: { ...history.deployments, 'direct-v2': direct } };
@@ -251,12 +284,9 @@ describe('OTC V2 action runtime', () => {
     const descriptors = Object.fromEntries(Object.entries(CURRENT_P2P_BINDING.deployments).map(([p, manifest]) => [p, { protocol: p, manifest }]));
     const current = { ...history, isCurrent: (): boolean => true, ownerAddress: `0x${'44'.repeat(20)}`, readCapability: {}, deployments: { ...history.deployments,
       'standard-v2': CURRENT_P2P_BINDING.deployments['standard-v2'], 'private-v2': CURRENT_P2P_BINDING.deployments['private-v2'], 'direct-v2': CURRENT_P2P_BINDING.deployments['direct-v2'] } };
-    const retainedDeployments = Object.fromEntries((['standard-v2', 'private-v2', 'direct-v2'] as const).map((protocol, index) => [protocol,
-      { protocol, manifest: { ...CURRENT_P2P_BINDING.deployments[protocol], contractAddress: `0x${String(70 + index).repeat(20)}`,
-        ...(protocol === 'private-v2' ? { runtimeBytecodeHash: '0xe20848f75e59634a16c7d33dd393e91698292a9b29400d456ff57ab0c04ac680' } : {}) } }]));
     const catalog = { status: 'active', chainId: '7082400', finalityLagBlocks: 5n,
-      preparedP2p: { status, linkAdmitted, deployments: descriptors, retainedDeployments } };
-    const getOwnerCapability = vi.fn(async () => ({} as never));
+      preparedP2p: { status, linkAdmitted, deployments: descriptors } };
+    const getOwnerCapability = vi.fn(async (_privacy: boolean) => ({} as never));
     mocks.ownerBinding.mockReturnValue({ ownerAddress: current.ownerAddress, chainId: 7082400n });
     mocks.attest.mockImplementation(async ({ manifest }) => manifest);
     mocks.createJournal.mockImplementation(() => ({ close: vi.fn() }));
@@ -264,7 +294,253 @@ describe('OTC V2 action runtime', () => {
       runOwnerTransactionFlow: async <T,>(operation: () => Promise<T>) => operation() } };
   };
 
-  it('keeps history syncs serial without blocking owner reads or a safe Direct action', async () => {
+  it('rejects old owner and display references without source admission or wallet access', async () => {
+    const f = rootFixture(), onReadRuntime = vi.fn();
+    const full = await createOtcV2ActionRuntimeFromCatalog({ ...f.input, onReadRuntime });
+    const base = onReadRuntime.mock.calls[0][0];
+    mocks.attest.mockClear(); mocks.createJournal.mockClear(); f.getOwnerCapability.mockClear();
+    const old = { ...f.current.deployments['private-v2'], contractAddress: `0x${'88'.repeat(20)}`, orderId: '7' };
+    for (const runtime of [base, full]) {
+      await expect(runtime.forReference(old)).rejects.toThrow(/no admitted deployment/);
+    }
+    expect(mocks.attest).not.toHaveBeenCalled(); expect(mocks.createJournal).not.toHaveBeenCalled();
+    expect(f.getOwnerCapability).not.toHaveBeenCalled(); full.close();
+  });
+
+  it('reuses a public capability only within one read-only runtime and keeps both snapshot guards on each queued read', async () => {
+    const f = rootFixture(), capability = Object.freeze({}), ownerFlow = vi.fn();
+    f.getOwnerCapability.mockResolvedValue(capability as never);
+    const runtime = createOtcV2ActionRuntime({ ...f.input, readOnly: true,
+      runOwnerTransactionFlow: async <T,>(operation: () => Promise<T>): Promise<T> => { ownerFlow(); return operation(); } });
+    try {
+      await Promise.all([runtime.listStandard('maker'), runtime.listDirect('taker')]);
+      expect(f.getOwnerCapability).toHaveBeenCalledExactlyOnceWith(false);
+      expect(mocks.listStandard).toHaveBeenCalledWith(expect.objectContaining({ capability }));
+      expect(mocks.listDirect).toHaveBeenCalledWith(expect.objectContaining({ capability }));
+      expect(mocks.assertCapabilitySnapshot.mock.calls).toEqual([[capability], [capability], [capability], [capability]]);
+      expect(ownerFlow).not.toHaveBeenCalled();
+    } finally { runtime.close(); }
+  });
+
+  it('keeps private display reads and every full-runtime read or financial action on fresh acquisition', async () => {
+    const f = rootFixture(), display = createOtcV2ActionRuntime({ ...f.input, readOnly: true });
+    const full = createOtcV2ActionRuntime(f.input);
+    try {
+      await display.listDirect('maker');
+      await display.readDirect('7', true); await display.readDirect('8', true);
+      await display.listDirect('taker');
+      expect(f.getOwnerCapability.mock.calls.map(call => call[0])).toEqual([false, true, true]);
+      await full.listDirect('maker'); await full.listDirect('taker');
+      await full.direct({ kind: 'cancel', tradeId: '7' }); await full.direct({ kind: 'cancel', tradeId: '8' });
+      expect(f.getOwnerCapability.mock.calls.map(call => call[0])).toEqual([false, true, true, false, false, false, false]);
+      expect(mocks.confirmDirect).toHaveBeenCalledTimes(2);
+    } finally { display.close(); full.close(); }
+  });
+
+  it('does not cache a rejected public acquisition or retry it until another explicit read', async () => {
+    const f = rootFixture(), runtime = createOtcV2ActionRuntime({ ...f.input, readOnly: true });
+    f.getOwnerCapability.mockRejectedValueOnce(new Error('wallet acquisition rejected'));
+    try {
+      await expect(runtime.listStandard('maker')).rejects.toThrow('wallet acquisition rejected');
+      expect(f.getOwnerCapability).toHaveBeenCalledOnce(); expect(mocks.listStandard).not.toHaveBeenCalled();
+      await runtime.listStandard('maker'); await runtime.listStandard('filler');
+      expect(f.getOwnerCapability).toHaveBeenCalledTimes(2);
+    } finally { runtime.close(); }
+  });
+
+  it.each(['close', 'replaced', 'owner', 'chain', 'snapshot'])('rejects a cached public capability before the next view after %s changes', async change => {
+    const f = rootFixture(), runtime = createOtcV2ActionRuntime({ ...f.input, readOnly: true });
+    try {
+      await runtime.listStandard('maker'); mocks.listStandard.mockClear();
+      if (change === 'close') runtime.close();
+      if (change === 'replaced') f.current.isCurrent = () => false;
+      if (change === 'owner') mocks.ownerBinding.mockReturnValue({ ownerAddress: `0x${'55'.repeat(20)}`, chainId: 7082400n });
+      if (change === 'chain') mocks.ownerBinding.mockReturnValue({ ownerAddress: f.current.ownerAddress, chainId: 2632500n });
+      if (change === 'snapshot') mocks.assertCapabilitySnapshot.mockRejectedValue(new Error('wallet lease replaced'));
+      await expect(runtime.listStandard('filler')).rejects.toThrow(change === 'snapshot' ? /wallet lease replaced/ : /closed|owner or chain changed/);
+      expect(mocks.listStandard).not.toHaveBeenCalled(); expect(f.getOwnerCapability).toHaveBeenCalledOnce();
+    } finally { runtime.close(); }
+  });
+
+  it.each(['close', 'replaced', 'owner', 'chain', 'snapshot'])('rejects a late public result using a cached capability after %s changes', async change => {
+    const f = rootFixture(), runtime = createOtcV2ActionRuntime({ ...f.input, readOnly: true });
+    const started = deferred<void>(), held = deferred<unknown>();
+    await runtime.listStandard('maker');
+    mocks.listStandard.mockImplementationOnce(async () => { started.resolve(); return held.promise; });
+    const reading = runtime.listStandard('filler');
+    try {
+      await started.promise;
+      if (change === 'close') runtime.close();
+      if (change === 'replaced') f.current.isCurrent = () => false;
+      if (change === 'owner') mocks.ownerBinding.mockReturnValue({ ownerAddress: `0x${'55'.repeat(20)}`, chainId: 7082400n });
+      if (change === 'chain') mocks.ownerBinding.mockReturnValue({ ownerAddress: f.current.ownerAddress, chainId: 2632500n });
+      if (change === 'snapshot') mocks.assertCapabilitySnapshot.mockRejectedValue(new Error('wallet lease replaced'));
+      held.resolve({ tradeIds: ['7'] });
+      await expect(reading).rejects.toThrow(change === 'snapshot' ? /wallet lease replaced/ : /closed|owner or chain changed/);
+      expect(f.getOwnerCapability).toHaveBeenCalledOnce();
+    } finally { held.resolve({}); await Promise.allSettled([reading]); runtime.close(); }
+  });
+
+  it('discards a public capability after a failed snapshot guard and reacquires only on an explicit retry', async () => {
+    const f = rootFixture(), runtime = createOtcV2ActionRuntime({ ...f.input, readOnly: true });
+    try {
+      await runtime.listStandard('maker');
+      mocks.assertCapabilitySnapshot.mockRejectedValueOnce(new Error('stale wallet lease'));
+      await expect(runtime.listStandard('filler')).rejects.toThrow('stale wallet lease');
+      expect(f.getOwnerCapability).toHaveBeenCalledOnce();
+      await runtime.listStandard('filler'); await runtime.listStandard('maker');
+      expect(f.getOwnerCapability).toHaveBeenCalledTimes(2);
+    } finally { runtime.close(); }
+  });
+
+  it('shares one public capability across a display family without repeating its exact admission or lists', async () => {
+    const f = rootFixture(), onReadRuntime = vi.fn(), capability = Object.freeze({});
+    f.getOwnerCapability.mockResolvedValue(capability as never);
+    const full = await createOtcV2ActionRuntimeFromCatalog({ ...f.input, onReadRuntime });
+    const base = onReadRuntime.mock.calls[0][0];
+    const old = f.current.deployments['standard-v2'];
+    f.getOwnerCapability.mockClear(); mocks.attest.mockClear(); mocks.assertCapabilitySnapshot.mockClear();
+    try {
+      await base.listStandard('maker', 0n, 100n);
+      const child = await base.forReference({ ...old, orderId: '7' });
+      await child.listStandard('maker', 0n, 100n);
+      await child.listStandard('filler', 0n, 100n);
+      expect(mocks.attest).not.toHaveBeenCalled();
+      expect(child).toBe(base);
+      expect(mocks.listStandard.mock.calls.map(([input]) => ({ scope: input.scope, deployment: input.deployment,
+        offset: input.offset, limit: input.limit }))).toEqual([
+        { scope: 'maker', deployment: f.current.deployments['standard-v2'], offset: 0n, limit: 100n },
+        { scope: 'maker', deployment: old, offset: 0n, limit: 100n },
+        { scope: 'filler', deployment: old, offset: 0n, limit: 100n }
+      ]);
+      expect(mocks.assertCapabilitySnapshot.mock.calls).toEqual(Array.from({ length: 6 }, () => [capability]));
+      expect(f.getOwnerCapability).toHaveBeenCalledExactlyOnceWith(false);
+    } finally { full.close(); }
+  });
+
+  it('does not share a display family capability with an independent runtime scope', async () => {
+    const f = rootFixture(), onReadRuntime = vi.fn();
+    const full = await createOtcV2ActionRuntimeFromCatalog({ ...f.input, onReadRuntime });
+    const base = onReadRuntime.mock.calls[0][0], other = createOtcV2ActionRuntime({ ...f.input, readOnly: true });
+    const old = f.current.deployments['direct-v2'];
+    const child = await base.forReference({ ...old, orderId: '7' });
+    f.getOwnerCapability.mockClear();
+    try {
+      for (const runtime of [base, child, other]) { await runtime.listDirect('maker'); await runtime.listDirect('taker'); }
+      expect(f.getOwnerCapability).toHaveBeenCalledTimes(2);
+    } finally { other.close(); full.close(); }
+  });
+
+  it('keeps private family reads and full financial operations on fresh acquisition', async () => {
+    const f = rootFixture(), onReadRuntime = vi.fn();
+    const full = await createOtcV2ActionRuntimeFromCatalog({ ...f.input, onReadRuntime });
+    const base = onReadRuntime.mock.calls[0][0];
+    const old = f.current.deployments['direct-v2'];
+    const child = await base.forReference({ ...old, orderId: '7' });
+    f.getOwnerCapability.mockClear();
+    try {
+      await base.listDirect('maker'); await child.listDirect('taker');
+      await child.readDirect('7', true); await child.readDirect('8', true);
+      await child.listDirect('maker');
+      expect(f.getOwnerCapability.mock.calls.map(([privacy]) => privacy)).toEqual([false, true, true]);
+      await full.listDirect('maker'); await full.listDirect('taker');
+      await full.direct({ kind: 'cancel', tradeId: '7' });
+      expect(f.getOwnerCapability.mock.calls.map(([privacy]) => privacy)).toEqual([false, true, true, false, false, false]);
+      expect(mocks.confirmDirect).toHaveBeenCalledOnce();
+    } finally { full.close(); }
+  });
+
+  it('does not use the operation queue as a public capability sharing boundary', async () => {
+    const f = rootFixture(), ownerOperationQueue = { tail: Promise.resolve() };
+    const first = createOtcV2ActionRuntime({ ...f.input, ownerOperationQueue, readOnly: true });
+    const second = createOtcV2ActionRuntime({ ...f.input, ownerOperationQueue, readOnly: true });
+    const financial = createOtcV2ActionRuntime({ ...f.input, ownerOperationQueue });
+    try {
+      await first.listStandard('maker'); await second.listStandard('maker');
+      await first.listStandard('filler'); await second.listStandard('filler');
+      await financial.listStandard('maker'); await financial.listStandard('filler');
+      expect(f.getOwnerCapability.mock.calls.map(([privacy]) => privacy)).toEqual([false, false, false, false]);
+    } finally { first.close(); second.close(); financial.close(); }
+  });
+
+  it('publishes current display reads before linked financial admission finishes and closes both runtimes together', async () => {
+    const f = rootFixture(), held = deferred<void>(), started = deferred<void>(), onReadRuntime = vi.fn();
+    mocks.attest.mockImplementation(async ({ manifest }) => { started.resolve(); await held.promise; return manifest; });
+    let finished = false;
+    const pending = createOtcV2ActionRuntimeFromCatalog({ ...f.input, onReadRuntime } as never).then(runtime => { finished = true; return runtime; });
+    let full: Awaited<typeof pending> | undefined;
+    try {
+      await started.promise;
+      expect(onReadRuntime).toHaveBeenCalledOnce();
+      const base = onReadRuntime.mock.calls[0][0];
+      expect(base.link).toBeUndefined(); expect(base.counter).toBeUndefined();
+      await base.listStandard('open', 0n, 20n);
+      expect(mocks.listStandard).toHaveBeenCalledOnce();
+      expect(mocks.createJournal).not.toHaveBeenCalled(); expect(finished).toBe(false);
+      held.resolve(); full = await pending;
+      expect(base.isCurrent()).toBe(true);
+      full.close(); expect(base.isCurrent()).toBe(false);
+    } finally { held.resolve(); (full ?? await pending).close(); }
+  });
+
+  it('keeps early display reads on the same owner lock as the full financial runtime', async () => {
+    const f = rootFixture(), onReadRuntime = vi.fn(), entered = deferred<void>(), held = deferred<void>();
+    const full = await createOtcV2ActionRuntimeFromCatalog({ ...f.input, onReadRuntime });
+    const base = onReadRuntime.mock.calls[0][0];
+    mocks.listStandard.mockImplementationOnce(async () => { entered.resolve(); await held.promise; return { tradeIds: [], nextOffset: '0' }; });
+    const read = base.listStandard('open');
+    let action: Promise<unknown> | undefined;
+    try {
+      await entered.promise;
+      action = full.direct({ kind: 'cancel', tradeId: 3n });
+      await oneMacrotask();
+      expect(mocks.confirmDirect).not.toHaveBeenCalled();
+      held.resolve(); await Promise.all([read, action]);
+      expect(mocks.confirmDirect).toHaveBeenCalledOnce();
+    } finally { held.resolve(); await Promise.allSettled([read, ...(action ? [action] : [])]); full.close(); }
+  });
+
+  it('blocks every financial and Book journal entry on the current display runtime before owner access', async () => {
+    const f = rootFixture(), onReadRuntime = vi.fn(), ownerTransactionStarted = vi.fn();
+    const runOwnerTransactionFlow = async <T,>(operation: () => Promise<T>): Promise<T> => { ownerTransactionStarted(); return operation(); };
+    const old = f.current.deployments['standard-v2'];
+    const full = await createOtcV2ActionRuntimeFromCatalog({ ...f.input, runOwnerTransactionFlow,
+      history: f.current as never, onReadRuntime });
+    const base = onReadRuntime.mock.calls[0][0];
+    const child = await base.forReference({ chainId: old.chainId, contractAddress: old.contractAddress, orderId: '7' });
+    f.getOwnerCapability.mockClear(); mocks.createJournal.mockClear();
+    try {
+      for (const runtime of [base, child]) {
+        const writes = [
+          () => runtime.standard({ kind: 'cancel', tradeId: 7n }),
+          () => runtime.direct({ kind: 'cancel', tradeId: 7n }),
+          () => runtime.privateBook!.execute({ kind: 'cancel', orderId: 7n }),
+          () => runtime.privateBook.readRecovery(),
+          () => runtime.privateBook.readPreparedAction(),
+          () => runtime.privateBook.discardPreparation('saved'),
+          () => runtime.privateBook.cleanupPreparation('saved'),
+          () => runtime.privateBook.reconcile()
+        ];
+        for (const write of writes) await expect(Promise.resolve().then(write)).rejects.toThrow(/read-only/i);
+        expect(runtime.tradeBalances).toEqual({});
+        expect(runtime.link).toBeUndefined(); expect(runtime.counter).toBeUndefined();
+        expect(runtime.privateBook.budgetVisibilityAvailable).toBe(false);
+      }
+      expect(f.getOwnerCapability).not.toHaveBeenCalled(); expect(ownerTransactionStarted).not.toHaveBeenCalled();
+      expect(mocks.createBookJournal).not.toHaveBeenCalled(); expect(mocks.createJournal).not.toHaveBeenCalled();
+      expect(mocks.submitStandard).not.toHaveBeenCalled(); expect(mocks.submitDirect).not.toHaveBeenCalled();
+      expect(mocks.executeBook).not.toHaveBeenCalled(); expect(mocks.reconcileBook).not.toHaveBeenCalled();
+    } finally { full.close(); }
+  });
+
+  it('rejects a prepared catalog before publishing display access or opening journals', async () => {
+    const f = rootFixture('prepared'), onReadRuntime = vi.fn();
+    await expect(createOtcV2ActionRuntimeFromCatalog({ ...f.input, onReadRuntime })).rejects.toThrow(/admission is unavailable/);
+    expect(onReadRuntime).not.toHaveBeenCalled(); expect(f.getOwnerCapability).not.toHaveBeenCalled();
+    expect(mocks.attest).not.toHaveBeenCalled(); expect(mocks.createJournal).not.toHaveBeenCalled();
+  });
+
+  it('lets Counter history finish during a held Link scan without blocking owner reads or a safe Direct action', async () => {
     const f = rootFixture('book-admitted', true);
     Object.assign(f.catalog.preparedP2p, { privateCounterAdmitted: true, privateCounterRecoveryAdmitted: true });
     let startLink!: () => void, releaseLink!: () => void;
@@ -280,15 +556,15 @@ describe('OTC V2 action runtime', () => {
     const linkSync = runtime.link!.syncActivity();
     let counterSync: Promise<unknown> | undefined;
     let standardRead: Promise<unknown> | undefined;
-    let recurringRead: Promise<unknown> | undefined;
+    let directRead: Promise<unknown> | undefined;
     let directAction: Promise<unknown> | undefined;
     try {
       await linkStarted;
       counterSync = runtime.counter!.syncActivity();
       standardRead = runtime.listStandard('open', 0n, 20n);
-      recurringRead = runtime.listRecurring('active', 0n, 20n);
+      directRead = runtime.listDirect('taker', 0n, 20n);
       directAction = runtime.direct({ kind: 'cancel', tradeId: 3n });
-      const ownerOperations = Promise.all([standardRead, recurringRead, directAction]);
+      const ownerOperations = Promise.all([standardRead, directRead, directAction]);
       const ownerOperationsSettled = await Promise.race([
         ownerOperations.then(() => true),
         oneMacrotask().then(() => false)
@@ -296,13 +572,13 @@ describe('OTC V2 action runtime', () => {
 
       expect(ownerOperationsSettled).toBe(true);
       expect(mocks.listStandard).toHaveBeenCalled();
-      expect(mocks.listRecurring).toHaveBeenCalled();
+      expect(mocks.listDirect).toHaveBeenCalled();
       expect(mocks.confirmDirect).toHaveBeenCalled();
-      expect(mocks.syncCounterActivity).not.toHaveBeenCalled();
+      expect(mocks.syncCounterActivity).toHaveBeenCalledOnce();
     } finally {
       releaseLink();
       await Promise.allSettled([linkSync, ...(counterSync ? [counterSync] : []),
-        ...(standardRead ? [standardRead] : []), ...(recurringRead ? [recurringRead] : []),
+        ...(standardRead ? [standardRead] : []), ...(directRead ? [directRead] : []),
         ...(directAction ? [directAction] : [])]);
       runtime.close();
     }
@@ -332,6 +608,45 @@ describe('OTC V2 action runtime', () => {
       runtime.close();
     }
     expect(mocks.confirmDirect).toHaveBeenCalledOnce();
+  });
+
+  it.each(['link', 'counter'] as const)('reserves idle %s activity capability before a subsequently started owner read', async source => {
+    const heldRead = deferred<{ tradeIds: string[]; nextOffset: string }>();
+    const { runtime, getOwnerCapability } = createActivityRuntime();
+    const snapshot = { orders: [], history: [], complete: true };
+    const scan = source === 'link' ? mocks.syncActivity : mocks.syncCounterActivity;
+    scan.mockResolvedValue(snapshot);
+    mocks.listStandard.mockImplementationOnce(() => heldRead.promise);
+    const activity = runtime[source]!.syncActivity();
+    const ownerRead = runtime.listStandard('maker');
+    try {
+      await oneMacrotask();
+      expect(getOwnerCapability.mock.calls).toEqual([[true], [false]]);
+      expect(scan).toHaveBeenCalledOnce();
+      await expect(activity).resolves.toBe(snapshot);
+    } finally {
+      heldRead.resolve({ tradeIds: [], nextOffset: '0' });
+      await Promise.allSettled([activity, ownerRead]);
+      runtime.close();
+    }
+  });
+
+  it('releases a rejected activity tail without retry and reserves the next idle call in order', async () => {
+    const { runtime, getOwnerCapability } = createActivityRuntime();
+    const snapshot = { orders: [], history: [], complete: true };
+    const failure = new Error('Activity failed.');
+    mocks.syncActivity.mockRejectedValueOnce(failure).mockResolvedValueOnce(snapshot);
+    try {
+      await expect(runtime.link!.syncActivity()).rejects.toBe(failure);
+      expect(mocks.syncActivity).toHaveBeenCalledOnce();
+      getOwnerCapability.mockClear();
+      const activity = runtime.link!.syncActivity();
+      const ownerRead = runtime.listStandard('maker');
+      await expect(activity).resolves.toBe(snapshot);
+      await ownerRead;
+      expect(getOwnerCapability.mock.calls).toEqual([[true], [false]]);
+      expect(mocks.syncActivity).toHaveBeenCalledTimes(2);
+    } finally { runtime.close(); }
   });
 
   it('keeps history capability acquisition behind a held owner action', async () => {
@@ -409,7 +724,7 @@ describe('OTC V2 action runtime', () => {
     }
   });
 
-  it('releases the history queue after a stale current scan so Counter can finish', async () => {
+  it('rejects a stale Link scan without withholding independent Counter results', async () => {
     const currentScanStarted = deferred<void>(), releaseCurrentScan = deferred<void>();
     const { runtime } = createActivityRuntime();
     mocks.syncActivity.mockImplementationOnce(async () => {
@@ -417,16 +732,16 @@ describe('OTC V2 action runtime', () => {
       await releaseCurrentScan.promise;
       return { orders: [], history: [], complete: true };
     });
-    mocks.assertCapabilitySnapshot
-      .mockImplementationOnce(() => {})
-      .mockRejectedValueOnce(new Error('stale owner capability'));
     mocks.syncCounterActivity.mockResolvedValue({ orders: [], history: [], complete: true });
     const linkSync = runtime.link!.syncActivity();
     let counterSync: Promise<unknown> | undefined;
     try {
       await currentScanStarted.promise;
       counterSync = runtime.counter!.syncActivity();
-      expect(mocks.syncCounterActivity).not.toHaveBeenCalled();
+      await oneMacrotask();
+      expect(mocks.syncCounterActivity).toHaveBeenCalledOnce();
+      await expect(counterSync).resolves.toMatchObject({ complete: true });
+      mocks.assertCapabilitySnapshot.mockRejectedValueOnce(new Error('stale owner capability'));
       releaseCurrentScan.resolve();
 
       await expect(linkSync).rejects.toThrow('stale owner capability');
@@ -439,58 +754,39 @@ describe('OTC V2 action runtime', () => {
     }
   });
 
-  it('rejects a close during retained Link history and releases the queued Counter scan', async () => {
-    const retainedStarted = deferred<void>(), releaseRetained = deferred<readonly unknown[]>();
-    const { runtime } = createActivityRuntime({
-      readRetainedLinkActivity: async () => {
-        retainedStarted.resolve();
-        return releaseRetained.promise;
-      }
-    });
-    mocks.syncActivity.mockResolvedValueOnce({ orders: [], history: [], complete: true });
-    const linkSync = runtime.link!.syncActivity();
-    let counterSync: Promise<unknown> | undefined;
+  it('keeps queued Link scans serial while Counter can finish independently', async () => {
+    const started = deferred<void>(), release = deferred<void>();
+    const secondStarted = deferred<void>(), releaseSecond = deferred<void>();
+    const { runtime } = createActivityRuntime();
+    const complete = { orders: [], history: [], complete: true };
+    mocks.syncActivity.mockImplementationOnce(async () => { started.resolve(); await release.promise; return complete; });
+    mocks.syncActivity.mockImplementationOnce(async () => { secondStarted.resolve(); await releaseSecond.promise; return complete; });
+    mocks.syncActivity.mockResolvedValueOnce(complete);
+    mocks.syncCounterActivity.mockResolvedValue(complete);
+    const first = runtime.link!.syncActivity();
+    let second: Promise<unknown> | undefined, third: Promise<unknown> | undefined, counter: Promise<unknown> | undefined;
     try {
-      await retainedStarted.promise;
-      counterSync = runtime.counter!.syncActivity();
-      runtime.close();
-      releaseRetained.resolve([]);
-
-      await expect(linkSync).rejects.toThrow(/closed during a scan/);
-      await expect(counterSync).rejects.toThrow(/closed/);
-      expect(mocks.syncCounterActivity).not.toHaveBeenCalled();
+      await started.promise;
+      second = runtime.link!.syncActivity();
+      counter = runtime.counter!.syncActivity();
+      await oneMacrotask();
+      expect(mocks.syncActivity).toHaveBeenCalledOnce();
+      expect(mocks.syncCounterActivity).toHaveBeenCalledOnce();
+      await expect(counter).resolves.toMatchObject({ complete: true });
+      release.resolve();
+      await secondStarted.promise;
+      third = runtime.link!.syncActivity();
+      await oneMacrotask();
+      expect(mocks.syncActivity).toHaveBeenCalledTimes(2);
     } finally {
-      releaseRetained.resolve([]);
-      await Promise.allSettled([linkSync, ...(counterSync ? [counterSync] : [])]);
+      release.resolve();
+      releaseSecond.resolve();
+      await Promise.allSettled([first, ...(second ? [second] : []), ...(third ? [third] : []), ...(counter ? [counter] : [])]);
       runtime.close();
     }
+    expect(mocks.syncActivity).toHaveBeenCalledTimes(3);
   });
 
-  it('retains the complete old financial graph and Counter parents without inheriting new disclosure admission', async () => {
-    const f = rootFixture('book-admitted', true);
-    Object.assign(f.catalog.preparedP2p, { privateCounterAdmitted: true, privateCounterRecoveryAdmitted: true, publicBookLinkAdmitted: true, publicBookLinkRecoveryAdmitted: true });
-    const old = Object.values(CURRENT_P2P_BINDING.deployments).map((manifest, index) => ({ ...manifest, contractAddress: `0x${String(80 + index).repeat(20)}` }));
-    const financialGraph = { previousBindingSha256: 'ab'.repeat(32), proofSha256: 'cd'.repeat(32), deployments: old };
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, Object.fromEntries(old.map(manifest => [manifest.contractAddress,
-      { protocol: manifest.protocol, manifest, retainedFinancialGraph: financialGraph }])));
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    const children = await Promise.all(old.map(manifest => runtime.forReference!({ ...manifest, orderId: '1' })));
-    expect(new Set(children).size).toBe(1);
-    expect(mocks.attestBatch).toHaveBeenCalledTimes(2);
-    expect(mocks.attestBatch).toHaveBeenLastCalledWith({ capability: f.current.readCapability, manifests: old, finalityLagBlocks: 5n });
-    const child = children[0], book = old.find(item => item.protocol === 'private-v2')!;
-    expect(child.deployments['standard-v2']).toEqual(old.find(item => item.protocol === 'standard-v2'));
-    expect(child.deployments['private-v2']).toEqual(book);
-    expect(child.deployments['direct-v2']).toEqual(old.find(item => item.protocol === 'direct-v2'));
-    expect(child.link?.readContext.deployment).toEqual(old.find(item => item.protocol === 'link-v2'));
-    expect(child.privateBook?.budgetVisibilityAvailable).toBe(false);
-    for (const balance of Object.values(child.tradeBalances)) expect(balance.available).toBe(false);
-    await child.counter!.propose({ bookReference: { chainId: book.chainId, escrow: book.contractAddress, id: '1', revision: '1', credentialEpoch: '0' },
-      maker: f.current.ownerAddress, offerToken: `0x${'11'.repeat(20)}`, requestToken: `0x${'22'.repeat(20)}` }, { offer: '1', request: '2', expiresAt: '0' });
-    expect(mocks.executeCounter).toHaveBeenCalledWith(expect.objectContaining({ deployment: old.find(item => item.protocol === 'counter-v2'),
-      parentDeployments: expect.arrayContaining(old.filter(item => ['standard-v2', 'private-v2', 'link-v2'].includes(item.protocol))) }));
-    runtime.close(); expect(child.isCurrent()).toBe(false);
-  });
   it('checks public-only Direct identity at root setup before acquiring an owner capability', async () => {
     const f = rootFixture('book-admitted'), direct = CURRENT_P2P_BINDING.deployments['direct-v2'];
     Object.assign(f.catalog.preparedP2p, { directAdmission: { ...direct, mode: 'public-forward', publicForward: true } });
@@ -611,102 +907,7 @@ describe('OTC V2 action runtime', () => {
     runtime.close();
   });
 
-  const oldLink = { protocol: 'link-v2' as const, chainId: '7082400', contractAddress: '0xcdf70597ebd1e4eb440e292a23003d129d9c5859',
-    deploymentBlock: '10225108', runtimeBytecodeHash: '0x074062a395d26e4f421f5b75a4b6f96f206996285fdd56566d96576ce41ff384' };
-  it('discovers retained Counter activity and resolves equal IDs to their exact financial child', async () => {
-    const f = rootFixture('book-admitted', true);
-    Object.assign(f.catalog.preparedP2p, { privateCounterAdmitted: true, privateCounterRecoveryAdmitted: true });
-    const old = Object.values(CURRENT_P2P_BINDING.deployments).map((manifest, index) => ({ ...manifest, contractAddress: `0x${String(80 + index).repeat(20)}` }));
-    const financialGraph = { previousBindingSha256: 'ab'.repeat(32), proofSha256: 'cd'.repeat(32), deployments: old };
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, Object.fromEntries(old.map(manifest => [manifest.contractAddress,
-      { protocol: manifest.protocol, manifest, retainedFinancialGraph: financialGraph }])));
-    const oldCounter = old.find(item => item.protocol === 'counter-v2')!;
-    mocks.createCounterActivity.mockImplementation(({ deployment }) => ({ close: vi.fn(), sync: async () => ({
-      orders: [{ chainId: deployment.chainId, escrow: deployment.contractAddress, id: '1', maker: f.current.ownerAddress,
-        taker: `0x${'55'.repeat(20)}`, offerToken: `0x${'11'.repeat(20)}`, requestToken: `0x${'22'.repeat(20)}`,
-        privatePair: true, expiresAt: '0', status: 1 }], history: [], complete: true, throughBlock: '50', safeHead: '50'
-    }) }));
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    const result = await runtime.counter!.syncActivity();
-    expect(result.orders.map(row => row.escrow)).toEqual([CURRENT_P2P_BINDING.deployments['counter-v2'].contractAddress, oldCounter.contractAddress]);
-    expect(result.orders.map(row => row.id)).toEqual(['1', '1']);
-    const selected = await runtime.counter!.forReference!({ chainId: oldCounter.chainId, escrow: oldCounter.contractAddress, id: '1' });
-    const child = await runtime.forReference!({ chainId: oldCounter.chainId, contractAddress: oldCounter.contractAddress, orderId: '1' });
-    expect(selected).toBe(child.counter);
-    await selected.cancel('1');
-    expect(mocks.cancelCounter).toHaveBeenCalledWith(expect.objectContaining({ deployment: oldCounter,
-      parentDeployments: expect.arrayContaining(old.filter(item => ['link-v2', 'private-v2', 'standard-v2'].includes(item.protocol))) }));
-    expect(selected.balance?.available).toBe(false);
-    expect(() => selected.balance!.read('1')).toThrow();
-    await expect(runtime.counter!.forReference!({ chainId: '1', escrow: oldCounter.contractAddress, id: '1' })).rejects.toThrow();
-    runtime.close();
-  });
-
-  it('opens retained Link review lazily under its exact old identity without a signing journal', async () => {
-    const f = rootFixture('book-admitted');
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, { oldLink: { protocol: 'link-v2', manifest: oldLink } });
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    const reference = { chainId: oldLink.chainId, escrow: oldLink.contractAddress, id: '1', revision: '1', credentialEpoch: '1' };
-    const [a, b] = await Promise.all([runtime.resolveLinkReadContext!(reference), runtime.resolveLinkReadContext!(reference)]);
-    expect(a).toBe(b); expect(a.deployment).toEqual(oldLink);
-    expect(mocks.attest).toHaveBeenCalledTimes(1); expect(mocks.createJournal).not.toHaveBeenCalled();
-    expect(f.getOwnerCapability).not.toHaveBeenCalled(); runtime.close();
-  });
-
-  it('routes retained Link cancellation to its own journal and blocks new creation or Fill there', async () => {
-    const f = rootFixture('book-admitted', true);
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, { oldLink: { protocol: 'link-v2', manifest: oldLink } });
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    const child = await runtime.forReference!({ chainId: oldLink.chainId, contractAddress: oldLink.contractAddress, orderId: '1' });
-    expect(child.link?.readContext.deployment).toEqual(oldLink);
-    await child.link!.ownerOrderAction({ orderId: '1', kind: 'cancel' });
-    expect(mocks.executeLinkOwner).toHaveBeenCalledWith(expect.objectContaining({ orderId: '1', deployment: oldLink }));
-    await expect(child.link!.create({} as never)).rejects.toThrow(/retained|recovery/i);
-    await expect(child.link!.fill({} as never, '1')).rejects.toThrow(/retained|recovery/i);
-    await expect(child.link!.continueFill('old')).rejects.toThrow(/retained|recovery/i);
-    await expect(child.link!.continueCreation('old')).rejects.toThrow(/retained|recovery/i);
-    expect(mocks.executeLink).not.toHaveBeenCalled(); expect(mocks.executeFill).not.toHaveBeenCalled();
-    runtime.close(); expect(child.isCurrent()).toBe(false);
-  });
-
-  it('includes retained Link activity through its scoped reader without merging equal order IDs', async () => {
-    const f = rootFixture('book-admitted', true);
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, { oldLink: { protocol: 'link-v2', manifest: oldLink } });
-    const closed = vi.fn();
-    mocks.createActivity.mockImplementation(({ deployment }) => ({ close: closed, sync: async () => ({
-      orders: [{ reference: { chainId: deployment.chainId, escrow: deployment.contractAddress, id: '1', revision: '1', credentialEpoch: '1' } }],
-      history: [{ chainId: deployment.chainId, escrow: deployment.contractAddress, orderId: '1', key: deployment.contractAddress + ':0x1', blockNumber: '50' }],
-      complete: deployment.contractAddress !== oldLink.contractAddress, throughBlock: '50', safeHead: '50', phase: 'scan'
-    }) }));
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input), result = await runtime.link!.syncActivity();
-    expect(result.orders.map(row => row.reference.escrow)).toEqual([CURRENT_P2P_BINDING.deployments['link-v2'].contractAddress, oldLink.contractAddress]);
-    expect(result.history).toHaveLength(2); expect(result.complete).toBe(false);
-    expect(mocks.createActivity).toHaveBeenCalledTimes(2); expect(mocks.executeLink).not.toHaveBeenCalled();
-    runtime.close(); expect(closed).toHaveBeenCalledTimes(2);
-  });
-
-  it('rejects a retained Link lookup closed during attestation before another owner capability is requested', async () => {
-    const f = rootFixture('book-admitted', true);
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, { oldLink: { protocol: 'link-v2', manifest: oldLink } });
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    let release!: (value: typeof oldLink) => void;
-    mocks.attest.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
-    const pending = runtime.forReference!({ chainId: oldLink.chainId, contractAddress: oldLink.contractAddress, orderId: '1' });
-    runtime.close(); release(oldLink);
-    await expect(pending).rejects.toThrow(/closed/);
-    expect(f.getOwnerCapability).toHaveBeenCalledTimes(1);
-    expect(mocks.createJournal).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps prepared root setup free of new RPC admission, journal access and wallet prompts', async () => {
-    const f = rootFixture('prepared');
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    expect(runtime.link).toBeUndefined(); expect(runtime.counter).toBeUndefined();
-    expect(mocks.attest).not.toHaveBeenCalled(); expect(mocks.createJournal).not.toHaveBeenCalled();
-    expect(f.getOwnerCapability).not.toHaveBeenCalled(); runtime.close();
-  });
-
-  it('connects the repaired Book and retained exits without activating Link or Counter clients', async () => {
+  it('connects the current Book exits without activating Link or Counter clients', async () => {
     const f = rootFixture('book-admitted');
     const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
     expect(runtime.deployments['private-v2']).toEqual(CURRENT_P2P_BINDING.deployments['private-v2']);
@@ -714,10 +915,11 @@ describe('OTC V2 action runtime', () => {
     expect(runtime.link).toBeUndefined(); expect(runtime.counter).toBeUndefined();
     expect(mocks.attest).not.toHaveBeenCalled(); expect(mocks.createJournal).not.toHaveBeenCalled();
     expect(f.getOwnerCapability).not.toHaveBeenCalled();
-    const old = f.catalog.preparedP2p.retainedDeployments['private-v2'].manifest;
+    const old = f.current.deployments['private-v2'];
     const child = await runtime.forReference!({ ...old, orderId: '1' });
-    await child.privateTrade({ kind: 'cancel', orderId: '1' });
-    expect(mocks.executePrivate.mock.lastCall?.[0].deployment).toEqual(old);
+    expect(child).toBe(runtime);
+    await child.privateBook!.execute({ kind: 'cancel', orderId: '1' });
+    expect(mocks.executeBook.mock.lastCall?.[0].deployment).toEqual(old);
     runtime.close(); expect(child.isCurrent()).toBe(false);
   });
 
@@ -787,42 +989,6 @@ describe('OTC V2 action runtime', () => {
     journals.forEach(j => expect(j.close).toHaveBeenCalledOnce());
   });
 
-  it('selects each retained reader once by full reference, keeps writes on that instance and closes child runtimes', async () => {
-    const f = rootFixture();
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    for (const protocol of ['standard-v2', 'private-v2', 'direct-v2'] as const) {
-      const manifest = f.catalog.preparedP2p.retainedDeployments[protocol].manifest;
-      const reference = { chainId: manifest.chainId, contractAddress: manifest.contractAddress, orderId: '7' };
-      const child = await runtime.forReference!(reference);
-      expect(await runtime.forReference!(reference)).toBe(child);
-      expect(child.deployments[protocol]).toEqual(manifest);
-      if (protocol === 'standard-v2') { await child.standard({ kind: 'cancel', tradeId: '7' }); expect(mocks.submitStandard.mock.lastCall?.[0].deployment).toEqual(manifest); }
-      if (protocol === 'private-v2') { expect(child.privateBook).toBeUndefined(); await child.privateTrade({ kind: 'cancel', orderId: '7' }); expect(mocks.executePrivate.mock.lastCall?.[0].deployment).toEqual(manifest); }
-      if (protocol === 'direct-v2') { await child.readDirect('7', false); expect(mocks.readDirect.mock.lastCall?.[0].deployment).toEqual(manifest); }
-    }
-    expect(mocks.attest).toHaveBeenCalledTimes(5);
-    expect(mocks.createJournal).toHaveBeenCalledTimes(2);
-    await expect(runtime.forReference!({ chainId: '1', contractAddress: CURRENT_P2P_BINDING.deployments['private-v2'].contractAddress, orderId: '7' })).rejects.toThrow(/reference/);
-    await expect(runtime.forReference!({ chainId: '7082400', contractAddress: `0x${'99'.repeat(20)}`, orderId: '7' })).rejects.toThrow(/reference/);
-    const retained = f.catalog.preparedP2p.retainedDeployments['standard-v2'].manifest;
-    const child = await runtime.forReference!({ ...retained, orderId: '7' });
-    runtime.close(); expect(child.isCurrent()).toBe(false);
-    await expect(child.standard({ kind: 'cancel', tradeId: '7' })).rejects.toThrow(/closed/);
-  });
-
-  it('reuses retained history attestations for owner discovery and rejects a changed descriptor', async () => {
-    const f = rootFixture(), old = f.catalog.preparedP2p.retainedDeployments['standard-v2'].manifest;
-    const retainedDeployments = [old];
-    const runtime = await createOtcV2ActionRuntimeFromCatalog({ ...f.input, history: { ...f.current, retainedDeployments } as never });
-    expect(runtime.retainedDeployments).toBe(retainedDeployments);
-    expect((await runtime.forReference!({ ...old, orderId: '7' })).deployments['standard-v2']).toBe(old);
-    expect(mocks.attest).toHaveBeenCalledTimes(2);
-    runtime.close();
-    const mismatch = await createOtcV2ActionRuntimeFromCatalog({ ...f.input,
-      history: { ...f.current, retainedDeployments: [{ ...old, runtimeBytecodeHash: `0x${'99'.repeat(32)}` }] } as never });
-    await expect(mismatch.forReference!({ ...old, orderId: '7' })).rejects.toThrow(/identities differ/);
-  });
-
   it('rejects a wrong graph before owner access and a different owner before opening journals', async () => {
     const f = rootFixture();
     const wrong = { ...f.current, deployments: { ...f.current.deployments, 'private-v2': { ...f.current.deployments['private-v2'], contractAddress: `0x${'99'.repeat(20)}` } } };
@@ -850,31 +1016,14 @@ describe('OTC V2 action runtime', () => {
     expect(mocks.createJournal).not.toHaveBeenCalled();
   });
 
-  it('rejects pending retained selection on close and does not retry a failed reference admission', async () => {
-    const f = rootFixture();
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    const old = f.catalog.preparedP2p.retainedDeployments['standard-v2'].manifest;
-    const reference = { ...old, orderId: '7' };
-    mocks.attest.mockRejectedValueOnce(new Error('reference admission unavailable'));
-    await expect(runtime.forReference!(reference)).rejects.toThrow(/admission unavailable/);
-    await expect(runtime.forReference!(reference)).rejects.toThrow(/admission unavailable/);
-    expect(mocks.attest).toHaveBeenCalledTimes(3);
-    const next = f.catalog.preparedP2p.retainedDeployments['direct-v2'].manifest;
-    let release!: () => void;
-    mocks.attest.mockImplementationOnce(async ({ manifest }) => { await new Promise<void>(resolve => { release = resolve; }); return manifest; });
-    const pending = runtime.forReference!({ ...next, orderId: '7' });
-    runtime.close(); release();
-    await expect(pending).rejects.toThrow(/closed/);
-  });
-  it.each(['0x9a55542e2174239860c063e33862b6f6875811f7a7674ce71a8d79ed51144b89', CURRENT_P2P_BINDING.deployments['private-v2'].runtimeBytecodeHash])('admits the public-price API and blocks legacy packing for %s', async (runtimeBytecodeHash) => {
+  it('admits the selected public-price Book API', async () => {
+    const runtimeBytecodeHash = CURRENT_P2P_BINDING.deployments['private-v2'].runtimeBytecodeHash;
     const currentHistory = { ...history, deployments: { ...history.deployments, 'private-v2': { protocol: 'private-v2', runtimeBytecodeHash } } };
     const getOwnerCapability = vi.fn(async (_requirePrivacy: boolean) => ({} as never));
     mocks.assertHistory.mockImplementation(value => value);
     const runtime = createOtcV2ActionRuntime({ history: currentHistory as never, getOwnerCapability, runOwnerTransactionFlow: operation => operation() });
-    expect(() => runtime.privateTrade({ kind: 'cancel', orderId: 1n })).toThrow(/promoted private book/);
-    expect(() => runtime.readPrivateTrade(1n)).toThrow(/promoted private book/);
-    expect(() => runtime.readPrivateTradeAccount(1n)).toThrow(/promoted private book/);
-    expect(getOwnerCapability).not.toHaveBeenCalled(); expect(mocks.executePrivate).not.toHaveBeenCalled();
+    expect(runtime.privateBook).toBeDefined();
+    expect(getOwnerCapability).not.toHaveBeenCalled();
     await runtime.privateBook!.list('open'); await runtime.privateBook!.read(1n); await runtime.privateBook!.readAccount(1n);
     expect(getOwnerCapability.mock.calls.map(call => call[0])).toEqual([false, false, true]);
     const action = { kind: 'fill', orderId: 1n, expectedRevision: 1n, terms: { mode: 'private-pair', fillBehavior: 'remaining-at-reviewed-price', maxRequestAmount: 20n, priceTerms: { offerAmount: 1n, requestAmount: 2n } } } as const;
@@ -978,24 +1127,11 @@ describe('OTC V2 action runtime', () => {
     }
     expect(f.getOwnerCapability).not.toHaveBeenCalled();
   });
-  it('Book budget native admission remains held on retained children after current candidate opt-in', async () => {
-    const f = rootFixture('book-admitted'), book = f.current.deployments['private-v2'];
-    Object.assign(f.catalog.preparedP2p, { bookBudgetAdmission: { ...book, mode: 'active' } });
-    const old = { ...book, contractAddress: `0x${'99'.repeat(20)}` };
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, { [old.contractAddress]: { protocol: 'private-v2', manifest: old } });
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    expect(runtime.privateBook?.budgetVisibilityAvailable).toBe(true);
-    const child = await runtime.forReference!({ chainId: old.chainId, contractAddress: old.contractAddress, orderId: '7' });
-    expect(child.privateBook?.budgetVisibilityAvailable).toBe(false);
-    expect(() => child.privateBook!.execute({ kind: 'budget-visibility', orderId: '7', expectedRevision: '1', visible: true })).toThrow(/unavailable/);
-    expect(f.getOwnerCapability).not.toHaveBeenCalled();
-    await child.privateBook!.execute({ kind: 'reclaim-expired', orderId: '7' });
-    expect(mocks.executeBook).toHaveBeenCalledWith(expect.objectContaining({ deployment: old, action: { kind: 'reclaim-expired', orderId: '7' } }));
-    expect(f.getOwnerCapability).toHaveBeenCalledExactlyOnceWith(false); runtime.close();
-  });
-  it('leaves the older runtime without a promoted API', () => {
+  it('does not expose the Book API for an old private runtime hash', () => {
     mocks.assertHistory.mockImplementation(value => value);
-    const runtime = createOtcV2ActionRuntime({ history: history as never, getOwnerCapability: async () => ({} as never), runOwnerTransactionFlow: operation => operation() });
+    const olderHistory = { ...history, deployments: { ...history.deployments,
+      'private-v2': { ...history.deployments['private-v2'], runtimeBytecodeHash: `0x${'9a'.repeat(32)}` } } };
+    const runtime = createOtcV2ActionRuntime({ history: olderHistory as never, getOwnerCapability: async () => ({} as never), runOwnerTransactionFlow: operation => operation() });
     expect(runtime.privateBook).toBeUndefined();
     expect(runtime.link).toBeUndefined();
     expect(runtime.counter).toBeUndefined();
@@ -1031,7 +1167,7 @@ describe('OTC V2 action runtime', () => {
     mocks.syncCounterActivity.mockResolvedValue({ orders: [], history: [], complete: true });
     await runtime.counter!.syncActivity(); await runtime.counter!.syncActivity();
     expect(mocks.createCounterActivity).toHaveBeenCalledOnce(); expect(mocks.syncCounterActivity).toHaveBeenCalledTimes(2);
-    expect(mocks.createCounterActivity).toHaveBeenCalledWith(expect.objectContaining({ pageRangeBlocks: 100_000n }));
+    expect(mocks.createCounterActivity).toHaveBeenCalledWith(expect.objectContaining({ pageRangeBlocks: 2_048n }));
     mocks.ownerBinding.mockReturnValue({ ownerAddress: `0x${'66'.repeat(20)}` });
     await expect(runtime.counter!.read('1')).rejects.toThrow(/owner/);
     runtime.close(); await expect(runtime.counter!.cancel('1')).rejects.toThrow(/closed/);
@@ -1112,18 +1248,6 @@ describe('OTC V2 action runtime', () => {
     expect(mocks.pendingBalance).toHaveBeenCalledWith(expect.objectContaining({ orderId: '7' }));
     expect(f.getOwnerCapability).toHaveBeenCalledExactlyOnceWith(true); runtime.close();
   });
-  it('contextual trade balance runtime never forwards current admission to a retained Book', async () => {
-    const f = rootFixture('book-admitted'), book = f.current.deployments['private-v2'];
-    Object.assign(f.catalog.preparedP2p, { tradeBalanceAdmissions: { 'private-v2': { ...book, mode: 'active', variants: ['private-pair'] } } });
-    const old = { ...book, contractAddress: `0x${'99'.repeat(20)}` };
-    Object.assign(f.catalog.preparedP2p.retainedDeployments, { [old.contractAddress]: { protocol: 'private-v2', manifest: old } });
-    const runtime = await createOtcV2ActionRuntimeFromCatalog(f.input);
-    expect(runtime.tradeBalances['private-v2']?.available).toBe(true);
-    const retained = await runtime.forReference!({ chainId: old.chainId, contractAddress: old.contractAddress, orderId: '7' });
-    expect(retained.tradeBalances['private-v2']?.available).toBe(false);
-    expect(() => retained.tradeBalances['private-v2']!.execute({ kind: 'grant', orderId: '7', recipient: f.current.ownerAddress, allowed: true })).toThrow(/unavailable/);
-    expect(f.getOwnerCapability).not.toHaveBeenCalled(); runtime.close();
-  });
   it('restores a redacted owner status and queues recovery actions through the selected owner', async () => {
     const owner = `0x${'44'.repeat(20)}`, escrow = `0x${'11'.repeat(20)}`, runtimeHash = `0x${'55'.repeat(32)}`;
     const current = { ...history, ownerAddress: owner, deployments: { ...history.deployments, 'standard-v2': { chainId: '7082400' } } };
@@ -1157,8 +1281,8 @@ describe('OTC V2 action runtime', () => {
     expect(mocks.continueFill).toHaveBeenCalledWith(expect.objectContaining({ capability, journal, fillId: saved.id }));
     await runtime.link!.syncActivity(); await runtime.link!.syncActivity();
     expect(mocks.createActivity).toHaveBeenCalledOnce(); expect(mocks.syncActivity).toHaveBeenCalledTimes(2);
-    expect(mocks.createActivity).toHaveBeenCalledWith(expect.objectContaining({ pageRangeBlocks: 100_000n }));
-    expect(mocks.syncActivity).toHaveBeenCalledWith(capability);
+    expect(mocks.createActivity).toHaveBeenCalledWith(expect.objectContaining({ pageRangeBlocks: 2_048n }));
+    expect(mocks.syncActivity).toHaveBeenCalledWith(capability, 'latest');
     await runtime.link!.discardDraft(saved.id); expect(journal.releaseUnsent).toHaveBeenCalledOnce();
     saved.records.push({ state: 'sending' });
     await expect(runtime.link!.discardDraft(saved.id)).rejects.toThrow(/cannot be discarded/);
@@ -1186,62 +1310,22 @@ describe('OTC V2 action runtime', () => {
     mocks.createBookJournal.mockImplementation(() => ({ read: async () => null, close: vi.fn() }));
     mocks.createActivity.mockReturnValue({ sync: mocks.syncActivity, close: mocks.closeActivity });
     mocks.assertHistory.mockImplementation((value) => value);
+    mocks.executeBook.mockResolvedValue({ action: 'cancel' });
     mocks.submitStandard.mockResolvedValue('standard-submission');
     mocks.confirmStandard.mockResolvedValue({ action: 'create' });
-    mocks.executePrivate.mockResolvedValue({ action: 'cancel' });
+    mocks.executeBook.mockResolvedValue({ action: 'cancel' });
     mocks.ensureDirect.mockResolvedValue(undefined);
     mocks.ensureStandard.mockResolvedValue(undefined);
     mocks.submitDirect.mockResolvedValue('direct-submission');
     mocks.confirmDirect.mockResolvedValue({ action: 'cancel' });
-    mocks.submitRecurring.mockResolvedValue('recurring-submission');
-    mocks.confirmRecurring.mockResolvedValue({ action: 'pause' });
-    mocks.submitPrivateRecurring.mockResolvedValue('private-recurring-submission');
-    mocks.confirmPrivateRecurring.mockResolvedValue({ action: 'pause' });
-    mocks.listRecurring.mockResolvedValue({ orderIds: ['1'], nextOffset: '0' });
     mocks.listStandard.mockResolvedValue({ tradeIds: ['1'], nextOffset: '0' });
     mocks.readStandard.mockResolvedValue({ tradeId: '1' });
     mocks.quoteStandard.mockResolvedValue({ revision: '1' });
-    mocks.listPrivateTrade.mockResolvedValue({ orderIds: ['2'], nextOffset: '0' });
-    mocks.readPrivateTrade.mockResolvedValue({ orderId: '2' });
-    mocks.readPrivateTradeAccount.mockResolvedValue({ orderId: '2' });
+    mocks.listBook.mockResolvedValue({ orderIds: ['2'], nextOffset: '0' });
+    mocks.readBook.mockResolvedValue({ orderId: '2' });
+    mocks.readBookAccount.mockResolvedValue({ orderId: '2' });
     mocks.listDirect.mockResolvedValue({ tradeIds: ['3'], nextOffset: '0' });
     mocks.readDirect.mockResolvedValue({ tradeId: '3' });
-    mocks.readRecurring.mockResolvedValue({ orderId: '1' });
-    mocks.quoteRecurring.mockResolvedValue({ revision: '1' });
-    mocks.listPrivateRecurring.mockResolvedValue({ orderIds: ['2'], nextOffset: '0' });
-    mocks.readPrivateRecurring.mockResolvedValue({ orderId: '2' });
-    mocks.readPrivateRecurringInventory.mockResolvedValue({ orderId: '2' });
-    mocks.readPrivateRecurringReceipt.mockResolvedValue({ orderId: '2' });
-  });
-
-  it('uses prompt-free public reads and privacy-capable private reads', async () => {
-    const privacyRequests: boolean[] = [];
-    const runtime = createOtcV2ActionRuntime({
-      history: history as never,
-      getOwnerCapability: async (requirePrivacy) => {
-        privacyRequests.push(requirePrivacy);
-        return Object.freeze({}) as never;
-      },
-      runOwnerTransactionFlow: (operation) => operation()
-    });
-
-    await runtime.listRecurring('active', 0n, 20n);
-    await runtime.readRecurring(1n);
-    await runtime.quoteRecurring(1n, 'buy', 10n);
-    await runtime.listPrivateRecurring('maker', 0n, 20n);
-    await runtime.readPrivateRecurring(2n);
-    await runtime.readPrivateRecurringInventory(2n);
-    await runtime.readPrivateRecurringReceipt(2n);
-
-    expect(privacyRequests).toEqual([false, false, false, false, false, true, true]);
-    expect(mocks.listRecurring).toHaveBeenCalledWith(expect.objectContaining({
-      deployment: history.deployments['recurring-v2'],
-      scope: 'active'
-    }));
-    expect(mocks.listPrivateRecurring).toHaveBeenCalledWith(expect.objectContaining({
-      deployment: history.deployments['private-recurring-v2'],
-      scope: 'maker'
-    }));
   });
 
   it('routes one-off and direct discovery through the exact protocol with privacy only for decrypted data', async () => {
@@ -1258,9 +1342,9 @@ describe('OTC V2 action runtime', () => {
     await runtime.listStandard('open', 0n, 20n);
     await runtime.readStandard(1n);
     await runtime.quoteStandard(1n, 10n);
-    await runtime.listPrivateTrade('maker', 0n, 20n);
-    await runtime.readPrivateTrade(2n);
-    await runtime.readPrivateTradeAccount(2n);
+    await runtime.privateBook!.list('maker', 0n, 20n);
+    await runtime.privateBook!.read(2n);
+    await runtime.privateBook!.readAccount(2n);
     await runtime.listDirect('taker', 0n, 20n);
     await runtime.readDirect(3n, false);
     await runtime.readDirect(3n, true);
@@ -1269,7 +1353,7 @@ describe('OTC V2 action runtime', () => {
     expect(mocks.listStandard).toHaveBeenCalledWith(expect.objectContaining({
       deployment: history.deployments['standard-v2'], scope: 'open'
     }));
-    expect(mocks.listPrivateTrade).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.listBook).toHaveBeenCalledWith(expect.objectContaining({
       deployment: history.deployments['private-v2'], scope: 'maker'
     }));
     expect(mocks.listDirect).toHaveBeenCalledWith(expect.objectContaining({
@@ -1290,7 +1374,7 @@ describe('OTC V2 action runtime', () => {
     });
 
     await runtime.standard({ kind: 'cancel', tradeId: 1n });
-    await runtime.privateTrade({ kind: 'cancel', orderId: 2n });
+    await runtime.privateBook!.execute({ kind: 'cancel', orderId: 2n });
     await runtime.direct({ kind: 'cancel', tradeId: 3n });
     await runtime.direct({
       kind: 'create-private',
@@ -1301,10 +1385,8 @@ describe('OTC V2 action runtime', () => {
       taker: '0x0000000000000000000000000000000000000003',
       expiresAt: 1n
     });
-    await runtime.recurring({ kind: 'pause', orderId: 4n, expectedRevision: 1n });
-    await runtime.privateRecurring({ kind: 'pause', orderId: 5n, expectedRevision: 1n });
 
-    expect(privacyRequests).toEqual([false, true, false, true, false, true]);
+    expect(privacyRequests).toEqual([false, false, false, true]);
     expect(mocks.submitStandard).toHaveBeenCalledWith(expect.objectContaining({
       deployment: history.deployments['standard-v2']
     }));
@@ -1312,7 +1394,7 @@ describe('OTC V2 action runtime', () => {
       deployment: history.deployments['standard-v2'],
       action: expect.objectContaining({ kind: 'cancel', tradeId: 1n })
     }));
-    expect(mocks.executePrivate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.executeBook).toHaveBeenCalledWith(expect.objectContaining({
       deployment: history.deployments['private-v2']
     }));
     expect(mocks.submitDirect).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -1322,12 +1404,6 @@ describe('OTC V2 action runtime', () => {
     expect(mocks.ensureDirect).toHaveBeenLastCalledWith(expect.objectContaining({
       deployment: history.deployments['direct-v2'],
       action: expect.objectContaining({ kind: 'create-private', offerAmount: 1n })
-    }));
-    expect(mocks.submitRecurring).toHaveBeenCalledWith(expect.objectContaining({
-      deployment: history.deployments['recurring-v2']
-    }));
-    expect(mocks.submitPrivateRecurring).toHaveBeenCalledWith(expect.objectContaining({
-      deployment: history.deployments['private-recurring-v2']
     }));
   });
 

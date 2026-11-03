@@ -50,7 +50,13 @@ export const getChatReactionSourceForMessage = (
   ) {
     return null;
   }
-  return getChatReactionWriteSourceForMessage(message);
+  const source = getChatReactionWriteSourceForMessage(message);
+  if (!source) return null;
+  const blockNumber = message.directV2?.blockNumber ?? message.groupV2?.blockNumber;
+  if (typeof blockNumber !== 'string' || !/^[1-9][0-9]*$/.test(blockNumber) || BigInt(blockNumber) >= 2n ** 64n) {
+    throw new Error('Finalized reaction source requires its canonical block number.');
+  }
+  return Object.freeze({ ...source, blockNumber });
 };
 
 export const getChatReactionMessageKey = (message: ChatMessage): string | null => {
@@ -93,6 +99,7 @@ export const collectChatReactionSources = (
     const previous = sources.get(key);
     if (previous && (
       previous.blockHash !== source.blockHash ||
+      previous.blockNumber !== source.blockNumber ||
       previous.transactionHash !== source.transactionHash ||
       previous.logIndex !== source.logIndex
     )) {

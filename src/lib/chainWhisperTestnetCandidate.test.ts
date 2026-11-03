@@ -9,6 +9,7 @@ import {
 import { resolveDirectChatV2DeploymentConfig } from './directChatV2Deployment';
 import { resolveDirectTradeV2DeploymentConfig } from './directTradeV2Deployment';
 import { CURRENT_P2P_BINDING } from './currentP2PBinding';
+import currentLiquidity from './currentPrivateLiquidityBinding.json';
 import { resolveGroupChatV2DeploymentConfig } from './groupChatV2Deployment';
 import { resolveChatReactionsV1DeploymentConfig } from './chatReactionsV1Deployment';
 import {
@@ -109,8 +110,11 @@ describe('chainWhisperTestnetCandidate', () => {
     });
   });
 
-  it('derives the V2 suite with the approved Direct selection and retains its old manifest', () => {
-    const candidate = parseTestnetCandidateConfig(env());
+  it('derives the V2 suite with the approved current Direct selection', () => {
+    const selected = manifest();
+    selected.owner = currentLiquidity.owner;
+    selected.manifestHash = keccak256(toUtf8Bytes(JSON.stringify(canonicalize({ ...selected, manifestHash: undefined }))));
+    const candidate = parseTestnetCandidateConfig(env(selected));
     expect(candidate.status).toBe('active');
     const directChat = resolveDirectChatV2DeploymentConfig({}, candidate);
     const groupChat = resolveGroupChatV2DeploymentConfig({}, candidate);
@@ -133,11 +137,8 @@ describe('chainWhisperTestnetCandidate', () => {
     expect(directTrade.status === 'active' && directTrade.manifest.contractAddress)
       .toBe(CURRENT_P2P_BINDING.deployments['direct-v2'].contractAddress);
     expect(directTrade.status === 'active' && directTrade.actionAdmission?.mode).toBe('private-forward');
-    expect(directTrade.status === 'active' && directTrade.retainedManifests).toContainEqual(expect.objectContaining({
-      contractAddress: candidate.status === 'active' ? candidate.components.directOtcV2.address : ''
-    }));
     expect(liquidity.status === 'active' && liquidity.manifest.positionToken.address)
-      .toBe(candidate.status === 'active' ? candidate.components.privateLiquidityPositionNftV2.address : '');
+      .toBe(currentLiquidity.manifest.positionToken.address.toLowerCase());
     expect(new Set([
       directChat.status === 'active' ? directChat.finalityLagBlocks : 0n,
       groupChat.status === 'active' ? groupChat.finalityLagBlocks : 0n,

@@ -9,6 +9,7 @@ import {
 } from './tradeHistoryV2Chain';
 import {
   materializeDirectTradeV2Acceptance,
+  type DirectTradeV2AcceptanceTerms,
   materializeTradeHistoryV2ParticipantReceipt,
   type ParsedDirectTradeV2Opened,
   type ParsedDirectTradeV2Status,
@@ -61,7 +62,7 @@ export type TradeHistoryV2PrivateAmountResolver = (
 ) => Promise<TradeHistoryV2Amounts | undefined>;
 
 export type TradeHistoryV2DirectPrivateAmountResolver = (input: Readonly<{
-  opened: ParsedDirectTradeV2Opened;
+  opened: DirectTradeV2AcceptanceTerms;
   status: ParsedDirectTradeV2Status;
   viewer: string;
 }>) => Promise<TradeHistoryV2Amounts | undefined>;
@@ -243,6 +244,7 @@ export const materializeCanonicalTradeHistoryV2Range = async ({
   viewer,
   resolvePrivateReceiptAmounts,
   resolveDirectPrivateAmounts,
+  resolveDirectTerms,
   shouldContinue
 }: {
   previous: TradeHistoryV2MaterializationState;
@@ -253,6 +255,7 @@ export const materializeCanonicalTradeHistoryV2Range = async ({
   viewer?: string;
   resolvePrivateReceiptAmounts?: TradeHistoryV2PrivateAmountResolver;
   resolveDirectPrivateAmounts?: TradeHistoryV2DirectPrivateAmountResolver;
+  resolveDirectTerms?: (status: ParsedDirectTradeV2Status) => Promise<DirectTradeV2AcceptanceTerms>;
   shouldContinue?: () => boolean;
 }): Promise<Readonly<{
   state: TradeHistoryV2MaterializationState;
@@ -355,11 +358,15 @@ export const materializeCanonicalTradeHistoryV2Range = async ({
 
   for (const event of canonicalPage.events) {
     if (event.kind !== 'direct-status') continue;
-    const opening = directOpeningsByOrderKey[buildTradeHistoryV2OrderKey({
+    let opening: DirectTradeV2AcceptanceTerms | undefined = directOpeningsByOrderKey[buildTradeHistoryV2OrderKey({
       chainId: event.chainId,
       contractAddress: event.contractAddress,
       orderId: event.orderId
     })];
+    if (!opening && event.previousStatus === '1' && event.nextStatus === '2' && resolveDirectTerms) {
+      opening = await resolveDirectTerms(event);
+      if (shouldContinue && !shouldContinue()) throw new Error('Trade-history materialization scope changed.');
+    }
     if (!opening) {
       if (event.previousStatus === '1' && event.nextStatus === '2') {
         throw new Error('Canonical Direct acceptance is missing its replayed opening terms.');

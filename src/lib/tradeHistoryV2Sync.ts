@@ -25,6 +25,7 @@ export type TradeHistoryV2Checkpoint = {
 export type TradeHistoryV2SyncState = {
   ledger: TradeHistoryV2LedgerState;
   checkpointsByScope: Readonly<Record<string, TradeHistoryV2Checkpoint>>;
+  oldestBlockByScope?: Readonly<Record<string, string>>;
 };
 
 export type TradeHistoryV2CanonicalBlock = {
@@ -44,6 +45,7 @@ export type TradeHistoryV2SyncDependencies = {
     fromBlock: string;
     toBlock: string;
     reorged: boolean;
+    reset?: boolean;
   }) => Promise<TradeHistoryV2RangePage>;
 };
 
@@ -53,6 +55,7 @@ export type TradeHistoryV2SyncResult = {
   safeHead: string;
   hasMore: boolean;
   reorged: boolean;
+  reset?: boolean;
   page?: { fromBlock: string; toBlock: string };
 };
 
@@ -104,6 +107,7 @@ export const syncTradeHistoryV2Range = async ({
   overlapBlocks,
   dependencies,
   expectedRevision,
+  mode,
   shouldContinue
 }: {
   previous: TradeHistoryV2SyncState;
@@ -113,11 +117,12 @@ export const syncTradeHistoryV2Range = async ({
   overlapBlocks: bigint;
   dependencies: TradeHistoryV2SyncDependencies;
   expectedRevision: number;
+  mode?: 'latest' | 'older';
   shouldContinue?: () => boolean;
 }): Promise<TradeHistoryV2SyncResult> => {
   if (confirmationDepth <= 0n) throw new Error('Trade-history confirmation depth must be non-zero.');
-  if (maxBlockSpan <= 0n || maxBlockSpan > 2_048n) {
-    throw new Error('Trade-history range span must be between 1 and 2,048 blocks.');
+  if (maxBlockSpan <= 0n || maxBlockSpan > 100_000n) {
+    throw new Error('Trade-history range span must be between 1 and 100,000 blocks.');
   }
   if (overlapBlocks < 0n || overlapBlocks >= maxBlockSpan) {
     throw new Error('Trade-history overlap must be non-negative and smaller than the range span.');
@@ -178,6 +183,17 @@ export const syncTradeHistoryV2Range = async ({
     }
   }
 
+  let oldestBlock = checkpoint ? previous.oldestBlockByScope?.[scopeKey] : undefined;
+  let reset = reorged;
+  // A long idle gap starts a fresh recent window; older pages remain retrievable.
+  if (mode && checkpoint && (oldestBlock === undefined ||
+      mode === 'latest' && safeHead - BigInt(checkpoint.blockNumber) > maxBlockSpan)) {
+    ledger = clearTradeHistoryV2Scope({ previous: ledger, ...scope,
+      expectedRevision: getTradeHistoryV2LedgerRevision({ state: ledger, ...scope }) });
+    checkpoint = undefined;
+    oldestBlock = undefined;
+    reset = true;
+  }
   const effectiveRevision = getTradeHistoryV2LedgerRevision({
     state: ledger,
     chainId: scope.chainId,
@@ -190,33 +206,46 @@ export const syncTradeHistoryV2Range = async ({
         ledger,
         checkpointsByScope: reorged
           ? Object.fromEntries(Object.entries(previous.checkpointsByScope).filter(([key]) => key !== scopeKey))
-          : previous.checkpointsByScope
+          : previous.checkpointsByScope,
+        ...(mode ? { oldestBlockByScope: Object.fromEntries(Object.entries(previous.oldestBlockByScope ?? {}).filter(([key]) => key !== scopeKey)) } : {})
       },
       safeHead: safeHead.toString(),
       hasMore: false,
-      reorged
+      reorged,
+      ...(mode ? { reset } : {})
     };
   }
 
   let fromBlock = deploymentBlock;
-  if (checkpoint) {
-    const checkpointNumber = parseDecimal(checkpoint.blockNumber, 'Trade-history checkpoint block');
-    if (checkpointNumber >= safeHead) {
-      return {
-        status: 'up-to-date',
-        state: previous,
-        safeHead: safeHead.toString(),
-        hasMore: false,
-        reorged: false
-      };
+  let toBlock: bigint;
+  if (mode) {
+    const oldest = oldestBlock === undefined ? undefined : parseDecimal(oldestBlock, 'History oldest block');
+    if (checkpoint && (mode === 'older' ? oldest === deploymentBlock : BigInt(checkpoint.blockNumber) === safeHead)) {
+      return { status: 'up-to-date', state: previous, safeHead: checkpoint.blockNumber,
+        hasMore: oldest !== undefined && oldest > deploymentBlock, reorged: false };
     }
-    const nextBlock = checkpointNumber + 1n;
-    fromBlock = nextBlock > overlapBlocks ? nextBlock - overlapBlocks : deploymentBlock;
-    if (fromBlock < deploymentBlock) fromBlock = deploymentBlock;
+    toBlock = mode === 'older' && oldest !== undefined ? oldest - 1n : safeHead;
+    fromBlock = toBlock - deploymentBlock + 1n > maxBlockSpan ? toBlock - maxBlockSpan + 1n : deploymentBlock;
+  } else {
+    if (checkpoint) {
+      const checkpointNumber = parseDecimal(checkpoint.blockNumber, 'Trade-history checkpoint block');
+      if (checkpointNumber >= safeHead) {
+        return {
+          status: 'up-to-date',
+          state: previous,
+          safeHead: safeHead.toString(),
+          hasMore: false,
+          reorged: false
+        };
+      }
+      const nextBlock = checkpointNumber + 1n;
+      fromBlock = nextBlock > overlapBlocks ? nextBlock - overlapBlocks : deploymentBlock;
+      if (fromBlock < deploymentBlock) fromBlock = deploymentBlock;
+    }
+    toBlock = fromBlock + maxBlockSpan - 1n < safeHead
+      ? fromBlock + maxBlockSpan - 1n
+      : safeHead;
   }
-  const toBlock = fromBlock + maxBlockSpan - 1n < safeHead
-    ? fromBlock + maxBlockSpan - 1n
-    : safeHead;
 
   const beforeFrom = assertCanonicalBlock(
     await dependencies.readCanonicalBlock(scope.chainId, fromBlock.toString()),
@@ -233,7 +262,8 @@ export const syncTradeHistoryV2Range = async ({
     scope,
     fromBlock: fromBlock.toString(),
     toBlock: toBlock.toString(),
-    reorged
+    reorged,
+    ...(mode ? { reset } : {})
   });
   assertLease(shouldContinue);
   if (
@@ -259,13 +289,20 @@ export const syncTradeHistoryV2Range = async ({
   if (afterFrom.hash !== beforeFrom.hash || afterTo.hash !== beforeTo.hash) {
     throw new Error('Trade-history range changed while it was being read.');
   }
+  if (mode && checkpoint) {
+    const head = await dependencies.readCanonicalBlock(scope.chainId, checkpoint.blockNumber);
+    assertLease(shouldContinue);
+    if (!head || head.number !== checkpoint.blockNumber || head.hash.toLowerCase() !== checkpoint.blockHash.toLowerCase()) {
+      throw new Error('Trade-history snapshot changed while reading an older page.');
+    }
+  }
 
   const nextLedger = replaceTradeHistoryV2Range({
     previous: ledger,
     page,
     expectedRevision: effectiveRevision
   });
-  const nextCheckpoint: TradeHistoryV2Checkpoint = {
+  const nextCheckpoint: TradeHistoryV2Checkpoint = mode === 'older' && checkpoint ? checkpoint : {
     blockNumber: toBlock.toString(),
     blockHash: afterTo.hash
   };
@@ -276,11 +313,14 @@ export const syncTradeHistoryV2Range = async ({
       checkpointsByScope: {
         ...previous.checkpointsByScope,
         [scopeKey]: nextCheckpoint
-      }
+      },
+      ...(mode ? { oldestBlockByScope: { ...previous.oldestBlockByScope,
+        [scopeKey]: oldestBlock !== undefined && BigInt(oldestBlock) < fromBlock ? oldestBlock : fromBlock.toString() } } : {})
     },
-    safeHead: safeHead.toString(),
-    hasMore: toBlock < safeHead,
+    safeHead: mode ? nextCheckpoint.blockNumber : safeHead.toString(),
+    hasMore: mode ? BigInt(oldestBlock !== undefined && BigInt(oldestBlock) < fromBlock ? oldestBlock : fromBlock) > deploymentBlock : toBlock < safeHead,
     reorged,
+    ...(mode ? { reset } : {}),
     page: { fromBlock: fromBlock.toString(), toBlock: toBlock.toString() }
   };
 };

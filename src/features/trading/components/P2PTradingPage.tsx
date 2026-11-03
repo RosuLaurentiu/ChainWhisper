@@ -11,7 +11,6 @@ import {
   getProviderErrorMessage,
   isWalletAddress,
   mergeOnboardInfo,
-  RECURRING_OTC_CONTRACT_ADDRESS,
   shortenAddress,
   type Eip1193Provider,
   type TradeFeeModeSelection,
@@ -37,21 +36,24 @@ import {
   PRIVATE_GCOTI_TOKEN_ADDRESS,
   TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS,
   USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS,
+  resolveTradePresetKind,
   type TradeTokenPresetKey
 } from '../../../lib/appHelpers';
+import { resolveTradeBudgetPrivacyForPairChange } from '../../../lib/tradeComposer';
 import {
   invertPriceInput,
   type TradePricingField
 } from '../../../lib/tradePricing';
 import { resolveCanonicalTradeActionSide, resolveDisplayedTradeActionSide } from '../../../lib/tradePerspective';
 import {
-  fetchRecurringExecutionRowsForWallet,
-  fetchTradePartialFillEventsForWallet
-} from '../../../lib/appChain';
-import {
   hasSessionAesKey,
   resolveTradingBrowserWalletState
 } from '../../../lib/walletSession';
+import {
+  buildBrowserWalletRuntimeScopeKey,
+  resolveBrowserWalletPrivacyReadScope,
+  type BrowserWalletPrivacyReadScope
+} from '../../../lib/browserWalletRuntimeScope';
 import useP2PTradeRoute, {
   buildPrivateLiquidityPositionPath,
   buildPrivateLiquidityWorkspacePath,
@@ -60,7 +62,7 @@ import useP2PTradeRoute, {
   type TradeEntryMode
 } from '../hooks/useP2PTradeRoute';
 import useCarbonPairReferences from '../hooks/useCarbonPairReferences';
-import useP2PTradeData, { mergeTradeSnapshotEnrichment } from '../hooks/useP2PTradeData';
+import { mergeTradeSnapshotEnrichment } from '../hooks/useP2PTradeData';
 import useP2PTradeActions from '../hooks/useP2PTradeActions';
 import useP2PTradeComposerActions from '../hooks/useP2PTradeComposerActions';
 import useP2PRealtimeSync from '../hooks/useP2PRealtimeSync';
@@ -77,7 +79,6 @@ import useP2PActionFeedback from '../hooks/useP2PActionFeedback';
 import useP2PTradeAccessMemory from '../hooks/useP2PTradeAccessMemory';
 import useP2PTradeDeskNavigation from '../hooks/useP2PTradeDeskNavigation';
 import useP2PTradeWalletPromptFlow from '../hooks/useP2PTradeWalletPromptFlow';
-import useP2PRecurringOrderActions from '../hooks/useP2PRecurringOrderActions';
 import useTradeDeskViewModel from '../hooks/useTradeDeskViewModel';
 import useOtcSwapQuoteState from '../hooks/useOtcSwapQuoteState';
 import useOtcSwapPairSelections from '../hooks/useOtcSwapPairSelections';
@@ -86,18 +87,13 @@ import useOtcSwapRouteActions from '../hooks/useOtcSwapRouteActions';
 import useP2PTradeTerminalRouteEffects from '../hooks/useP2PTradeTerminalRouteEffects';
 import useP2PTradingBalances from '../hooks/useP2PTradingBalances';
 import useP2PTradeComposerModel from '../hooks/useP2PTradeComposerModel';
-import useP2PRecurringReceiveInputs from '../hooks/useP2PRecurringReceiveInputs';
-import useRecurringTradeV2Data from '../hooks/useRecurringTradeV2Data';
 import useOneOffTradeV2Data from '../hooks/useOneOffTradeV2Data';
 import useOtcTradeHistoryV2Data from '../hooks/useOtcTradeHistoryV2Data';
 import useP2PSyncQueue from '../hooks/useP2PSyncQueue';
 import useP2PTradeFundingPreflight from '../hooks/useP2PTradeFundingPreflight';
-import useP2PPrivateTradeEnrichment from '../hooks/useP2PPrivateTradeEnrichment';
 import useP2PTradeEntryNavigation from '../hooks/useP2PTradeEntryNavigation';
 import useTerminalAssetBalanceLabel from '../hooks/useTerminalAssetBalanceLabel';
 import usePrivateLiquidityWorkspaceData from '../hooks/usePrivateLiquidityWorkspaceData';
-import usePrivateLiquidityDailyPriceData from '../hooks/usePrivateLiquidityDailyPriceData';
-import usePrivateLiquiditySwapAction from '../hooks/usePrivateLiquiditySwapAction';
 import usePrivateLiquidityPositionAction from '../hooks/usePrivateLiquidityPositionAction';
 import usePrivateLiquidityHiddenIntentAction from '../hooks/usePrivateLiquidityHiddenIntentAction';
 import usePrivateLiquidityHiddenIntentOwnerData from '../hooks/usePrivateLiquidityHiddenIntentOwnerData';
@@ -108,7 +104,6 @@ import LinkTradeV2Terminal from './LinkTradeV2Terminal';
 import LinkTradeV2FillControls from './LinkTradeV2FillControls';
 import CounterTradeV2Controls from './CounterTradeV2Controls';
 import TradeBalanceDisclosureV2 from './TradeBalanceDisclosureV2';
-import type { TradeBalanceDisclosureV2Runtime } from '../../../lib/tradeBalanceDisclosureV2';
 import type { TradeBalanceDisclosureProtocol } from '../../../lib/currentP2PBinding';
 import CounterTradeV2Activity, { useCounterTradeV2Activity } from './CounterTradeV2Activity';
 import LinkTradeV2Activity, { useLinkTradeV2Activity } from './LinkTradeV2Activity';
@@ -122,11 +117,7 @@ import useVisualViewportKeyboardOpen from '../../../shared/hooks/useVisualViewpo
 import { useStoredWalletPreference } from '../../wallet/hooks/useStoredWalletPreference';
 import {
   buildWalletReadAccountsKey,
-  getTradeAccountPerspectiveAddress,
-  getWalletActionAccount,
-  getWalletOwnerAccount,
   resolveTradeActionWalletAddress as resolveTradeActionWalletAddressForScope,
-  type WalletReadAccount
 } from '../../../lib/walletAccountScope';
 import { type OtcSwapInputMode, type OtcSwapQuoteCandidate } from '../../../lib/otcSwapQuote';
 import {
@@ -143,12 +134,6 @@ import {
 import { resolveTradeAgentReadiness } from '../../../lib/tradeAgentReadiness';
 import { PRIVATE_LIQUIDITY_V2_DEPLOYMENT_CONFIG } from '../../../lib/privateLiquidityV2Deployment';
 import { findOtcV2Deployment, OTC_V2_DEPLOYMENT_CATALOG } from '../../../lib/otcV2DeploymentCatalog';
-import { buildPrivateLiquidityPairKey } from '../../../lib/privateLiquidity';
-import {
-  buildPrivateLiquidityDailyPriceDemoSeries,
-  derivePrivateLiquidityDailyPriceDemoSeed,
-  selectPrivateLiquidityDailyPricePresentation
-} from '../../../lib/privateLiquidityDailyPrice';
 import { buildPrivateLiquidityPositionToken } from '../../../lib/privateLiquidityPositionFlow';
 import { getAppHelpReadinessTopicId, type AppHelpReason } from '../../../lib/appHelpLaunch';
 import {
@@ -156,18 +141,12 @@ import {
   recordWalletTransactionFlowStage
 } from '../../../lib/walletTransactionFlow';
 import OtcOffersPanel from './OtcOffersPanel';
-import PrivateLiquiditySwapPanel, {
-  type PrivateLiquiditySwapHistoryRowView
-} from './PrivateLiquiditySwapPanel';
 import PrivateLiquidityWorkspace from './PrivateLiquidityWorkspace';
 import {
   canEditPublicTrade,
   filterAndSortTradeDesk,
-  getTradeTermsVisibility,
-  hasHydratedDirectTradeTerms,
   getSnapshotKey,
   readInitialTradeBrowserWalletId,
-  type RecurringTerminalActionSide,
   type TradeDeskSortMode,
   type TradeDeskTypeFilter
 } from '../../../lib/p2pTradeView';
@@ -179,13 +158,12 @@ import TradeAccessSettings from './TradeAccessSettings';
 import TradeActionConfirmModal from './TradeActionConfirmModal';
 import TradeAgentPanel from './TradeAgentPanel';
 import TradeCounterParentSummary from './TradeCounterParentSummary';
-import { DexViewTabs, TradeEntryModeTabs, TradeViewTabs } from './TradeDeskTabs';
+import { DexViewTabs, TradeViewTabs } from './TradeDeskTabs';
 import TradeMarketOverviewPanel from './TradeMarketOverviewPanel';
 import TradeMyTradesSection from './TradeMyTradesSection';
 import {
   type TradeOrderCardProps
 } from './TradeOrderLists';
-import TradeRecurringComposerPanel from './TradeRecurringComposerPanel';
 import {
   TradeTerminalHistoryRenderer,
   TradeTerminalRenderer,
@@ -210,15 +188,20 @@ import {
 import {
   EMPTY_STALE_TOKEN_ADDRESSES,
   OPEN_TERMINAL_LABEL,
+  PendingTradeRecoveryDisclosure,
   buildOtcV2DataScopeKey,
   buildMakerControlsKey,
   mergeOnboardInfoByAddress,
   onboardInfoEqual,
   renderP2PEmptyState,
+  isP2PParticipantReadPassPending,
+  selectTerminalBalance,
+  shouldLoadP2PTradeHistory,
   type MakerControlsSurface,
   type MyTradeGroupView,
   type P2PTradingPageProps,
   type TerminalFillInputSide,
+  type TerminalBalanceSelection,
   type TerminalReturnSurface,
   type TradeCreateMode,
   type TradeFilterRouteScope,
@@ -349,6 +332,8 @@ export default function P2PTradingPage({
   priceDisplayInverted,
   onPriceDisplayInvertedChange,
   sharedWalletSession,
+  onInitialOwnerDiscoverySettled,
+  onParticipantReadPassChange,
   linkTradeV2ReadContext,
   appHelpLaunchContext,
   onAppHelpLaunchConsumed,
@@ -423,7 +408,7 @@ export default function P2PTradingPage({
     () => sharedWalletSession?.sessionOnboardInfo ?? {}
   );
   const [tradeFeeModeSelection, setTradeFeeModeSelection] = useState<TradeFeeModeSelection>('coti');
-  const [tradeCreateMode, setTradeCreateMode] = useState<TradeCreateMode>('one-off');
+  const [, setTradeCreateMode] = useState<TradeCreateMode>('one-off');
   const [tradeVisibility, setTradeVisibility] = useState<TradeVisibility>('public');
   const [directTradeRecipient, setDirectTradeRecipient] = useState('');
   const [tradeOfferTokenSelection, setTradeOfferTokenSelection] = useState<TradeTokenPresetKey>(
@@ -436,6 +421,8 @@ export default function P2PTradingPage({
       ? TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS.privateQuote
       : PRIVATE_COTI_TOKEN_ADDRESS.toLowerCase()
   );
+  const [createBaseIsOffer, setCreateBaseIsOffer] = useState(true);
+  const [createPairEdited, setCreatePairEdited] = useState(false);
   const [swapSellTokenSelection, setSwapSellTokenSelection] = useState<TradeTokenPresetKey>(
     USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
       ? TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS.privateQuote
@@ -460,9 +447,6 @@ export default function P2PTradingPage({
     }
     setLocalSwapPriceDisplayInverted(next);
   }, [onPriceDisplayInvertedChange, swapPriceDisplayInverted]);
-  const recurringPriceDisplayInverted = swapPriceDisplayInverted;
-  const [privateLiquiditySlippageBps, setPrivateLiquiditySlippageBps] = useState(500);
-  const [privateLiquidityMinimumFillBps, setPrivateLiquidityMinimumFillBps] = useState(0);
   const [tradeOfferCustomTokenAddress, setTradeOfferCustomTokenAddress] = useState('');
   const [tradeRequestCustomTokenAddress, setTradeRequestCustomTokenAddress] = useState('');
   const [tradeOfferAmountInput, setTradeOfferAmountInput] = useState('');
@@ -470,27 +454,10 @@ export default function P2PTradingPage({
   const [tradePriceInput, setTradePriceInput] = useState('');
   const [tradePricingEditedFields, setTradePricingEditedFields] = useState<TradePricingField[]>([]);
   const [tradeHasNoExpiry, setTradeHasNoExpiry] = useState(false);
-  const [recurringBuyPriceInput, setRecurringBuyPriceInput] = useState('');
-  const [recurringSellPriceInput, setRecurringSellPriceInput] = useState('');
-  const [recurringHidePrivateAmounts, setRecurringHidePrivateAmounts] = useState(true);
-  const [editingRecurringOrder, setEditingRecurringOrder] = useState<TradeSnapshot | null>(null);
-  const [recurringAddBuyBudgetInput, setRecurringAddBuyBudgetInput] = useState('');
-  const [recurringAddSellInventoryInput, setRecurringAddSellInventoryInput] = useState('');
-  const [recurringBuyReceiveInput, setRecurringBuyReceiveInput] = useState('');
-  const [recurringSellReceiveInput, setRecurringSellReceiveInput] = useState('');
-  const [recurringBuyReceiveEditable, setRecurringBuyReceiveEditable] = useState(false);
-  const [recurringSellReceiveEditable, setRecurringSellReceiveEditable] = useState(false);
-  const [recurringRemoveBuyBudgetInput, setRecurringRemoveBuyBudgetInput] = useState('');
-  const [recurringRemoveSellInventoryInput, setRecurringRemoveSellInventoryInput] = useState('');
   const [tradeExpiryHoursInput, setTradeExpiryHoursInput] = useState(DEFAULT_TRADE_EXPIRY_HOURS);
   const [tradeHidePrivateLiquidity, setTradeHidePrivateLiquidity] = useState(true);
   const [tradeActionError, setTradeActionError] = useState('');
   const [creatingTrade, setCreatingTrade] = useState(false);
-  const [creatingRecurringOrder, setCreatingRecurringOrder] = useState(false);
-  const [createdRecurringOrderId, setCreatedRecurringOrderId] = useState<number | null>(null);
-  const [createdRecurringOrderLink, setCreatedRecurringOrderLink] = useState('');
-  const [recurringBuyFillInput, setRecurringBuyFillInput] = useState('');
-  const [recurringSellFillInput, setRecurringSellFillInput] = useState('');
   const [createdTradeId, setCreatedTradeId] = useState<number | null>(null);
   const [createdTradeLink, setCreatedTradeLink] = useState('');
   const [linkOwnerActionState, setLinkOwnerActionState] = useState<{ wallet: string; busy: boolean } | null>(null);
@@ -498,7 +465,6 @@ export default function P2PTradingPage({
   const [swapOrderLinkInput, setSwapOrderLinkInput] = useState('');
   const [swapPinnedTradeKey, setSwapPinnedTradeKey] = useState('');
   const [swapOrderLinkError, setSwapOrderLinkError] = useState('');
-  const [recurringTerminalSide, setRecurringTerminalSide] = useState<RecurringTerminalActionSide>('buy');
   const [terminalFillInputSide, setTerminalFillInputSide] = useState<TerminalFillInputSide>('pay');
   const [terminalPayInput, setTerminalPayInput] = useState('');
   const [terminalBuyInput, setTerminalBuyInput] = useState('');
@@ -560,9 +526,6 @@ export default function P2PTradingPage({
   const providerRef = useRef<Eip1193Provider | null>(initialSharedBrowserWallet?.browserProvider ?? null);
   const signerCacheRef = useRef<Record<string, TradeSigner>>({});
   const tradeLinkInputRef = useRef<HTMLInputElement | null>(null);
-  const terminalPrivateHistoryHydrationRef = useRef<Record<string, boolean>>({});
-  const terminalPublicStandardHistoryHydrationRef = useRef<Record<string, boolean>>({});
-  const terminalPublicRecurringHistoryHydrationRef = useRef<Record<string, boolean>>({});
 
   const tradingBrowserWalletState = resolveTradingBrowserWalletState({
     localBrowserProvider: providerRef.current,
@@ -589,9 +552,7 @@ export default function P2PTradingPage({
       ? sharedWalletSession.walletAddress
       : null;
   const privateLiquidityData = usePrivateLiquidityWorkspaceData({
-    enabled: route.view === 'pools' || (
-      route.view === 'swap' && route.swapVenue === 'private-liquidity'
-    ),
+    enabled: route.view === 'mine' && (route.privateLiquidityView === 'mine' || route.privateLiquidityView === 'intents'),
     config: PRIVATE_LIQUIDITY_V2_DEPLOYMENT_CONFIG,
     walletAddress: privateLiquidityWalletAddress,
     selectedPositionId: route.privateLiquidityPositionId
@@ -603,21 +564,11 @@ export default function P2PTradingPage({
     sharedWalletSession?.activeSignerSource === 'metamask' &&
     sharedWalletActions?.getPrivateLiquidityCapability
   );
-  const privateLiquidityOwnerData = usePrivateLiquidityOwnerData({
-    deployment: privateLiquidityData.deployment,
-    model: privateLiquidityData.model,
-    historyPages: privateLiquidityData.historyPages,
-    walletAddress: privateLiquidityWalletAddress,
-    walletReady: privateLiquidityWalletReady,
-    walletActions: sharedWalletActions
-  });
   const previousWalletKeyRef = useRef(walletKey);
   const activeWalletKeyRef = useRef(walletKey);
   activeWalletKeyRef.current = walletKey;
   const {
     forgetTradeAccessSecret,
-    knownPrivateLiquidityByTrade,
-    rememberPrivateTradeLiquidity,
     rememberTradeAccessSecret,
     resolveKnownTradeAccessSecret
   } = useP2PTradeAccessMemory({ walletKey });
@@ -642,6 +593,32 @@ export default function P2PTradingPage({
     );
   }, [onboardInfoByAddress, sharedWalletKey, sharedWalletSession?.sessionOnboardInfo, walletKey]);
   const walletHasAes = hasSessionAesKey(walletKey, effectiveOnboardInfoByAddress) || sharedWalletHasAes;
+  const privateLiquidityRuntimeScopeKey = PRIVATE_LIQUIDITY_V2_DEPLOYMENT_CONFIG.status === 'active'
+    ? buildBrowserWalletRuntimeScopeKey({
+        activeSignerSource: sharedWalletSession?.activeSignerSource,
+        deploymentFingerprint: PRIVATE_LIQUIDITY_V2_DEPLOYMENT_CONFIG.fingerprint,
+        expectedChainId: BigInt(PRIVATE_LIQUIDITY_V2_DEPLOYMENT_CONFIG.manifest.chainId),
+        session: sharedWalletSession ? {
+          address: sharedWalletSession.walletAddress,
+          chainId: sharedWalletSession.chainId,
+          walletId: sharedWalletSession.browserWalletId,
+          provider: sharedWalletSession.browserProvider ?? undefined
+        } : null,
+        walletAddress: privateLiquidityWalletAddress ?? ''
+      })
+    : null;
+  const privateLiquidityPrivacyReadScopeRef = useRef<BrowserWalletPrivacyReadScope | null>(null);
+  privateLiquidityPrivacyReadScopeRef.current = resolveBrowserWalletPrivacyReadScope(
+    privateLiquidityRuntimeScopeKey, sharedWalletHasAes, privateLiquidityPrivacyReadScopeRef.current);
+  const privateLiquidityOwnerData = usePrivateLiquidityOwnerData({
+    deployment: privateLiquidityData.deployment,
+    model: privateLiquidityData.model,
+    historyPages: privateLiquidityData.historyPages,
+    walletAddress: privateLiquidityWalletAddress,
+    walletReady: privateLiquidityWalletReady,
+    walletActions: sharedWalletActions,
+    privacyReadScope: privateLiquidityPrivacyReadScopeRef.current
+  });
   const walletReadAccounts = useMemo(
     () =>
       sharedWalletSession?.walletReadAccounts?.length
@@ -664,16 +641,6 @@ export default function P2PTradingPage({
     () => buildWalletReadAccountsKey(walletReadAccounts),
     [walletReadAccounts]
   );
-  const walletOwnerAccount = useMemo(() => getWalletOwnerAccount(walletReadAccounts), [walletReadAccounts]);
-  const ownerWalletAddress = walletOwnerAccount?.address ?? '';
-  const ownerWalletKey = walletOwnerAccount?.key ?? '';
-  const ownerWalletCanReadPrivate = Boolean(
-    walletOwnerAccount?.canReadPrivate && ownerWalletKey && ownerWalletKey !== walletKey
-  );
-  const {
-    knownPrivateLiquidityByTrade: knownOwnerPrivateLiquidityByTrade,
-    rememberPrivateTradeLiquidity: rememberOwnerPrivateTradeLiquidity
-  } = useP2PTradeAccessMemory({ walletKey: ownerWalletCanReadPrivate ? ownerWalletKey : '' });
   const activeWalletScopedSnapAesState = resolveWalletScopedSnapAesState(
     walletScopedSnapAesState,
     walletKey,
@@ -740,7 +707,6 @@ export default function P2PTradingPage({
   }, [route.linkV2Reference, route.tradeId, route.view]);
   const routeTradeId = route.tradeId;
   const routeEscrowContract = route.escrowContract;
-  const routeIsRecurringOrder = routeEscrowContract?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase();
   const routeAccessSecret = route.accessSecret;
   const flushQueuedTradeDataRefreshRef = useRef<() => void>(() => {});
   const storedRouteAccessSecret =
@@ -1080,96 +1046,6 @@ export default function P2PTradingPage({
     ]
   );
 
-  const getOwnerTradeSigner = useCallback(
-    (requireAes: boolean) => getTradeSignerForWallet(ownerWalletAddress, requireAes),
-    [getTradeSignerForWallet, ownerWalletAddress]
-  );
-
-  const { enrichMakerPrivateProgress: enrichActiveMakerPrivateProgress } = useP2PPrivateTradeEnrichment({
-    getTradeSigner,
-    knownPrivateLiquidityByTrade,
-    rememberPrivateTradeLiquidity,
-    rememberTradeAccessSecret,
-    resolveKnownTradeAccessSecret,
-    walletAddress,
-    walletHasAes,
-    walletKey
-  });
-
-  const { enrichMakerPrivateProgress: enrichOwnerMakerPrivateProgress } = useP2PPrivateTradeEnrichment({
-    getTradeSigner: getOwnerTradeSigner,
-    knownPrivateLiquidityByTrade: knownOwnerPrivateLiquidityByTrade,
-    rememberPrivateTradeLiquidity: rememberOwnerPrivateTradeLiquidity,
-    rememberTradeAccessSecret,
-    resolveKnownTradeAccessSecret,
-    walletAddress: ownerWalletAddress,
-    walletHasAes: ownerWalletCanReadPrivate,
-    walletKey: ownerWalletKey
-  });
-
-  const actionWalletAccount = useMemo(() => getWalletActionAccount(walletReadAccounts), [walletReadAccounts]);
-  const resolvePrivateReadAccount = useCallback(
-    (snapshot: TradeSnapshot, account?: WalletReadAccount): WalletReadAccount | null => {
-      if (account) {
-        return account;
-      }
-
-      const perspectiveAddress = resolveTerminalHistoryWallet(snapshot, { walletAddress: walletKey, walletReadAccounts }).walletAddress ||
-        getTradeAccountPerspectiveAddress(snapshot, {
-          actionAccount: actionWalletAccount,
-          ownerAccount: walletOwnerAccount
-        });
-      const perspectiveKey = perspectiveAddress.trim().toLowerCase();
-      if (ownerWalletKey && perspectiveKey === ownerWalletKey) {
-        return walletOwnerAccount ?? null;
-      }
-      if (walletKey && perspectiveKey === walletKey) {
-        return actionWalletAccount;
-      }
-      return actionWalletAccount ?? walletOwnerAccount ?? null;
-    },
-    [actionWalletAccount, ownerWalletKey, walletKey, walletOwnerAccount, walletReadAccounts]
-  );
-  const enrichMakerPrivateProgress = useCallback(
-    (snapshot: TradeSnapshot, forceReveal = false, account?: WalletReadAccount): Promise<TradeSnapshot> => {
-      const privateReadAccount = resolvePrivateReadAccount(snapshot, account);
-      const attachReadAccount = (enrichedSnapshot: TradeSnapshot): TradeSnapshot => {
-        if (!privateReadAccount) {
-          return enrichedSnapshot;
-        }
-        const accountMatch = {
-          address: privateReadAccount.address,
-          role: privateReadAccount.role
-        };
-        return {
-          ...enrichedSnapshot,
-          accountAddress: privateReadAccount.address,
-          accountRole: privateReadAccount.role,
-          accountMatches: [
-            ...(enrichedSnapshot.accountMatches ?? []).filter(
-              (match) => match.address.toLowerCase() !== privateReadAccount.key
-            ),
-            accountMatch
-          ]
-        };
-      };
-      if (
-        privateReadAccount?.key === ownerWalletKey &&
-        ownerWalletKey !== walletKey
-      ) {
-        return enrichOwnerMakerPrivateProgress(snapshot, forceReveal).then(attachReadAccount);
-      }
-      return enrichActiveMakerPrivateProgress(snapshot, forceReveal).then(attachReadAccount);
-    },
-    [
-      enrichActiveMakerPrivateProgress,
-      enrichOwnerMakerPrivateProgress,
-      ownerWalletKey,
-      resolvePrivateReadAccount,
-      walletKey
-    ]
-  );
-
   const walletBalanceRefreshSessionKey = useMemo(
     () =>
       [
@@ -1182,9 +1058,6 @@ export default function P2PTradingPage({
   );
 
   const tradeFeeEscrowContract = useMemo(() => {
-    if ((tradeCreateMode === 'recurring' && !editingTrade && !counterParentTrade) || editingRecurringOrder) {
-      return RECURRING_OTC_CONTRACT_ADDRESS;
-    }
     if (editingTrade?.escrowContract) {
       return editingTrade.escrowContract;
     }
@@ -1200,18 +1073,13 @@ export default function P2PTradingPage({
     return TRADE_ESCROW_CONTRACT_ADDRESS;
   }, [
     counterParentTrade,
-    editingRecurringOrder,
     editingTrade,
-    tradeCreateMode,
     tradeHidePrivateLiquidity,
     tradeVisibility
   ]);
 
   const tradeFeeEscrowContractLabel = useMemo(() => {
     const normalizedContract = tradeFeeEscrowContract.toLowerCase();
-    if (normalizedContract === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
-      return 'Recurring contract';
-    }
     if (normalizedContract === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
       return 'Private escrow';
     }
@@ -1223,9 +1091,6 @@ export default function P2PTradingPage({
     }
     return 'Escrow';
   }, [tradeFeeEscrowContract]);
-  const tradeFeeEscrowContractTitleLabel = tradeFeeEscrowContractLabel.toLowerCase().includes('contract')
-    ? tradeFeeEscrowContractLabel
-    : `${tradeFeeEscrowContractLabel} contract`;
 
   const {
     clearWalletBalances,
@@ -1254,41 +1119,36 @@ export default function P2PTradingPage({
     walletHasAes,
     walletKey
   });
-  const ensureRecurringV2TokenInfo = useCallback(
+  const ensureOtcV2TokenInfo = useCallback(
     // V2 list refreshes are background reconciliation. Keep the last verified
     // token metadata visible while it is revalidated so order cards do not
     // disappear and reappear on every sync cycle.
     (request: Parameters<typeof loadCustomTokenInfo>[0]) => loadCustomTokenInfo(
       request,
-      OTC_V2_BACKGROUND_TOKEN_INFO_LOAD_OPTIONS
+      { ...OTC_V2_BACKGROUND_TOKEN_INFO_LOAD_OPTIONS, metadataOnly: true }
     ),
     [loadCustomTokenInfo]
   );
   const linkActivity = useLinkTradeV2Activity({ runtime: sharedWalletSession?.otcV2ActionRuntime?.link, ownerAddress: walletKey,
-    enabled: route.view === 'mine' && walletHasAes, ensureTokenInfo: ensureRecurringV2TokenInfo });
+    enabled: route.view === 'mine' && walletHasAes, ensureTokenInfo: ensureOtcV2TokenInfo });
   const counterActivity = useCounterTradeV2Activity({ runtime: sharedWalletSession?.otcV2ActionRuntime?.counter, ownerAddress: walletKey,
-    enabled: route.view === 'mine' && walletHasAes, ensureTokenInfo: ensureRecurringV2TokenInfo });
+    enabled: route.view === 'mine' && walletHasAes, ensureTokenInfo: ensureOtcV2TokenInfo });
+  const otcV2SetupError = sharedWalletSession?.otcV2RuntimeError ?? '';
+  const initializingOtcV2Actions = Boolean(sharedWalletSession && walletKey && onCotiNetwork &&
+    OTC_V2_DEPLOYMENT_CATALOG.status === 'active' && !sharedWalletSession.otcV2ActionRuntime && !otcV2SetupError);
+  const participantRuntime = sharedWalletSession?.otcV2ActionRuntime ?? null;
+  // Each activity hook reads one bounded step before canonical history can proceed.
+  const participantReadPassPending = isP2PParticipantReadPassPending({
+    selected: route.view === 'mine', privacyReady: walletHasAes,
+    setupPending: initializingOtcV2Actions, setupError: otcV2SetupError,
+    sources: [participantRuntime?.link ? linkActivity : null, participantRuntime?.counter ? counterActivity : null]
+  });
   const otcV2DataScopeKey = buildOtcV2DataScopeKey({
     deploymentFingerprint: OTC_V2_DEPLOYMENT_CATALOG.status === 'active'
       ? OTC_V2_DEPLOYMENT_CATALOG.fingerprint
       : OTC_V2_DEPLOYMENT_CATALOG.status,
     walletAddress,
     walletKey
-  });
-  const {
-    activeRecurringV2Trades,
-    loadingRecurringV2Trades,
-    myRecurringV2Trades,
-    recurringV2TradesError,
-    refreshRecurringV2Trades
-  } = useRecurringTradeV2Data({
-    runtime: sharedWalletSession?.otcV2ActionRuntime,
-    walletAddress,
-    dataScopeKey: otcV2DataScopeKey,
-    privateReadsEnabled: walletHasAes,
-    includePublicDiscovery: route.view !== 'mine',
-    tokenInfoByKey: customTradeTokenInfoByAddress,
-    ensureTokenInfo: ensureRecurringV2TokenInfo
   });
   const routeOneOffReference = useMemo(() => {
     if (routeTradeId === null || !routeEscrowContract || !chainId) return undefined;
@@ -1300,6 +1160,9 @@ export default function P2PTradingPage({
   const {
     activeOneOffV2Trades,
     loadingOneOffV2Trades,
+    loadingPublicOneOffV2Trades,
+    oneOffV2DiscoverySettled,
+    oneOffV2PublicDiscoverySettled,
     myOneOffV2Trades,
     oneOffV2TradesError,
     refreshOneOffV2Trades,
@@ -1308,36 +1171,44 @@ export default function P2PTradingPage({
     loadingReferencedTrade,
     readReferencedTrade
   } = useOneOffTradeV2Data({
-    runtime: sharedWalletSession?.otcV2ActionRuntime,
+    runtime: sharedWalletSession?.otcV2ReadRuntime ?? sharedWalletSession?.otcV2ActionRuntime,
     walletAddress,
     dataScopeKey: otcV2DataScopeKey,
     privateReadsEnabled: walletHasAes,
     includePublicDiscovery: route.view !== 'mine',
+    onInitialDiscoverySettled: onInitialOwnerDiscoverySettled,
     tokenInfoByKey: customTradeTokenInfoByAddress,
-    ensureTokenInfo: ensureRecurringV2TokenInfo,
+    ensureTokenInfo: ensureOtcV2TokenInfo,
     reference: routeOneOffReference
   });
+  const selectedMineHistoryContract = route.view === 'mine'
+    ? myOneOffV2Trades
+      .find(trade => getSnapshotKey(trade) === selectedMyTradeDetailKey)?.escrowContract
+    : undefined;
   const historyContractAddresses = useMemo(() => {
     const catalog = OTC_V2_DEPLOYMENT_CATALOG;
     if (catalog.status !== 'active') return undefined;
-    // An explicit old order link can still load its recovery history. Normal views omit legacy scopes.
+    // Default discovery stays current. An old link or selected owner order
+    // loads that exact deployment's history without a market-wide backfill.
     if (routeOneOffReference) return [routeOneOffReference.contractAddress];
-    if (route.view === 'trade' && routeEscrowContract) {
-      const deployment = findOtcV2Deployment(catalog, catalog.chainId, routeEscrowContract);
-      if (deployment?.protocol === 'recurring-v2' || deployment?.protocol === 'private-recurring-v2') {
-        return [deployment.manifest.contractAddress];
-      }
-    }
+    if (selectedMineHistoryContract) return [selectedMineHistoryContract];
     return (['standard-v2', 'private-v2', 'direct-v2'] as const).map(protocol =>
       catalog.deployments[protocol].manifest.contractAddress);
-  }, [route.view, routeEscrowContract, routeOneOffReference]);
+  }, [route.view, routeEscrowContract, routeOneOffReference, selectedMineHistoryContract]);
   const {
     loadingOtcTradeHistoryV2,
+    initialOtcTradeHistoryV2Pending,
     otcTradeHistoryV2Error,
     otcTradeHistoryV2LifecycleEvents,
     otcTradeHistoryV2Rows,
+    hasMoreOtcTradeHistoryV2,
+    completeOtcTradeHistoryV2,
+    loadOlderOtcTradeHistoryV2,
     refreshOtcTradeHistoryV2
-  } = useOtcTradeHistoryV2Data(sharedWalletSession?.otcV2Runtime, otcV2DataScopeKey, historyContractAddresses);
+  } = useOtcTradeHistoryV2Data(sharedWalletSession?.otcV2Runtime, otcV2DataScopeKey, historyContractAddresses, walletHasAes,
+    shouldLoadP2PTradeHistory({ view: route.view, publicDiscoverySettled: oneOffV2PublicDiscoverySettled,
+      ownerDiscoverySettled: oneOffV2DiscoverySettled, selectedTrade: Boolean(routeOneOffReference || selectedMineHistoryContract),
+      setupFailed: Boolean(otcV2SetupError), participantReadPassPending }));
   const {
     combinedBalanceByAssetKey,
     pWispFooterBalanceState,
@@ -1407,7 +1278,6 @@ export default function P2PTradingPage({
     clearWalletBalances();
     setCounterParentTrade(null);
     setEditingTrade(null);
-    setEditingRecurringOrder(null);
     setSelectedMyTradeDetailKey('');
     setTerminalHistorySheetKey('');
     setExpandedMakerControls({});
@@ -1418,9 +1288,6 @@ export default function P2PTradingPage({
     setHistoryLifecycleTxHashes({});
     setHistoryTransactionTxHashes({});
     setHistoryTransactionTimestamps({});
-    terminalPrivateHistoryHydrationRef.current = {};
-    terminalPublicStandardHistoryHydrationRef.current = {};
-    terminalPublicRecurringHistoryHydrationRef.current = {};
     const sharedWalletKey = sharedWalletSession?.walletAddress.trim().toLowerCase() ?? '';
     const sharedHasNextWalletAes = Boolean(
       walletKey &&
@@ -1486,53 +1353,13 @@ export default function P2PTradingPage({
     walletAddress
   });
 
-  const isOtcV2Contract = useCallback((contract?: string): boolean => Boolean(
-    contract &&
-    OTC_V2_DEPLOYMENT_CATALOG.status === 'active' &&
-    findOtcV2Deployment(OTC_V2_DEPLOYMENT_CATALOG, OTC_V2_DEPLOYMENT_CATALOG.chainId, contract)
-  ), []);
-  const routeUsesOtcV2 = isOtcV2Contract(routeEscrowContract);
-
-  const {
-    detailTrade: legacyDetailTrade,
-    detailTradeError: legacyDetailTradeError,
-    hasActiveListRefresh,
-    loadingDetailTrade: legacyLoadingDetailTrade,
-    loadingMyTrades: legacyLoadingMyTrades,
-    loadingPublicTrades: legacyLoadingPublicTrades,
-    mergeTradeSnapshot,
-    myTrades: legacyMyTrades,
-    myTradesError: legacyMyTradesError,
-    publicTrades: legacyPublicTrades,
-    publicTradesError: legacyPublicTradesError,
-    readTradeDetail: legacyReadTradeDetail,
-    refreshMyTrades: legacyRefreshMyTrades,
-    refreshPublicTrades: legacyRefreshPublicTrades,
-    refreshTradeDetail: legacyRefreshTradeDetail,
-    setDetailTrade,
-    setDetailTradeError,
-    tradeAccessBlocked
-  } = useP2PTradeData({
-    enrichMakerPrivateProgress,
-    privateRewardTokenDecimals,
-    privateRewardTokenSymbol,
-    resolvedRouteAccessSecret,
-    rewardTokenDecimals,
-    rewardTokenSymbol,
-    routeError,
-    routeEscrowContract,
-    routeTradeId: routeUsesOtcV2 ? null : routeTradeId,
-    routeView,
-    syncSessionKey: [
-      walletKey || 'no-wallet',
-      walletReadAccountsKey || 'single-wallet',
-      chainId ?? 'no-chain',
-      selectedWalletId || 'browser'
-    ].join(':'),
-    walletAddress,
-    walletKey,
-    walletReadAccounts
-  });
+  const isSupportedOtcV2Contract = useCallback((contract?: string): boolean => {
+    if (!contract || OTC_V2_DEPLOYMENT_CATALOG.status !== 'active') return false;
+    const deployment = findOtcV2Deployment(OTC_V2_DEPLOYMENT_CATALOG, OTC_V2_DEPLOYMENT_CATALOG.chainId, contract);
+    return Boolean(deployment && ['standard-v2', 'private-v2', 'direct-v2'].includes(deployment.protocol));
+  }, []);
+  const routeUsesOtcV2 = isSupportedOtcV2Contract(routeEscrowContract);
+  const routeHasUnsupportedContract = Boolean(routeEscrowContract && !routeUsesOtcV2);
 
   const mergeExactTradeSnapshots = useCallback((...groups: readonly TradeSnapshot[][]): TradeSnapshot[] => {
     const byKey = new Map<string, TradeSnapshot>();
@@ -1541,10 +1368,7 @@ export default function P2PTradingPage({
     }
     return Array.from(byKey.values());
   }, []);
-  const discoveredMyTrades = useMemo(
-    () => mergeExactTradeSnapshots(legacyMyTrades, myRecurringV2Trades, myOneOffV2Trades),
-    [legacyMyTrades, mergeExactTradeSnapshots, myOneOffV2Trades, myRecurringV2Trades]
-  );
+  const discoveredMyTrades = myOneOffV2Trades;
   const myTrades = useMemo(
     () => approvedOffersDesignQa
       ? mergeExactTradeSnapshots(
@@ -1560,78 +1384,75 @@ export default function P2PTradingPage({
       walletAddress
     ]
   );
-  const publicTrades = useMemo(
-    () => mergeExactTradeSnapshots(legacyPublicTrades, activeRecurringV2Trades, activeOneOffV2Trades),
-    [activeOneOffV2Trades, activeRecurringV2Trades, legacyPublicTrades, mergeExactTradeSnapshots]
-  );
+  const publicTrades = activeOneOffV2Trades;
   const routeV2Trade = useMemo(() => {
     if (routeTradeId === null || !routeEscrowContract) return null;
     const key = buildTradeSnapshotKey(routeTradeId, routeEscrowContract);
-    return [...myRecurringV2Trades, ...activeRecurringV2Trades, ...myOneOffV2Trades, ...activeOneOffV2Trades].find(
+    return [...myOneOffV2Trades, ...activeOneOffV2Trades].find(
       (snapshot) => buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract) === key
     ) ?? null;
-  }, [activeOneOffV2Trades, activeRecurringV2Trades, myOneOffV2Trades, myRecurringV2Trades, routeEscrowContract, routeTradeId]);
+  }, [activeOneOffV2Trades, myOneOffV2Trades, routeEscrowContract, routeTradeId]);
   const approvedOffersQaDetailTrade = approvedOffersDesignQa && routeTradeId !== null
     ? approvedOffersQaCandidates.find((candidate) => candidate.tradeId === routeTradeId)?.trade ?? null
     : null;
-  const detailTrade = approvedOffersQaDetailTrade ?? (routeUsesOtcV2 ? (routeOneOffReference ? referencedTrade : routeV2Trade) : legacyDetailTrade);
-  const otcV2SetupError = sharedWalletSession?.otcV2RuntimeError ?? '';
-  const otcV2TradesError = otcV2SetupError || oneOffV2TradesError || recurringV2TradesError;
+  const selectedDetailTrade = approvedOffersQaDetailTrade ?? (routeUsesOtcV2 ? (routeOneOffReference ? referencedTrade : routeV2Trade) : null);
+  const detailTradeScopeKey = [walletKey, walletReadAccountsKey, walletHasAes ? 'unlocked' : 'locked', routeEscrowContract?.toLowerCase() ?? '', routeTradeId ?? '', selectedMyTradeDetailKey].join(':');
+  const [detailTradeOverride, setDetailTradeOverride] = useState<{ scope: string; snapshot: TradeSnapshot } | null>(null);
+  const detailTrade = detailTradeOverride?.scope === detailTradeScopeKey
+    ? mergeTradeSnapshotEnrichment(selectedDetailTrade ?? detailTradeOverride.snapshot, detailTradeOverride.snapshot, walletKey)
+    : selectedDetailTrade;
+  const setDetailTrade = useCallback((update: SetStateAction<TradeSnapshot | null>) => {
+    setDetailTradeOverride(current => {
+      const prior = current?.scope === detailTradeScopeKey ? current.snapshot : selectedDetailTrade;
+      const snapshot = typeof update === 'function' ? update(prior) : update;
+      return snapshot ? { scope: detailTradeScopeKey, snapshot } : null;
+    });
+  }, [detailTradeScopeKey, selectedDetailTrade]);
+  const mergeTradeSnapshot = useCallback((snapshot: TradeSnapshot) => {
+    setDetailTrade(current => mergeTradeSnapshotEnrichment(snapshot, current, walletKey));
+  }, [setDetailTrade, walletKey]);
+  const [pageDetailTradeError, setPageDetailTradeError] = useState('');
+  useEffect(() => setPageDetailTradeError(''), [detailTradeScopeKey]);
+  const otcV2TradesError = otcV2SetupError || oneOffV2TradesError;
   const initializingOtcV2History = Boolean(sharedWalletSession && walletKey && onCotiNetwork &&
     OTC_V2_DEPLOYMENT_CATALOG.status === 'active' && !sharedWalletSession.otcV2Runtime && !otcV2SetupError);
-  const initializingOtcV2Actions = Boolean(sharedWalletSession && walletKey && onCotiNetwork &&
-    OTC_V2_DEPLOYMENT_CATALOG.status === 'active' && !sharedWalletSession.otcV2ActionRuntime && !otcV2SetupError);
-  const loadingOtcV2Trades = initializingOtcV2History || initializingOtcV2Actions || loadingOneOffV2Trades || loadingRecurringV2Trades;
-  const detailTradeError = approvedOffersQaDetailTrade
+  const initializingOtcV2Reads = initializingOtcV2Actions && !sharedWalletSession?.otcV2ReadRuntime;
+  const loadingOtcV2Trades = initializingOtcV2History || initializingOtcV2Reads || loadingOneOffV2Trades;
+  const routeUnsupportedError = routeHasUnsupportedContract
+    ? 'This trade uses a contract that this App does not support.'
+    : route.tradeMode === 'recurring' ? 'Recurring orders are not supported in this App.' : '';
+  const detailTradeError = routeUnsupportedError || (approvedOffersQaDetailTrade
     ? ''
-    : routeUsesOtcV2 ? (otcV2SetupError || (routeOneOffReference ? referencedTradeError : otcV2TradesError)) : legacyDetailTradeError;
+    : routeUsesOtcV2 ? (otcV2SetupError || (routeOneOffReference ? referencedTradeError : otcV2TradesError)) : routeError || pageDetailTradeError);
+  const setDetailTradeError = setPageDetailTradeError;
   const loadingDetailTrade = approvedOffersQaDetailTrade
     ? false
-    : routeUsesOtcV2 ? (!otcV2SetupError && (routeOneOffReference ? loadingReferencedTrade : loadingOtcV2Trades)) : legacyLoadingDetailTrade;
-  const loadingMyTrades = legacyLoadingMyTrades || loadingOtcV2Trades;
-  const loadingPublicTrades = legacyLoadingPublicTrades || loadingOtcV2Trades;
-  const myTradesError = legacyMyTradesError || otcV2TradesError;
-  const publicTradesError = legacyPublicTradesError || otcV2TradesError;
-  const refreshMyTrades = useCallback(async (options?: Parameters<typeof legacyRefreshMyTrades>[0]) => {
+    : routeUsesOtcV2 ? (!otcV2SetupError && (routeOneOffReference ? loadingReferencedTrade : loadingOtcV2Trades)) : false;
+  const loadingMyTrades = loadingOtcV2Trades;
+  const loadingPublicTrades = initializingOtcV2Reads || loadingPublicOneOffV2Trades;
+  const foregroundReadPassPending = participantReadPassPending ||
+    (route.view === 'mine' && walletHasAes && initialOtcTradeHistoryV2Pending);
+  useEffect(() => {
+    onParticipantReadPassChange?.(participantRuntime, foregroundReadPassPending);
+    return () => onParticipantReadPassChange?.(participantRuntime, false);
+  }, [onParticipantReadPassChange, participantRuntime, foregroundReadPassPending]);
+  const myTradesError = otcV2TradesError;
+  const publicTradesError = otcV2TradesError;
+  const refreshMyTrades = useCallback(async () => {
     refreshOneOffV2Trades();
-    refreshRecurringV2Trades();
     refreshOtcTradeHistoryV2();
-    await legacyRefreshMyTrades(options);
-  }, [legacyRefreshMyTrades, refreshOneOffV2Trades, refreshOtcTradeHistoryV2, refreshRecurringV2Trades]);
-  const refreshPublicTrades = useCallback(async (options?: Parameters<typeof legacyRefreshPublicTrades>[0]) => {
+  }, [refreshOneOffV2Trades, refreshOtcTradeHistoryV2]);
+  const refreshPublicTrades = useCallback(async () => {
     refreshOneOffV2Trades();
-    refreshRecurringV2Trades();
-    await legacyRefreshPublicTrades(options);
-  }, [legacyRefreshPublicTrades, refreshOneOffV2Trades, refreshRecurringV2Trades]);
+  }, [refreshOneOffV2Trades]);
   const readTradeDetail = useCallback(async (tradeId: number, escrowContract?: string) => {
-    if (isOtcV2Contract(escrowContract)) {
-      const deployment = OTC_V2_DEPLOYMENT_CATALOG.status === 'active'
-        ? findOtcV2Deployment(OTC_V2_DEPLOYMENT_CATALOG, OTC_V2_DEPLOYMENT_CATALOG.chainId, escrowContract!) : undefined;
-      if (deployment && ['standard-v2', 'private-v2', 'direct-v2'].includes(deployment.protocol)) {
-        return readReferencedTrade({ chainId: String(chainId), contractAddress: escrowContract!, orderId: String(tradeId) });
-      }
-      const key = buildTradeSnapshotKey(tradeId, escrowContract);
-      return [...myRecurringV2Trades, ...activeRecurringV2Trades, ...myOneOffV2Trades, ...activeOneOffV2Trades].find(
-        (snapshot) => buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract) === key
-      ) ?? null;
-    }
-    return legacyReadTradeDetail(tradeId, escrowContract);
-  }, [activeOneOffV2Trades, activeRecurringV2Trades, chainId, isOtcV2Contract, legacyReadTradeDetail, myOneOffV2Trades, myRecurringV2Trades, readReferencedTrade]);
-  const refreshTradeDetail = useCallback(async (
-    tradeId: number,
-    escrowContract?: string,
-    options?: Parameters<typeof legacyRefreshTradeDetail>[2]
-  ) => {
-    if (isOtcV2Contract(escrowContract)) {
-      const deployment = OTC_V2_DEPLOYMENT_CATALOG.status === 'active'
-        ? findOtcV2Deployment(OTC_V2_DEPLOYMENT_CATALOG, OTC_V2_DEPLOYMENT_CATALOG.chainId, escrowContract!) : undefined;
-      if (deployment && ['standard-v2', 'private-v2', 'direct-v2'].includes(deployment.protocol)) return readTradeDetail(tradeId, escrowContract);
-      refreshOneOffV2Trades();
-      refreshRecurringV2Trades();
-      return readTradeDetail(tradeId, escrowContract);
-    }
-    return legacyRefreshTradeDetail(tradeId, escrowContract, options);
-  }, [chainId, isOtcV2Contract, legacyRefreshTradeDetail, readTradeDetail, refreshOneOffV2Trades, refreshRecurringV2Trades]);
+    if (!isSupportedOtcV2Contract(escrowContract) || !chainId) return null;
+    return readReferencedTrade({ chainId: String(chainId), contractAddress: escrowContract!, orderId: String(tradeId) });
+  }, [chainId, isSupportedOtcV2Contract, readReferencedTrade]);
+  const refreshTradeDetail = useCallback(async (tradeId: number, escrowContract?: string) => {
+    if (!isSupportedOtcV2Contract(escrowContract)) return null;
+    return readTradeDetail(tradeId, escrowContract);
+  }, [isSupportedOtcV2Contract, readTradeDetail]);
 
   const openPublicTradeCount = publicTrades.filter((trade) => trade.status === 'open').length;
 
@@ -1687,7 +1508,6 @@ export default function P2PTradingPage({
 
   const {
     clearSwapPinnedOrder,
-    flipSwapTokens,
     openSwapOrderFromInput,
     updateSwapOrderLinkInput
   } = useOtcSwapRouteActions({
@@ -1727,12 +1547,9 @@ export default function P2PTradingPage({
     rememberTradeAccessSecret,
     resolveKnownTradeAccessSecret,
     routeAccessSecret,
-    routeEscrowContract,
-    routeTradeId: routeUsesOtcV2 ? null : routeTradeId,
+    routeEscrowContract: routeUsesOtcV2 ? routeEscrowContract : undefined,
+    routeTradeId: routeUsesOtcV2 ? routeTradeId : null,
     routeView: route.view,
-    setRecurringBuyFillInput,
-    setRecurringSellFillInput,
-    setRecurringTerminalSide,
     setTerminalBuyInput,
     setTerminalFillInputSide,
     setTerminalHistorySheetKey,
@@ -1750,11 +1567,6 @@ export default function P2PTradingPage({
     swapSellTokenKey,
     swapTokenOptions,
     tradeComposerModel,
-    updateRecurringBuyPriceInput,
-    updateRecurringBuyReversePriceInput,
-    updateRecurringSellPriceInput,
-    updateRecurringSellReversePriceInput,
-    updateSwapSellAmountInput,
     updateTradeOfferAmountInput,
     updateTradePriceInput,
     updateTradeRequestAmountInput,
@@ -1773,8 +1585,6 @@ export default function P2PTradingPage({
     rewardTokenBalanceWei,
     rewardTokenDecimals,
     rewardTokenSymbol,
-    setRecurringBuyPriceInput,
-    setRecurringSellPriceInput,
     setSwapBuyAmountInput,
     setSwapBuyTokenSelection,
     setSwapInputMode,
@@ -1815,65 +1625,6 @@ export default function P2PTradingPage({
     }),
     [privateLiquidityTokenOptions, resolveSwapTokenSelection]
   );
-  const [privateLiquidityDailyPricePairKey, setPrivateLiquidityDailyPricePairKey] = useState('');
-  const privateLiquidityDailyPriceMarket = useMemo(() => {
-    const markets = privateLiquidityData.model?.markets ?? [];
-    return markets.find((market) => market.pairKey === privateLiquidityDailyPricePairKey) ?? markets[0];
-  }, [privateLiquidityDailyPricePairKey, privateLiquidityData.model]);
-  const privateLiquidityDailyPriceFallbackTokens = useMemo(
-    () => [...privateLiquidityPositionTokens]
-      .sort((left, right) => BigInt(left.address) < BigInt(right.address) ? -1 : 1)
-      .slice(0, 2),
-    [privateLiquidityPositionTokens]
-  );
-  const privateLiquidityDailyPriceBaseToken = privateLiquidityDailyPriceMarket
-    ? privateLiquidityPositionTokens.find((token) => token.address === privateLiquidityDailyPriceMarket.baseToken)
-    : privateLiquidityDailyPriceFallbackTokens[0];
-  const privateLiquidityDailyPriceQuoteToken = privateLiquidityDailyPriceMarket
-    ? privateLiquidityPositionTokens.find((token) => token.address === privateLiquidityDailyPriceMarket.quoteToken)
-    : privateLiquidityDailyPriceFallbackTokens[1];
-  const privateLiquidityDailyPriceResolvedPairKey = useMemo(() => {
-    if (privateLiquidityDailyPriceMarket) return privateLiquidityDailyPriceMarket.pairKey;
-    if (!privateLiquidityDailyPriceBaseToken || !privateLiquidityDailyPriceQuoteToken) return undefined;
-    try {
-      return buildPrivateLiquidityPairKey(
-        privateLiquidityDailyPriceBaseToken.address,
-        privateLiquidityDailyPriceQuoteToken.address
-      );
-    } catch {
-      return undefined;
-    }
-  }, [
-    privateLiquidityDailyPriceBaseToken,
-    privateLiquidityDailyPriceMarket,
-    privateLiquidityDailyPriceQuoteToken
-  ]);
-  const privateLiquidityDailyPriceData = usePrivateLiquidityDailyPriceData({
-    enabled: route.view === 'pools' && (route.privateLiquidityView ?? 'discover') === 'discover',
-    pairKey: privateLiquidityDailyPriceResolvedPairKey,
-    baseTokenDecimals: privateLiquidityDailyPriceBaseToken?.decimals,
-    quoteTokenDecimals: privateLiquidityDailyPriceQuoteToken?.decimals
-  });
-  const [privateLiquidityDailyPriceDemoEndingDay] = useState(
-    () => BigInt(Math.floor(Date.now() / 86_400_000) - 1)
-  );
-  const privateLiquidityDailyPriceDemoPoints = useMemo(
-    () => privateLiquidityDailyPriceResolvedPairKey
-      ? buildPrivateLiquidityDailyPriceDemoSeries({
-          endingDay: privateLiquidityDailyPriceDemoEndingDay,
-          seed: derivePrivateLiquidityDailyPriceDemoSeed(privateLiquidityDailyPriceResolvedPairKey)
-        })
-      : Object.freeze([]),
-    [privateLiquidityDailyPriceDemoEndingDay, privateLiquidityDailyPriceResolvedPairKey]
-  );
-  const privateLiquidityDailyPricePresentation = useMemo(
-    () => selectPrivateLiquidityDailyPricePresentation({
-      status: privateLiquidityDailyPriceData.status,
-      livePoints: privateLiquidityDailyPriceData.points,
-      demoPoints: privateLiquidityDailyPriceDemoPoints
-    }),
-    [privateLiquidityDailyPriceData.points, privateLiquidityDailyPriceData.status, privateLiquidityDailyPriceDemoPoints]
-  );
   const privateLiquidityManagedInventory = useMemo(() => {
     if (privateLiquidityOwnerData.status !== 'available' || !privateLiquidityOwnerData.inventory) {
       return { state: privateLiquidityOwnerData.status === 'unavailable' ? 'unavailable' : 'locked' } as const;
@@ -1899,133 +1650,6 @@ export default function P2PTradingPage({
     privateLiquidityOwnerData.status,
     privateLiquidityPositionTokens
   ]);
-  const privateLiquiditySwapAction = usePrivateLiquiditySwapAction({
-    active: route.view === 'swap' && route.swapVenue === 'private-liquidity',
-    deployment: privateLiquidityData.deployment,
-    model: privateLiquidityData.model,
-    sellToken: swapSellToken,
-    buyToken: swapBuyToken,
-    sellAmountInput: swapSellAmountInput,
-    slippageBps: privateLiquiditySlippageBps,
-    minimumFillBps: privateLiquidityMinimumFillBps,
-    walletReady: privateLiquidityWalletReady,
-    walletActions: sharedWalletActions,
-    requestConfirmation: requestTradeActionConfirmation,
-    refresh: privateLiquidityData.refresh
-  });
-  const privateLiquiditySwapHistoryRows = useMemo(() => {
-    const tokenByAddress = new Map(
-      privateLiquidityPositionTokens.map((token) => [token.address.toLowerCase(), token] as const)
-    );
-    const pairTokens = new Map<string, Readonly<{ baseAddress: string; quoteAddress: string }>>();
-    for (const position of privateLiquidityData.model?.positions ?? []) {
-      if (!pairTokens.has(position.pairKey)) {
-        pairTokens.set(position.pairKey, Object.freeze({
-          baseAddress: position.baseToken,
-          quoteAddress: position.quoteToken
-        }));
-      }
-    }
-    const finalizedRows = [...privateLiquidityOwnerData.history.traderRows]
-      .reverse()
-      .map((row): PrivateLiquiditySwapHistoryRowView => {
-        const pair = pairTokens.get(row.pairKey);
-        const baseToken = pair ? tokenByAddress.get(pair.baseAddress.toLowerCase()) : undefined;
-        const quoteToken = pair ? tokenByAddress.get(pair.quoteAddress.toLowerCase()) : undefined;
-        const inputToken = row.direction === 'base-to-quote' ? baseToken : quoteToken;
-        const outputToken = row.direction === 'base-to-quote' ? quoteToken : baseToken;
-        const displayAmount = (amount: string, token: typeof inputToken) => token
-          ? `${formatTokenAmount(BigInt(amount), token.decimals, 6)} ${token.symbol}`
-          : amount;
-        return Object.freeze({
-          key: row.key,
-          swapId: row.swapId,
-          pairLabel: baseToken && quoteToken
-            ? `${baseToken.symbol} / ${quoteToken.symbol}`
-            : `${row.pairKey.slice(0, 10)}…`,
-          inputLabel: displayAmount(row.inputAmount, inputToken),
-          outputLabel: displayAmount(row.outputAmount, outputToken),
-          unusedInputLabel: displayAmount(row.unusedInputAmount, inputToken),
-          blockNumber: row.provenance.blockNumber,
-          transactionHash: row.provenance.transactionHash,
-          status: 'finalized'
-        });
-      });
-    const failedRows = privateLiquiditySwapAction.failedAttempts.map(
-      (attempt): PrivateLiquiditySwapHistoryRowView => Object.freeze({
-        key: attempt.key,
-        pairLabel: `${attempt.inputTokenSymbol} / ${attempt.outputTokenSymbol}`,
-        inputLabel: `Attempted ${formatTokenAmount(
-          BigInt(attempt.maximumInput),
-          attempt.inputTokenDecimals,
-          6
-        )} ${attempt.inputTokenSymbol}`,
-        outputLabel: 'No fill',
-        unusedInputLabel: 'No tokens spent',
-        transactionHash: attempt.transactionHash,
-        status: 'failed',
-        failureMessage: attempt.message,
-        attemptedAt: attempt.attemptedAt
-      })
-    );
-    const confirmed = privateLiquiditySwapAction.confirmed;
-    if (!confirmed || finalizedRows.some(
-      (row) => row.transactionHash.toLowerCase() === confirmed.transactionHash.toLowerCase()
-    )) {
-      return Object.freeze([...failedRows, ...finalizedRows]);
-    }
-    const confirmedPair = pairTokens.get(confirmed.pairKey);
-    const confirmedBaseToken = confirmedPair
-      ? tokenByAddress.get(confirmedPair.baseAddress.toLowerCase())
-      : undefined;
-    const confirmedQuoteToken = confirmedPair
-      ? tokenByAddress.get(confirmedPair.quoteAddress.toLowerCase())
-      : undefined;
-    const confirmedInputToken = confirmed.direction === 'base-to-quote'
-      ? confirmedBaseToken
-      : confirmedQuoteToken;
-    const confirmedOutputToken = confirmed.direction === 'base-to-quote'
-      ? confirmedQuoteToken
-      : confirmedBaseToken;
-    const inputToken = confirmedInputToken ?? swapSellToken;
-    const outputToken = confirmedOutputToken ?? swapBuyToken;
-    const inputLabel = inputToken
-      ? `${formatTokenAmount(BigInt(confirmed.inputAmount), inputToken.decimals, 6)} ${inputToken.symbol}`
-      : confirmed.inputAmount;
-    const outputLabel = outputToken
-      ? `${formatTokenAmount(BigInt(confirmed.outputAmount), outputToken.decimals, 6)} ${outputToken.symbol}`
-      : confirmed.outputAmount;
-    const unusedInputLabel = inputToken
-      ? `${formatTokenAmount(BigInt(confirmed.unusedInputAmount), inputToken.decimals, 6)} ${inputToken.symbol}`
-      : confirmed.unusedInputAmount;
-    return Object.freeze([
-      Object.freeze({
-        key: `confirmed-private-liquidity-swap:${confirmed.transactionHash}`,
-        swapId: confirmed.swapId,
-        pairLabel: confirmedBaseToken && confirmedQuoteToken
-          ? `${confirmedBaseToken.symbol} / ${confirmedQuoteToken.symbol}`
-          : swapSellToken && swapBuyToken
-            ? `${swapSellToken.symbol} / ${swapBuyToken.symbol}`
-          : `${confirmed.pairKey.slice(0, 10)}…`,
-        inputLabel,
-        outputLabel,
-        unusedInputLabel,
-        blockNumber: confirmed.blockNumber,
-        transactionHash: confirmed.transactionHash,
-        status: 'confirmed' as const
-      }),
-      ...failedRows,
-      ...finalizedRows
-    ]);
-  }, [
-    privateLiquidityData.model,
-    privateLiquidityOwnerData.history.traderRows,
-    privateLiquidityPositionTokens,
-    privateLiquiditySwapAction.confirmed,
-    privateLiquiditySwapAction.failedAttempts,
-    swapBuyToken,
-    swapSellToken
-  ]);
   const privateLiquidityPositionAction = usePrivateLiquidityPositionAction({
     deployment: privateLiquidityData.deployment,
     walletReady: privateLiquidityWalletReady,
@@ -2043,12 +1667,13 @@ export default function P2PTradingPage({
     refresh: privateLiquidityData.refresh
   });
   const privateLiquidityHiddenIntentOwnerData = usePrivateLiquidityHiddenIntentOwnerData({
-    active: route.view === 'pools' && route.privateLiquidityView === 'intents',
+    active: route.view === 'mine' && route.privateLiquidityView === 'intents',
     deployment: privateLiquidityData.deployment,
     model: privateLiquidityData.model,
     walletAddress: privateLiquidityWalletAddress,
     walletReady: privateLiquidityWalletReady,
     walletActions: sharedWalletActions,
+    privacyReadScope: privateLiquidityPrivacyReadScopeRef.current,
     refreshKey: privateLiquidityHiddenIntentAction.confirmed?.transactionHash ?? ''
   });
 
@@ -2064,18 +1689,27 @@ export default function P2PTradingPage({
     tradeRequestAmountInput
   });
 
+  const p2pReadsBusy = loadingPublicTrades || loadingMyTrades || loadingDetailTrade || loadingOtcTradeHistoryV2 ||
+    initializingOtcV2Actions || linkActivity.busy || counterActivity.busy;
+  const p2pReadBusyRef = useRef(false);
+  p2pReadBusyRef.current = p2pReadsBusy;
+  const hasActiveP2PRead = useCallback(() => p2pReadBusyRef.current, []);
   const { refreshTradeDataInBackground, scheduleP2PSync } = useP2PSyncQueue({
     flushQueuedTradeDataRefreshRef,
     getTradeWalletFlowInput,
+    hasActiveListRefresh: hasActiveP2PRead,
     refreshAllTradingBalances,
     refreshMyTrades,
     refreshPublicTrades,
     refreshTradeDetail,
-    routeEscrowContract,
-    routeTradeId: routeUsesOtcV2 ? null : routeTradeId,
+    routeEscrowContract: routeUsesOtcV2 ? routeEscrowContract : undefined,
+    routeTradeId: routeUsesOtcV2 ? routeTradeId : null,
     routeView,
     walletAddress
   });
+  useEffect(() => {
+    if (!p2pReadsBusy) flushQueuedTradeDataRefreshRef.current();
+  }, [p2pReadsBusy]);
 
   const {
     beginCounterTrade,
@@ -2132,82 +1766,25 @@ export default function P2PTradingPage({
     refreshOneOffV2Trades
   });
 
-  const {
-    beginEditRecurringOrder,
-    cancelCounterCreate,
-    clearRecurringEdit,
-    createRecurringOrder,
-    fillRecurringOrderSide,
-    processingRecurringAction,
-    startFreshOneOffTrade,
-    startFreshRecurringOrder,
-    updateRecurringOrderStatus
-  } = useP2PRecurringOrderActions({
-    buildCurrentTradeSurfacePath,
-    buildTradeShareUrl,
-    clearCounterTrade,
-    clearEditTrade,
-    combinedBalanceByAssetKey,
-    counterParentTrade,
-    customTradeTokenInfoByAddress,
-    editingRecurringOrder,
-    editingTrade,
-    ensureTradeFunding,
-    nativeBalanceWei,
-    navigateToTradePath,
-    onActionNotice: pushActionNotice,
-    onCotiNetwork,
-    openTrade,
-    otcV2ActionRuntime: sharedWalletSession?.otcV2ActionRuntime,
-    pWispFooterBalanceState,
-    recurringAddBuyBudgetInput,
-    recurringAddSellInventoryInput,
-    recurringBuyFillInput,
-    recurringBuyPriceInput,
-    recurringRemoveBuyBudgetInput,
-    recurringRemoveSellInventoryInput,
-    recurringSellFillInput,
-    recurringSellPriceInput,
-    refreshRecurringV2Trades,
-    rememberTradeTerminalReturn,
-    rewardTokenBalanceWei,
-    runTradeWalletPromptFlow,
-    setCreatedRecurringOrderId,
-    setCreatedRecurringOrderLink,
-    setCreatingRecurringOrder,
-    setEditingRecurringOrder,
-    setRecurringAddBuyBudgetInput,
-    setRecurringAddSellInventoryInput,
-    setRecurringBuyFillInput,
-    setRecurringBuyPriceInput,
-    setRecurringBuyReceiveEditable,
-    setRecurringBuyReceiveInput,
-    setRecurringHidePrivateAmounts,
-    setRecurringRemoveBuyBudgetInput,
-    setRecurringRemoveSellInventoryInput,
-    setRecurringSellFillInput,
-    setRecurringSellPriceInput,
-    setRecurringSellReceiveEditable,
-    setRecurringSellReceiveInput,
-    setTradeActionError,
-    setTradeCreateMode,
-    setTradeExpiryHoursInput,
-    setTradeHasNoExpiry,
-    setTradeOfferAmountInput,
-    setTradeOfferCustomTokenAddress,
-    setTradeOfferTokenSelection,
-    setTradePriceInput,
-    setTradePricingEditedFields,
-    setTradeRequestAmountInput,
-    setTradeRequestCustomTokenAddress,
-    setTradeRequestTokenSelection,
-    startFreshTrade,
-    tradeComposerModel,
-    tradeExpiryHoursInput,
-    tradeHasNoExpiry,
-    tradeRequiredFeeWei,
-    walletAddress
-  });
+  const startFreshOneOffTrade = useCallback(() => {
+    setTradeCreateMode('one-off');
+    setTradePriceInput('');
+    setTradePricingEditedFields([]);
+    startFreshTrade();
+  }, [setTradeCreateMode, setTradePriceInput, setTradePricingEditedFields, startFreshTrade]);
+  const cancelCounterCreate = useCallback(() => {
+    clearCounterTrade();
+    setTradeCreateMode('one-off');
+    setTradeOfferAmountInput('');
+    setTradeRequestAmountInput('');
+    setTradePriceInput('');
+    setTradePricingEditedFields([]);
+    setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+    setTradeHasNoExpiry(false);
+    navigateToTradePath(buildCurrentTradeSurfacePath('trade'));
+  }, [buildCurrentTradeSurfacePath, clearCounterTrade, navigateToTradePath, setTradeCreateMode,
+    setTradeExpiryHoursInput, setTradeHasNoExpiry, setTradeOfferAmountInput, setTradePriceInput,
+    setTradePricingEditedFields, setTradeRequestAmountInput]);
 
   const resolveSwapPairSelectionsForTrade = useOtcSwapPairSelections({
     swapActionMode,
@@ -2245,8 +1822,8 @@ export default function P2PTradingPage({
     resolveKnownTradeAccessSecret,
     rememberTradeAccessSecret,
     resolvedRouteAccessSecret,
-    routeEscrowContract,
-    routeTradeId,
+    routeEscrowContract: routeUsesOtcV2 ? routeEscrowContract : undefined,
+    routeTradeId: routeUsesOtcV2 ? routeTradeId : null,
     runTradeWalletPromptFlow,
     setTradeActionError,
     walletAddress,
@@ -2281,30 +1858,41 @@ export default function P2PTradingPage({
     canonicalV2Rows: otcTradeHistoryV2Rows,
     canonicalV2LifecycleEvents: otcTradeHistoryV2LifecycleEvents,
     canonicalV2Loading: loadingOtcTradeHistoryV2,
+    canonicalV2Complete: completeOtcTradeHistoryV2,
+    canonicalV2HasMore: hasMoreOtcTradeHistoryV2,
+    onLoadOlderCanonicalV2History: loadOlderOtcTradeHistoryV2,
     canonicalV2Error: otcV2SetupError || otcTradeHistoryV2Error
   };
-  const p2pReadBusyRef = useRef(false);
-  p2pReadBusyRef.current = loadingPublicTrades || loadingMyTrades || loadingDetailTrade || loadingOtcTradeHistoryV2;
-  const hasActiveP2PRead = useCallback(() => p2pReadBusyRef.current || hasActiveListRefresh(), [hasActiveListRefresh]);
   useP2PRealtimeSync({
     chainId,
     getTradeWalletFlowInput,
-    hasActiveListRefresh: hasActiveP2PRead,
-    routeEscrowContract,
-    routeTradeId,
+    routeEscrowContract: routeUsesOtcV2 ? routeEscrowContract : undefined,
+    routeTradeId: routeUsesOtcV2 ? routeTradeId : null,
     routeView,
     scheduleP2PSync,
     walletAddress
   });
 
+  const tradingHeaderDisabled = creatingTrade || Boolean(processingTradeActionId) ||
+    Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy) || Boolean(tradeActionConfirmation) ||
+    privateLiquidityPositionAction.busy || privateLiquidityHiddenIntentAction.busy ||
+    isWalletTransactionFlowActive(getTradeWalletFlowInput());
   const {
-    activeTradeMode,
     openLimitOrderFromSwapPair,
-    openTradeEntryMode
+    navigateTradeView,
   } = useP2PTradeEntryNavigation({
-    buildCurrentTradeSurfacePath,
     navigateDeskView,
-    navigateToTradePath,
+    isEntryBlocked: () => tradingHeaderDisabled || isWalletTransactionFlowActive(getTradeWalletFlowInput()),
+    hasTradeDraft: Boolean(editingTrade || counterParentTrade || tradeOfferAmountInput || tradeRequestAmountInput ||
+      tradePriceInput || tradeOfferCustomTokenAddress || tradeRequestCustomTokenAddress || directTradeRecipient ||
+      tradeVisibility !== 'public' || tradeHasNoExpiry || tradeExpiryHoursInput !== DEFAULT_TRADE_EXPIRY_HOURS ||
+      (tradeComposerModel.canHidePrivateLiquidity && !tradeHidePrivateLiquidity) || createPairEdited),
+    onPrefillMarketPair: () => {
+      setCreateBaseIsOffer(false);
+      setCreatePairEdited(false);
+      setTradeHidePrivateLiquidity([swapSellTokenSelection, swapBuyTokenSelection]
+        .some(selection => resolveTradePresetKind(selection) === 'private-erc20'));
+    },
     routeTradeMode: route.tradeMode,
     routeView: route.view,
     setTradeActionError,
@@ -2314,19 +1902,12 @@ export default function P2PTradingPage({
     setTradeRequestCustomTokenAddress,
     setTradeRequestTokenSelection,
     startFreshOneOffTrade,
-    startFreshRecurringOrder,
     swapActionMode,
     swapBuyTokenSelection,
     swapSellTokenSelection
   });
-  const tradeEntryModeTabs = (
-    <TradeEntryModeTabs
-      activeTradeMode={activeTradeMode}
-      onOpenTradeEntryMode={openTradeEntryMode}
-    />
-  );
   const activeSwapVenue = route.swapVenue ?? 'otc';
-  const isDexProduct = route.tradeProduct === 'dex' || routeSurfaceView === 'pools' || activeSwapVenue === 'private-liquidity';
+  const isDexProduct = route.tradeProduct === 'dex';
   const tradeViewTabs = (
     <div className="p2p-product-navigation">
       {isDexProduct ? (
@@ -2344,7 +1925,7 @@ export default function P2PTradingPage({
         />
       ) : (
         <TradeViewTabs
-          onNavigateDeskView={navigateDeskView}
+          onNavigateDeskView={navigateTradeView}
           routeSurfaceView={routeSurfaceView}
           routeView={route.view}
         />
@@ -2448,7 +2029,6 @@ export default function P2PTradingPage({
     tradeTypeFilterOptions
   } = useTradeDeskViewModel({
     counterParentTrade,
-    editingRecurringOrder,
     editingTrade,
     filteredPublicTradeCount: filteredPublicTrades.length,
     myTrades,
@@ -2458,7 +2038,6 @@ export default function P2PTradingPage({
     routeSurfaceView,
     selectedMyTradeGroupLabel: selectedMyTradeGroup.label,
     selectedMyTradeGroupTradeCount: selectedMyTradeGroup.trades.length,
-    tradeCreateMode,
     tradePairFilter,
     tradeSearchInput,
     tradeSortMode,
@@ -2483,7 +2062,8 @@ export default function P2PTradingPage({
     .map((symbol) => symbol.trim().toUpperCase())
     .sort()
     .join('/');
-  const terminalPanelOpen = route.view === 'trade' || myTradeTerminalOpen || myTradesSelectionEmpty || emptyTerminalOpen || offersTerminalOpen;
+  const terminalPanelOpen = !route.privateLiquidityView && activeSwapVenue !== 'private-liquidity' &&
+    (route.view === 'trade' || myTradeTerminalOpen || myTradesSelectionEmpty || emptyTerminalOpen || offersTerminalOpen);
   const terminalPanelBaseTrade = emptyTerminalOpen || route.linkV2Reference ? null : route.view === 'mine' ? selectedMyTradeDetail : detailTrade;
   const terminalPanelTrade = useMemo(() => {
     if (!terminalPanelBaseTrade) {
@@ -2507,8 +2087,7 @@ export default function P2PTradingPage({
     return { protocol: identity.protocol as TradeBalanceDisclosureProtocol, chainId: identity.chainId,
       contractAddress: identity.contractAddress, orderId: String(terminalPanelTrade!.tradeId) };
   }, [route.linkV2Reference, terminalPanelTrade]);
-  const [terminalBalance, setTerminalBalance] = useState<{ root: NonNullable<typeof sharedWalletSession>['otcV2ActionRuntime'];
-    owner: string; key: string; runtime: TradeBalanceDisclosureV2Runtime } | null>(null);
+  const [terminalBalance, setTerminalBalance] = useState<TerminalBalanceSelection | null>(null);
   const balanceReferenceKey = balanceReference ? `${balanceReference.protocol}:${balanceReference.chainId}:${balanceReference.contractAddress}:${balanceReference.orderId}` : '';
   const balanceRoot = sharedWalletSession?.otcV2ActionRuntime;
   useEffect(() => {
@@ -2517,7 +2096,8 @@ export default function P2PTradingPage({
     void (async () => {
       const selected = await balanceRoot.forReference?.(balanceReference) ?? balanceRoot;
       const runtime = selected.tradeBalances[balanceReference.protocol];
-      if (current && runtime && selected.isCurrent()) setTerminalBalance({ root: balanceRoot, owner: walletKey, key: balanceReferenceKey, runtime });
+      if (current && runtime && selected.isCurrent()) setTerminalBalance(previous => selectTerminalBalance(previous,
+        { root: balanceRoot, owner: walletKey, key: balanceReferenceKey, runtime }));
     })().catch(() => { if (current) setTerminalBalance(null); });
     return () => { current = false; };
   }, [balanceRoot, balanceReference, balanceReferenceKey, walletHasAes, walletKey]);
@@ -2529,7 +2109,7 @@ export default function P2PTradingPage({
   const terminalHistoryTargetTrade =
     route.view === 'mine'
       ? terminalPanelTrade
-      : route.view === 'trade' && !tradeAccessBlocked
+      : route.view === 'trade' && !routeHasUnsupportedContract
         ? terminalPanelTrade
         : null;
   const terminalHistoryWalletAddress = terminalHistoryTargetTrade
@@ -2553,7 +2133,7 @@ export default function P2PTradingPage({
     !route.linkV2Reference &&
     !emptyTerminalOpen &&
     !detailTrade &&
-    !tradeAccessBlocked &&
+    !routeHasUnsupportedContract &&
     !route.routeError &&
     !detailTradeError;
   const offersTerminalEmpty = offersTerminalOpen && route.view !== 'trade' && !terminalPanelTrade;
@@ -2572,383 +2152,6 @@ export default function P2PTradingPage({
     tradeComposerRequestToken: tradeComposerModel.selectedTradeRequestToken,
     walletAddress
   });
-  useEffect(() => {
-    if (!terminalPanelTrade) {
-      return;
-    }
-
-    const privateReadAccount = resolvePrivateReadAccount(terminalPanelTrade);
-    const privateReadKey = privateReadAccount?.key ?? '';
-    if (!privateReadKey) {
-      return;
-    }
-
-    const isMaker = terminalPanelTrade.maker.toLowerCase() === privateReadKey;
-    const recurring = terminalPanelTrade.recurringOrder;
-    const termsVisibility = getTradeTermsVisibility(terminalPanelTrade);
-    const isPrivateStandardTrade = !recurring && termsVisibility === 'hidden-liquidity';
-    const isDirectPrivateTermsTrade = !recurring && termsVisibility === 'direct-private-terms';
-    const isPublicStandardTrade =
-      !recurring &&
-      termsVisibility === 'public' &&
-      !terminalPanelTrade.directTermsMetadata;
-    const isPrivateRecurringTrade = Boolean(recurring && recurring.mode !== 'public');
-    if (!isPrivateStandardTrade && !isPrivateRecurringTrade && !isPublicStandardTrade && !isDirectPrivateTermsTrade) {
-      return;
-    }
-
-    const walletFillEventsStateKey = (snapshot: TradeSnapshot) =>
-      (snapshot.walletFillEvents ?? [])
-        .filter((event) => isMaker || event.filler?.toLowerCase() === privateReadKey)
-        .map((event) =>
-          [
-            event.fillIndex,
-            event.filler?.toLowerCase() ?? '',
-            event.offerAmount ?? '',
-            event.requestAmount ?? '',
-            event.txHash ?? '',
-            event.blockNumber ?? '',
-            event.logIndex ?? ''
-          ].join('/')
-        )
-        .join('|');
-    const receiptStateKey = (snapshot: TradeSnapshot) =>
-      (snapshot.privateFillReceipts ?? [])
-        .filter((receipt) => isMaker || receipt.filler?.toLowerCase() === privateReadKey)
-        .map((receipt) =>
-          [
-            receipt.fillIndex,
-            receipt.filler?.toLowerCase() ?? '',
-            receipt.offerAmount ?? '',
-            receipt.requestAmount ?? '',
-            receipt.remainingOfferAmount ?? '',
-            receipt.txHash ?? ''
-          ].join('/')
-        )
-        .join('|');
-    const recurringExecutionStateEntries = (snapshot: TradeSnapshot) => [
-      ...(snapshot.recurringOrder?.privateExecutions ?? []).map((execution) => ({
-        execution,
-        source: 'private'
-      })),
-      ...(snapshot.recurringOrder?.publicExecutions ?? []).map((execution) => ({
-        execution,
-        source: 'public'
-      }))
-    ].filter(({ execution }) => isMaker || execution.filler?.toLowerCase() === privateReadKey);
-    const recurringExecutionStateKey = (snapshot: TradeSnapshot) =>
-      recurringExecutionStateEntries(snapshot)
-        .map(({ execution, source }) =>
-          [
-            source,
-            execution.fillIndex,
-            execution.side,
-            execution.filler?.toLowerCase() ?? '',
-            execution.baseAmount ?? '',
-            execution.quoteAmount ?? '',
-            execution.remainingBaseInventory ?? '',
-            execution.remainingQuoteInventory ?? '',
-            execution.txHash ?? ''
-          ].join('/')
-        )
-        .join('|');
-    const recurringExecutionCount = (snapshot: TradeSnapshot) =>
-      new Set(
-        recurringExecutionStateEntries(snapshot).map(({ execution }) =>
-          `${execution.fillIndex}:${execution.filler?.toLowerCase() ?? ''}`
-        )
-      ).size;
-    const privateStateKey = (snapshot: TradeSnapshot) =>
-      [
-        walletFillEventsStateKey(snapshot),
-        receiptStateKey(snapshot),
-        recurringExecutionStateKey(snapshot),
-        hasHydratedDirectTradeTerms(snapshot) ? 'direct-ready' : 'direct-pending',
-        snapshot.offer.amount,
-        snapshot.request.amount,
-        snapshot.fillState?.filledOfferAmount ?? '',
-        snapshot.fillState?.filledRequestAmount ?? '',
-        snapshot.walletFillState?.offerAmountReceived ?? '',
-        snapshot.walletFillState?.requestAmountPaid ?? '',
-        snapshot.walletHasFill ? 'wallet-fill' : '',
-        snapshot.makerPrivateProgress?.initialOfferAmount ?? '',
-        snapshot.makerPrivateProgress?.remainingOfferAmount ?? '',
-        snapshot.makerPrivateProgress?.filledOfferAmount ?? '',
-        snapshot.recurringOrder?.makerPrivateInventory?.baseInventory ?? '',
-        snapshot.recurringOrder?.makerPrivateInventory?.quoteInventory ?? ''
-      ].join('::');
-
-    const currentPrivateStateKey = privateStateKey(terminalPanelTrade);
-    const privateReceiptCount = (terminalPanelTrade.privateFillReceipts ?? []).filter(
-      (receipt) => isMaker || receipt.filler?.toLowerCase() === privateReadKey
-    ).length;
-    const needsStandardHydration =
-      isPrivateStandardTrade &&
-      (isMaker ? !terminalPanelTrade.makerPrivateProgress || privateReceiptCount === 0 : privateReceiptCount === 0);
-    const hydratedPublicFillEventCount = (terminalPanelTrade.walletFillEvents ?? []).filter(
-      (event) => isMaker || event.filler?.toLowerCase() === privateReadKey
-    ).length;
-    const needsPublicStandardHydration =
-      isPublicStandardTrade &&
-      hydratedPublicFillEventCount === 0;
-    const needsDirectTermHydration =
-      isDirectPrivateTermsTrade &&
-      !hasHydratedDirectTradeTerms(terminalPanelTrade);
-
-    const hydratedRecurringExecutionCount = recurringExecutionCount(terminalPanelTrade);
-    const missingPrivateInventory =
-      Boolean(
-        isMaker &&
-          recurring &&
-          (
-            (recurring.hasPrivateBaseInventory && recurring.makerPrivateInventory?.baseInventory === undefined) ||
-            (recurring.hasPrivateQuoteInventory && recurring.makerPrivateInventory?.quoteInventory === undefined)
-          )
-      );
-    const needsRecurringHydration =
-      Boolean(
-        recurring &&
-          recurring.mode !== 'public' &&
-          (isMaker
-            ? missingPrivateInventory || hydratedRecurringExecutionCount === 0 || recurring.executionCount > hydratedRecurringExecutionCount
-            : hydratedRecurringExecutionCount === 0 || recurring.executionCount > hydratedRecurringExecutionCount)
-      );
-
-    if (!needsStandardHydration && !needsRecurringHydration && !needsPublicStandardHydration && !needsDirectTermHydration) {
-      return;
-    }
-
-    if (needsDirectTermHydration && terminalPanelTrade.v2?.protocol === 'direct-v2') {
-      // Direct V2 participant terms are hydrated centrally by
-      // useOneOffTradeV2Data as soon as privacy is ready. Do not issue a
-      // second terminal-scoped wallet read for the same ciphertexts.
-      return;
-    }
-
-    const forceReveal =
-      needsStandardHydration ||
-      needsRecurringHydration ||
-      needsPublicStandardHydration ||
-      (needsDirectTermHydration && Boolean(privateReadAccount?.canReadPrivate));
-    const hydrationKey = [
-      getSnapshotKey(terminalPanelTrade),
-      privateReadKey,
-      privateReadAccount?.role ?? 'wallet',
-      forceReveal ? 'force' : 'read',
-      recurring?.executionCount ?? 'standard',
-      currentPrivateStateKey
-    ].join(':');
-    if (terminalPrivateHistoryHydrationRef.current[hydrationKey]) {
-      return;
-    }
-    terminalPrivateHistoryHydrationRef.current[hydrationKey] = true;
-
-    let cancelled = false;
-    enrichMakerPrivateProgress(terminalPanelTrade, forceReveal, privateReadAccount ?? undefined)
-      .then((enrichedSnapshot) => {
-        if (cancelled || privateStateKey(enrichedSnapshot) === currentPrivateStateKey) {
-          return;
-        }
-        mergeTradeSnapshot(enrichedSnapshot);
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    enrichMakerPrivateProgress,
-    mergeTradeSnapshot,
-    resolvePrivateReadAccount,
-    terminalPanelTrade
-  ]);
-  useEffect(() => {
-    if (!terminalPanelTrade || terminalPanelTrade.recurringOrder) {
-      return;
-    }
-    if (getTradeTermsVisibility(terminalPanelTrade) !== 'public' || terminalPanelTrade.directTermsMetadata) {
-      return;
-    }
-
-    const historyWallet = resolveTerminalHistoryWallet(terminalPanelTrade, { walletAddress, walletReadAccounts });
-    const historyWalletKey = historyWallet.walletKey;
-    if (!historyWalletKey) {
-      return;
-    }
-
-    const isMaker = terminalPanelTrade.maker.toLowerCase() === historyWalletKey;
-    const relevantFillEvents = (terminalPanelTrade.walletFillEvents ?? []).filter(
-      (event) => isMaker || event.filler?.toLowerCase() === historyWalletKey
-    );
-    const fillEventStateKey = relevantFillEvents
-      .map((event) =>
-        [
-          event.fillIndex,
-          event.filler?.toLowerCase() ?? '',
-          event.offerAmount,
-          event.requestAmount,
-          event.txHash ?? '',
-          event.blockNumber ?? '',
-          event.logIndex ?? ''
-        ].join('/')
-      )
-      .join('|');
-    const hydrationKey = [
-      getSnapshotKey(terminalPanelTrade),
-      historyWalletKey,
-      isMaker ? 'maker' : 'filler',
-      terminalPanelTrade.fillState?.filledOfferAmount ?? '',
-      terminalPanelTrade.fillState?.filledRequestAmount ?? '',
-      fillEventStateKey
-    ].join(':');
-    if (terminalPublicStandardHistoryHydrationRef.current[hydrationKey]) {
-      return;
-    }
-    terminalPublicStandardHistoryHydrationRef.current[hydrationKey] = true;
-
-    let cancelled = false;
-    fetchTradePartialFillEventsForWallet({
-      tradeId: terminalPanelTrade.tradeId,
-      escrowContract: terminalPanelTrade.escrowContract,
-      walletAddress: historyWallet.walletAddress,
-      role: isMaker ? 'maker' : 'filler'
-    })
-      .then((walletFillEvents) => {
-        if (cancelled || walletFillEvents.length === 0) {
-          return;
-        }
-        const historyAccount = walletReadAccounts.find((account) => account.key === historyWalletKey);
-        const accountMatch = historyAccount
-          ? { address: historyAccount.address, role: historyAccount.role }
-          : { address: historyWallet.walletAddress, role: 'owner' as const };
-        mergeTradeSnapshot({
-          ...terminalPanelTrade,
-          accountAddress: accountMatch.address,
-          accountRole: accountMatch.role,
-          accountMatches: [
-            ...(terminalPanelTrade.accountMatches ?? []).filter(
-              (match) => match.address.toLowerCase() !== accountMatch.address.toLowerCase()
-            ),
-            accountMatch
-          ],
-          walletHasFill: Boolean(terminalPanelTrade.walletHasFill || walletFillEvents.length > 0),
-          walletFillEvents
-        });
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    mergeTradeSnapshot,
-    terminalPanelTrade,
-    walletAddress,
-    walletReadAccounts
-  ]);
-  useEffect(() => {
-    const recurring = terminalPanelTrade?.recurringOrder;
-    if (!terminalPanelTrade || !recurring) {
-      return;
-    }
-
-    const publicReadAccount = resolvePrivateReadAccount(terminalPanelTrade);
-    const publicReadKey = publicReadAccount?.key ?? '';
-    if (!publicReadKey) {
-      return;
-    }
-
-    const isMaker = terminalPanelTrade.maker.toLowerCase() === publicReadKey;
-    const relevantPublicExecutions = (recurring.publicExecutions ?? []).filter(
-      (execution) => isMaker || execution.filler?.toLowerCase() === publicReadKey
-    );
-    const relevantExecutionCount = new Set(
-      [
-        ...(recurring.privateExecutions ?? []),
-        ...(recurring.publicExecutions ?? [])
-      ]
-        .filter((execution) => isMaker || execution.filler?.toLowerCase() === publicReadKey)
-        .map((execution) => `${execution.fillIndex}:${execution.filler?.toLowerCase() ?? ''}`)
-    ).size;
-    if (
-      recurring.executionCount <= 0 ||
-      (relevantPublicExecutions.length > 0 && relevantExecutionCount >= recurring.executionCount)
-    ) {
-      return;
-    }
-
-    const hydrationKey = [
-      getSnapshotKey(terminalPanelTrade),
-      publicReadKey,
-      publicReadAccount?.role ?? 'wallet',
-      recurring.executionCount,
-      relevantPublicExecutions.length
-    ].join(':');
-    if (terminalPublicRecurringHistoryHydrationRef.current[hydrationKey]) {
-      return;
-    }
-    terminalPublicRecurringHistoryHydrationRef.current[hydrationKey] = true;
-
-    let cancelled = false;
-    fetchRecurringExecutionRowsForWallet({
-      contractAddress: terminalPanelTrade.escrowContract,
-      orderId: recurring.orderId,
-      walletAddress: isMaker ? undefined : publicReadAccount?.address
-    })
-      .then(async (publicExecutions) => {
-        let resolvedExecutions = publicExecutions;
-        let resolvedAccount = publicReadAccount;
-        const ownerFallbackAccount = getWalletOwnerAccount(walletReadAccounts);
-        if (
-          !isMaker &&
-          resolvedExecutions.length === 0 &&
-          ownerFallbackAccount &&
-          ownerFallbackAccount.key !== publicReadKey &&
-          ownerFallbackAccount.key !== terminalPanelTrade.maker.toLowerCase()
-        ) {
-          const ownerExecutions = await fetchRecurringExecutionRowsForWallet({
-            contractAddress: terminalPanelTrade.escrowContract,
-            orderId: recurring.orderId,
-            walletAddress: ownerFallbackAccount.address
-          }).catch(() => []);
-          if (ownerExecutions.length > 0) {
-            resolvedExecutions = ownerExecutions;
-            resolvedAccount = ownerFallbackAccount;
-          }
-        }
-        if (cancelled || resolvedExecutions.length === 0) {
-          return;
-        }
-        mergeTradeSnapshot({
-          ...terminalPanelTrade,
-          accountAddress: resolvedAccount?.address ?? terminalPanelTrade.accountAddress,
-          accountRole: resolvedAccount?.role ?? terminalPanelTrade.accountRole,
-          accountMatches: resolvedAccount
-            ? [
-                ...(terminalPanelTrade.accountMatches ?? []).filter(
-                  (match) => match.address.toLowerCase() !== resolvedAccount.address.toLowerCase()
-                ),
-                { address: resolvedAccount.address, role: resolvedAccount.role }
-              ]
-            : terminalPanelTrade.accountMatches,
-          walletHasFill: Boolean(terminalPanelTrade.walletHasFill || (!isMaker && resolvedExecutions.length > 0)),
-          recurringOrder: {
-            ...recurring,
-            publicExecutions: resolvedExecutions
-          }
-        });
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    mergeTradeSnapshot,
-    resolvePrivateReadAccount,
-    terminalPanelTrade,
-    walletReadAccounts
-  ]);
   const closeTerminalPanel = useCloseTradeTerminalPanel({
     buildCurrentTradeSurfacePath,
     isMobileNav,
@@ -2969,60 +2172,21 @@ export default function P2PTradingPage({
   const focusTradeLinkInput = () => {
     tradeLinkInputRef.current?.focus();
   };
-  const recurringBaseToken = tradeComposerModel.selectedTradeOfferToken;
-  const recurringQuoteToken = tradeComposerModel.selectedTradeRequestToken;
-  const recurringBaseDecimals = recurringBaseToken?.decimals ?? 18;
-  const recurringQuoteDecimals = recurringQuoteToken?.decimals ?? 18;
-  const {
-    recurringBuyReceivePreview,
-    recurringSellReceivePreview,
-    toggleRecurringBuyReceiveEditable,
-    toggleRecurringSellReceiveEditable,
-    updateRecurringBuyLiquidityInput,
-    updateRecurringBuyReceiveInput,
-    updateRecurringSellLiquidityInput,
-    updateRecurringSellReceiveInput
-  } = useP2PRecurringReceiveInputs({
-    hasRecurringPair: Boolean(recurringBaseToken && recurringQuoteToken),
-    recurringAddBuyBudgetInput,
-    recurringAddSellInventoryInput,
-    recurringBaseDecimals,
-    recurringBuyPriceInput,
-    recurringBuyReceiveEditable,
-    recurringBuyReceiveInput,
-    recurringQuoteDecimals,
-    recurringSellPriceInput,
-    recurringSellReceiveEditable,
-    recurringSellReceiveInput,
-    setRecurringAddBuyBudgetInput,
-    setRecurringAddSellInventoryInput,
-    setRecurringBuyReceiveEditable,
-    setRecurringBuyReceiveInput,
-    setRecurringSellReceiveEditable,
-    setRecurringSellReceiveInput
-  });
-
   const {
     formatSwapAvailability,
     openSwapQuoteInTerminal,
-    swapBuyVerifyUrl,
     swapCarbonReference,
     swapCarbonReferenceContext,
     swapChainWhisperMarketLabel,
     swapDisplayQuote,
-    swapSellBalanceLabel,
-    swapSellBalanceTitle,
-    swapSellVerifyUrl
   } = useOtcSwapReviewState({
     activeTerminalSwapIntentRef,
     combinedBalanceByAssetKey,
-    fillRecurringOrderSide,
     getCarbonReferenceContext,
     getCarbonReferenceDisplay,
     lastAppliedSwapPinnedTradeKeyRef,
     openTradeSnapshot,
     partialFillTrade,
-    processingRecurringAction,
     processingTradeActionId,
     setSwapPinnedTradeKey,
     swapActionMode,
@@ -3165,13 +2329,7 @@ export default function P2PTradingPage({
     setTradeRequestTokenSelection,
     setTradeVisibility,
     setDirectTradeRecipient,
-    setRecurringAddBuyBudgetInput,
-    setRecurringAddSellInventoryInput,
-    setRecurringBuyPriceInput,
-    setRecurringHidePrivateAmounts,
-    setRecurringSellPriceInput,
     startFreshOneOffTrade,
-    startFreshRecurringOrder,
     swapActionMode,
     swapBuyToken,
     swapCarbonReferenceContext,
@@ -3192,7 +2350,7 @@ export default function P2PTradingPage({
   const showAgentSurface = routeSurfaceView === 'agent' && !isComposerRoute;
   const showPublicSurface = routeSurfaceView === 'public' && !isComposerRoute;
   const showOffersSurface =
-    activeSwapVenue === 'otc' && (showSwapSurface || showPublicSurface || desktopCreateOffersOpen);
+    !route.privateLiquidityView && activeSwapVenue === 'otc' && (showSwapSurface || showPublicSurface || desktopCreateOffersOpen);
   const offerQuoteCandidates = useMemo(
     () => approvedOffersDesignQa
       ? offersQaHidesCandidates ? [] : approvedOffersQaCandidates
@@ -3236,7 +2394,7 @@ export default function P2PTradingPage({
     (best, candidate) => best === null || candidate.price < best.price ? candidate : best,
     null
   );
-  const showPrivateLiquidityWorkspace = routeSurfaceView === 'pools' && !isComposerRoute;
+  const showStrategyRecovery = route.view === 'mine' && (route.privateLiquidityView === 'mine' || route.privateLiquidityView === 'intents');
   const marketOverviewClassView = routeSurfaceView ?? route.view;
   const tradeTerminalRendererProps: Omit<TradeTerminalRendererProps, 'snapshot'> = {
     routeView: route.view,
@@ -3267,13 +2425,12 @@ export default function P2PTradingPage({
       if (!walletHasAes || !runtime || !identity || !reference || identity.chainId !== reference.chainId ||
           identity.contractAddress.toLowerCase() !== reference.contractAddress.toLowerCase() || String(snapshot.tradeId) !== reference.orderId) return null;
       return <TradeBalanceDisclosureV2 key={`terminal-balance:${walletKey}:${balanceReferenceKey}`} runtime={runtime} orderId={String(snapshot.tradeId)}
-          tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
+          tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
           actionInProgress={creatingTrade || Boolean(processingTradeActionId) || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
           onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} />;
     },
     copyWithFeedback,
     declineTrade,
-    fillRecurringOrderSide,
     getCarbonReferenceDisplay,
     partialFillTrade,
     renderActionNotice: renderP2PActionNotice,
@@ -3282,15 +2439,6 @@ export default function P2PTradingPage({
     resolveTerminalAssetBalanceLabel,
     toggleMakerControls,
     toggleTradeRateDirection,
-    recurringTerminalSide,
-    recurringBuyFillInput,
-    recurringSellFillInput,
-    processingRecurringAction,
-    setRecurringTerminalSide,
-    setRecurringBuyFillInput,
-    setRecurringSellFillInput,
-    beginEditRecurringOrder,
-    updateRecurringOrderStatus,
     terminalHistoryConfigParams,
     showHistoryControl: false
   };
@@ -3313,24 +2461,26 @@ export default function P2PTradingPage({
     tradeComposerModel.selectedTradeRequestToken,
     true
   );
-  const canonicalCreateBaseSelection = USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
-    ? TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS.privateBase
-    : PRIVATE_GCOTI_TOKEN_ADDRESS.toLowerCase();
-  const canonicalCreateQuoteSelection = USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
-    ? TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS.privateQuote
-    : PRIVATE_COTI_TOKEN_ADDRESS.toLowerCase();
-  const createUsesSharedPair =
-    (tradeOfferTokenSelection === canonicalCreateBaseSelection && tradeRequestTokenSelection === canonicalCreateQuoteSelection) ||
-    (tradeOfferTokenSelection === canonicalCreateQuoteSelection && tradeRequestTokenSelection === canonicalCreateBaseSelection);
-  const canonicalCreateSide = tradeOfferTokenSelection === canonicalCreateBaseSelection ? 'sell' : 'buy';
+  const canonicalCreateBaseSelection = createBaseIsOffer ? tradeOfferTokenSelection : tradeRequestTokenSelection;
+  const canonicalCreateQuoteSelection = createBaseIsOffer ? tradeRequestTokenSelection : tradeOfferTokenSelection;
+  const canonicalCreateBaseToken = createBaseIsOffer ? tradeComposerModel.selectedTradeOfferToken : tradeComposerModel.selectedTradeRequestToken;
+  const canonicalCreateQuoteToken = createBaseIsOffer ? tradeComposerModel.selectedTradeRequestToken : tradeComposerModel.selectedTradeOfferToken;
+  const canonicalCreateSide = createBaseIsOffer ? 'sell' : 'buy';
   const displayedCreateSide = resolveDisplayedTradeActionSide(canonicalCreateSide, swapPriceDisplayInverted);
-  const canonicalCreateBaseSymbol = tradeComposerModel.tradeTokenOptions.find(
-    (option) => option.value === canonicalCreateBaseSelection
-  )?.symbol ?? tradeComposerModel.tradeTokenOptions.find((option) => option.value === canonicalCreateBaseSelection)?.label ?? 'Base';
-  const canonicalCreateQuoteSymbol = tradeComposerModel.tradeTokenOptions.find(
-    (option) => option.value === canonicalCreateQuoteSelection
-  )?.symbol ?? tradeComposerModel.tradeTokenOptions.find((option) => option.value === canonicalCreateQuoteSelection)?.label ?? 'Quote';
+  const canonicalCreateBaseSymbol = canonicalCreateBaseToken?.symbol ?? 'Base';
+  const canonicalCreateQuoteSymbol = canonicalCreateQuoteToken?.symbol ?? 'Quote';
   const displayedCreateBaseSymbol = swapPriceDisplayInverted ? canonicalCreateQuoteSymbol : canonicalCreateBaseSymbol;
+
+  const changeComposerTokenSelection = (isOffer: boolean, key: TradeTokenPresetKey) => {
+    if (tradingHeaderDisabled || isWalletTransactionFlowActive(getTradeWalletFlowInput())) return;
+    setCreatePairEdited(true);
+    setTradeHidePrivateLiquidity(resolveTradeBudgetPrivacyForPairChange(
+      tradeHidePrivateLiquidity,
+      [tradeOfferTokenSelection, tradeRequestTokenSelection],
+      [isOffer ? key : tradeOfferTokenSelection, isOffer ? tradeRequestTokenSelection : key]
+    ));
+    (isOffer ? setTradeOfferTokenSelection : setTradeRequestTokenSelection)(key);
+  };
 
   const composerActionNotice = renderP2PActionNotice('composer');
 
@@ -3348,6 +2498,7 @@ export default function P2PTradingPage({
 
   const tradeComposer = (
     <TradeComposerPanel
+      tradeVisibility={tradeVisibility}
       validationDisplayMode="after-interaction"
       title={
         editingTrade
@@ -3367,7 +2518,7 @@ export default function P2PTradingPage({
               ? directTradeRecipientIsValid
                 ? `Direct to ${shortenAddress(directTradeRecipientNormalized)}`
                 : 'Direct proposal'
-              : 'Private link · contract pending'
+              : 'Private link'
       }
       escrowContractAddress={tradeFeeEscrowContract}
       escrowContractLabel={tradeFeeEscrowContractLabel}
@@ -3383,9 +2534,7 @@ export default function P2PTradingPage({
           ? 'Save Edit'
           : counterParentTrade
             ? 'Send Counter'
-            : tradeVisibility === 'unlisted'
-              ? 'Private link contract pending'
-              : 'Create Offer'
+            : 'Create Offer'
       }
       sendingLabel="Creating..."
       sendTitle={
@@ -3404,9 +2553,9 @@ export default function P2PTradingPage({
       offerTokenOptions={tradeComposerModel.tradeTokenOptions}
       requestTokenOptions={tradeComposerModel.tradeTokenOptions}
       offerTokenSelection={tradeOfferTokenSelection}
-      onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
+      onOfferTokenSelectionChange={(value) => changeComposerTokenSelection(true, value as TradeTokenPresetKey)}
       requestTokenSelection={tradeRequestTokenSelection}
-      onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
+      onRequestTokenSelectionChange={(value) => changeComposerTokenSelection(false, value as TradeTokenPresetKey)}
       offerAssetError={tradeComposerModel.tradeComposerFieldErrors.offerAsset}
       requestAssetError={tradeComposerModel.tradeComposerFieldErrors.requestAsset}
       offerCustomAddress={tradeOfferCustomTokenAddress}
@@ -3437,8 +2586,8 @@ export default function P2PTradingPage({
       priceReverseReference={tradeComposerReverseCarbonPriceReference}
       priceReverseSummaryLabel={tradeReversePricePairLabel}
       priceSummaryLabel={tradePricePairLabel}
-      priceDisplayInverted={swapPriceDisplayInverted}
-      onPriceDisplayInvertedChange={(inverted) => setSwapPriceDisplayInverted(inverted)}
+      priceDisplayInverted={swapPriceDisplayInverted !== !createBaseIsOffer}
+      onPriceDisplayInvertedChange={(inverted) => setSwapPriceDisplayInverted(inverted !== !createBaseIsOffer)}
       priceHelpText=""
       pricePlacement="top"
       showPriceRatioPreview
@@ -3451,9 +2600,7 @@ export default function P2PTradingPage({
       offerBalanceBreakdownLabel={tradeComposerModel.tradeOfferBalanceBreakdownLabel}
       requestBalanceBreakdownLabel={tradeComposerModel.tradeRequestBalanceBreakdownLabel}
       pricingSourceFields={tradePricingEditedFields}
-      // The shared header does not bind P2P's token state. Keep its selectors
-      // available, with Buy/Sell only for the actual canonical pair.
-      displayedTradeSide={createUsesSharedPair ? displayedCreateSide : undefined}
+      displayedTradeSide={canonicalCreateBaseToken && canonicalCreateQuoteToken ? displayedCreateSide : undefined}
       displayedTradeBaseSymbol={displayedCreateBaseSymbol}
       onSwapSides={() => {
         const nextOfferToken = tradeRequestTokenSelection;
@@ -3470,8 +2617,10 @@ export default function P2PTradingPage({
         setTradeRequestCustomTokenAddress(nextRequestCustomAddress);
         setTradeOfferAmountInput(nextOfferAmount);
         setTradeRequestAmountInput(nextRequestAmount);
+        setCreateBaseIsOffer(!createBaseIsOffer);
+        setCreatePairEdited(true);
       }}
-      swapDisabled={creatingTrade}
+      swapDisabled={tradingHeaderDisabled}
       tradePreviewLabel={tradeComposerModel.tradePreviewLabel}
       tradeRateLabel={tradeComposerModel.tradeRateLabel}
       tradeReverseRateLabel={tradeComposerModel.tradeReverseRateLabel}
@@ -3481,22 +2630,18 @@ export default function P2PTradingPage({
       onExpiresNeverChange={setTradeHasNoExpiry}
       expiryError={tradeComposerModel.tradeComposerFieldErrors.expiry}
       hidePrivateLiquidity={tradeHidePrivateLiquidity}
+      privateTokenAmounts={tradeComposerModel.selectedTradeOfferToken?.kind === 'private-erc20' || tradeComposerModel.selectedTradeRequestToken?.kind === 'private-erc20'}
       canHidePrivateLiquidity={tradeComposerModel.canHidePrivateLiquidity}
       hiddenLiquidityUnavailableMessage={tradeComposerModel.hiddenLiquidityUnavailableMessage}
       onHidePrivateLiquidityChange={setTradeHidePrivateLiquidity}
       sending={creatingTrade}
-      canSend={tradeVisibility !== 'unlisted' && tradeComposerModel.canSendTradeOffer}
-      submissionBlocked={tradeVisibility === 'unlisted'}
+      canSend={tradeComposerModel.canSendTradeOffer}
       settingsSlot={tradeAccessSettings}
       onSendTradeOffer={() => {
         createTrade().catch(() => {});
       }}
       generalError={tradeComposerModel.tradeComposerFieldErrors.general}
-      validationMessage={
-        tradeVisibility === 'unlisted'
-          ? 'Shared trades are not enabled for this deployment.'
-          : tradeComposerModel.tradeComposerValidationMessage || undefined
-      }
+      validationMessage={tradeComposerModel.tradeComposerValidationMessage || undefined}
     />
   );
   const contextualAppHelpReason = useMemo<AppHelpReason | null>(() => {
@@ -3524,33 +2669,33 @@ export default function P2PTradingPage({
     return 'generic-error';
   }, [tradeActionError, walletError, walletKey]);
 
-  const tradingHeaderDisabled = creatingTrade || Boolean(processingTradeActionId) || Boolean(processingRecurringAction) ||
-    Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy) || Boolean(tradeActionConfirmation) ||
-    privateLiquiditySwapAction.busy || privateLiquidityPositionAction.busy || privateLiquidityHiddenIntentAction.busy ||
-    isWalletTransactionFlowActive(getTradeWalletFlowInput());
   return (
     <>
       {renderTradingHeader?.({
-        baseSelection: swapBuyTokenSelection,
-        quoteSelection: swapSellTokenSelection,
-        baseToken: swapBuyToken,
-        quoteToken: swapSellToken,
-        tokenOptions: swapTokenOptions,
+        baseSelection: isComposerRoute ? canonicalCreateBaseSelection : swapBuyTokenSelection,
+        quoteSelection: isComposerRoute ? canonicalCreateQuoteSelection : swapSellTokenSelection,
+        baseToken: isComposerRoute ? canonicalCreateBaseToken : swapBuyToken,
+        quoteToken: isComposerRoute ? canonicalCreateQuoteToken : swapSellToken,
+        tokenOptions: isComposerRoute ? tradeComposerModel.tradeTokenOptions : swapTokenOptions,
         onTokenSelectionChange: (side, key) => {
           if (tradingHeaderDisabled || isWalletTransactionFlowActive(getTradeWalletFlowInput()) ||
-              !swapTokenOptions.some(option => option.value === key)) return;
+              !(isComposerRoute ? tradeComposerModel.tradeTokenOptions : swapTokenOptions).some(option => option.value === key)) return;
+          if (isComposerRoute) {
+            if (canonicalCreateBaseSelection.startsWith('custom') || canonicalCreateQuoteSelection.startsWith('custom')) return;
+            const isOffer = side === 'buy' ? createBaseIsOffer : !createBaseIsOffer;
+            changeComposerTokenSelection(isOffer, key);
+            return;
+          }
           ensureDistinctSwapTokenSelection(side, key);
         },
-        disabled: tradingHeaderDisabled,
-        reference: swapCarbonReference
+        disabled: tradingHeaderDisabled || (isComposerRoute && (canonicalCreateBaseSelection.startsWith('custom') || canonicalCreateQuoteSelection.startsWith('custom'))),
+        reference: isComposerRoute ? getCarbonReferenceDisplay(canonicalCreateBaseToken, canonicalCreateQuoteToken, swapPriceDisplayInverted) : swapCarbonReference
       })}
     <main
-      data-p2p-pending-reads={import.meta.env.DEV ? [
-        legacyLoadingMyTrades && 'legacy',
+      data-p2p-pending-reads={import.meta.env.DEV || import.meta.env.MODE === 'coti-testnet-candidate' ? [
         initializingOtcV2History && 'history-setup',
         initializingOtcV2Actions && 'actions-setup',
-        loadingOneOffV2Trades && 'one-off',
-        loadingRecurringV2Trades && 'recurring'
+        loadingOneOffV2Trades && 'one-off'
       ].filter(Boolean).join(',') : undefined}
       className={`standalone-trades-shell p2p-trading-shell${terminalPanelOpen ? ' p2p-trading-shell-drawer-open' : ''}${
         terminalShowsOpenPanel ? ' p2p-trading-shell-empty-terminal' : ''
@@ -3579,52 +2724,54 @@ export default function P2PTradingPage({
         walletError={showOffersSurface && !approvedOffersDesignQa && walletError === publicTradesError ? '' : walletError}
         tradeActionError={showOffersSurface && !approvedOffersDesignQa && (otcV2SetupError || tradeActionError) === publicTradesError ? '' : (otcV2SetupError || tradeActionError)}
       />
-      {sharedWalletSession?.otcV2ActionRuntime?.privateBook ? <PrivateBookV2RecoveryPanel
-        key={`book-recovery:${walletKey}:${chainId}`}
-        runtime={sharedWalletSession.otcV2ActionRuntime} ownerAddress={walletAddress} privacyUnlocked={walletHasAes}
-        actionInProgress={creatingTrade || Boolean(processingTradeActionId) || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
-        tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
-        confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
-        onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
-        onConfirmed={() => { refreshOneOffV2Trades(); }}
-      /> : null}
-      {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.link ? <LinkTradeV2CreationRecoveryPanel
-        key={`${walletKey}:${chainId}`}
-        runtime={sharedWalletSession.otcV2ActionRuntime.link}
-        ownerAddress={walletAddress}
-        actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
-        tokenInfoByKey={customTradeTokenInfoByAddress}
-        ensureTokenInfo={ensureRecurringV2TokenInfo}
-        confirmFunding={ensureTradeFunding}
-        runWalletFlow={runTradeWalletPromptFlow}
-        onCreated={created => {
-          setCreatedTradeLink(new URL(created.sharePath, window.location.origin).href);
-          navigateToTradePath(created.sharePath);
-        }}
-      /> : null}
-      {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.counter ? <CounterTradeV2Controls
-        runtime={sharedWalletSession.otcV2ActionRuntime.counter} ownerAddress={walletAddress}
-        actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
-        tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
-        confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
-        onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
-      /> : null}
-      {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.link?.balance ? <TradeBalanceDisclosureV2 key={`link-balance:${walletKey}:${chainId}`}
-        runtime={sharedWalletSession.otcV2ActionRuntime.link.balance} tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
-        actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
-        onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} /> : null}
-      {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.counter?.balance ? <TradeBalanceDisclosureV2 key={`counter-balance:${walletKey}:${chainId}`}
-        runtime={sharedWalletSession.otcV2ActionRuntime.counter.balance} tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
-        actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
-        onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} /> : null}
-      {walletHasAes ? (['private-v2', 'direct-v2'] as const).map(protocol => {
-        const runtime = sharedWalletSession?.otcV2ActionRuntime?.tradeBalances[protocol];
-        return runtime ? <TradeBalanceDisclosureV2 key={`balance-recovery:${protocol}:${walletKey}:${chainId}`} runtime={runtime}
-          tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
-          actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
+      {sharedWalletSession?.otcV2ActionRuntime ? <PendingTradeRecoveryDisclosure key={`pending-recovery:${walletKey}:${chainId}`}>
+        {sharedWalletSession.otcV2ActionRuntime.privateBook ? <PrivateBookV2RecoveryPanel
+          key={`book-recovery:${walletKey}:${chainId}`}
+          runtime={sharedWalletSession.otcV2ActionRuntime} ownerAddress={walletAddress} privacyUnlocked={walletHasAes}
+          actionInProgress={creatingTrade || Boolean(processingTradeActionId) || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
+          tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
           confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
-          onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} /> : null;
-      }) : null}
+          onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
+          onConfirmed={() => { refreshOneOffV2Trades(); }}
+        /> : null}
+        {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.link ? <LinkTradeV2CreationRecoveryPanel
+          key={`${walletKey}:${chainId}`}
+          runtime={sharedWalletSession.otcV2ActionRuntime.link}
+          ownerAddress={walletAddress}
+          actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
+          tokenInfoByKey={customTradeTokenInfoByAddress}
+          ensureTokenInfo={ensureOtcV2TokenInfo}
+          confirmFunding={ensureTradeFunding}
+          runWalletFlow={runTradeWalletPromptFlow}
+          onCreated={created => {
+            setCreatedTradeLink(new URL(created.sharePath, window.location.origin).href);
+            navigateToTradePath(created.sharePath);
+          }}
+        /> : null}
+        {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.counter ? <CounterTradeV2Controls
+          runtime={sharedWalletSession.otcV2ActionRuntime.counter} ownerAddress={walletAddress}
+          actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
+          tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
+          confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
+          onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
+        /> : null}
+        {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.link?.balance ? <TradeBalanceDisclosureV2 key={`link-balance:${walletKey}:${chainId}`}
+          runtime={sharedWalletSession.otcV2ActionRuntime.link.balance} tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
+          actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
+          onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} /> : null}
+        {walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.counter?.balance ? <TradeBalanceDisclosureV2 key={`counter-balance:${walletKey}:${chainId}`}
+          runtime={sharedWalletSession.otcV2ActionRuntime.counter.balance} tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
+          actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
+          onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} /> : null}
+        {walletHasAes ? (['private-v2', 'direct-v2'] as const).map(protocol => {
+          const runtime = sharedWalletSession?.otcV2ActionRuntime?.tradeBalances[protocol];
+          return runtime ? <TradeBalanceDisclosureV2 key={`balance-recovery:${protocol}:${walletKey}:${chainId}`} runtime={runtime}
+            tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
+            actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
+            confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
+            onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} /> : null;
+        }) : null}
+      </PendingTradeRecoveryDisclosure> : null}
       {onOpenAppHelp && contextualAppHelpReason ? (
         <div className="p2p-contextual-help">
           <span>Need help with this readiness step?</span>
@@ -3701,88 +2848,22 @@ export default function P2PTradingPage({
             : formatSwapAvailability}
         />
       ) : null}
-      {showSwapSurface && activeSwapVenue === 'private-liquidity' ? (
-        <PrivateLiquiditySwapPanel
-          tradeEntryModeTabs={tradeEntryModeTabs}
-          venueTabs={null}
-          sellAmountInput={swapSellAmountInput}
-          sellBalanceLabel={swapSellBalanceLabel}
-          sellBalanceTitle={swapSellBalanceTitle}
-          sellTokenSelection={swapSellTokenSelection}
-          sellVerifyUrl={swapSellVerifyUrl}
-          buyTokenSelection={swapBuyTokenSelection}
-          buyVerifyUrl={swapBuyVerifyUrl}
-          tokenOptions={privateLiquidityTokenOptions}
-          quote={privateLiquiditySwapAction.quote}
-          inputTokenDecimals={swapSellToken?.decimals}
-          inputTokenSymbol={swapSellToken?.symbol}
-          outputTokenDecimals={swapBuyToken?.decimals}
-          outputTokenSymbol={swapBuyToken?.symbol}
-          slippageBps={privateLiquiditySlippageBps}
-          minimumFillBps={privateLiquidityMinimumFillBps}
-          deploymentReady={privateLiquidityData.deploymentReady}
-          liquidityLoading={[
-            'attesting',
-            'syncing-events',
-            'hydrating-positions'
-          ].includes(privateLiquidityData.status)}
-          deploymentError={privateLiquidityData.error}
-          walletReady={privateLiquidityWalletReady}
-          busy={privateLiquiditySwapAction.busy}
-          quoteError={privateLiquiditySwapAction.quoteError}
-          actionMessage={privateLiquiditySwapAction.message}
-          actionStatus={
-            privateLiquiditySwapAction.stage === 'success'
-              ? 'success'
-              : privateLiquiditySwapAction.stage === 'error'
-                ? 'error'
-                : privateLiquiditySwapAction.busy
-                  ? 'pending'
-                  : 'idle'
-          }
-          onSellAmountInputChange={updateSwapSellAmountInput}
-          onTokenSelectionChange={ensureDistinctSwapTokenSelection}
-          onFlipTokens={flipSwapTokens}
-          onOpenPools={() => navigateToTradePath(buildPrivateLiquidityWorkspacePath())}
-          onRetryDeployment={privateLiquidityData.retryDeployment}
-          onSlippageBpsChange={setPrivateLiquiditySlippageBps}
-          onMinimumFillBpsChange={setPrivateLiquidityMinimumFillBps}
-          historyRows={privateLiquiditySwapHistoryRows}
-          historyStatus={privateLiquidityData.historyLoading ? 'loading' : privateLiquidityOwnerData.status}
-          historyError={privateLiquidityOwnerData.error}
-          onRevealHistory={privateLiquidityOwnerData.reveal}
-          onReview={privateLiquiditySwapAction.review}
-        />
-      ) : null}
-      {showPrivateLiquidityWorkspace ? (
+      {showStrategyRecovery ? <button type="button" className="standalone-trade-secondary-btn"
+        disabled={tradingHeaderDisabled} onClick={() => navigateToTradePath('/otc/orders')}>Back to My trades</button> : null}
+      {showStrategyRecovery ? (
         <PrivateLiquidityWorkspace
-          activeView={route.privateLiquidityView ?? 'discover'}
+          recoveryOnly
+          activeView={route.privateLiquidityView!}
+          intentMode={route.view === 'mine' ? 'manage' : 'create'}
           deploymentReady={privateLiquidityData.deploymentReady}
           model={privateLiquidityData.model}
           positionTokens={privateLiquidityPositionTokens}
-          selectedDailyPricePairKey={privateLiquidityDailyPriceMarket?.pairKey ?? privateLiquidityDailyPriceResolvedPairKey}
-          onSelectDailyPricePair={setPrivateLiquidityDailyPricePairKey}
-          dailyPriceChart={
-            privateLiquidityDailyPriceResolvedPairKey &&
-            privateLiquidityDailyPriceBaseToken &&
-            privateLiquidityDailyPriceQuoteToken
-              ? {
-                  points: privateLiquidityDailyPricePresentation.points,
-                  pairLabel: `${privateLiquidityDailyPriceBaseToken.symbol} / ${privateLiquidityDailyPriceQuoteToken.symbol}`,
-                  quoteSymbol: privateLiquidityDailyPriceQuoteToken.symbol,
-                  mode: privateLiquidityDailyPricePresentation.mode,
-                  status: privateLiquidityDailyPricePresentation.status,
-                  error: privateLiquidityDailyPriceData.error,
-                  onRetry: privateLiquidityDailyPriceData.refresh
-                }
-              : undefined
-          }
           managedPositionInventory={privateLiquidityManagedInventory}
           ownerPrivateHistory={privateLiquidityOwnerData.history}
           ownerPrivateDataStatus={privateLiquidityOwnerData.status}
           ownerPrivateDataLoading={privateLiquidityOwnerData.status === 'loading'}
           ownerPrivateDataError={privateLiquidityOwnerData.error}
-          routeError={route.routeError || privateLiquidityData.error}
+          routeError={route.routeError || privateLiquidityData.error || privateLiquidityData.historyError}
           walletReady={privateLiquidityWalletReady}
           processingPositionAction={privateLiquidityPositionAction.currentAction}
           positionActionBusy={privateLiquidityPositionAction.busy}
@@ -3817,17 +2898,11 @@ export default function P2PTradingPage({
           ].includes(privateLiquidityData.status)}
           hydratedPositionCount={privateLiquidityData.hydratedPositionCount}
           totalPositionCount={privateLiquidityData.totalPositionCount}
-          onBackToSwap={() => navigateToTradePath(
-            buildTradeSurfacePath('swap', 'desk', 'swap', 'private-liquidity')
-          )}
           onBackToPositions={() => navigateToTradePath(buildPrivateLiquidityWorkspacePath('mine'))}
-          onChangeView={(view) => navigateToTradePath(buildPrivateLiquidityWorkspacePath(view))}
           onOpenPosition={(positionId) => navigateToTradePath(buildPrivateLiquidityPositionPath(positionId))}
           onPositionAction={privateLiquidityPositionAction.execute}
-          onCreateHiddenIntent={privateLiquidityHiddenIntentAction.create}
           onCancelHiddenIntent={privateLiquidityHiddenIntentAction.cancel}
           onReclaimHiddenIntent={privateLiquidityHiddenIntentAction.reclaim}
-          onSettleHiddenIntents={privateLiquidityHiddenIntentAction.settle}
           onRevealHiddenIntentOwnerData={privateLiquidityHiddenIntentOwnerData.reveal}
           onRevealOwnerPrivateData={privateLiquidityOwnerData.reveal}
           onRefresh={privateLiquidityData.refresh}
@@ -3901,7 +2976,7 @@ export default function P2PTradingPage({
         />
       ) : null}
 
-      {isComposerRoute ? (
+      {isComposerRoute && !showStrategyRecovery ? (
         <section className="standalone-trade-create-panel p2p-trade-workspace-panel">
           <div className="standalone-trades-section-head">
             <div>
@@ -3910,18 +2985,14 @@ export default function P2PTradingPage({
                   ? `Edit public offer #${editingTrade.tradeId}`
                   : counterParentTrade
                     ? `Counter offer #${counterParentTrade.tradeId}`
-                  : editingRecurringOrder?.recurringOrder
-                    ? `Edit recurring order #${editingRecurringOrder.recurringOrder.orderId}`
                   : 'Create P2P offer'}
               </h2>
-              {editingTrade || counterParentTrade || editingRecurringOrder ? <p className="p2p-create-task-description">
+              {editingTrade || counterParentTrade ? <p className="p2p-create-task-description">
                 {editingTrade
                   ? 'Update this public offer without changing the shared pair or price display.'
                   : counterParentTrade
                     ? 'Reply with new fixed terms for the selected participant.'
-                  : editingRecurringOrder?.recurringOrder
-                    ? 'Update both reusable private orders and their starting inventory.'
-                    : 'Update both reusable private orders and their starting inventory.'}
+                    : 'Create or update a fixed-term P2P offer.'}
               </p> : null}
             </div>
             {editingTrade ? (
@@ -3939,11 +3010,6 @@ export default function P2PTradingPage({
                 </button>
               </div>
             ) : null}
-            {editingRecurringOrder ? (
-              <button type="button" className="standalone-trade-secondary-btn" onClick={clearRecurringEdit}>
-                Cancel Edit
-              </button>
-            ) : null}
           </div>
           {isCounterRouteWithoutParent
             ? renderP2PEmptyState(
@@ -3959,59 +3025,7 @@ export default function P2PTradingPage({
                 </>
               )
             : null}
-          {!isCounterRouteWithoutParent ? (editingRecurringOrder?.recurringOrder && !editingTrade && !counterParentTrade ? (
-            <TradeRecurringComposerPanel
-              actionNotice={composerActionNotice}
-              copyWithFeedback={copyWithFeedback}
-              createRecurringOrder={createRecurringOrder}
-              createdRecurringOrderId={createdRecurringOrderId}
-              createdRecurringOrderLink={createdRecurringOrderLink}
-              creatingRecurringOrder={creatingRecurringOrder}
-              editingRecurringOrder={editingRecurringOrder}
-              lastCopiedKey={lastCopiedKey}
-              recurringAddBuyBudgetInput={recurringAddBuyBudgetInput}
-              recurringAddSellInventoryInput={recurringAddSellInventoryInput}
-              recurringBaseToken={recurringBaseToken}
-              recurringBuyPriceInput={recurringBuyPriceInput}
-              recurringBuyReceiveEditable={recurringBuyReceiveEditable}
-              recurringBuyReceiveInput={recurringBuyReceiveInput}
-              recurringBuyReceivePreview={recurringBuyReceivePreview}
-              recurringHidePrivateAmounts={recurringHidePrivateAmounts}
-              recurringPriceDisplayInverted={recurringPriceDisplayInverted}
-              recurringQuoteToken={recurringQuoteToken}
-              recurringRemoveBuyBudgetInput={recurringRemoveBuyBudgetInput}
-              recurringRemoveSellInventoryInput={recurringRemoveSellInventoryInput}
-              recurringSellPriceInput={recurringSellPriceInput}
-              recurringSellReceiveEditable={recurringSellReceiveEditable}
-              recurringSellReceiveInput={recurringSellReceiveInput}
-              recurringSellReceivePreview={recurringSellReceivePreview}
-              recurringBaseBalanceLabel={tradeComposerModel.tradeOfferBalanceSummaryLabel}
-              recurringQuoteBalanceLabel={tradeComposerModel.tradeRequestBalanceSummaryLabel}
-              recurringBaseMaxInputValue={tradeComposerModel.tradeOfferMaxInputValue}
-              recurringQuoteMaxInputValue={tradeComposerModel.tradeRequestMaxInputValue}
-              canUseRecurringBaseMax={tradeComposerModel.canUseTradeOfferMax}
-              canUseRecurringQuoteMax={tradeComposerModel.canUseTradeRequestMax}
-              setRecurringHidePrivateAmounts={setRecurringHidePrivateAmounts}
-              setRecurringRemoveBuyBudgetInput={setRecurringRemoveBuyBudgetInput}
-              setRecurringRemoveSellInventoryInput={setRecurringRemoveSellInventoryInput}
-              tradeFeeEscrowContract={tradeFeeEscrowContract}
-              tradeFeeEscrowContractLabel={tradeFeeEscrowContractLabel}
-              tradeFeeEscrowContractTitleLabel={tradeFeeEscrowContractTitleLabel}
-              tradeRequiredFeeWei={tradeRequiredFeeWei}
-              updateRecurringBuyLiquidityInput={updateRecurringBuyLiquidityInput}
-              updateRecurringBuyPriceInput={updateRecurringBuyPriceInput}
-              updateRecurringBuyReceiveInput={updateRecurringBuyReceiveInput}
-              updateRecurringBuyReversePriceInput={updateRecurringBuyReversePriceInput}
-              updateRecurringSellLiquidityInput={updateRecurringSellLiquidityInput}
-              updateRecurringSellPriceInput={updateRecurringSellPriceInput}
-              updateRecurringSellReceiveInput={updateRecurringSellReceiveInput}
-              updateRecurringSellReversePriceInput={updateRecurringSellReversePriceInput}
-              onCotiNetwork={onCotiNetwork}
-              toggleRecurringBuyReceiveEditable={toggleRecurringBuyReceiveEditable}
-              toggleRecurringSellReceiveEditable={toggleRecurringSellReceiveEditable}
-              walletAddress={walletAddress}
-            />
-          ) : (
+          {!isCounterRouteWithoutParent ? (
             <>
           {counterParentTrade ? (
             <TradeCounterParentSummary trade={counterParentTrade} walletAddress={walletAddress} />
@@ -4025,7 +3039,7 @@ export default function P2PTradingPage({
             onCopyCreatedTradeLink={() => copyWithFeedback(createdTradeLink, createdTradeCopyKey).catch(() => {})}
           />
             </>
-          )) : null}
+          ) : null}
           {tradeActionError ? <p className="standalone-trade-error">{tradeActionError}</p> : null}
         </section>
       ) : null}
@@ -4059,7 +3073,7 @@ export default function P2PTradingPage({
               onOpenDesk={() => navigateToTradePath(buildCurrentTradeSurfacePath('public'))}
               onCreateOffer={() => {
                 setEmptyTerminalDrawerOpen(false);
-                navigateToTradePath(buildCurrentTradeSurfacePath('create', 'limit'));
+                navigateTradeView('/otc/limit');
               }}
               persistentOffers={offersTerminalEmpty}
               tradeDirection={offersTerminalEmpty
@@ -4098,7 +3112,7 @@ export default function P2PTradingPage({
             runtime={sharedWalletSession.otcV2ActionRuntime.link}
             reference={route.linkV2Reference}
             tokenInfoByKey={customTradeTokenInfoByAddress}
-            ensureTokenInfo={ensureRecurringV2TokenInfo}
+            ensureTokenInfo={ensureOtcV2TokenInfo}
             confirmFunding={ensureTradeFunding}
             runWalletFlow={runTradeWalletPromptFlow}
             onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
@@ -4109,7 +3123,7 @@ export default function P2PTradingPage({
             readContext={linkTradeV2ReadContext ?? sharedWalletSession?.otcV2ActionRuntime?.link?.readContext}
             resolveReadContext={sharedWalletSession?.otcV2ActionRuntime?.resolveLinkReadContext}
             tokenInfoByKey={customTradeTokenInfoByAddress}
-            ensureTokenInfo={ensureRecurringV2TokenInfo}
+            ensureTokenInfo={ensureOtcV2TokenInfo}
             renderFill={walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.link ? review => review.reference.chainId === sharedWalletSession.otcV2ActionRuntime!.link!.readContext.deployment.chainId &&
               review.reference.escrow === sharedWalletSession.otcV2ActionRuntime!.link!.readContext.deployment.contractAddress ? <LinkTradeV2FillControls
               review={review} runtime={sharedWalletSession.otcV2ActionRuntime!.link!} ownerAddress={walletKey}
@@ -4120,7 +3134,7 @@ export default function P2PTradingPage({
             /> : null : undefined}
             renderCounter={walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.counter ? review => <CounterTradeV2Controls
               review={review} runtime={sharedWalletSession.otcV2ActionRuntime!.counter!} ownerAddress={walletKey}
-              tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
+              tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
               actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
               confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
               onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
@@ -4128,18 +3142,16 @@ export default function P2PTradingPage({
             renderBalance={walletHasAes && selectedBalanceRuntime ? review => review.maker !== walletKey &&
               review.reference.chainId === balanceReference?.chainId && review.reference.escrow === balanceReference.contractAddress && review.reference.id === balanceReference.orderId ? <TradeBalanceDisclosureV2
               key={`${walletKey}:${review.reference.id}`} runtime={selectedBalanceRuntime} orderId={review.reference.id}
-              tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
+              tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo} confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
               actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
               onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })} /> : null : undefined}
           /> : <TradeTerminalRouteStatus
             routeView={route.view}
             routeError={route.routeError}
             detailTradeError={detailTradeError}
-            routeIsRecurringOrder={routeIsRecurringOrder}
-            canRetryRouteTrade={routeTradeId !== null}
+            canRetryRouteTrade={routeUsesOtcV2 && routeTradeId !== null}
             loadingDetailTrade={loadingDetailTrade}
             terminalRouteDetailPending={terminalRouteDetailPending}
-            tradeAccessBlocked={tradeAccessBlocked}
             onRefreshTradeDetail={() => {
               if (routeTradeId !== null) {
                 refreshTradeDetail(routeTradeId, routeEscrowContract).catch(() => {});
@@ -4148,20 +3160,20 @@ export default function P2PTradingPage({
             onFocusTradeLinkInput={focusTradeLinkInput}
             onOpenDesk={() => navigateToTradePath(buildCurrentTradeSurfacePath('public'))}
           />}
-          {terminalHasTradeContent && (route.view === 'mine' || !tradeAccessBlocked) ? (
+          {terminalHasTradeContent && (route.view === 'mine' || !routeHasUnsupportedContract) ? (
             <div className="p2p-terminal-view-tabs" role="tablist" aria-label="Trade terminal view">
               <button type="button" role="tab" aria-selected={terminalPanelTab === 'overview'} className={terminalPanelTab === 'overview' ? 'active' : undefined} onClick={() => setTerminalPanelTab('overview')}>Overview</button>
               <button type="button" role="tab" aria-selected={terminalPanelTab === 'activity'} className={terminalPanelTab === 'activity' ? 'active' : undefined} onClick={() => setTerminalPanelTab('activity')}>Activity</button>
             </div>
           ) : null}
-          {!terminalShowsOpenPanel && terminalPanelTrade && (route.view === 'mine' || !tradeAccessBlocked) ? (
+          {!terminalShowsOpenPanel && terminalPanelTrade && (route.view === 'mine' || !routeHasUnsupportedContract) ? (
             <div className="p2p-terminal-view-panel" role="tabpanel" aria-label={terminalPanelTab === 'overview' ? 'Trade overview' : 'Trade activity'}>
               {terminalPanelTab === 'overview' ? (
                 <>
                   <TradeTerminalRenderer snapshot={terminalPanelTrade} {...tradeTerminalRendererProps} />
                   {walletHasAes && (terminalPanelTrade.v2?.protocol === 'standard-v2' || terminalPanelTrade.v2?.protocol === 'private-v2' && 'privateBook' in terminalPanelTrade) && sharedWalletSession?.otcV2ActionRuntime?.counter ? <CounterTradeV2Controls
                     bookTrade={terminalPanelTrade} runtime={sharedWalletSession.otcV2ActionRuntime.counter} ownerAddress={walletKey}
-                    tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
+                    tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
                     actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
                     confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
                     onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
@@ -4181,11 +3193,24 @@ export default function P2PTradingPage({
         </section>
       ) : null}
 
-      {route.view === 'mine' ? (
+      {route.view === 'mine' && !showStrategyRecovery ? <details className="p2p-fund-recovery">
+        <summary>Recover existing strategy funds</summary>
+        <p>Withdraw or refund funds from earlier strategy orders. New strategy orders are disabled.</p>
+        <button type="button" className="standalone-trade-secondary-btn" disabled={tradingHeaderDisabled}
+          onClick={() => navigateToTradePath(buildPrivateLiquidityWorkspacePath('mine'))}>Strategy position exits</button>
+        <button type="button" className="standalone-trade-secondary-btn" disabled={tradingHeaderDisabled}
+          onClick={() => navigateToTradePath(buildPrivateLiquidityWorkspacePath('intents', 'mine'))}>Hidden limit refunds</button>
+      </details> : null}
+      {route.view === 'mine' && !showStrategyRecovery ? (
         <TradeMyTradesSection
           loadingMyTrades={loadingMyTrades}
           myTradesCount={myTrades.length}
           myTradesError={myTradesError}
+          historyHasMore={hasMoreOtcTradeHistoryV2}
+          historyComplete={completeOtcTradeHistoryV2}
+          historyLoading={loadingOtcTradeHistoryV2}
+          historyError={otcTradeHistoryV2Error}
+          onLoadOlderHistory={loadOlderOtcTradeHistoryV2}
           privateTradesLocked={Boolean(walletAddress && !walletHasAes)}
           myTradeGroupOptions={myTradeGroupOptions}
           selectedMyTradeGroup={selectedMyTradeGroup}
@@ -4212,20 +3237,21 @@ export default function P2PTradingPage({
           onToggleMobileFilters={() => setMobileTradeFiltersOpen((isOpen) => !isOpen)}
           onTypeFilterChange={(value) => setTradeTypeFilter(value as TradeDeskTypeFilter)}
           onSortModeChange={(value) => setTradeSortMode(value as TradeDeskSortMode)}
-          onCreateOffer={startFreshOneOffTrade}
+          onCreateOffer={openLimitOrderFromSwapPair}
           additionalActiveCount={(linkActivity.snapshot?.orders.filter(order => order.status === 'Open').length ?? 0) + (counterActivity.snapshot?.orders.filter(order => order.status === 1).length ?? 0)}
           additionalReceivedCount={counterActivity.snapshot?.orders.filter(order => order.status === 1 && order.taker === walletKey).length ?? 0}
           additionalHistoryCount={(linkActivity.snapshot?.history.length ?? 0) + (counterActivity.snapshot?.history.length ?? 0)}
-          additionalPending={Boolean(walletHasAes && (sharedWalletSession?.otcV2ActionRuntime?.link && !linkActivity.snapshot?.complete || sharedWalletSession?.otcV2ActionRuntime?.counter && !counterActivity.snapshot?.complete))}
+          additionalPending={initializingOtcV2Actions || participantReadPassPending}
+          additionalIncomplete={Boolean(walletHasAes && (sharedWalletSession?.otcV2ActionRuntime?.link && (!linkActivity.snapshot?.complete || linkActivity.error) || sharedWalletSession?.otcV2ActionRuntime?.counter && (!counterActivity.snapshot?.complete || counterActivity.error)))}
           renderAdditionalTrades={walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.link ? (lifecycle, activeFilter) => <><LinkTradeV2Activity
             activity={linkActivity} runtime={sharedWalletSession.otcV2ActionRuntime!.link!} lifecycle={lifecycle} activeFilter={activeFilter}
-            tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
+            tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
             search={tradeSearchInput} pairFilter={tradePairFilter} typeFilter={tradeTypeFilter} sortMode={tradeSortMode}
             confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
             onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
           />{sharedWalletSession?.otcV2ActionRuntime?.counter ? <CounterTradeV2Activity
             activity={counterActivity} runtime={sharedWalletSession.otcV2ActionRuntime.counter} lifecycle={lifecycle} activeFilter={activeFilter}
-            tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureRecurringV2TokenInfo}
+            tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
             search={tradeSearchInput} pairFilter={tradePairFilter} typeFilter={tradeTypeFilter} sortMode={tradeSortMode}
             actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
             confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}

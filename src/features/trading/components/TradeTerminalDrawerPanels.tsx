@@ -43,11 +43,9 @@ type TradeTerminalRouteStatusProps = {
   routeView: string;
   routeError: string;
   detailTradeError: string;
-  routeIsRecurringOrder: boolean;
   canRetryRouteTrade: boolean;
   loadingDetailTrade: boolean;
   terminalRouteDetailPending: boolean;
-  tradeAccessBlocked: boolean;
   onRefreshTradeDetail: () => void;
   onFocusTradeLinkInput: () => void;
   onOpenDesk: () => void;
@@ -190,11 +188,9 @@ export function TradeTerminalRouteStatus({
   routeView,
   routeError,
   detailTradeError,
-  routeIsRecurringOrder,
   canRetryRouteTrade,
   loadingDetailTrade,
   terminalRouteDetailPending,
-  tradeAccessBlocked,
   onRefreshTradeDetail,
   onFocusTradeLinkInput,
   onOpenDesk
@@ -203,7 +199,7 @@ export function TradeTerminalRouteStatus({
     <>
       {routeView === 'trade' && (routeError || detailTradeError)
         ? renderP2PEmptyState(
-            routeIsRecurringOrder ? 'Recurring order could not load' : 'Trade could not load',
+            'Trade could not load',
             routeError || detailTradeError,
             <>
               {canRetryRouteTrade ? (
@@ -224,25 +220,10 @@ export function TradeTerminalRouteStatus({
         : null}
       {terminalRouteDetailPending
         ? renderP2PEmptyState(
-            routeIsRecurringOrder ? 'Reading recurring order' : 'Loading trade',
-            routeIsRecurringOrder ? 'Reading reusable buy/sell terms and liquidity.' : 'Reading escrow terms and access rules.',
+            'Loading trade',
+            'Reading escrow terms and access rules.',
             undefined,
             'loading'
-          )
-        : null}
-      {routeView === 'trade' && !loadingDetailTrade && tradeAccessBlocked
-        ? renderP2PEmptyState(
-            'Unlisted link required',
-            'Paste the full shared link, not only the trade id.',
-            <>
-              <button type="button" onClick={onFocusTradeLinkInput}>
-                Paste Link
-              </button>
-              <button type="button" onClick={onOpenDesk}>
-                Open Desk
-              </button>
-            </>,
-            'locked'
           )
         : null}
     </>

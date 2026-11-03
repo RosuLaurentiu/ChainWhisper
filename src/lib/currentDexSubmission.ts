@@ -1,3 +1,4 @@
+import { isCurrentDexBrowserSigner, assertCurrentDexBrowserWindow } from './currentDexBrowserPolicy';
 import { assertCurrentSwapCandidate, assertCurrentSwapIdentity, assertCurrentNativeSwapIntent, usesCurrentNativeSwapChecks, currentNativeSigningBudget, completeCurrentNativeSwapScope,
   currentNativeSwapCheckpoint, recordCurrentNativeSwapHash, restoreCurrentNativeSwapCheckpoint, validateCurrentNativeSwapCheckpoint, currentNativeSwapChargeGasPrice, hasCurrentNativeSigningBudget, bindCurrentNativeSwapFundingScope, renewCurrentNativeSwapFundingWindow, renewCurrentNativeSwapClosedWindow, CURRENT_NATIVE_SWAP_LIMITS, type CurrentNativeSwapCheckpoint } from './currentDexNativeSwapPolicy';
 import { CURRENT_D06_SWAP_GAS_CAPS, assertCurrentD06AppAuthority, assertCurrentAppInitialClaimAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, CURRENT_APP_REPLACEMENT_TRIAL, CURRENT_APP_FURTHER_TRIAL, CURRENT_APP_FOURTH_TRIAL, CURRENT_APP_HISTORY_REPLACEMENT_TRIAL, hasCurrentHistoryReplacementProof, CURRENT_APP_HISTORY_FAST_TRIAL, hasCurrentHistoryFastProof } from './currentDexC1SwapPolicy';
@@ -51,7 +52,7 @@ import { blockCurrentSwapVerification, blockCurrentDexOperationVerification, cle
 import { readCurrentDexNativeReload, writeCurrentDexNativeReload, type CurrentDexNativeReloadRecord } from './currentDexNativeReload';
 import { recoverCurrentPartialLedger } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY, CURRENT_APP_PARTIAL_REFUND_TRIAL, currentPartialLedgerRecoveryAllowed, hasCurrentPartialRefundProof } from './currentDexC1SwapPolicy';
-import { CURRENT_OWNER_BETA, isCurrentOwnerBeta, assertCurrentOwnerBetaWindow, isCurrentOwnerBetaRecovery } from './currentDexOwnerBetaPolicy';
+import { CURRENT_OWNER_BETA } from './currentDexOwnerBetaPolicy';
 
 export {
   CURRENT_DEX_SUBMISSION_CANDIDATE_SHA256,
@@ -397,6 +398,7 @@ type CurrentAppPoolSigning = Readonly<{ signer: object }> & (
   { kind: 'approval'; prepared: CurrentSharedPoolApprovalPrepared });
 export type CurrentTransport = CurrentDexSubmissionTransport & Readonly<{ readHead(): Promise<CurrentHead>;
   readNonce(): Promise<number>;
+  admitOwnerRecord?(swapScope?: string, gasCap?: bigint): Promise<void>;
   readNativeResources?(head: CurrentHead): Promise<CurrentNativeResources>;
   readBlockHash(blockNumber: number): Promise<string | null>;
   readTransaction(transactionHash: string): Promise<SubmittedTransaction | null>;
@@ -450,7 +452,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     await transport.assertCurrent();
     return head;
   };
-  const requireNativeResources = async (head: CurrentHead, nonce: number, gasCap: bigint) => {
+  const requireNativeResources = async (head: CurrentHead, nonce: number | undefined, gasCap: bigint) => {
     if (!nativeFit) return;
     if (!transport.readNativeResources) throw new Error('Current native send resources are unavailable.');
     await transport.assertCurrent();
@@ -459,7 +461,8 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     if (!sameAddress(resources.owner, owner) || resources.chainId !== chainId ||
         resources.head.number !== head.number || resources.head.hash.toLowerCase() !== head.hash.toLowerCase() ||
         resources.head.timestamp !== head.timestamp || resources.head.gasLimit !== head.gasLimit ||
-        resources.latestNonce !== nonce || resources.pendingNonce !== nonce ||
+        !Number.isSafeInteger(resources.latestNonce) || resources.latestNonce < 0 || resources.latestNonce !== resources.pendingNonce ||
+        nonce !== undefined && resources.latestNonce !== nonce ||
         typeof resources.gasPrice !== 'bigint' || resources.gasPrice <= 0n ||
         typeof resources.baseFeePerGas !== 'bigint' || resources.baseFeePerGas < 0n || resources.baseFeePerGas > fixedGasPrice ||
         resources.code !== '0x' || typeof resources.balance !== 'bigint' ||
@@ -467,34 +470,37 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
         head.timestamp > now() || now() - head.timestamp >= 90n) {
       throw new Error('Current native nonce, fee, payer resources or head changed.');
     }
+    return resources;
   };
   const sendCurrent = async (phase: CurrentDexPendingAttempt['phase'], call: UnsignedTransaction, deadline: bigint | undefined,
     validate: () => void | Promise<void>, onSigningRequest: (request: TransactionRequest) => void,
     operationId?: bigint, gasCap = SHARED_POOL_GAS_CAP,
     observation?: { sendStarted(): void; hashReturned?(transactionHash: string): void; submissionReturned(transactionHash: string): void },
     authorizeSigning?: (request: TransactionRequest) => void | Promise<void>, sourceFit?: CurrentNativePoolSourceFit, appSwap?: { prepared: CurrentCheapDexPreparedQuote; signer: object }, appInitialClaimSigner?: object,
-    appSharedFunding?: Readonly<{ action: 'initial' | 'refill'; token: string }>,
+    appSharedFunding?: Readonly<{ action: 'initial' | 'refill'; token: string; signer?: object }>,
     appLimit?: Readonly<{ prepared: CurrentLimitPrepared | CurrentLimitPreparedSnapshot | CurrentLimitPreparedOwner | CurrentLimitFundingReview; signer: object }>,
     appPool?: CurrentAppPoolSigning) => {
     const fundingScope = appSharedFunding && Object.freeze({ ...appSharedFunding });
     const limitScope = appLimit && Object.freeze({ ...appLimit });
     const poolScope = appPool && Object.freeze({ ...appPool });
-    const checkOwnerBeta = (nonce: number) => {
-      if (!isCurrentOwnerBeta(c.graph, owner)) return;
-      const saved = readCurrentDexNativeReload(storage);
+    const browserSigner = appSwap?.signer ?? limitScope?.signer ?? poolScope?.signer ?? fundingScope?.signer;
+    const normalBrowser = () => isCurrentDexBrowserSigner(browserSigner,c.graph,owner);
+    const reloadScope = Object.freeze({ owner, graph: c.graph, chainId });
+    const checkNormalBrowser = (nonce: number) => {
+      if (!normalBrowser()) return;
+      const saved = readCurrentDexNativeReload(storage, reloadScope);
       if (!saved) throw new Error('Owner beta requires the retained native reload record.');
-      validateCurrentNativeSwapCheckpoint(saved.budget, owner, STAGED_SHARED_HISTORY_DEX_CANDIDATE);
-      // Action names come only from the issuer-authenticated objects checked below.
-      let recovery = false;
-      if (appSwap) recovery = isCurrentOwnerBetaRecovery('swap', phase);
-      else if (limitScope) {
-        const p = limitScope.prepared;
-        recovery = isCurrentOwnerBetaRecovery('limit', p.phase === 'limit-snapshot' ? 'snapshot' : p.phase === 'limit-owner' ? p.action : 'create');
-      } else if (poolScope) {
-        recovery = poolScope.kind === 'position' ? isCurrentOwnerBetaRecovery('pool', poolScope.prepared.action) :
-          poolScope.kind === 'approval' && poolScope.prepared.cleanup && poolScope.prepared.amount === 0n;
+      validateCurrentNativeSwapCheckpoint(saved.budget, owner, STAGED_SHARED_HISTORY_DEX_CANDIDATE, browserSigner);
+      if(saved.budget.version===2){
+        const legacy=readCurrentDexNativeReload(storage,false,reloadScope);
+        if(legacy){
+          validateCurrentNativeSwapCheckpoint(legacy.budget,owner,STAGED_SHARED_HISTORY_DEX_CANDIDATE);
+          if(legacy.budget.activeSwap!==null||legacy.budget.charges.some(row=>!row.hash)||appSwap&&
+              legacy.budget.charges.some(row=>row.scope===`quote:${keccak256(appSwap.prepared.data)}`))
+            throw new Error('The retained owner record has an active or reused scope. Reconcile it.');
+        }
       }
-      assertCurrentOwnerBetaWindow(c.graph, owner, core, chainId, now(), nonce, recovery, gasCap, fixedGasPrice);
+      assertCurrentDexBrowserWindow(browserSigner!,c.graph,owner,core,chainId,now(),nonce,gasCap,fixedGasPrice);
     };
     if(poolScope&&(appSwap||appInitialClaimSigner||fundingScope||limitScope||sourceFit)) throw new Error('Pool App scope changed.');
     if(limitScope&&(appSwap||appInitialClaimSigner||fundingScope||sourceFit)) throw new Error('Limit App scope changed.');
@@ -504,7 +510,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       assertCurrentLimitPrepared(p,limitScope.signer);
       const action=p.phase==='limit-funding-review'?`approve-${p.kind}` as const:p.phase==='limit-create'?'create':p.phase==='limit-snapshot'?'snapshot':p.action;
       const amount=p.phase==='limit-funding-review'?p.amount:p.phase==='limit-create'?p.intent.amount:p.phase==='limit-owner'&&p.action==='topup'?p.topUpAmount:undefined;
-      assertCurrentAppLimitAuthority(c.graph,{owner,action,amount});
+      assertCurrentAppLimitAuthority(c.graph,{owner,action,amount},limitScope.signer);
       const pair=STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.find(pair=>pair.marketId===p.marketId&&p.poolTokens?.length===2&&pair.tokens.every((token,i)=>sameAddress(token,p.poolTokens![i])));
       if(c.graph!==STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph||c.packageSha256!==STAGED_SHARED_HISTORY_DEX_CANDIDATE.packageSha256||
           !sameAddress(core,STAGED_SHARED_HISTORY_DEX_CANDIDATE.core)||chainId!==BigInt(STAGED_SHARED_HISTORY_DEX_CANDIDATE.chainId)||
@@ -521,7 +527,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     };
     const assertSharedFunding = (request: UnsignedTransaction) => {
       if (!fundingScope || appInitialClaimSigner || appSwap || sourceFit) throw new Error('Shared funding App scope changed.');
-      assertCurrentAppSharedFundingAuthority(c.graph, owner, fundingScope.token, fundingScope.action);
+      assertCurrentAppSharedFundingAuthority(c.graph, owner, fundingScope.token, fundingScope.action, fundingScope.signer);
       const abi = new Interface(['function claimFaucet()', 'function claim(address)']);
       const initial = fundingScope.action === 'initial';
       if (chainId !== BigInt(STAGED_SHARED_HISTORY_DEX_CANDIDATE.chainId) || !sameAddress(core, STAGED_SHARED_HISTORY_DEX_CANDIDATE.core) ||
@@ -544,7 +550,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
           binding.graph !== c.graph || binding.packageSha256 !== c.packageSha256 || binding.chainId !== chainId || !sameAddress(binding.from, owner) ||
           binding.readyToSign !== false || request.chainId !== chainId || !sameAddress(request.from, owner) || request.value !== 0n || request.data !== p.data) throw new Error('Pool App candidate, owner or call changed.');
       if ('kind' in binding && binding.kind === 'allowance-cleanup') {
-        assertCurrentAppPoolAllowanceCleanupAuthority(c.graph, owner);
+        assertCurrentAppPoolAllowanceCleanupAuthority(c.graph, owner,poolScope.signer);
         if (poolScope.kind !== 'approval') throw new Error('Pool cleanup cannot authorize funding.');
         const approval = poolScope.prepared;
         const pair = STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.find(pair => pair.marketId === binding.marketId &&
@@ -557,7 +563,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
         }
       } else if (poolScope.kind === 'position') {
         const position = poolScope.prepared, action = position.action;
-        assertCurrentAppPoolAuthority(c.graph, { owner, action, positionId: position.positionId, recipient: position.recipient });
+        assertCurrentAppPoolAuthority(c.graph, { owner, action, positionId: position.positionId, recipient: position.recipient },poolScope.signer);
         const expectedPhase = action === 'snapshot' ? 'pool-snapshot' : action === 'transfer' ? 'pool-transfer' : 'pool-owner';
         const expectedTarget = action === 'transfer' ? STAGED_SHARED_HISTORY_DEX_CANDIDATE.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1] : core;
         if (phase !== expectedPhase || gasCap !== (action === 'snapshot' ? 30_000_000n : currentPoolOwnerGasCap(action)) || !sameAddress(request.to, expectedTarget) || !sameAddress(position.to, expectedTarget)) throw new Error('Pool App position phase changed.');
@@ -567,7 +573,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
         const topUp = 'positionId' in funding, intent = funding.intent;
         const action = poolScope.kind === 'approval' ? (poolScope.prepared.cleanup ? topUp ? 'clear-top-up' : 'clear-create' : topUp ? 'approve-top-up' : 'approve-create') : topUp ? 'top-up' : 'create';
         assertCurrentAppPoolAuthority(c.graph, { owner, action, positionId: topUp ? funding.positionId : undefined, budgets: intent.budgets,
-          classId: intent.classId, tolerance: 'tolerance' in intent ? intent.tolerance : [intent.terms[8], intent.terms[9]] });
+          classId: intent.classId, tolerance: 'tolerance' in intent ? intent.tolerance : [intent.terms[8], intent.terms[9]] },poolScope.signer);
         const pair = STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.find(pair => pair.marketId === intent.marketId && pair.tokens.every((token, i) => sameAddress(token, intent.poolTokens[i])));
         if (!pair || !sameAddress(funding.to, core)) throw new Error('Pool App market changed.');
         if (poolScope.kind === 'approval') {
@@ -580,7 +586,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     // at the shared send boundary too, including owner/funding callers.
     if (appSwap) {
       assertCurrentCheapDexPreparedQuote(appSwap.prepared, appSwap.signer);
-      if (!isCurrentOwnerBeta(c.graph, owner) && c.graph===STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph && hasCurrentNativeSigningBudget(appSwap.signer)) {
+      if (!normalBrowser() && c.graph===STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph && hasCurrentNativeSigningBudget(appSwap.signer)) {
         const charges=currentNativeSwapCheckpoint(appSwap.signer).charges;
         if(hasCurrentPartialRefundProof(c.graph,owner,charges)?appSwap.prepared.profile!=='cheap-async':hasCurrentHistoryFastProof(c.graph,owner,charges)?appSwap.prepared.profile!=='fast-pool':
           hasCurrentHistoryReplacementProof(c.graph,owner,charges)&&appSwap.prepared.profile!=='cheap-async')
@@ -588,7 +594,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       }
       if (!sameAddress(appSwap.prepared.from, owner) || !['quote','accept','cancel','recover','token-approve','token-faucet'].includes(phase)) throw new Error('App trial phase or owner changed.');
       if(appSwap.prepared.graph!==c.graph||!sameAddress(appSwap.prepared.to,core)||!sameAddress(call.to,phase==='token-approve'?appSwap.prepared.intent.inputToken:core)||phase==='quote'&&call.data!==appSwap.prepared.data)throw new Error('App trial candidate, target or Quote calldata changed.');
-      if(exitFit)assertCurrentNativeSwapIntent(appSwap.prepared,now(),phase==='cancel'||phase==='recover',phase==='accept');
+      if(exitFit)assertCurrentNativeSwapIntent(appSwap.prepared,now(),phase==='cancel'||phase==='recover',phase==='accept',appSwap.signer);
     }
     if (appInitialClaimSigner) {
       assertCurrentAppInitialClaimAuthority(c.graph,owner,call.to,'initial');
@@ -597,7 +603,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     } else if (fundingScope) assertSharedFunding(call);
     else if (limitScope) assertLimitCall(call);
     else if (poolScope) await assertPoolCall(call);
-    else assertCurrentD06AppAuthority(c.graph, appSwap?.prepared.intent);
+    else assertCurrentD06AppAuthority(c.graph, appSwap?.prepared.intent,appSwap?.signer);
     if (exitFit && (phase === 'quote' || phase === 'accept' || phase === 'cancel' || phase === 'recover')) {
       const profile = pendingProfile(call.data, phase, 'quote-slippage');
       const expected = phase === 'quote' || phase === 'accept'
@@ -613,13 +619,17 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     };
     // Select the source policy before estimation. A failed estimate never selects it.
     await checkFit();
+    if(normalBrowser()){
+      if(!transport.admitOwnerRecord)throw new Error('Owner normal-use record admission is unavailable.');
+      await transport.admitOwnerRecord(appSwap?`quote:${keccak256(appSwap.prepared.data)}`:undefined,gasCap);
+    }
     await validate();
     const initialHead = await currentHead(deadline, gasCap, exitHighCap);
     requireEmptyPending();
     const nonce = await transport.readNonce();
     await transport.assertCurrent();
     if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error('Current DEX pending nonce is invalid.');
-    checkOwnerBeta(nonce);
+    checkNormalBrowser(nonce);
     await requireNativeResources(initialHead, nonce, gasCap);
     const numberedCall = Object.freeze({ ...call, nonce, ...(nativeFit ? { gasPrice: fixedGasPrice } : {}) });
     if ((historical || nativeFit) && !sourceFit) {
@@ -657,7 +667,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     if (appSwap) {
       assertCurrentCheapDexPreparedQuote(appSwap.prepared, appSwap.signer);
       if (!sameAddress(appSwap.prepared.from, owner) || !['quote','accept','cancel','recover','token-approve'].includes(phase)) throw new Error('App trial phase or owner changed.');
-      if(exitFit)assertCurrentNativeSwapIntent(appSwap.prepared,now(),phase==='cancel'||phase==='recover',phase==='accept');
+      if(exitFit)assertCurrentNativeSwapIntent(appSwap.prepared,now(),phase==='cancel'||phase==='recover',phase==='accept',appSwap.signer);
     }
     if (appInitialClaimSigner) {
       const scope=`quote:${keccak256(call.data)}`,budget=currentNativeSwapCheckpoint(appInitialClaimSigner);
@@ -667,9 +677,9 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     } else if (fundingScope) assertSharedFunding(numberedCall);
     else if (limitScope) assertLimitCall(numberedCall);
     else if (poolScope) await assertPoolCall(numberedCall);
-    else assertCurrentD06AppAuthority(c.graph, appSwap?.prepared.intent);
+    else assertCurrentD06AppAuthority(c.graph, appSwap?.prepared.intent,appSwap?.signer);
     requireEmptyPending();
-    checkOwnerBeta(nonce);
+    checkNormalBrowser(nonce);
     reserveCurrentDexPendingAttempt(storage, attempt);
     onSigningRequest(request);
     await transport.assertCurrent();
@@ -733,7 +743,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
         topics: log.topics.map(topic => topic.toLowerCase()), data: log.data.toLowerCase() })) });
     if (identity(before) !== identity(after)) throw new Error('Current native receipt changed after private verification.');
   };
-  return { pending, requireEmptyPending, requireOwnPending, currentHead, sendCurrent, verifyMinedCall, recheckMinedCall };
+  return { pending, requireEmptyPending, requireOwnPending, currentHead, requireNativeResources, sendCurrent, verifyMinedCall, recheckMinedCall };
 };
 
 export const createCurrentSharedPoolSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest,
@@ -1226,6 +1236,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   const recovered = reservations.cheapRecovered ??= new Map();
   const reviewed = reservations.cheapReviewed ??= new Map();
   const storage = currentDexPendingStorage();
+  const reloadScope = Object.freeze({owner,graph:c.graph,chainId});
   const closedTrialScopes = reservations.cheapClosedTrials ??= new Set<string>();
   const closedAccountingScopes = new Set<string>();
   let savedReload: string | undefined;
@@ -1233,12 +1244,12 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   const persistBudget = async () => {
     if(!usesCurrentSwapAccounting(c))return;
     if(!authenticateReload)throw new Error('Owner-authenticated reload reservations are unavailable.');
-    savedReload??=JSON.stringify(readCurrentDexNativeReload(storage));
-    const budget=currentNativeSwapCheckpoint(signer);validateCurrentNativeSwapCheckpoint(budget,owner,c);
+    savedReload??=JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false));
+    const budget=currentNativeSwapCheckpoint(signer);validateCurrentNativeSwapCheckpoint(budget,owner,c,signer);
     const authentication=await authenticateReload(budget);await transport.assertCurrent();
-    if(JSON.stringify(readCurrentDexNativeReload(storage))!==savedReload)throw new Error('Native reload reservation changed during this wallet session.');
-    writeCurrentDexNativeReload(storage,{budget,authentication});
-    savedReload=JSON.stringify(readCurrentDexNativeReload(storage));
+    if(JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false))!==savedReload)throw new Error('Native reload reservation changed during this wallet session.');
+    writeCurrentDexNativeReload(storage,{budget,authentication},isCurrentDexBrowserSigner(signer,c.graph,owner)&&budget.version===2?reloadScope:undefined);
+    savedReload=JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false));
   };
   const rememberHash = async (sent: {request:TransactionRequest;transactionHash:string}) => {
     if(!usesCurrentSwapAccounting(c))return;
@@ -1253,8 +1264,61 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     }
     return captured.prepared;
   };
-  const { pending, requireEmptyPending, requireOwnPending, currentHead, sendCurrent, verifyMinedCall, recheckMinedCall } =
+  const { pending, requireEmptyPending, requireOwnPending, currentHead, requireNativeResources, sendCurrent, verifyMinedCall, recheckMinedCall } =
     createCurrentAttemptBoundary({ storage, c, core, owner, chainId, transport, attest, now, historical: false });
+  const admitNormalOwnerRecord = async (requireIdle = true, swapScope?: string, actionGasCap?: bigint) => {
+    if(!isCurrentDexBrowserSigner(signer,c.graph,owner))return;
+    const saved=readCurrentDexNativeReload(storage,reloadScope), recordBytes=JSON.stringify(saved),
+      legacy=readCurrentDexNativeReload(storage,false,reloadScope),legacyBytes=JSON.stringify(legacy);
+    if(saved)validateCurrentNativeSwapCheckpoint(saved.budget,owner,c,signer);
+    if(legacy&&saved?.budget.version===2)validateCurrentNativeSwapCheckpoint(legacy.budget,owner,c);
+    if(!authenticateReload)throw new Error('Owner-authenticated reload reservations are unavailable.');
+    if(saved&&await authenticateReload(saved.budget)!==saved.authentication)throw new Error('Owner reload record authentication failed.');
+    if(legacy&&saved?.budget.version===2&&await authenticateReload(legacy.budget)!==legacy.authentication)
+      throw new Error('Retained owner reload record authentication failed.');
+    await transport.assertCurrent();
+    if(JSON.stringify(readCurrentDexNativeReload(storage,reloadScope))!==recordBytes||JSON.stringify(readCurrentDexNativeReload(storage,false,reloadScope))!==legacyBytes)
+      throw new Error('Owner records changed during normal-use admission.');
+    const lookups=readCurrentDexOperationLookups(storage);
+    if(!requireIdle&&saved){
+      if(pending()||saved.budget.charges.some(row=>!row.hash)||saved.budget.activeSwap!==null&&saved.budget.activeSwap!==swapScope||
+          legacy&&saved.budget.version===2&&(legacy.budget.activeSwap!==null||legacy.budget.charges.some(row=>!row.hash))||
+          lookups.some(row=>!swapScope||!saved.budget.charges.some(charge=>charge.scope===swapScope&&charge.hash===row.attempt.txHash)))
+        throw new Error('Reconcile the pending or active owner record before this action.');
+      return;
+    }
+    if(pending()||lookups.length||[saved,legacy].some(record=>record&&record.budget.charges.some(row=>!row.hash)))
+      throw new Error('Reconcile the pending or active owner record before normal use.');
+    if(saved?.budget.activeSwap!==null&&saved){
+      const lastScope=saved.budget.charges[saved.budget.charges.length-1]?.scope,
+        funding=saved.budget.charges.slice(saved.budget.version===1?CURRENT_OWNER_BETA.legacyStarts:0).filter(row=>row.scope===lastScope);
+      if(!funding.length||funding.some(row=>row.phase!=='token-funding'))throw new Error('Reconcile the active owner swap before another Quote.');
+      await restoreFundingBudget();return;
+    }
+    if(legacy&&saved?.budget.version===2&&legacy.budget.activeSwap!==null)
+      throw new Error('Reconcile the retained active owner record before normal use.');
+    // Intact closed v1 continuations keep their complete authenticated accounting.
+    if(saved?.budget.version===2||saved&&saved.budget.charges.length>CURRENT_OWNER_BETA.legacyStarts)return;
+    if(hasCurrentNativeSigningBudget(signer)){
+      const live=currentNativeSwapCheckpoint(signer);
+      if(saved&&JSON.stringify(live)===JSON.stringify(saved.budget))return;
+      if(live.version!==2||live.activeSwap!==null||live.charges.length)throw new Error('Reconcile the existing signing budget before normal use.');
+    }
+    const cap=actionGasCap??gasCaps()['fast-pool'].quote;
+    const head=await currentHead(undefined,cap,cap===gasCaps()['fast-pool'].quote);
+    const resources=await requireNativeResources(head,undefined,cap);
+    if(!resources)throw new Error('Owner normal-use resources are unavailable.');
+    assertCurrentDexBrowserWindow(signer,c.graph,owner,core,chainId,now(),resources.latestNonce,cap,currentSwapFixedGasPrice(c));
+    const budget:CurrentNativeSwapCheckpoint=hasCurrentNativeSigningBudget(signer)?currentNativeSwapCheckpoint(signer):
+      {version:2,owner:owner.toLowerCase(),candidateGraph:c.graph,start:String(now()),committedWei:'0',activeSwap:null,charges:[]};
+    validateCurrentNativeSwapCheckpoint(budget,owner,c,signer);
+    const authentication=await authenticateReload(budget);await transport.assertCurrent();
+    if(JSON.stringify(readCurrentDexNativeReload(storage,reloadScope))!==recordBytes||JSON.stringify(readCurrentDexNativeReload(storage,false,reloadScope))!==legacyBytes||pending()||readCurrentDexOperationLookups(storage).length)
+      throw new Error('Owner records changed during normal-use admission.');
+    writeCurrentDexNativeReload(storage,{budget,authentication},isCurrentDexBrowserSigner(signer,c.graph,owner)&&budget.version===2?reloadScope:undefined);
+    restoreCurrentNativeSwapCheckpoint(signer,owner,c,budget);
+    savedReload=JSON.stringify(readCurrentDexNativeReload(storage,reloadScope));
+  };
   const fundingRequest = (charge: CurrentNativeSwapCheckpoint['charges'][number], tx: SubmittedTransaction,
     prepared?: CurrentCheapDexPreparedQuote): TransactionRequest => {
     if (!['token-funding', 'token-faucet'].includes(charge.phase) || tx.nonce !== charge.nonce || tx.chainId !== chainId ||
@@ -1273,16 +1337,17 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       gasLimit: 5_000_000n, gasPrice: currentNativeSwapChargeGasPrice(charge) };
   };
   const restoreFundingBudget = async (prepared?: CurrentCheapDexPreparedQuote, approvalRequest?: TransactionRequest) => {
-    const saved=readCurrentDexNativeReload(storage);
+    if(isCurrentDexBrowserSigner(signer,c.graph,owner)&&!readCurrentDexNativeReload(storage,reloadScope))await admitNormalOwnerRecord();
+    const saved=readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false);
     if(!usesCurrentSwapAccounting(c)||!saved)return;
     const scope = prepared ? `quote:${keccak256(prepared.data)}` : undefined;
-    const expired = isCurrentOwnerBeta(c.graph,owner) ? false :
+    const expired = isCurrentDexBrowserSigner(signer,c.graph,owner) ? false :
       now() >= BigInt(saved.budget.windowStart ?? saved.budget.start) +
         (hasCurrentPartialRefundProof(c.graph,owner,saved.budget.charges)?7200n:CURRENT_NATIVE_SWAP_LIMITS.normalSeconds);
     if(prepared && hasCurrentNativeSigningBudget(signer) && !pending() && !ownLookups().length &&
-        currentNativeSwapCheckpoint(signer).activeSwap === null && (isCurrentOwnerBeta(c.graph,owner) || !expired && saved.budget.charges.some(row=>closedTrialScopes.has(row.scope)))) {
+        currentNativeSwapCheckpoint(signer).activeSwap === null && (isCurrentDexBrowserSigner(signer,c.graph,owner) || !expired && saved.budget.charges.some(row=>closedTrialScopes.has(row.scope)))) {
       if(JSON.stringify(currentNativeSwapCheckpoint(signer))!==JSON.stringify(saved.budget))throw new Error('Closed trial reservation changed.');
-      validateCurrentNativeSwapCheckpoint(saved.budget,owner,c);
+      validateCurrentNativeSwapCheckpoint(saved.budget,owner,c,signer);
       await requireFunding(prepared,await currentHead(prepared.intent.deadline,gasCaps()[prepared.profile].quote,true),!!approvalRequest);
       return;
     }
@@ -1293,13 +1358,13 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         attempt.chainId !== chainId.toString() || attempt.core !== core.toLowerCase() || attempt.graph !== `0x${c.graph}` ||
         attempt.target !== approvalRequest.to.toLowerCase() || attempt.nonce !== approvalRequest.nonce ||
         attempt.callHash !== keccak256(approvalRequest.data)))) throw new Error('Reconcile the earlier operation before renewing funding.');
-    validateCurrentNativeSwapCheckpoint(saved.budget,owner,c);
-    if(isCurrentOwnerBeta(c.graph,owner)){
+    validateCurrentNativeSwapCheckpoint(saved.budget,owner,c,signer);
+    if(isCurrentDexBrowserSigner(signer,c.graph,owner)){
       if(pending()||ownLookups().length||!authenticateReload||await authenticateReload(saved.budget)!==saved.authentication)
         throw new Error('Owner beta funding has no authenticated continuation.');
       const activeScope=saved.budget.activeSwap;
       const lastScope=saved.budget.charges[saved.budget.charges.length-1]?.scope;
-      const funding=activeScope===null?[]:saved.budget.charges.slice(CURRENT_OWNER_BETA.legacyStarts).filter(row=>row.scope===lastScope);
+      const funding=activeScope===null?[]:saved.budget.charges.slice(saved.budget.version===1?CURRENT_OWNER_BETA.legacyStarts:0).filter(row=>row.scope===lastScope);
       if(activeScope!==null&&(!funding.length||funding.some(row=>!row.hash||row.phase!=='token-funding')))
         throw new Error('Reconcile the active owner beta swap before another Quote.');
       const checked:{request:TransactionRequest;receipt:MinedReceipt;hash:string}[]=[];
@@ -1312,7 +1377,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       if(prepared)await requireFunding(prepared,await currentHead(prepared.intent.deadline,gasCaps()[prepared.profile].quote,true),!!approvalRequest);
       for(const row of checked)await recheckMinedCall(row.request,row.hash,row.receipt);
       await transport.assertCurrent();
-      if(JSON.stringify(readCurrentDexNativeReload(storage))!==JSON.stringify(saved)||pending()||ownLookups().length)
+      if(JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false))!==JSON.stringify(saved)||pending()||ownLookups().length)
         throw new Error('Owner beta reload records changed during funding restoration.');
       restoreCurrentNativeSwapCheckpoint(signer,owner,c,saved.budget);
       if(scope&&activeScope!==null&&scope!==activeScope){bindCurrentNativeSwapFundingScope(signer,scope);await persistBudget();}
@@ -1330,7 +1395,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     if (prepared) await requireFunding(prepared, await currentHead(prepared.intent.deadline, gasCaps()[prepared.profile].quote, true), !!approvalRequest);
     for (const row of checked) await recheckMinedCall(row.request,row.hash,row.receipt);
     await transport.assertCurrent();
-    if(JSON.stringify(readCurrentDexNativeReload(storage))!==JSON.stringify(saved))throw new Error('Funding reservation changed during restoration.');
+    if(JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false))!==JSON.stringify(saved))throw new Error('Funding reservation changed during restoration.');
     if (JSON.stringify(pending()) !== JSON.stringify(attempt) || prepared && ownLookups().length) throw new Error('Pending operation changed during funding restoration.');
     restoreCurrentNativeSwapCheckpoint(signer,owner,c,saved.budget);
     if (scope) {
@@ -1375,7 +1440,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   const validateQuote = (prepared: CurrentCheapDexPreparedQuote, expired = false, restorationRead = false) => {
     assertCurrentCheapDexPreparedQuote(prepared, signer);
     const i = prepared.intent;
-    if (usesCurrentNativeSwapChecks(c) && !restorationRead) assertCurrentNativeSwapIntent(prepared, now(), expired);
+    if (usesCurrentNativeSwapChecks(c) && !restorationRead) assertCurrentNativeSwapIntent(prepared, now(), expired, false, signer);
     if(restorationRead)assertCurrentSwapIdentity(c);
     if (prepared.profile !== 'fast-pool' && prepared.profile !== 'cheap-async' || i.profile !== prepared.profile ||
         prepared.readyToSign !== false || prepared.graph !== c.graph || prepared.chainId !== chainId ||
@@ -1397,11 +1462,11 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   const nativeSigning = (phase: 'quote' | 'accept' | 'cancel' | 'recover', cap: bigint,
     prepared: CurrentCheapDexPreparedQuote) => {
     if (!usesCurrentNativeSwapChecks(c)) return undefined;
-    if(usesCurrentSwapAccounting(c)&&readCurrentDexNativeReload(storage)&&!hasCurrentNativeSigningBudget(signer))throw new Error('Restore the original native budget before another signing request.');
+    if(usesCurrentSwapAccounting(c)&&readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false)&&!hasCurrentNativeSigningBudget(signer))throw new Error('Restore the original native budget before another signing request.');
     const budget = currentNativeSigningBudget(signer, owner, now, c), scope = `quote:${keccak256(prepared.data)}`,
       key = phase === 'quote' ? scope : `${phase}:${scope}`;
     const check = () => {
-      assertCurrentSwapCandidate(c, prepared.intent); assertCurrentNativeSwapIntent(prepared, now(), phase === 'cancel' || phase === 'recover');
+      assertCurrentSwapCandidate(c, prepared.intent, signer); assertCurrentNativeSwapIntent(prepared, now(), phase === 'cancel' || phase === 'recover', false, signer);
       budget.check(phase, key, cap, scope);
     };
     check();
@@ -1423,7 +1488,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         i.quoteProtocol !== p.quoteProtocol || i.toleranceBps !== p.toleranceBps ||
         i.contextHash !== issued.operation.contextHash) throw new Error('Current-mode issued intent changed.');
   };
-  const refreshReady = async (issued: CurrentCheapDexIssuedQuote, prepared: CurrentCheapDexPreparedQuote) => {
+  const refreshReady = async (issued: CurrentCheapDexIssuedQuote, prepared: CurrentCheapDexPreparedQuote, allowExpired = false) => {
     validateIssued(issued, prepared);
     const ready = await issued.readCurrent();
     await transport.assertCurrent();
@@ -1433,13 +1498,13 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         ready.block.number < issued.block.number ||
         (ready.block.number === issued.block.number && ready.block.hash !== issued.block.hash) ||
         (BigInt(issued.operation.contextHash) !== 0n && ready.operation.contextHash !== issued.operation.contextHash) ||
-        !ready.operation.ready || ready.operation.phase !== 'quote-prepared' || now() >= ready.operation.deadline) {
+        !ready.operation.ready || ready.operation.phase !== 'quote-prepared' && !(allowExpired && ready.operation.phase === 'expired-unrecovered') || !allowExpired && now() >= ready.operation.deadline) {
       throw new Error('Current-mode Quote is not READY or changed.');
     }
     return ready;
   };
   const recoverQuote = async (prepared: CurrentCheapDexPreparedQuote, transactionHash: string) => timedVerification(transactionHash, 'quote-issue', async observation => {
-    assertCurrentSwapCandidate(c, prepared.intent);
+    assertCurrentSwapCandidate(c, prepared.intent, signer);
     validateQuote(prepared, true);
     await transport.assertCurrent();
     const issued = await prepared.readIssue(transactionHash);
@@ -1712,7 +1777,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   const restoreOperation = async (issued: CurrentCheapDexIssuedQuote): Promise<CurrentCheapDexIssuedQuote> => {
     if(!usesCurrentSwapAccounting(c)||!authenticateReload)throw new Error('Current owner restoration is unavailable.');
     const prepared=currentDexRestoredPlan(issued,signer);validateQuote(prepared,true,true);validateIssued(issued,prepared);
-    let saved=readCurrentDexNativeReload(storage);
+    let saved=readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false);
     const recordBytes=JSON.stringify(saved),rebuilding=saved===null,recoveryTransactions=new Map<string,SubmittedTransaction>();
     if(!saved){
       if(!currentPartialLedgerRecoveryAllowed(c.graph,owner,now())||issued.intent.profile!=='fast-pool'||issued.operationId!==7n||
@@ -1726,8 +1791,13 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       const budget=recoverCurrentPartialLedger(owner,c,now(),[...recoveryTransactions.values()]);
       saved={budget,authentication:await authenticateReload(budget)};
     }
-    validateCurrentNativeSwapCheckpoint(saved.budget,owner,c);
+    validateCurrentNativeSwapCheckpoint(saved.budget,owner,c,signer);
     if(await authenticateReload(saved.budget)!==saved.authentication)throw new Error('Original native budget authentication failed.');
+    const restoredScope=`quote:${keccak256(prepared.data)}`;
+    if(issued.intent.profile==='fast-pool'&&saved.budget.activeSwap!==restoredScope&&
+        saved.budget.charges.some(row=>row.scope===restoredScope&&row.phase==='quote'&&row.hash===issued.transactionHash.toLowerCase())&&
+        !saved.budget.charges.some(row=>row.scope===restoredScope&&row.phase==='accept'))
+      throw new Error('This Fast Quote was closed without funding. Request a new Quote.');
     const active=pending(),pendingBytes=JSON.stringify(active);
     if(active?.verificationBlocked||operationLookup(issued)?.attempt.verificationBlocked)throw new Error('Original private verification remains blocked.');
     if(active&&(active.owner!==owner.toLowerCase()||active.core!==core.toLowerCase()||active.graph!==`0x${c.graph}`||active.chainId!==String(chainId)))throw new Error('Pending action belongs to another owner or candidate.');
@@ -1803,7 +1873,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     if(resources.owner.toLowerCase()!==owner.toLowerCase()||resources.chainId!==chainId||resources.code!=='0x'||resources.head.number!==head.number||resources.head.hash!==head.hash||
        resources.latestNonce!==resources.pendingNonce||resources.latestNonce<=Math.max(...budget.charges.map(c=>c.nonce))||rebuilding&&resources.latestNonce!==217)throw new Error('Native reload has an unresolved wallet nonce or identity.');
     for(const row of checked)await recheckMinedCall(row.request,row.hash,row.receipt,true);
-    await transport.assertCurrent();if(JSON.stringify(pending())!==pendingBytes||JSON.stringify(readCurrentDexNativeReload(storage))!==recordBytes)throw new Error('Native reload records changed during reconciliation.');
+    await transport.assertCurrent();if(JSON.stringify(pending())!==pendingBytes||JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false))!==recordBytes)throw new Error('Native reload records changed during reconciliation.');
     restoreCurrentNativeSwapCheckpoint(signer,owner,c,budget);await persistBudget();
     if(closedSettlement&&hasCurrentPartialRefundProof(c.graph,owner,budget.charges)){
       if(renewCurrentNativeSwapClosedWindow(signer,owner,c,scope,now()))await persistBudget();
@@ -1836,13 +1906,68 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   };
   const adapter = Object.freeze({ readyToSign: false as const,
     readCurrentCheapRestoreHint: () => {
-      const record=readCurrentDexNativeReload(storage);
+      const record=readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false);
       if(!record)return currentPartialLedgerRecoveryAllowed(c.graph,owner,now())?{quoteHash:CURRENT_APP_PARTIAL_LEDGER_RECOVERY.hashes[9]}:null;
-      validateCurrentNativeSwapCheckpoint(record.budget,owner,c);
+      validateCurrentNativeSwapCheckpoint(record.budget,owner,c,signer);
       const row=[...record.budget.charges].reverse().find(r=>r.phase==='quote'&&(record.budget.activeSwap===null||r.scope===record.budget.activeSwap));
+      // A closed unfunded Quote needs no signing restoration; keep its charge as history.
+      if(record.budget.activeSwap===null&&row&&!record.budget.charges.some(charge=>charge.scope===row.scope&&charge.phase==='accept'))return null;
       const attempt=pending();return row?Object.freeze({quoteHash:row.hash??(attempt?.phase==='quote'&&attempt.nonce===row.nonce?attempt.txHash:null)}):null;
     },
     restoreCurrentCheapOperation: restoreOperation,
+    discardCurrentFastQuote: async (issued: CurrentCheapDexIssuedQuote): Promise<void> => {
+      if(!isCurrentDexBrowserSigner(signer,c.graph,owner)||issued.intent.profile!=='fast-pool'||!authenticateReload)
+        throw new Error('Local Fast Quote cancellation requires the current browser wallet.');
+      assertCurrentCheapDexIssuedQuote(issued,signer);
+      const prepared=capturedQuote(issued);validateQuote(prepared,true);validateIssued(issued,prepared);
+      const saved=readCurrentDexNativeReload(storage,reloadScope);
+      if(!saved||!hasCurrentNativeSigningBudget(signer))throw new Error('Restore the original Fast Quote budget before cancellation.');
+      validateCurrentNativeSwapCheckpoint(saved.budget,owner,c,signer);
+      const scope=`quote:${keccak256(prepared.data)}`,recordBytes=JSON.stringify(saved),budgetBytes=JSON.stringify(saved.budget),
+        acceptKey=`${chainId}:${owner}:fast-pool:${issued.operationId}:${issued.operation.contextHash}`.toLowerCase(),
+        charges=saved.budget.charges.filter(row=>row.scope===scope),quotes=charges.filter(row=>row.phase==='quote');
+      if(saved.budget.activeSwap!==scope||quotes.length!==1||quotes[0].hash!==issued.transactionHash.toLowerCase()||
+          charges.some(row=>row.phase!=='quote'&&row.phase!=='token-funding')||saved.budget.charges.some(row=>!row.hash))
+        throw new Error('Fast Quote has funding, an Accept reservation or unresolved accounting.');
+      const fence=()=>{
+        if(!isCurrentDexBrowserSigner(signer,c.graph,owner))throw new Error('Fast Quote browser session changed.');
+        requireEmptyPending();
+        if(readCurrentDexOperationLookups(storage).length||reservations.accept.has(acceptKey)||reservations.acceptRequests.has(acceptKey)||
+            JSON.stringify(currentNativeSwapCheckpoint(signer))!==budgetBytes||JSON.stringify(readCurrentDexNativeReload(storage,reloadScope))!==recordBytes)
+          throw new Error('Fast Quote records changed or an operation remains unresolved.');
+      };
+      fence();
+      if(await authenticateReload(saved.budget)!==saved.authentication)throw new Error('Fast Quote record authentication failed.');
+      await transport.assertCurrent();fence();
+      const charge=quotes[0],request:TransactionRequest={chainId,from:owner,to:core,value:0n,data:prepared.data,
+        nonce:charge.nonce,gasLimit:gasCaps()['fast-pool'].quote,gasPrice:currentNativeSwapChargeGasPrice(charge)},
+        receipt=await verifyMinedCall(request,charge.hash!);
+      const event=uniqueCheapEvent(receipt,core,'FastPoolQuoteIssued');
+      if(event.quoteId!==issued.operationId||event.context!==issued.operation.contextHash||event.deadline!==issued.intent.deadline||
+          receipt.blockNumber!==Number(issued.originBlock.number)||receipt.blockHash?.toLowerCase()!==issued.originBlock.hash.toLowerCase())
+        throw new Error('Fast Quote canonical origin changed.');
+      await refreshReady(issued,prepared,true);fence();
+      const head=await transport.readHead();await attest(head);await transport.assertCurrent();fence();
+      if(!transport.readNativeResources)throw new Error('Fast Quote nonce observation is unavailable.');
+      const resources=await transport.readNativeResources(head);await transport.assertCurrent();fence();
+      const checkResources=(value:CurrentNativeResources)=>{
+        if(!sameAddress(value.owner,owner)||value.chainId!==chainId||value.code!=='0x'||value.head.number!==head.number||
+            value.head.hash!==head.hash||value.head.timestamp!==head.timestamp||value.head.gasLimit!==head.gasLimit||
+            !Number.isSafeInteger(value.latestNonce)||value.latestNonce!==value.pendingNonce||
+            value.latestNonce<=Math.max(...saved.budget.charges.map(row=>row.nonce))||head.timestamp>now()||now()-head.timestamp>=90n)
+          throw new Error('Fast Quote has an unresolved wallet nonce or changed identity.');
+      };
+      checkResources(resources);
+      const budget=Object.freeze({...saved.budget,activeSwap:null}),authentication=await authenticateReload(budget);
+      await transport.assertCurrent();fence();
+      await recheckMinedCall(request,charge.hash!,receipt);fence();
+      await refreshReady(issued,prepared,true);fence();
+      const finalResources=await transport.readNativeResources(head);await transport.assertCurrent();fence();checkResources(finalResources);
+      if(finalResources.latestNonce!==resources.latestNonce)throw new Error('Fast Quote wallet nonce changed during cancellation.');
+      writeCurrentDexNativeReload(storage,{budget,authentication},budget.version===2?reloadScope:undefined);
+      completeCurrentNativeSwapScope(signer,scope);
+      savedReload=JSON.stringify(readCurrentDexNativeReload(storage,reloadScope));
+    },
     // History proves accounting only; it never restores or releases signing authority.
     readCurrentCheapActivityReceipt: async (issued: CurrentCheapDexIssuedQuote) => {
       if (!usesCurrentSwapAccounting(c) || !authenticateReload || !verifyOwnerTokens || issued.intent.profile==='cheap-async'&&!readTerminalReceipt) {
@@ -1850,10 +1975,10 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       }
       const prepared = currentDexRestoredPlan(issued, signer);
       validateQuote(prepared, true, true); validateIssued(issued, prepared);
-      const stored = readCurrentDexNativeReload(storage),saved=stored??recoveringRecord;
+      const stored = readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false),saved=stored??recoveringRecord;
       if (!saved) throw new Error('Original Activity reservation is unavailable.');
       const savedBytes = JSON.stringify(stored), pendingBytes = JSON.stringify(pending()), lookupBytes = JSON.stringify(ownLookups());
-      validateCurrentNativeSwapCheckpoint(saved.budget, owner, c);
+      validateCurrentNativeSwapCheckpoint(saved.budget, owner, c, signer);
       if (await authenticateReload(saved.budget) !== saved.authentication) throw new Error('Original Activity reservation authentication failed.');
       const scope = `quote:${keccak256(prepared.data)}`, charges = saved.budget.charges.filter(row => row.scope === scope);
       const quote = charges.filter(row => row.phase === 'quote');
@@ -1880,7 +2005,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
           throw new Error('Fast Activity Accept order changed.');
         await verifyOwnerTokens({issued:current,amounts:receipt.amounts,phase:'fast-settle',receipt:accept,contextHash:current.operation.contextHash});
         await transport.assertCurrent();
-        if(JSON.stringify(readCurrentDexNativeReload(storage))!==savedBytes||JSON.stringify(pending())!==pendingBytes||JSON.stringify(ownLookups())!==lookupBytes)
+        if(JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false))!==savedBytes||JSON.stringify(pending())!==pendingBytes||JSON.stringify(ownLookups())!==lookupBytes)
           throw new Error('Activity reservation changed during the read.');
         return Object.freeze({...receipt,releaseAction:null,privateAccountingVerified:true as const,
           originalQuoteRateVerification:'unavailable' as const,readyToSign:false as const,nativeAdmission:false as const});
@@ -1908,7 +2033,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       }
       await verifyOwnerTokens({ issued: current, amounts: receipt.amounts, phase: terminal.phase, receipt: terminal.receipt, contextHash: current.operation.contextHash });
       await transport.assertCurrent();
-      if (JSON.stringify(readCurrentDexNativeReload(storage)) !== savedBytes || JSON.stringify(pending()) !== pendingBytes || JSON.stringify(ownLookups()) !== lookupBytes) {
+      if (JSON.stringify(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false)) !== savedBytes || JSON.stringify(pending()) !== pendingBytes || JSON.stringify(ownLookups()) !== lookupBytes) {
         throw new Error('Activity reservation changed during the read.');
       }
       return Object.freeze({ ...receipt, releaseAction: terminal.phase === 'terminal' ? null : terminal.phase,
@@ -1934,23 +2059,27 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     authorizeCurrentCheapInitialClaim: async (request:TransactionRequest) => {
       assertCurrentAppInitialClaimAuthority(c.graph,owner,request.to,'initial');
       if(!usesCurrentSwapAccounting(c)||!sameAddress(request.from,owner)||request.chainId!==chainId||request.value!==0n||request.data!==new Interface(['function claimFaucet()']).encodeFunctionData('claimFaucet'))throw new Error('Initial claim App call changed.');
-      if(readCurrentDexNativeReload(storage)&&!hasCurrentNativeSigningBudget(signer))throw new Error('The original App trial is already reserved. Reconcile it.');
+      if(readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false)&&!hasCurrentNativeSigningBudget(signer))throw new Error('The original App trial is already reserved. Reconcile it.');
       const scope=`quote:${keccak256(request.data)}`;currentNativeSigningBudget(signer,owner,now,c).commit('token-faucet',`token-faucet:${scope}:${keccak256(request.data)}`,5_000_000n,scope,request.nonce);await persistBudget();
     },
     authorizeCurrentCheapSwapApproval: async (prepared: CurrentCheapDexPreparedQuote, request: TransactionRequest) => {
-      validateQuote(prepared); assertCurrentSwapCandidate(c, prepared.intent);
+      validateQuote(prepared); assertCurrentSwapCandidate(c, prepared.intent, signer);
       if (!usesCurrentSwapAccounting(c) || !sameAddress(request.to, prepared.intent.inputToken) || !sameAddress(request.from, owner) || request.chainId !== chainId || request.value !== 0n) throw new Error('Swap approval owner or target changed.');
       const claim=request.data===new Interface(['function claimFaucet()']).encodeFunctionData('claimFaucet'),phase=claim?'token-faucet':'token-funding';
       if(!claim){const approval=new Interface(['function approve(address,((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature) input)']);if(!sameAddress(decodeCanonical(request.data,approval,'approve')[0],core))throw new Error('Exact approval spender changed.');}
       await restoreFundingBudget(claim ? undefined : prepared, claim ? undefined : request);
-      if (readCurrentDexNativeReload(storage) && !hasCurrentNativeSigningBudget(signer)) throw new Error('Restore the original native budget before another signing request.');
+      if (readCurrentDexNativeReload(storage, isCurrentDexBrowserSigner(signer,c.graph,owner) ? reloadScope : false) && !hasCurrentNativeSigningBudget(signer)) throw new Error('Restore the original native budget before another signing request.');
       const scope=`quote:${keccak256(prepared.data)}`, key=`${phase}:${scope}:${keccak256(request.data)}`;
       currentNativeSigningBudget(signer,owner,now,c).commit(phase,key,5_000_000n,scope,request.nonce);
       await persistBudget();
     },
     rememberCurrentCheapSwapApproval: rememberHash,
+    admitCurrentOwnerNormalRecord: (swapScope?: string, gasCap?: bigint) => admitNormalOwnerRecord(false,swapScope,gasCap),
     checkCurrentCheapCandidate: async () => {
       assertCurrentSwapIdentity(c);
+      if (isCurrentDexBrowserSigner(signer,c.graph,owner)) {
+        await admitNormalOwnerRecord();
+      }
       const block = await currentHead(undefined, gasCaps()['fast-pool'].quote, usesCurrentSwapAccounting(c));
       return Object.freeze({ chainId, owner, core, graph: c.graph, packageSha256: c.packageSha256, block, readyToSign: false as const });
     },
@@ -2045,7 +2174,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     },
     submitCurrentCheapQuote: async (prepared: CurrentCheapDexPreparedQuote, progress?: CurrentDexSendProgress) => {
       assertCurrentDexQuoteNotRestored(prepared);
-      assertCurrentSwapCandidate(c, prepared.intent);
+      assertCurrentSwapCandidate(c, prepared.intent, signer);
       validateQuote(prepared); requireEmptyPending();
       if (prepared.profile === 'cheap-async') requireLookupCapacity();
       const admission = issueCurrentCheapDexQuoteAdmission(prepared, signer), call: UnsignedTransaction = Object.freeze({
@@ -2057,7 +2186,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         await restoreFundingBudget(prepared);
         const authorize = nativeSigning('quote', gasCaps()[prepared.profile].quote, prepared);
         const sent = await sendCurrent('quote', call, prepared.intent.deadline, () => {
-          assertCurrentSwapCandidate(c, prepared.intent);
+          assertCurrentSwapCandidate(c, prepared.intent, signer);
           if (prepared.profile === 'cheap-async') requireLookupCapacity();
           validateQuote(prepared); assertCurrentDexInternalAdmission(admission, 'quote', signer, prepared.data, prepared);
         }, () => { signing = true; }, undefined, gasCaps()[prepared.profile].quote, observeSend(prepared.profile, 'quote', progress), authorize, undefined, { prepared, signer });
@@ -2067,12 +2196,15 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     },
     submitCurrentCheapAcceptance: async ({ issued, confirm, progress }: { issued: CurrentCheapDexIssuedQuote;
       confirm: (model: unknown) => Promise<boolean>; progress?: CurrentDexSendProgress }) => {
-      assertCurrentSwapCandidate(c, issued.intent);
+      assertCurrentSwapCandidate(c, issued.intent, signer);
       assertCurrentCheapDexIssuedQuote(issued, signer); requireEmptyPending();
       if (issued.intent.profile === 'cheap-async') requireLookupCapacity();
       const preparedQuote = capturedQuote(issued);
+      if(issued.intent.profile==='fast-pool'&&isCurrentDexBrowserSigner(signer,c.graph,owner)&&hasCurrentNativeSigningBudget(signer)&&
+          currentNativeSwapCheckpoint(signer).activeSwap!==`quote:${keccak256(preparedQuote.data)}`)
+        throw new Error('This Fast Quote is no longer active in the App. Request a new Quote.');
       const ready = await refreshReady(issued, preparedQuote);
-      if (usesCurrentSwapAccounting(c)) assertCurrentNativeSwapIntent(preparedQuote, now(), false, true);
+      if (usesCurrentSwapAccounting(c)) assertCurrentNativeSwapIntent(preparedQuote, now(), false, true, signer);
       const key = `${chainId}:${owner}:${ready.intent.profile}:${ready.operationId}:${ready.operation.contextHash}`.toLowerCase();
       if (reservations.accept.has(key)) throw new Error('Current-mode Accept was already submitted. Recover it instead.');
       reservations.accept.add(key); let signing = false;
@@ -2097,7 +2229,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
             !sameAddress(call.to, core) || call.value !== 0n || decoded[0] !== ready.operationId ||
             decoded[1] !== ready.operation.contextHash) throw new Error('Current-mode Accept call changed.');
         const validate = async () => {
-          assertCurrentSwapCandidate(c, ready.intent);
+          assertCurrentSwapCandidate(c, ready.intent, signer);
           if (ready.intent.profile === 'cheap-async') requireLookupCapacity();
           assertCurrentDexInternalAdmission(admission, 'accept', signer, prepared.data, preparedQuote, ready);
           const fresh = await refreshReady(ready, preparedQuote);
@@ -2116,7 +2248,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     },
     submitCurrentCheapOwnerAction: async ({ issued, action, confirm, progress }: { issued: CurrentCheapDexIssuedQuote;
       action: 'cancel' | 'recover'; confirm: (operation: CurrentCheapDexOperation) => Promise<boolean>; progress?: CurrentDexSendProgress }) => {
-      assertCurrentSwapCandidate(c, issued.intent);
+      assertCurrentSwapCandidate(c, issued.intent, signer);
       assertCurrentCheapDexIssuedQuote(issued, signer); requireEmptyPending();
       const prepared = capturedQuote(issued);
       validateIssued(issued, prepared);
@@ -2141,7 +2273,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         const call = Object.freeze({ chainId, from: owner, to: core, value: 0n as const,
           data: ownerActionInterface.encodeFunctionData(action === 'cancel' ? 'cancelSwap' : 'recoverSwap', [issued.operationId]) });
         const authorize = nativeSigning(action, gasCaps()['cheap-async'][action], prepared);
-        const sent = await sendCurrent(action, call, undefined, async () => { assertCurrentSwapCandidate(c, prepared.intent); await refresh(); },
+        const sent = await sendCurrent(action, call, undefined, async () => { assertCurrentSwapCandidate(c, prepared.intent, signer); await refresh(); },
           () => { signing = true; }, issued.operationId, gasCaps()['cheap-async'][action], {
             sendStarted: () => progress?.walletRequested?.(),
             hashReturned: transactionHash => progress?.transactionHashReturned?.(transactionHash),

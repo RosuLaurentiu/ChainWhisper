@@ -18,6 +18,7 @@ import {
   type DirectChatV2HistoryRuntime
 } from './directChatV2HistoryRuntime';
 import type { DirectChatV2ReadCursorStore } from './directChatV2ReadCursorStore';
+import type { CotiEventHintSubscriber } from './appShared/cotiEventHints';
 import {
   createDirectChatV2WriteCoordinator,
   DIRECT_CHAT_V2_WRITE_DISABLED,
@@ -129,7 +130,8 @@ export const createDirectChatV2Runtime = ({
   lifecycle,
   nonceRetirementFactory = createIndexedDbDirectChatV2NonceAttemptRetirer,
   ownerAddress,
-  runOwnerTransactionFlow
+  runOwnerTransactionFlow,
+  subscribeEventHints
 }: {
   cursorStore?: DirectChatV2ReadCursorStore;
   deploymentConfig: DirectChatV2DeploymentConfig;
@@ -138,6 +140,7 @@ export const createDirectChatV2Runtime = ({
   nonceRetirementFactory?: () => NonceRetirement;
   ownerAddress: string;
   runOwnerTransactionFlow: DirectChatV2TransactionFlow;
+  subscribeEventHints?: CotiEventHintSubscriber;
 }): DirectChatV2Runtime => {
   if (deploymentConfig.status === 'inactive') return disabledRuntime('inactive');
   if (deploymentConfig.status === 'invalid') {
@@ -173,7 +176,8 @@ export const createDirectChatV2Runtime = ({
       manifest: deploymentConfig.manifest,
       ownerAddress: normalizedOwner,
       retireNonceAttempt: nonceRetirement.retire,
-      runOwnerTransactionFlow
+      runOwnerTransactionFlow,
+      subscribeEventHints
     });
     const coordinator = createDirectChatV2WriteCoordinator({
       enabled: true,

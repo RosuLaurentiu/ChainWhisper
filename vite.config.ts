@@ -9,7 +9,11 @@ export default defineConfig(({ mode }) => ({
   // Applying Fast Refresh while MetaMask/Snap prompts or reads are active can
   // preserve incompatible React state and repeatedly reconnect wallet streams.
   // Candidate edits become visible only after an intentional page reload.
-  server: mode === 'coti-testnet-candidate' ? { hmr: false } : undefined,
+  server: {
+    ...(mode === 'coti-testnet-candidate' ? { hmr: false } : {}),
+    // Evidence snapshots are not App inputs; watching them blocks cold startup.
+    watch: { ignored: ['**/reports/**'] }
+  },
   build: {
     chunkSizeWarningLimit: 900,
     rollupOptions: {

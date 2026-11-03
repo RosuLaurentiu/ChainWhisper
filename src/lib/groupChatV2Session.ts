@@ -42,6 +42,7 @@ import {
   verifyGroupChatV2Deployment,
   withdrawGroupChatV2NativeCredit,
   type GroupChatV2EpochKey,
+  type GroupChatV2ReadContext,
   type GroupChatV2CanonicalBlock,
   type GroupChatV2GroupSnapshot,
   type GroupChatV2InviteSnapshot,
@@ -74,6 +75,27 @@ export type GroupChatV2OwnerCapabilityGetter = (
   requirePrivacy: boolean
 ) => Promise<GroupChatV2MetaMaskCapability>;
 export type GroupChatV2TransactionFlow = <T>(operation: () => Promise<T>) => Promise<T>;
+export type GroupChatV2ReadPhase =
+  | 'capability' | 'deployment' | 'head' | 'lifecycle' | 'group-state'
+  | 'metadata' | 'messages' | 'members' | 'fence'
+  | 'history-state' | 'history-head' | 'history-fence' | 'history-page'
+  | 'history-membership' | 'history-count' | 'history-keys';
+export type GroupChatV2ReadObserver = (phase: GroupChatV2ReadPhase, pending: boolean) => void;
+
+export const observeGroupChatV2Read = <T>(
+  phase: GroupChatV2ReadPhase,
+  observer: GroupChatV2ReadObserver | undefined,
+  operation: () => Promise<T>
+): Promise<T> => {
+  if (!observer) return operation();
+  const notify = (pending: boolean): void => {
+    try { observer(phase, pending); } catch { /* Diagnostics must not change read results. */ }
+  };
+  notify(true);
+  return (async () => {
+    try { return await operation(); } finally { notify(false); }
+  })();
+};
 
 export type GroupChatV2SendInput = Readonly<{
   body: string;
@@ -101,11 +123,12 @@ export type GroupChatV2SessionController = Readonly<{
   manifest: Readonly<GroupChatV2DeploymentManifest>;
   ownerAddress: string;
   create: (initialInvitees?: readonly string[]) => Promise<GroupChatV2CreateResult>;
-  inspect: (groupId: bigint) => Promise<GroupChatV2GroupSnapshot>;
+  inspect: (groupId: bigint, readContext?: GroupChatV2ReadContext) => Promise<GroupChatV2GroupSnapshot>;
   inspectMember: (groupId: bigint, account: string) => Promise<GroupChatV2MemberSnapshot>;
   membershipRanges: (
     groupId: bigint,
-    account?: string
+    account?: string,
+    readContext?: GroupChatV2ReadContext
   ) => Promise<readonly GroupChatV2MembershipRangeSnapshot[]>;
   inspectInvite: (groupId: bigint, account: string) => Promise<GroupChatV2InviteSnapshot>;
   inspectJoinCode: (groupId: bigint, codeHash: string) => Promise<GroupChatV2JoinCodeSnapshot>;
@@ -149,7 +172,7 @@ export type GroupChatV2SessionController = Readonly<{
     signatureDeadline: bigint;
     signature: string;
   }>) => Promise<GroupChatV2ConfirmedMutation>;
-  readEpochKey: (groupId: bigint, epoch?: bigint) => Promise<GroupChatV2EpochKey>;
+  readEpochKey: (groupId: bigint, epoch?: bigint, readContext?: GroupChatV2ReadContext) => Promise<GroupChatV2EpochKey>;
   syncEpoch: (groupId: bigint, epoch: bigint) => Promise<GroupChatV2EpochKey>;
   send: (groupId: bigint, input: GroupChatV2SendInput) => Promise<GroupChatV2SendResult>;
   setMetadata: (groupId: bigint, title: string) => Promise<GroupChatV2GroupSnapshot>;
@@ -162,11 +185,12 @@ export type GroupChatV2SessionController = Readonly<{
   historyPage: (
     groupId: bigint,
     fromBlock: bigint,
-    toBlock: bigint
+    toBlock: bigint,
+    readContext?: GroupChatV2ReadContext
   ) => Promise<readonly GroupChatV2MessageEvent[]>;
-  latestBlock: () => Promise<bigint>;
-  canonicalBlock: (blockNumber: bigint) => Promise<GroupChatV2CanonicalBlock>;
-  messageCountAtBlock: (groupId: bigint, blockNumber: bigint) => Promise<bigint>;
+  latestBlock: (readContext?: GroupChatV2ReadContext, assertContinue?: () => void) => Promise<bigint>;
+  canonicalBlock: (blockNumber: bigint, readContext?: GroupChatV2ReadContext) => Promise<GroupChatV2CanonicalBlock>;
+  messageCountAtBlock: (groupId: bigint, blockNumber: bigint, readContext?: GroupChatV2ReadContext) => Promise<bigint>;
   readMessageAnchor: (
     groupId: bigint,
     messageId: bigint,
@@ -263,6 +287,7 @@ export const createGroupChatV2Session = ({
   getOwnerCapability,
   invalidateOwnerCapabilities = () => undefined,
   manifest,
+  onReadPhase,
   ownerAddress,
   retireNonceAttempt,
   runOwnerTransactionFlow
@@ -270,6 +295,7 @@ export const createGroupChatV2Session = ({
   getOwnerCapability: GroupChatV2OwnerCapabilityGetter;
   invalidateOwnerCapabilities?: () => void;
   manifest: GroupChatV2DeploymentManifest;
+  onReadPhase?: GroupChatV2ReadObserver;
   ownerAddress: string;
   retireNonceAttempt: GroupChatV2NonceAttemptRetirer;
   runOwnerTransactionFlow: GroupChatV2TransactionFlow;
@@ -281,7 +307,8 @@ export const createGroupChatV2Session = ({
   let mutationInFlight = false;
   let epochKeyReadTail: Promise<void> = Promise.resolve();
 
-  const capability = async (requirePrivacy: boolean): Promise<GroupChatV2MetaMaskCapability> => {
+  const capability = (requirePrivacy: boolean): Promise<GroupChatV2MetaMaskCapability> =>
+    observeGroupChatV2Read('capability', onReadPhase, async () => {
     let value = await getOwnerCapability(requirePrivacy);
     try {
       await assertGroupChatV2MetaMaskCapabilitySnapshotCurrent({
@@ -305,9 +332,10 @@ export const createGroupChatV2Session = ({
       invalidateOwnerCapabilities();
       throw error;
     }
-  };
+  });
 
-  const readCapability = async (requirePrivacy: boolean): Promise<GroupChatV2MetaMaskCapability> => {
+  const readCapability = (requirePrivacy: boolean): Promise<GroupChatV2MetaMaskCapability> =>
+    observeGroupChatV2Read('capability', onReadPhase, async () => {
     const value = await getOwnerCapability(requirePrivacy);
     assertGroupChatV2MetaMaskCapabilityScope({
       capability: value,
@@ -315,13 +343,14 @@ export const createGroupChatV2Session = ({
       chainId: immutableManifest.chainId
     });
     return value;
-  };
+  });
 
   const deployment = (
     current: GroupChatV2MetaMaskCapability
   ): Promise<VerifiedGroupChatV2Deployment> => {
     if (!verifiedPromise) {
-      const pending = verifyGroupChatV2Deployment({ manifest: immutableManifest, capability: current });
+      const pending = observeGroupChatV2Read('deployment', onReadPhase, () =>
+        verifyGroupChatV2Deployment({ manifest: immutableManifest, capability: current }));
       const guarded = pending.catch((error) => {
         if (verifiedPromise === guarded) verifiedPromise = null;
         throw error;
@@ -380,12 +409,14 @@ export const createGroupChatV2Session = ({
     current,
     target,
     group,
-    selectedEpoch
+    selectedEpoch,
+    readContext
   }: {
     current: GroupChatV2MetaMaskCapability;
     target: VerifiedGroupChatV2Deployment;
     group: GroupChatV2GroupSnapshot;
     selectedEpoch?: bigint;
+    readContext?: GroupChatV2ReadContext;
   }): Promise<GroupChatV2EpochKey> => {
     const epoch = selectedEpoch ?? group.currentEpoch;
     const cacheKey = keyCacheKey(target, group.groupId, epoch, group.membershipRevision);
@@ -395,7 +426,8 @@ export const createGroupChatV2Session = ({
       deployment: target,
       capability: current,
       groupId: group.groupId,
-      epoch
+      epoch,
+      ...(readContext ? { readContext } : {})
     }));
     epochKeys.set(cacheKey, pending);
     try {
@@ -406,11 +438,12 @@ export const createGroupChatV2Session = ({
     }
   };
 
-  const readEpochKey = async (groupId: bigint, selectedEpoch?: bigint): Promise<GroupChatV2EpochKey> => {
+  const readEpochKey = async (groupId: bigint, selectedEpoch?: bigint, readContext?: GroupChatV2ReadContext): Promise<GroupChatV2EpochKey> => {
     const current = await readCapability(true);
     const target = await deployment(current);
-    const group = await readGroupChatV2Group({ deployment: target, capability: current, groupId });
-    return readEpochKeyFor({ current, target, group, selectedEpoch });
+    const group = await readGroupChatV2Group({ deployment: target, capability: current, groupId,
+      ...(readContext ? { readContext } : {}) });
+    return readEpochKeyFor({ current, target, group, selectedEpoch, readContext });
   };
 
   const readCurrentEpochKeyForSend = async ({
@@ -505,12 +538,13 @@ export const createGroupChatV2Session = ({
       return Object.freeze({ group, transactionHash: confirmed.transactionHash });
       });
     },
-    inspect: async (groupId: bigint) => {
+    inspect: async (groupId: bigint, readContext?: GroupChatV2ReadContext) => {
       const current = await readCapability(false);
       return readGroupChatV2Group({
         deployment: await deployment(current),
         capability: current,
-        groupId
+        groupId,
+        ...(readContext ? { readContext } : {})
       });
     },
     inspectMember: async (groupId: bigint, account: string) => {
@@ -522,13 +556,14 @@ export const createGroupChatV2Session = ({
         account
       });
     },
-    membershipRanges: async (groupId: bigint, account = owner) => {
+    membershipRanges: async (groupId: bigint, account = owner, readContext?: GroupChatV2ReadContext) => {
       const current = await readCapability(false);
       return readGroupChatV2MembershipRanges({
         deployment: await deployment(current),
         capability: current,
         groupId,
-        account
+        account,
+        ...(readContext ? { readContext } : {})
       });
     },
     inspectInvite: async (groupId: bigint, account: string) => {
@@ -815,38 +850,46 @@ export const createGroupChatV2Session = ({
         toBlock
       });
     },
-    historyPage: async (groupId: bigint, fromBlock: bigint, toBlock: bigint) => {
+    historyPage: async (groupId: bigint, fromBlock: bigint, toBlock: bigint, readContext?: GroupChatV2ReadContext) => {
       const current = await readCapability(false);
       return readGroupChatV2MessageLogPage({
         deployment: await deployment(current),
         capability: current,
         groupId,
         fromBlock,
-        toBlock
+        toBlock,
+        ...(readContext ? { readContext } : {})
       });
     },
-    latestBlock: async () => {
+    latestBlock: async (readContext?: GroupChatV2ReadContext, assertContinue?: () => void) => {
+      assertContinue?.();
       const current = await readCapability(false);
-      return readGroupChatV2LatestBlockNumber({
-        deployment: await deployment(current),
-        capability: current
-      });
+      assertContinue?.();
+      const target = await deployment(current);
+      assertContinue?.();
+      return observeGroupChatV2Read('head', onReadPhase, () => readGroupChatV2LatestBlockNumber({
+        deployment: target,
+        capability: current,
+        ...(readContext ? { readContext } : {})
+      }));
     },
-    canonicalBlock: async (blockNumber: bigint) => {
+    canonicalBlock: async (blockNumber: bigint, readContext?: GroupChatV2ReadContext) => {
       const current = await readCapability(false);
       return readGroupChatV2CanonicalBlock({
         deployment: await deployment(current),
         capability: current,
-        blockNumber
+        blockNumber,
+        ...(readContext ? { readContext } : {})
       });
     },
-    messageCountAtBlock: async (groupId: bigint, blockNumber: bigint) => {
+    messageCountAtBlock: async (groupId: bigint, blockNumber: bigint, readContext?: GroupChatV2ReadContext) => {
       const current = await readCapability(false);
       return readGroupChatV2MessageCountAtBlock({
         deployment: await deployment(current),
         capability: current,
         groupId,
-        blockNumber
+        blockNumber,
+        ...(readContext ? { readContext } : {})
       });
     },
     readMessageAnchor: async (groupId: bigint, messageId: bigint, blockNumber: bigint) => {

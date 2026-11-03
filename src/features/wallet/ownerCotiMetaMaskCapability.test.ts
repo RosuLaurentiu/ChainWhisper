@@ -8,9 +8,12 @@ import {
 } from '../../lib/appShared';
 import {
   issueOwnerCotiMetaMaskCapability,
-  releaseOwnerCotiMetaMaskProviderPool
+  hasCurrentDexBrowserSigner,
+  releaseOwnerCotiMetaMaskProviderPool,
+  type IssueOwnerCotiMetaMaskCapabilityArgs
 } from './ownerCotiMetaMaskCapability';
 import type { BrowserWalletSession, BrowserWalletSignerLease } from './hooks/useWalletOnboarding';
+import type { CotiSnapOwnerAesResult } from '../../lib/cotiSnap';
 
 const privacyMocks = vi.hoisted(() => ({
   recover: vi.fn(async ({ signer }: {
@@ -20,12 +23,18 @@ const privacyMocks = vi.hoisted(() => ({
     signer.setUserOnboardInfo(onboardInfo);
     return { status: 'ready' as const, onboardInfo, source: 'fallback' as const };
   }),
-  snap: vi.fn(async () => ({ status: 'unsupported' as const }))
+  snap: vi.fn(async (_provider: InjectedEthereumProvider): Promise<CotiSnapOwnerAesResult> => ({ status: 'unsupported' }))
 }));
 
 vi.mock('../../lib/cotiAesUnlock', () => ({
   getOrRecoverAesForWalletResult: privacyMocks.recover
 }));
+
+vi.mock('../../lib/appShared', async original => {
+  const actual = await original<typeof import('../../lib/appShared')>();
+  const readProvider = Object.freeze({ request: vi.fn(async () => { throw new Error('Unexpected independent RPC in issuer fixture'); }) });
+  return { ...actual, loadCotiReadProvider: vi.fn(async () => readProvider) };
+});
 
 vi.mock('../../lib/cotiSnap', () => ({
   getCotiSnapOwnerAesKeyResult: privacyMocks.snap,
@@ -40,6 +49,7 @@ type CapturedBinding = Readonly<{
   readProvider: CotiReadProvider;
   signer: JsonRpcSigner;
 }>;
+type IssuedBinding = Parameters<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>['bindCapability']>[0];
 
 const createLease = (epoch = 1): BrowserWalletSignerLease => {
   const provider: InjectedEthereumProvider = {
@@ -131,6 +141,200 @@ const issue = (
 });
 
 describe('owner COTI browser-wallet provider pool', () => {
+  it('binds normal DEX context only to the exact live Testnet signer and preserves other-network issuance',async()=>{
+    if(import.meta.env.MODE==='coti-testnet-candidate')expect(CHAIN_ID).toBe(7082400);
+    const lease=createLease(),capability=await issue(lease,'browser DEX context');
+    expect(hasCurrentDexBrowserSigner({},OWNER,7082400n)).toBe(false);
+    expect(hasCurrentDexBrowserSigner(capability.signer,`0x${'22'.repeat(20)}`,7082400n)).toBe(false);
+    expect(hasCurrentDexBrowserSigner(capability.signer,OWNER,7082400n)).toBe(CHAIN_ID===7082400);
+    releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider);
+    await Promise.resolve();
+    if(CHAIN_ID===7082400)expect(()=>hasCurrentDexBrowserSigner(capability.signer,OWNER,7082400n)).toThrow('lease ended');
+    else expect(hasCurrentDexBrowserSigner(capability.signer,OWNER,7082400n)).toBe(false);
+  });
+  it.each(['cold', 'pooled'] as const)('imports an unlocked owner session into a %s signer without prompting for privacy', async state => {
+    const lease = createLease();
+    const snapCalls = privacyMocks.snap.mock.calls.length, recoverCalls = privacyMocks.recover.mock.calls.length;
+    const commitOnboardInfo = vi.fn();
+    try {
+      const prior = state === 'pooled' ? await issue(lease, 'public DEX setup') : undefined;
+      const capability = await issueOwnerCotiMetaMaskCapability({
+        assertLeaseCurrent: async () => {}, assertLeaseSnapshotCurrent: () => {},
+        bindCapability: async input => input, capabilityLabel: 'current DEX submission',
+        expectedChainId: BigInt(CHAIN_ID), expectedOwnerAddress: OWNER, lease, requirePrivacy: false,
+        sessionOnboardInfo: { [OWNER.toLowerCase()]: { aesKey: 'local-owner-session-key' } }, commitOnboardInfo
+      });
+      if (prior) expect(capability.signer).toBe(prior.signer);
+      expect(capability.signer.getUserOnboardInfo()?.aesKey).toBe('local-owner-session-key');
+      expect(privacyMocks.snap).toHaveBeenCalledTimes(snapCalls);
+      expect(privacyMocks.recover).toHaveBeenCalledTimes(recoverCalls);
+      expect(commitOnboardInfo).not.toHaveBeenCalled();
+      expect(lease.sessionProvider.request).not.toHaveBeenCalled();
+    } finally { releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
+  it('does not import another owner key or replace a nonempty signer key during public capability setup', async () => {
+    const lease = createLease();
+    const issueWithCache = (sessionOnboardInfo: IssueOwnerCotiMetaMaskCapabilityArgs<unknown>['sessionOnboardInfo']) =>
+      issueOwnerCotiMetaMaskCapability({
+        assertLeaseCurrent: async () => {}, assertLeaseSnapshotCurrent: () => {},
+        bindCapability: async input => input, capabilityLabel: 'current DEX submission',
+        expectedChainId: BigInt(CHAIN_ID), expectedOwnerAddress: OWNER, lease, requirePrivacy: false, sessionOnboardInfo
+      });
+    try {
+      const first = await issueWithCache({ ['0x' + '22'.repeat(20)]: { aesKey: 'other-owner-key' } });
+      expect(first.signer.getUserOnboardInfo()?.aesKey).toBeFalsy();
+      first.signer.setUserOnboardInfo({ aesKey: 'retained-owner-key' });
+      const second = await issueWithCache({ [OWNER.toLowerCase()]: { aesKey: 'replacement-key' } });
+      expect(second.signer).toBe(first.signer);
+      expect(second.signer.getUserOnboardInfo()?.aesKey).toBe('retained-owner-key');
+      expect(lease.sessionProvider.request).not.toHaveBeenCalled();
+    } finally { releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
+  it('keeps retired capability guards separate from the reused lease-only provider and signer', async () => {
+    const lease = createLease(), assertLeaseCurrent = vi.fn(async () => {}), assertLeaseSnapshotCurrent = vi.fn();
+    let firstCurrent = true;
+    const issueGeneration = (assertCapabilityCurrent: () => void) => issueOwnerCotiMetaMaskCapability({
+      assertLeaseCurrent, assertLeaseSnapshotCurrent, assertCapabilityCurrent,
+      bindCapability: async input => input, capabilityLabel: 'OTC V2 scoped test',
+      expectedChainId: BigInt(CHAIN_ID), expectedOwnerAddress: OWNER, lease, requirePrivacy: false
+    });
+    try {
+      const first = await issueGeneration(() => { if (!firstCurrent) throw new Error('private generation retired'); });
+      firstCurrent = false;
+      await expect(first.assertCurrent()).rejects.toThrow('private generation retired');
+      expect(() => first.assertSnapshotCurrent()).toThrow('private generation retired');
+      const second = await issueGeneration(() => {});
+      expect(second.browserProvider).toBe(first.browserProvider); expect(second.signer).toBe(first.signer);
+      await second.assertCurrent(); second.assertSnapshotCurrent();
+      await second.browserProvider.send('wallet_getSnaps', []);
+      expect(lease.sessionProvider.request).toHaveBeenCalledWith({ method: 'wallet_getSnaps', params: [] });
+      await expect(first.assertCurrent()).rejects.toThrow('private generation retired');
+      expect(assertLeaseCurrent).toHaveBeenCalledWith(expect.objectContaining({ epoch: lease.epoch }));
+      expect(assertLeaseSnapshotCurrent).toHaveBeenCalledWith(expect.objectContaining({ epoch: lease.epoch }));
+    } finally { releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
+  it('rejects an invalid capability generation before lease access, privacy onboarding or binding', async () => {
+    const lease = createLease(), assertLeaseCurrent = vi.fn(), assertLeaseSnapshotCurrent = vi.fn(), bindCapability = vi.fn();
+    const commitOnboardInfo = vi.fn(), snapCalls = privacyMocks.snap.mock.calls.length;
+    try {
+      await expect(issueOwnerCotiMetaMaskCapability({
+        assertLeaseCurrent, assertLeaseSnapshotCurrent, bindCapability, commitOnboardInfo,
+        assertCapabilityCurrent: () => { throw new Error('private generation retired'); },
+        capabilityLabel: 'OTC V2 scoped test', expectedChainId: BigInt(CHAIN_ID), expectedOwnerAddress: OWNER, lease, requirePrivacy: true
+      })).rejects.toThrow('private generation retired');
+      expect(assertLeaseCurrent).not.toHaveBeenCalled(); expect(assertLeaseSnapshotCurrent).not.toHaveBeenCalled();
+      expect(bindCapability).not.toHaveBeenCalled(); expect(commitOnboardInfo).not.toHaveBeenCalled();
+      expect(privacyMocks.snap).toHaveBeenCalledTimes(snapCalls); expect(lease.sessionProvider.request).not.toHaveBeenCalled();
+    } finally { releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
+  it('rechecks the capability generation after a pending lease assertion before it acquires a pooled signer', async () => {
+    const lease = createLease(), bindCapability = vi.fn();
+    let current = true, enter!: () => void, resume!: () => void;
+    const started = new Promise<void>(resolve => { enter = resolve; }), held = new Promise<void>(resolve => { resume = resolve; });
+    const pending = issueOwnerCotiMetaMaskCapability({
+      assertLeaseCurrent: async () => { enter(); await held; }, assertLeaseSnapshotCurrent: () => {},
+      assertCapabilityCurrent: () => { if (!current) throw new Error('private generation retired'); }, bindCapability,
+      capabilityLabel: 'OTC V2 scoped test', expectedChainId: BigInt(CHAIN_ID), expectedOwnerAddress: OWNER, lease, requirePrivacy: false
+    });
+    const settled = Promise.allSettled([pending]);
+    try {
+      await started; current = false; resume();
+      const [result] = await settled;
+      expect(result.status).toBe('rejected');
+      if (result.status === 'rejected') expect(result.reason.message).toContain('private generation retired');
+      expect(bindCapability).not.toHaveBeenCalled(); expect(lease.sessionProvider.request).not.toHaveBeenCalled();
+    } finally { resume(); await settled; releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
+  it('blocks the next Snap wallet request after its issuance retires and leaves the pooled provider usable', async () => {
+    const lease = createLease(), bindCapability = vi.fn(), commitOnboardInfo = vi.fn();
+    let current = true, enter!: () => void, resume!: () => void;
+    const started = new Promise<void>(resolve => { enter = resolve; }), held = new Promise<void>(resolve => { resume = resolve; });
+    let privacyProvider: InjectedEthereumProvider | undefined;
+    privacyMocks.snap.mockImplementationOnce(async provider => {
+      privacyProvider = provider;
+      await provider.request({ method: 'wallet_getSnaps', params: [] });
+      enter(); await held;
+      await provider.request({ method: 'wallet_invokeSnap', params: [] });
+      return { status: 'ready', aesKey: 'synthetic-test-key' };
+    });
+    const pending = issueOwnerCotiMetaMaskCapability({
+      assertLeaseCurrent: async () => {}, assertLeaseSnapshotCurrent: () => {},
+      assertCapabilityCurrent: () => { if (!current) throw new Error('private generation retired'); },
+      bindCapability, commitOnboardInfo, capabilityLabel: 'OTC V2 scoped test', expectedChainId: BigInt(CHAIN_ID),
+      expectedOwnerAddress: OWNER, lease, requirePrivacy: true
+    });
+    const settled = Promise.allSettled([pending]);
+    try {
+      await started; current = false; resume();
+      const [result] = await settled;
+      expect(result.status).toBe('rejected');
+      if (result.status === 'rejected') expect(result.reason.message).toContain('private generation retired');
+      expect(bindCapability).not.toHaveBeenCalled(); expect(commitOnboardInfo).not.toHaveBeenCalled();
+      expect(lease.sessionProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'wallet_invokeSnap' }));
+      const fresh = await issueOwnerCotiMetaMaskCapability({
+        assertLeaseCurrent: async () => {}, assertLeaseSnapshotCurrent: () => {}, assertCapabilityCurrent: () => {},
+        bindCapability: async input => input, capabilityLabel: 'OTC V2 scoped test', expectedChainId: BigInt(CHAIN_ID),
+        expectedOwnerAddress: OWNER, lease, requirePrivacy: false
+      });
+      expect(fresh.signer.getUserOnboardInfo()?.aesKey).toBeFalsy();
+      await fresh.browserProvider.send('wallet_getSnaps', []);
+      await expect(privacyProvider!.request({ method: 'wallet_getSnaps' })).rejects.toThrow('private generation retired');
+    } finally { resume(); await settled; releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
+  it.each(['snap', 'ciphertrade'])('rejects a retired %s unlock result before committing onboard info or binding', async wallet => {
+    const lease = wallet === 'snap' ? createLease() : createCipherTradeLease(), bindCapability = vi.fn(), commitOnboardInfo = vi.fn();
+    let current = true, enter!: () => void, resume!: () => void;
+    const started = new Promise<void>(resolve => { enter = resolve; }), held = new Promise<void>(resolve => { resume = resolve; });
+    if (wallet === 'snap') privacyMocks.snap.mockImplementationOnce(async () => {
+      enter(); await held; return { status: 'ready', aesKey: 'synthetic-test-key' };
+    });
+    else privacyMocks.recover.mockImplementationOnce(async () => {
+      enter(); await held; return { status: 'ready', onboardInfo: { aesKey: 'synthetic-test-key' }, source: 'fallback' };
+    });
+    const pending = issueOwnerCotiMetaMaskCapability({
+      assertLeaseCurrent: async () => {}, assertLeaseSnapshotCurrent: () => {},
+      assertCapabilityCurrent: () => { if (!current) throw new Error('private generation retired'); }, bindCapability, commitOnboardInfo,
+      capabilityLabel: 'OTC V2 scoped test', expectedChainId: BigInt(CHAIN_ID), expectedOwnerAddress: OWNER, lease, requirePrivacy: true
+    });
+    const settled = Promise.allSettled([pending]);
+    try {
+      await started; current = false; resume();
+      const [result] = await settled;
+      expect(result.status).toBe('rejected');
+      if (result.status === 'rejected') expect(result.reason.message).toContain('private generation retired');
+      expect(bindCapability).not.toHaveBeenCalled(); expect(commitOnboardInfo).not.toHaveBeenCalled();
+      expect(lease.sessionProvider.request).not.toHaveBeenCalled();
+    } finally { resume(); await settled; releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
+  it('does not return a capability retired during binding or change the lease guard used by the pool', async () => {
+    const lease = createLease();
+    let current = true, leaseCurrent = true;
+    const assertLease = () => { if (!leaseCurrent) throw new Error('lease revoked'); };
+    const bindCapability = vi.fn(async (input: IssuedBinding) => { await Promise.resolve(); current = false; return input; });
+    try {
+      await expect(issueOwnerCotiMetaMaskCapability({
+        assertLeaseCurrent: async () => assertLease(), assertLeaseSnapshotCurrent: assertLease,
+        assertCapabilityCurrent: () => { if (!current) throw new Error('private generation retired'); }, bindCapability,
+        capabilityLabel: 'OTC V2 scoped test', expectedChainId: BigInt(CHAIN_ID), expectedOwnerAddress: OWNER, lease, requirePrivacy: false
+      })).rejects.toThrow('private generation retired');
+      const fresh = await issueOwnerCotiMetaMaskCapability({
+        assertLeaseCurrent: async () => assertLease(), assertLeaseSnapshotCurrent: assertLease, assertCapabilityCurrent: () => {},
+        bindCapability: async input => input, capabilityLabel: 'OTC V2 scoped test', expectedChainId: BigInt(CHAIN_ID),
+        expectedOwnerAddress: OWNER, lease, requirePrivacy: false
+      });
+      leaseCurrent = false;
+      await expect(fresh.browserProvider.send('wallet_getSnaps', [])).rejects.toThrow(/lease revoked/);
+      expect(lease.sessionProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'wallet_getSnaps' }));
+    } finally { releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider); }
+  });
+
   it('uses event-backed guards for all current DEX factories instead of repeated extension probes', () => {
     const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
     for (const name of ['Quote', 'PoolFunding', 'PoolPosition', 'Limit', 'Receipt', 'Submission']) {

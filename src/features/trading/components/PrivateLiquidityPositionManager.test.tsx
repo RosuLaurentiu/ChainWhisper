@@ -97,6 +97,20 @@ const renderManager = (
 ));
 
 describe('PrivateLiquidityPositionManager', () => {
+  it('keeps fund recovery actions and hides trading actions in recovery mode', () => {
+    const markup = renderToStaticMarkup(createElement(PrivateLiquidityPositionManager, {
+      position: position(), baseToken, quoteToken, inventory: { state: 'locked' },
+      deploymentReady: true, walletReady: true, recoveryOnly: true,
+      onRevealPrivateData: () => undefined, onAction: () => undefined, onBack: () => undefined
+    }));
+    expect(markup).toContain('Reveal private data');
+    expect(markup).toContain('Withdraw liquidity');
+    expect(markup).toContain('Close &amp; withdraw all');
+    expect(markup).not.toContain('Edit prices');
+    expect(markup).not.toContain('Add liquidity');
+    expect(markup).not.toContain('Resume');
+  });
+
   it('shows the full owner lifecycle and exact per-position trading history', () => {
     const markup = renderManager();
     expect(markup).toContain('Position NFT #7');

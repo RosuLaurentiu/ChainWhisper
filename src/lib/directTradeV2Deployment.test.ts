@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DIRECT_TRADE_V2_ENV_KEYS,
+  isSupportedDirectTradeV2Escrow,
   parseDirectTradeV2DeploymentConfig,
   resolveDirectTradeV2DeploymentConfig
 } from './directTradeV2Deployment';
@@ -21,7 +22,16 @@ const ACTIVE = {
 };
 
 describe('directTradeV2Deployment', () => {
-  it('uses the same admitted Direct selection as OTC and keeps the old Direct manifest', () => {
+  it('rejects missing escrow scope and accepts only the exact configured current address', () => {
+    expect(isSupportedDirectTradeV2Escrow(address('11'))).toBe(false);
+    expect(isSupportedDirectTradeV2Escrow(address('11'), [])).toBe(false);
+    expect(isSupportedDirectTradeV2Escrow(address('11'), [address('11')])).toBe(true);
+    expect(isSupportedDirectTradeV2Escrow(address('22'), [address('11')])).toBe(false);
+    expect(isSupportedDirectTradeV2Escrow(address('11'), undefined, address('11'))).toBe(true);
+    expect(isSupportedDirectTradeV2Escrow(address('22'), undefined, address('11'))).toBe(false);
+  });
+
+  it('uses only the current admitted Direct selection and preserves action admission', () => {
     const components = Object.fromEntries(['standardOtcV2', 'privateOtcV2', 'directOtcV2', 'recurringOtcV2', 'private-recurringOtcV2'].map((key, i) => [key,
       { address: address(String(i + 1).repeat(2)), deploymentBlock: '123', runtimeBytecodeHash: hash('22') }]));
     const candidate = { status: 'active', chainId: '7082400', components, finalityLagBlocks: 5n, rpcUrl: 'https://testnet.coti.io/rpc', fingerprint: 'candidate' } as never;
@@ -29,7 +39,7 @@ describe('directTradeV2Deployment', () => {
     const config = resolveDirectTradeV2DeploymentConfig({}, candidate, catalog);
     if (config.status !== 'active' || catalog.status !== 'active') throw new Error('Expected active');
     expect(config.manifest).toBe(catalog.deployments['direct-v2'].manifest);
-    expect(config.retainedManifests).toEqual([catalog.preparedP2p!.retainedDeployments['direct-v2'].manifest]);
+    expect(config).not.toHaveProperty('retainedManifests');
     expect(config.fingerprint).toContain(catalog.fingerprint);
     const activated = resolveDirectTradeV2DeploymentConfig({}, candidate);
     if (activated.status !== 'active') throw new Error('Expected activated private Direct');
@@ -38,7 +48,7 @@ describe('directTradeV2Deployment', () => {
     expect(activated.actionAdmission?.privateCounter).toBe(true);
     expect(activated.actionAdmission?.publicForward).toBe(true);
     expect(activated.actionAdmission?.publicCounter).toBe(true);
-    expect(activated.retainedManifests).toEqual([catalog.preparedP2p!.retainedDeployments['direct-v2'].manifest]);
+    expect(activated).not.toHaveProperty('retainedManifests');
     const counterCatalog = resolveOtcV2DeploymentCatalog(candidate, { ...CURRENT_P2P_BINDING, directCounterAppActivated: false });
     const counter = resolveDirectTradeV2DeploymentConfig({}, candidate, counterCatalog);
     if (counter.status !== 'active') throw new Error('Expected private counter hold configuration');
@@ -48,8 +58,8 @@ describe('directTradeV2Deployment', () => {
     const heldCatalog = resolveOtcV2DeploymentCatalog(candidate, { ...CURRENT_P2P_BINDING,
       directAppActivated: false, directPublicAppActivated: false, directPublicCounterAppActivated: false });
     const prepared = resolveDirectTradeV2DeploymentConfig({}, candidate, heldCatalog);
-    expect(prepared.status === 'active' ? prepared.manifest.contractAddress : '').toBe(components.directOtcV2.address);
-    expect(prepared.status === 'active' ? prepared.retainedManifests : undefined).toBeUndefined();
+    expect(prepared.status === 'active' ? prepared.manifest.contractAddress : '').toBe(CURRENT_P2P_BINDING.deployments['direct-v2'].contractAddress);
+    expect(prepared).not.toHaveProperty('retainedManifests');
   });
   it('stays inactive by default and resolves invalid configuration without partial activation', () => {
     expect(parseDirectTradeV2DeploymentConfig({})).toEqual({ status: 'inactive' });

@@ -55,10 +55,16 @@ const metadata = new Interface(['function symbol() view returns (string)',
   'function decimals() view returns (uint8)', 'function balanceOf(address) view returns (uint256)']);
 let provider: JsonRpcProvider;
 let nativeBalance: bigint;
+let tokenBalance: bigint;
+let metadataSymbol: string;
+let holdTokenRead: ((token: string, selector: string) => Promise<void> | undefined) | undefined;
+let signerRequests: ReturnType<typeof vi.fn<() => Promise<never>>>;
 let requests: Array<{ method: string; selector?: string; token?: string }>;
-let mountOwner: (includeCustomTokens: boolean) => void;
+let mountOwner: (includeCustomTokens: boolean) => { ownerCustomTradeTokenInfoByAddress: Record<string, unknown> };
 let mountComposer: (enabled: boolean) => ReturnType<typeof vi.fn>;
-let mountP2P: (sessionKey?: string, privateToken?: string) => ReturnType<typeof import('../../features/trading/hooks/useP2PTradeTokenData').default>;
+let mountP2P: (sessionKey?: string, privateToken?: string, overrides?: {
+  walletKey?: string; walletHasAes?: boolean;
+}) => ReturnType<typeof import('../../features/trading/hooks/useP2PTradeTokenData').default>;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -68,18 +74,22 @@ beforeEach(async () => {
   hooks.stateIndex = hooks.refIndex = hooks.effectIndex = hooks.callbackIndex = 0;
   requests = [];
   nativeBalance = 42n;
+  tokenBalance = 7n;
+  metadataSymbol = 'TOKEN';
+  holdTokenRead = undefined;
   // Only the HTTP boundary is replaced; run the installed SDK and our real paced queue.
   FetchRequest.registerGetUrl(async request => {
     const payload = JSON.parse(new TextDecoder().decode(request.body!));
     const selector = payload.params?.[0]?.data?.slice(0, 10);
     requests.push({ method: payload.method, selector, token: payload.params?.[0]?.to?.toLowerCase() });
+    await holdTokenRead?.(payload.params?.[0]?.to?.toLowerCase() ?? '', selector ?? '');
     await new Promise(resolve => setTimeout(resolve, 20));
     let result: string;
     if (payload.method === 'eth_chainId') result = `0x${CONFIGURED_COTI_NETWORK.chainIdDecimal.toString(16)}`;
     else if (payload.method === 'eth_getBalance') result = `0x${nativeBalance.toString(16)}`;
-    else if (selector === '0x95d89b41') result = metadata.encodeFunctionResult('symbol', ['TOKEN']);
+    else if (selector === '0x95d89b41') result = metadata.encodeFunctionResult('symbol', [metadataSymbol]);
     else if (selector === '0x313ce567') result = metadata.encodeFunctionResult('decimals', [6]);
-    else if (selector === '0x70a08231') result = metadata.encodeFunctionResult('balanceOf', [7n]);
+    else if (selector === '0x70a08231') result = metadata.encodeFunctionResult('balanceOf', [tokenBalance]);
     else throw new Error(`Unexpected local fixture method: ${payload.method}`);
     return { statusCode: 200, statusMessage: 'OK', headers: {},
       body: new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result })) };
@@ -91,21 +101,26 @@ beforeEach(async () => {
   const owner = (await import('../../features/wallet/hooks/useOwnerWalletBalances')).default;
   const composer = (await import('../../features/trading/hooks/useTradeCustomTokenInfoLoader')).default;
   const p2p = (await import('../../features/trading/hooks/useP2PTradeTokenData')).default;
-  const getLockedSigner = async () => { throw new Error('Locked fixture must not request a signer'); };
-  mountP2P = (sessionKey = 'owner:provider-1:locked', privateToken = '') => {
+  signerRequests = vi.fn(async () => { throw new Error('Locked fixture must not request a signer'); });
+  mountP2P = (sessionKey = 'owner:provider-1:locked', privateToken = '', overrides = {}) => {
     hooks.stateIndex = hooks.refIndex = hooks.effectIndex = hooks.callbackIndex = 0;
     hooks.effects = [];
     return p2p({ balanceRefreshSessionKey: sessionKey,
-    getTradeSigner: getLockedSigner,
+    getTradeSigner: signerRequests,
     tradeOfferCustomTokenAddress: privateToken, tradeOfferTokenSelection: privateToken ? 'custom-private' : 'native',
     tradeRequestCustomTokenAddress: '', tradeRequestTokenSelection: 'native',
     tradeFeeEscrowContract: '0x0000000000000000000000000000000000000002', tradeRequiredFeeOverrideWei: 0n,
-    walletAddress: '0x0000000000000000000000000000000000000001', walletKey: 'owner', walletHasAes: false });
+    walletAddress: '0x0000000000000000000000000000000000000001', walletKey: 'owner', walletHasAes: false,
+    ...overrides });
   };
-  mountOwner = includeCustomTokens => owner({ chainId: CONFIGURED_COTI_NETWORK.chainIdDecimal,
-    ownerWalletAddress: '0x0000000000000000000000000000000000000001', ownerAesReady: false,
-    getOwnerReadSigner: async () => { throw new Error('Locked fixture must not request a signer'); },
-    refreshNonce: 0, includeCustomTokens });
+  mountOwner = includeCustomTokens => {
+    hooks.stateIndex = hooks.refIndex = hooks.effectIndex = hooks.callbackIndex = 0;
+    hooks.effects = [];
+    return owner({ chainId: CONFIGURED_COTI_NETWORK.chainIdDecimal,
+      ownerWalletAddress: '0x0000000000000000000000000000000000000001', ownerAesReady: false,
+      getOwnerReadSigner: async () => { throw new Error('Locked fixture must not request a signer'); },
+      refreshNonce: 0, includeCustomTokens });
+  };
   mountComposer = enabled => {
     const setInfo = vi.fn();
     composer({ enabled, chainId: CONFIGURED_COTI_NETWORK.chainIdDecimal, hasAesReady: false,
@@ -139,52 +154,40 @@ const deferred = <T,>() => {
 };
 const nativeAsset = { assetType: 'native' as const };
 const standardView = (tradeId: string) => ({ tradeId, maker: ownerAddress, offerAsset: nativeAsset, requestAsset: nativeAsset });
-const privateView = (orderId: string) => ({ orderId, maker: ownerAddress, offerAsset: nativeAsset, requestAsset: nativeAsset });
+const privateBookView = (orderId: string) => ({
+  orderId, maker: ownerAddress, status: 'open' as const, mode: 'private-pair' as const,
+  offerAsset: { assetType: 'native' as const, token: `0x${'00'.repeat(20)}`, publicAmount: '0' },
+  requestAsset: { assetType: 'native' as const, token: `0x${'00'.repeat(20)}`, publicAmount: '0' },
+  fillPolicy: { partialFillsAllowed: false, minPartialFillBps: '0', maxFills: '0' },
+  priceTerms: { offerAmount: '1', requestAmount: '2' }, offerLocked: true,
+  offerTokenCodeHash: `0x${'00'.repeat(32)}`, requestTokenCodeHash: `0x${'00'.repeat(32)}`,
+  pairKey: `0x${'00'.repeat(32)}`, createdAt: '1', expiresAt: '0', revision: '1', fillCount: '0',
+  rootOrderId: orderId, replacementOrderId: '0', replacesOrderId: '0'
+});
 const directView = (tradeId: string) => ({ tradeId, maker: ownerAddress, taker: ownerAddress, offerAsset: nativeAsset, requestAsset: nativeAsset });
 
 const makeOneOffRuntime = async () => {
   const { CURRENT_P2P_BINDING } = await import('../currentP2PBinding');
-  const standard = CURRENT_P2P_BINDING.deployments['standard-v2'];
-  const retainedCalls: string[] = [];
-  const retained = {
-    isCurrent: () => true,
-    deployments: { 'standard-v2': standard },
-    listStandard: vi.fn(async (scope: string) => {
-      retainedCalls.push(scope);
-      return zeroPage(scope === 'maker' ? ['103'] : []);
-    }),
-    readStandard: vi.fn(async (tradeId: string) => standardView(tradeId))
-  };
   const runtime = {
     isCurrent: () => true,
     deployments: CURRENT_P2P_BINDING.deployments,
-    retainedDeployments: [standard],
-    forReference: vi.fn(async () => retained),
     listStandard: vi.fn(async (scope: string) => zeroPage(
       scope === 'open' ? ['901'] : scope === 'maker' ? ['101'] : []
     )),
     readStandard: vi.fn(async (tradeId: string) => standardView(tradeId)),
-    listPrivateTrade: vi.fn(async (scope: string) => zeroPage(
-      scope === 'open' ? ['902'] : scope === 'maker' ? ['102'] : []
-    )),
-    readPrivateTrade: vi.fn(async (orderId: string) => privateView(orderId)),
+    privateBook: {
+      ownerAddress: ownerAddress,
+      budgetVisibilityAvailable: false,
+      list: vi.fn(async (scope: string) => zeroPage(
+        scope === 'open' ? ['902'] : scope === 'maker' ? ['102'] : []
+      )),
+      read: vi.fn(async (orderId: string) => privateBookView(orderId)),
+      readAccount: vi.fn(async (orderId: string) => ({ orderId, sequence: '1', totalOfferAmount: '99', totalRequestAmount: '198', remainingOfferAmount: '99' }))
+    },
     listDirect: vi.fn(async (scope: string) => zeroPage(scope === 'maker' ? ['104'] : [])),
     readDirect: vi.fn(async (tradeId: string) => directView(tradeId))
   };
-  return { runtime, retained, retainedCalls };
-};
-
-const makeRecurringRuntime = async () => {
-  const { CURRENT_P2P_BINDING } = await import('../currentP2PBinding');
-  const runtime = {
-    isCurrent: () => true,
-    deployments: CURRENT_P2P_BINDING.deployments,
-    listRecurring: vi.fn(async (scope: string) => zeroPage(scope === 'active' ? ['911'] : scope === 'maker' ? ['201'] : [])),
-    listPrivateRecurring: vi.fn(async (scope: string) => zeroPage(scope === 'active' ? ['912'] : scope === 'maker' ? ['202'] : [])),
-    readRecurring: vi.fn(async (orderId: string) => ({ orderId, maker: ownerAddress, baseAsset: nativeAsset, quoteAsset: nativeAsset })),
-    readPrivateRecurring: vi.fn(async (orderId: string) => ({ orderId, maker: ownerAddress, baseToken: ownerAddress, quoteToken: ownerAddress }))
-  };
-  return runtime;
+  return { runtime };
 };
 
 const mountOneOff = async (runtime: object, includePublicDiscovery?: boolean, ensureTokenInfo = async () => {}, privateReadsEnabled = false) => {
@@ -199,24 +202,179 @@ const mountOneOff = async (runtime: object, includePublicDiscovery?: boolean, en
   } as never);
 };
 
-const mountRecurring = async (runtime: object, includePublicDiscovery?: boolean) => {
-  const useRecurringTradeV2Data = (await import('../../features/trading/hooks/useRecurringTradeV2Data')).default;
-  hooks.stateIndex = hooks.refIndex = hooks.effectIndex = hooks.callbackIndex = 0;
-  hooks.effects = [];
-  // The existing harness calls the hook directly so it can run and flush its effects.
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  return useRecurringTradeV2Data({
-    runtime, walletAddress: ownerAddress, dataScopeKey: 'current-test-scope', privateReadsEnabled: false,
-    tokenInfoByKey: {}, ensureTokenInfo: async () => {}, includePublicDiscovery
-  } as never);
-};
-
 const flushHookEffects = async () => {
   runEffects();
   await vi.runAllTimersAsync();
 };
 
+describe('P2P display metadata through the real token loader', () => {
+  const token = { address: '0x0000000000000000000000000000000000000077', kind: 'erc20' as const };
+  const tokenKey = `erc20:${token.address}`;
+
+  it('publishes display metadata without requesting a held owner balance', async () => {
+    const balance = deferred<void>();
+    holdTokenRead = (address, selector) => address === token.address && selector === '0x70a08231'
+      ? balance.promise : undefined;
+    const data = mountP2P();
+    let settled = false;
+    const loading = data.loadCustomTokenInfo(token, { silent: true, metadataOnly: true }).then(() => { settled = true; });
+    // Stop before the SDK timeout. A blocked balance cannot pass by timing out.
+    await vi.advanceTimersByTimeAsync(2_000);
+    try {
+      expect(settled).toBe(true);
+      expect(requests.filter(request => request.selector === '0x70a08231')).toEqual([]);
+      expect((hooks.values[0] as Record<string, object>)[tokenKey]).toMatchObject({ symbol: 'TOKEN', decimals: 6, balanceWei: null });
+    } finally {
+      balance.resolve();
+      await vi.runAllTimersAsync();
+      await loading;
+    }
+  });
+
+  it('coalesces identical display reads and reuses metadata while explicit balance refresh stays fresh', async () => {
+    const data = mountP2P();
+    const first = data.loadCustomTokenInfo(token, { metadataOnly: true });
+    const duplicate = data.loadCustomTokenInfo(token, { metadataOnly: true });
+    await vi.runAllTimersAsync();
+    await Promise.all([first, duplicate]);
+    expect(metadataRequests()).toHaveLength(2);
+    requests = [];
+    const displayAgain = data.loadCustomTokenInfo(token, { metadataOnly: true });
+    await vi.runAllTimersAsync(); await displayAgain;
+    expect(requests).toEqual([]);
+
+    tokenBalance = 13n;
+    const refresh = data.loadCustomTokenInfo(token);
+    await vi.runAllTimersAsync(); await refresh;
+    expect((hooks.values[0] as Record<string, { balanceWei: bigint }>)[tokenKey].balanceWei).toBe(13n);
+    tokenBalance = 19n;
+    const refreshAgain = data.loadCustomTokenInfo(token);
+    await vi.runAllTimersAsync(); await refreshAgain;
+    expect((hooks.values[0] as Record<string, { balanceWei: bigint }>)[tokenKey].balanceWei).toBe(19n);
+    expect(requests.filter(request => request.selector === '0x70a08231')).toHaveLength(2);
+    requests = [];
+    const displayAfterRefresh = data.loadCustomTokenInfo(token, { metadataOnly: true });
+    await vi.runAllTimersAsync(); await displayAfterRefresh;
+    expect((hooks.values[0] as Record<string, { balanceWei: bigint }>)[tokenKey].balanceWei).toBe(19n);
+    expect(requests).toEqual([]);
+  });
+
+  it.each(['wallet', 'provider', 'chain', 'privacy'] as const)('does not reuse completed metadata after a %s scope change', async change => {
+    const first = mountP2P().loadCustomTokenInfo(token, { metadataOnly: true });
+    await vi.runAllTimersAsync(); await first;
+    requests = [];
+    const current = mountP2P(change === 'provider' ? 'owner:provider-2:locked'
+      : change === 'chain' ? 'owner:chain-2:locked' : undefined, '', {
+      walletKey: change === 'wallet' ? 'other-owner' : 'owner', walletHasAes: change === 'privacy'
+    });
+    runEffects();
+    const next = current.loadCustomTokenInfo(token, { metadataOnly: true });
+    await vi.runAllTimersAsync(); await next;
+    expect(metadataRequests().filter(request => request.token === token.address)).toHaveLength(2);
+    expect((hooks.values[0] as Record<string, object>)[tokenKey]).toMatchObject({ symbol: 'TOKEN', decimals: 6 });
+  });
+
+  it.each(['wallet', 'provider', 'chain', 'privacy'] as const)('rejects late metadata after a %s scope change', async change => {
+    const metadataGate = deferred<void>();
+    holdTokenRead = (address, selector) => address === token.address && selector === '0x95d89b41'
+      ? metadataGate.promise : undefined;
+    const loading = mountP2P().loadCustomTokenInfo(token, { silent: true, metadataOnly: true });
+    await vi.advanceTimersByTimeAsync(1_100);
+    mountP2P(change === 'provider' ? 'owner:provider-2:locked'
+      : change === 'chain' ? 'owner:chain-2:locked' : undefined, '', {
+      walletKey: change === 'wallet' ? 'other-owner' : 'owner', walletHasAes: change === 'privacy'
+    });
+    runEffects();
+    metadataGate.resolve();
+    await vi.runAllTimersAsync(); await loading;
+    expect((hooks.values[0] as Record<string, object>)[tokenKey]).toBeUndefined();
+  });
+
+  it('preserves an existing private amount and disclosure state without a signer request', async () => {
+    const data = mountP2P(undefined, '', { walletHasAes: true });
+    const privateToken = { ...token, kind: 'private-erc20' as const };
+    const privateKey = `private-erc20:${token.address}`;
+    const entry = { ...privateToken, symbol: 'KNOWN', decimals: 6, balanceWei: 29n,
+      privateBalanceState: { status: 'ready', balanceWei: 29n }, aesReady: true, walletKey: 'owner', loading: false };
+    hooks.values[0] = { [privateKey]: entry };
+    const loading = data.loadCustomTokenInfo(privateToken, { metadataOnly: true });
+    await vi.runAllTimersAsync(); await loading;
+    expect((hooks.values[0] as Record<string, object>)[privateKey]).toMatchObject({
+      balanceWei: 29n, aesReady: true, privateBalanceState: { status: 'ready', balanceWei: 29n }
+    });
+    expect(requests.filter(request => request.selector === '0x70a08231')).toEqual([]);
+    expect(signerRequests).not.toHaveBeenCalled();
+  });
+
+  it('does not carry another wallet private amount into a metadata-only entry', async () => {
+    const data = mountP2P();
+    const privateToken = { ...token, kind: 'private-erc20' as const };
+    const privateKey = `private-erc20:${token.address}`;
+    hooks.values[0] = { [privateKey]: { ...privateToken, symbol: 'OLD', decimals: 6, balanceWei: 29n,
+      privateBalanceState: { status: 'ready', balanceWei: 29n }, aesReady: true, walletKey: 'prior-owner', loading: false } };
+    const loading = data.loadCustomTokenInfo(privateToken, { metadataOnly: true });
+    await vi.runAllTimersAsync(); await loading;
+    expect((hooks.values[0] as Record<string, object>)[privateKey]).toMatchObject({
+      walletKey: 'owner', balanceWei: null, aesReady: false, privateBalanceState: { status: 'locked' }
+    });
+  });
+});
+
 describe('startup token reads at the shared paced HTTP boundary', () => {
+  it('reuses successful metadata across fallback refreshes while balance reads remain fresh', async () => {
+    const data = mountP2P(); runEffects();
+    await vi.runAllTimersAsync();
+    requests = [];
+    for (const amount of [43n, 44n, 45n]) {
+      await vi.advanceTimersByTimeAsync(500);
+      nativeBalance = amount; tokenBalance = amount + 1n;
+      const refresh = data.refreshWalletBalances({ reason: 'interval', silent: true });
+      await vi.runAllTimersAsync(); await refresh;
+      expect(hooks.values[1]).toBe(amount);
+      expect(hooks.values[2]).toBe(amount + 1n);
+    }
+    expect(metadataRequests()).toEqual([]);
+    expect(requests.filter(request => request.method === 'eth_getBalance')).toHaveLength(3);
+    expect(requests.filter(request => request.selector === '0x70a08231')).toHaveLength(3);
+  });
+
+  it('retries fallback metadata on an ordinary refresh instead of caching it as successful', async () => {
+    metadataSymbol = '';
+    const data = mountP2P(); runEffects();
+    await vi.runAllTimersAsync();
+    requests = []; metadataSymbol = 'RECOVERED';
+    await vi.advanceTimersByTimeAsync(500);
+    const refresh = data.refreshWalletBalances({ reason: 'focus', silent: true });
+    await vi.runAllTimersAsync(); await refresh;
+    expect(metadataRequests().length).toBeGreaterThan(0);
+    expect(hooks.values[5]).toBe('RECOVERED');
+    requests = [];
+    await vi.advanceTimersByTimeAsync(500);
+    const again = data.refreshWalletBalances({ reason: 'interval', silent: true });
+    await vi.runAllTimersAsync(); await again;
+    expect(metadataRequests()).toEqual([]);
+  });
+
+  it('does not downgrade a queued manual balance refresh when a fallback arrives', async () => {
+    const data = mountP2P(); runEffects(); await vi.runAllTimersAsync();
+    const { REWARD_TOKEN_ADDRESS } = await import('./core');
+    const held = deferred<void>(); let heldOnce = false;
+    holdTokenRead = (address, selector) => {
+      if (!heldOnce && address === REWARD_TOKEN_ADDRESS.toLowerCase() && selector === '0x70a08231') {
+        heldOnce = true; return held.promise;
+      }
+    };
+    requests = []; await vi.advanceTimersByTimeAsync(500);
+    const initial = data.refreshWalletBalances({ reason: 'interval', silent: true });
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(heldOnce).toBe(true);
+    const manual = data.refreshWalletBalances({ reason: 'manual' });
+    const interval = data.refreshWalletBalances({ reason: 'interval', silent: true });
+    held.resolve(); await vi.runAllTimersAsync(); await Promise.all([initial, manual, interval]);
+    expect(metadataRequests().length).toBeGreaterThan(0);
+    expect(requests.filter(request => request.method === 'eth_getBalance')).toHaveLength(2);
+  });
+
   it('keeps the catalog metadata producer bounded while retaining every token', async () => {
     const pending = new Set<number>();
     let peak = 0;
@@ -298,18 +456,40 @@ describe('startup token reads at the shared paced HTTP boundary', () => {
     expect(hooks.values[1]).toBe(42n);
   });
 
-  it('still reads fresh balances and token metadata for an explicit P2P refresh', async () => {
+  it.each(['manual', 'trade-action', 'wallet-action'] as const)('still reads fresh balances and token metadata for an explicit P2P %s refresh', async reason => {
     const data = mountP2P(); runEffects();
     await vi.runAllTimersAsync();
     requests = [];
     nativeBalance = 43n;
     // An explicit refresh must not reuse the completed connect pass.
     await vi.advanceTimersByTimeAsync(500);
-    const refreshing = data.refreshWalletBalances({ reason: 'manual' });
+    const refreshing = data.refreshWalletBalances({ reason });
     await vi.runAllTimersAsync();
     await refreshing;
     expect(hooks.values[1]).toBe(43n);
     expect(metadataRequests().some(request => request.token === '0x0000000000000000000000000000000000000014')).toBe(true);
+  });
+
+  it.each(['wallet', 'session', 'privacy'] as const)('rejects old primary balances after a deferred %s replacement', async change => {
+    const data = mountP2P(); runEffects(); await vi.runAllTimersAsync();
+    const { REWARD_TOKEN_ADDRESS } = await import('./core');
+    const held = deferred<void>(); let heldOnce = false;
+    holdTokenRead = (address, selector) => {
+      if (!heldOnce && address === REWARD_TOKEN_ADDRESS.toLowerCase() && selector === '0x70a08231') {
+        heldOnce = true; return held.promise;
+      }
+    };
+    await vi.advanceTimersByTimeAsync(500);
+    const refresh = data.refreshWalletBalances({ reason: 'interval', silent: true });
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(heldOnce).toBe(true);
+    mountP2P(change === 'session' ? 'owner:provider-2:locked' : undefined, '', {
+      walletKey: change === 'wallet' ? 'other-owner' : 'owner', walletHasAes: change === 'privacy'
+    });
+    hooks.values[1] = 999n; hooks.values[2] = 888n;
+    held.resolve(); await vi.runAllTimersAsync(); await refresh;
+    expect(hooks.values[1]).toBe(999n);
+    expect(hooks.values[2]).toBe(888n);
   });
 
   it.each(['', '0x0000000000000000000000000000000000000077'])(
@@ -372,84 +552,125 @@ describe('startup token reads at the shared paced HTTP boundary', () => {
     mountOwner(true); runEffects();
     await vi.runAllTimersAsync();
     expect(metadataRequests()).toHaveLength(20);
-    expect(Object.keys(hooks.values[6] as object)).toHaveLength(10);
+    const current = mountOwner(true);
+    expect(Object.keys(current.ownerCustomTradeTokenInfoByAddress)).toHaveLength(10);
   });
 });
 
-describe('owner-only V2 history discovery', () => {
-  it('publishes verified current rows while retained discovery is pending', async () => {
-    const { runtime, retained } = await makeOneOffRuntime();
-    runtime.readStandard.mockImplementation(async tradeId => ({ ...standardView(tradeId),
-      offerAsset: { assetType: 'native', amount: '1' }, requestAsset: { assetType: 'native', amount: '2' },
-      status: 'open', revision: '1', createdAt: '1', expiresAt: '0', replacementTradeId: '0', replacesTradeId: '0' } as never));
-    const older = deferred<ReturnType<typeof zeroPage>>();
-    retained.listStandard.mockImplementation(async scope => scope === 'maker' ? older.promise : zeroPage([]));
-    await mountOneOff(runtime, false);
-    await flushHookEffects();
-    const partial = await mountOneOff(runtime, false);
-    expect(partial.myOneOffV2Trades.map(row => row.tradeId)).toContain(101);
-    expect(partial.loadingOneOffV2Trades).toBe(true);
-    expect(partial.oneOffV2TradesError).toBe('');
-    expect(retained.listStandard).toHaveBeenCalledExactlyOnceWith('maker', 0n, 100n);
-    older.resolve(zeroPage(['103']));
-    await vi.runAllTimersAsync();
-    const complete = await mountOneOff(runtime, false);
-    expect(complete.myOneOffV2Trades.map(row => row.tradeId)).toContain(101);
-    expect(complete.loadingOneOffV2Trades).toBe(false);
-    expect((hooks.values[0] as { retainedTrades: unknown[] }).retainedTrades).toHaveLength(1);
+describe('current-contract owner discovery', () => {
+  it('finishes public discovery before it starts owner inventory reads', async () => {
+    const { runtime } = await makeOneOffRuntime();
+    const open = deferred<ReturnType<typeof zeroPage>>();
+    runtime.listStandard.mockImplementation(async scope => scope === 'open' ? open.promise : zeroPage(['101']));
+    await mountOneOff(runtime); runEffects(); await vi.runAllTimersAsync();
+    expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).toEqual(['open']);
+    expect(runtime.privateBook.list.mock.calls.map(([scope]) => scope)).toEqual(['open']);
+    expect(runtime.listDirect).not.toHaveBeenCalled();
+    expect((hooks.values[0] as { openPrivateIds: Set<string> }).openPrivateIds.has('902')).toBe(true);
+    open.resolve(zeroPage(['901'])); await vi.runAllTimersAsync();
+    expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).toEqual(['open', 'maker', 'filler']);
+    expect(runtime.listDirect).toHaveBeenCalled();
   });
 
-  it('keeps verified current rows and an error when retained discovery fails', async () => {
-    const { runtime, retained } = await makeOneOffRuntime();
-    retained.listStandard.mockRejectedValueOnce(new Error('Retained discovery unavailable.'));
-    await mountOneOff(runtime, false);
-    await flushHookEffects();
+  it('releases public loading while an owner source remains pending and keeps the verified public rows', async () => {
+    const { runtime } = await makeOneOffRuntime();
+    const owner = deferred<ReturnType<typeof zeroPage>>();
+    runtime.listStandard.mockImplementation(async scope => scope === 'maker' ? owner.promise
+      : zeroPage(scope === 'open' ? ['901'] : []));
+    await mountOneOff(runtime); runEffects(); await vi.runAllTimersAsync();
+    const partial = await mountOneOff(runtime);
+    expect(partial.oneOffV2PublicDiscoverySettled).toBe(true);
+    expect(partial.loadingPublicOneOffV2Trades).toBe(false);
+    expect(partial.oneOffV2DiscoverySettled).toBe(false);
+    expect(partial.loadingOneOffV2Trades).toBe(true);
+    expect((hooks.values[0] as { openStandardIds: Set<string> }).openStandardIds.has('901')).toBe(true);
+    owner.resolve(zeroPage(['101'])); await vi.runAllTimersAsync();
     const raw = hooks.values[0] as { standardViews: Array<{ tradeId: string }> };
-    expect(raw.standardViews.map(row => row.tradeId)).toContain('101');
-    expect(hooks.values[1]).toBe(false);
-    expect(hooks.values[2]).toBe('Retained discovery unavailable.');
+    expect(raw.standardViews.map(view => view.tradeId).sort()).toEqual(['101', '901']);
+  });
+
+  it('keeps prior participant rows through a public refresh and removes superseded participants after owner completion', async () => {
+    const { runtime } = await makeOneOffRuntime();
+    const first = await mountOneOff(runtime); await flushHookEffects();
+    const owner = deferred<ReturnType<typeof zeroPage>>();
+    runtime.listStandard.mockImplementation(async scope => scope === 'maker' ? owner.promise
+      : zeroPage(scope === 'open' ? ['901'] : []));
+    first.refreshOneOffV2Trades(); await mountOneOff(runtime); runEffects(); await vi.runAllTimersAsync();
+    let raw = hooks.values[0] as { standardViews: Array<{ tradeId: string }>; participantStandardIds: Set<string> };
+    expect(raw.participantStandardIds.has('101')).toBe(true);
+    expect(raw.standardViews.map(view => view.tradeId)).toContain('101');
+    owner.resolve(zeroPage(['201'])); await vi.runAllTimersAsync();
+    raw = hooks.values[0] as typeof raw;
+    expect([...raw.participantStandardIds]).toEqual(['201']);
+    expect(raw.standardViews.map(view => view.tradeId).sort()).toEqual(['201', '901']);
+  });
+
+  it('settles a failed public attempt and continues owner recovery discovery', async () => {
+    const { runtime } = await makeOneOffRuntime();
+    runtime.listStandard.mockImplementation(async scope => {
+      if (scope === 'open') throw new Error('Public page unavailable');
+      return zeroPage(scope === 'maker' ? ['101'] : []);
+    });
+    await mountOneOff(runtime); await flushHookEffects();
+    const result = await mountOneOff(runtime);
+    expect(result.oneOffV2PublicDiscoverySettled).toBe(true);
+    expect(result.oneOffV2DiscoverySettled).toBe(true);
+    expect(result.oneOffV2TradesError).toContain('Public page unavailable');
+    const raw = hooks.values[0] as { participantStandardIds: Set<string>; directViews: Array<{ tradeId: string }> };
+    expect(raw.participantStandardIds.has('101')).toBe(true);
+    expect(raw.directViews.map(view => view.tradeId)).toContain('104');
+  });
+
+  it('reuses the current public order read when the same order is in owner inventory', async () => {
+    const { runtime } = await makeOneOffRuntime();
+    runtime.listStandard.mockImplementation(async scope => zeroPage(scope === 'filler' ? [] : ['901']));
+    runtime.privateBook.list.mockImplementation(async scope => zeroPage(scope === 'filler' ? [] : ['902']));
+    await mountOneOff(runtime); await flushHookEffects();
+    expect(runtime.readStandard).toHaveBeenCalledExactlyOnceWith('901');
+    expect(runtime.privateBook.read).toHaveBeenCalledExactlyOnceWith('902');
+    const raw = hooks.values[0] as { openStandardIds: Set<string>; participantStandardIds: Set<string> };
+    expect(raw.openStandardIds.has('901')).toBe(true);
+    expect(raw.participantStandardIds.has('901')).toBe(true);
   });
 
   it('publishes amount-free current rows before private hydration and rejects a disposed late result', async () => {
     const { runtime } = await makeOneOffRuntime();
-    runtime.retainedDeployments = [];
-    const account = deferred<{ orderId: string; totalOfferAmount: string }>();
-    const active = Object.assign(runtime, { readPrivateTradeAccount: vi.fn(async () => account.promise) });
+    const account = deferred<{ orderId: string; sequence: string; totalOfferAmount: string; totalRequestAmount: string; remainingOfferAmount: string }>();
+    const active = Object.assign(runtime, { privateBook: { ...runtime.privateBook, readAccount: vi.fn(async () => account.promise) } });
     await mountOneOff(active, false, async () => {}, true);
     await flushHookEffects();
-    const partial = hooks.values[0] as { privateViews: Array<{ orderId: string }>; privateAccounts: object };
-    expect(partial.privateViews.map(row => row.orderId)).toContain('102');
+    await mountOneOff(active, false, async () => {}, true);
+    await flushHookEffects();
+    const partial = hooks.values[0] as { privateBookViews: Array<{ orderId: string }>; privateAccounts: object };
+    expect(partial.privateBookViews.map(row => row.orderId)).toContain('102');
     expect(partial.privateAccounts).toEqual({});
-    expect(hooks.values[1]).toBe(true);
-    expect(active.readPrivateTradeAccount).toHaveBeenCalledOnce();
+    expect(hooks.values[1]).toBe(false);
+    expect(active.privateBook.readAccount).toHaveBeenCalledOnce();
     hooks.cleanups.forEach(cleanup => cleanup?.());
-    account.resolve({ orderId: '102', totalOfferAmount: '99' });
+    account.resolve({ orderId: '102', sequence: '2', totalOfferAmount: '99', totalRequestAmount: '198', remainingOfferAmount: '99' });
     await vi.runAllTimersAsync();
     expect(hooks.values[0]).toBe(partial);
     expect(partial.privateAccounts).toEqual({});
   });
 
-  it('skips global one-off books but keeps participant and retained owner reads', async () => {
-    const { runtime, retained, retainedCalls } = await makeOneOffRuntime();
+  it('skips global one-off books but keeps current participant reads', async () => {
+    const { runtime } = await makeOneOffRuntime();
     await mountOneOff(runtime, false);
     await flushHookEffects();
 
     const raw = hooks.values[0] as {
       openStandardIds: Set<string>; openPrivateIds: Set<string>; participantStandardIds: Set<string>;
-      directViews: Array<{ tradeId: string }>; retainedTrades: unknown[];
+      directViews: Array<{ tradeId: string }>;
     };
     expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).not.toContain('open');
-    expect(runtime.listPrivateTrade.mock.calls.map(([scope]) => scope)).not.toContain('open');
+    expect(runtime.privateBook.list.mock.calls.map(([scope]) => scope)).not.toContain('open');
     expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'filler']);
-    expect(runtime.listPrivateTrade.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'filler']);
+    expect(runtime.privateBook.list.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'filler']);
     expect(runtime.listDirect.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'taker']);
     expect(raw.openStandardIds.size).toBe(0);
     expect(raw.openPrivateIds.size).toBe(0);
     expect(raw.participantStandardIds.has('101')).toBe(true);
     expect(raw.directViews.map(view => view.tradeId)).toContain('104');
-    expect(retained.listStandard.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'filler']);
-    expect(retainedCalls).toEqual(['maker', 'filler']);
-    expect(raw.retainedTrades).toHaveLength(1);
     expect(hooks.values[1]).toBe(false);
     expect(hooks.values[2]).toBe('');
   });
@@ -461,7 +682,7 @@ describe('owner-only V2 history discovery', () => {
 
     const raw = hooks.values[0] as { openStandardIds: Set<string>; openPrivateIds: Set<string> };
     expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).toContain('open');
-    expect(runtime.listPrivateTrade.mock.calls.map(([scope]) => scope)).toContain('open');
+    expect(runtime.privateBook.list.mock.calls.map(([scope]) => scope)).toContain('open');
     expect(raw.openStandardIds.has('901')).toBe(true);
     expect(raw.openPrivateIds.has('902')).toBe(true);
     expect(hooks.values[1]).toBe(false);
@@ -478,73 +699,17 @@ describe('owner-only V2 history discovery', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).toContain('maker');
-    expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).toContain('filler');
+    expect(runtime.listStandard.mock.calls.map(([scope]) => scope)).toEqual(['open']);
     expect(runtime.readStandard).not.toHaveBeenCalled();
+    const privateReadsBeforeDisposal = runtime.privateBook.read.mock.calls.length;
     hooks.cleanups.forEach(cleanup => cleanup?.());
     openList.resolve(zeroPage(['999']));
     await vi.runAllTimersAsync();
 
     expect(runtime.readStandard).not.toHaveBeenCalled();
-    expect(runtime.readPrivateTrade).not.toHaveBeenCalled();
+    expect(runtime.privateBook.read).toHaveBeenCalledTimes(privateReadsBeforeDisposal);
     expect(runtime.readDirect).not.toHaveBeenCalled();
     expect(ensureTokenInfo).not.toHaveBeenCalled();
   });
 
-  it('skips global recurring books but keeps participant reads', async () => {
-    const runtime = await makeRecurringRuntime();
-    await mountRecurring(runtime, false);
-    await flushHookEffects();
-
-    const raw = hooks.values[0] as {
-      activePublicIds: Set<string>; activePrivateIds: Set<string>;
-      participantPublicIds: Set<string>; participantPrivateIds: Set<string>;
-    };
-    expect(runtime.listRecurring.mock.calls.map(([scope]) => scope)).not.toContain('active');
-    expect(runtime.listPrivateRecurring.mock.calls.map(([scope]) => scope)).not.toContain('active');
-    expect(runtime.listRecurring.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'filler']);
-    expect(runtime.listPrivateRecurring.mock.calls.map(([scope]) => scope)).toEqual(['maker', 'filler']);
-    expect(raw.activePublicIds.size).toBe(0);
-    expect(raw.activePrivateIds.size).toBe(0);
-    expect(raw.participantPublicIds.has('201')).toBe(true);
-    expect(raw.participantPrivateIds.has('202')).toBe(true);
-    expect(runtime.readRecurring).toHaveBeenCalledWith('201');
-    expect(runtime.readPrivateRecurring).toHaveBeenCalledWith('202');
-    expect(hooks.values[1]).toBe(false);
-    expect(hooks.values[2]).toBe('');
-  });
-
-  it('keeps default recurring Offers discovery enabled', async () => {
-    const runtime = await makeRecurringRuntime();
-    await mountRecurring(runtime);
-    await flushHookEffects();
-
-    const raw = hooks.values[0] as { activePublicIds: Set<string>; activePrivateIds: Set<string> };
-    expect(runtime.listRecurring.mock.calls.map(([scope]) => scope)).toContain('active');
-    expect(runtime.listPrivateRecurring.mock.calls.map(([scope]) => scope)).toContain('active');
-    expect(raw.activePublicIds.has('911')).toBe(true);
-    expect(raw.activePrivateIds.has('912')).toBe(true);
-    expect(hooks.values[1]).toBe(false);
-    expect(hooks.values[2]).toBe('');
-  });
-
-  it('does not start recurring details after a disposed global list read resolves', async () => {
-    const runtime = await makeRecurringRuntime();
-    const activeList = deferred<ReturnType<typeof zeroPage>>();
-    runtime.listRecurring.mockImplementation(async (scope) => scope === 'active' ? activeList.promise : zeroPage([]));
-    await mountRecurring(runtime, true);
-    runEffects();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(runtime.listRecurring.mock.calls.map(([scope]) => scope)).toContain('maker');
-    expect(runtime.listRecurring.mock.calls.map(([scope]) => scope)).toContain('filler');
-    expect(runtime.readRecurring).not.toHaveBeenCalled();
-    hooks.cleanups.forEach(cleanup => cleanup?.());
-    activeList.resolve(zeroPage(['999']));
-    await vi.runAllTimersAsync();
-
-    expect(runtime.readRecurring).not.toHaveBeenCalled();
-    expect(runtime.readPrivateRecurring).not.toHaveBeenCalled();
-  });
 });

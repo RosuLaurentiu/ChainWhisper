@@ -22,11 +22,12 @@ export const currentSharedTokenFundingAbi = new Interface([
 ]);
 export const CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP = 5_000_000n;
 export const CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM = (1n << 256n) - 1n;
-export const assertCurrentSharedTokenFundingAppAuthority = (value?: unknown): void => {
+export const assertCurrentSharedTokenFundingAppAuthority = (value?: unknown, signerOrToken?: unknown): void => {
+  const signer = signerOrToken && typeof signerOrToken === 'object' ? signerOrToken : undefined;
   const scope=value&&typeof value==='object'?value as {candidate?:string;owner?:string;token?:string;action?:string}:undefined;
   if(!scope || scope.candidate!=='cheap-exit'&&scope.candidate!=='cheap-history'||typeof scope.owner!=='string'||typeof scope.token!=='string'||typeof scope.action!=='string')
     throw new Error('Beta token signing is held: connected App-wallet trial remains inactive.');
-  if(scope.candidate==='cheap-history')return assertCurrentAppSharedFundingAuthority(resolvePreparedDexScope(scope.candidate).candidate.graph,scope.owner,scope.token,scope.action);
+  if(scope.candidate==='cheap-history')return assertCurrentAppSharedFundingAuthority(resolvePreparedDexScope(scope.candidate).candidate.graph,scope.owner,scope.token,scope.action,signer);
   assertCurrentAppInitialClaimAuthority(resolvePreparedDexScope(scope.candidate).candidate.graph,scope.owner,scope.token,scope.action);
 };
 type Head = Awaited<ReturnType<CurrentTransport['readHead']>>;
@@ -208,17 +209,17 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
   };
   const approvals = new WeakMap<object, { before: Funds; deadline: bigint; funding: PoolApprovalBinding }>();
   const assertPoolApprovalAdmission = (funding: PoolApprovalBinding) => {
-    if (isAllowanceCleanup(funding)) return assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner);
+    if (isAllowanceCleanup(funding)) return assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner, signer);
     if (candidate !== 'cheap-history') return assertApprovalAdmission();
     assertCurrentPoolFundingPrepared(funding, signer);
     const topUp = 'positionId' in funding;
     assertCurrentAppPoolAuthority(policy.graph, { owner, action: topUp ? 'approve-top-up' : 'approve-create',
       positionId: topUp ? funding.positionId : undefined, budgets: funding.intent.budgets,
-      classId: funding.intent.classId, tolerance: 'tolerance' in funding.intent ? funding.intent.tolerance : [funding.intent.terms[8], funding.intent.terms[9]] });
+      classId: funding.intent.classId, tolerance: 'tolerance' in funding.intent ? funding.intent.tolerance : [funding.intent.terms[8], funding.intent.terms[9]] }, signer);
   };
   const limitApprovals = new WeakMap<object, { before: Funds; deadline: bigint; funding: CurrentLimitFundingReview }>();
   const assertLimitApprovalAdmission = (funding: CurrentLimitFundingReview) => candidate==='cheap-history'
-    ?assertCurrentAppLimitAuthority(policy.graph,{owner,action:`approve-${funding.kind}`,amount:funding.amount}):assertApprovalAdmission();
+    ?assertCurrentAppLimitAuthority(policy.graph,{owner,action:`approve-${funding.kind}`,amount:funding.amount},signer):assertApprovalAdmission();
   const swapApprovals = new WeakMap<object, { before: Funds; deadline: bigint; assertReviewCurrent: () => void | Promise<void>; preparedQuote?: CurrentCheapDexPreparedQuote }>();
   const swapReview = (token: string, amount: bigint): CurrentSharedSwapApprovalReview => {
     if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new FundingProofError('Swap approval requires a supported current DEX candidate.');
@@ -487,7 +488,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       marketId: string; canonicalIndex: 0 | 1;
       confirm: (review: { token: string; amount: bigint; previousAllowance: bigint; spender: string; cleanup: boolean }) => Promise<boolean>
     }) => {
-      assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner); b.requireEmptyPending();
+      assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner, signer); b.requireEmptyPending();
       const pair = resolvePreparedDexScope(candidate).candidate.pairs.find(pair => pair.marketId === marketId);
       if (candidate !== 'cheap-history' || !pair || (canonicalIndex !== 0 && canonicalIndex !== 1) || !encrypt || typeof confirm !== 'function') {
         throw new FundingProofError('Invalid registered Pool allowance cleanup.');
@@ -496,13 +497,13 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       const previousAllowance = before.tokens[indexOf(token)].allowance;
       if (previousAllowance === 0n) return null;
       if (!await confirm(Object.freeze({ token, amount: 0n, previousAllowance, spender: policy.core, cleanup: true }))) return null;
-      assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner); await transport.assertCurrent(); b.requireEmptyPending();
+      assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner, signer); await transport.assertCurrent(); b.requireEmptyPending();
       const current = await inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP));
       if (!current.tokens.every((t, i) => equalToken(t, before.tokens[i]))) throw new FundingProofError('Pool approval funds changed during confirmation.');
       const input = await encrypt(0n, token, currentTokenFundingAbi.getFunction('approve')!.selector); await transport.assertCurrent();
       const funding: CurrentSharedPoolAllowanceCleanupBinding = Object.freeze({ kind: 'allowance-cleanup', ...identity, chainId,
         from: owner, to: policy.core, marketId, poolTokens: Object.freeze([...pair.tokens]) as readonly [string, string], readyToSign: false,
-        assertCurrent: async () => { assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner); await transport.assertCurrent(); } });
+        assertCurrent: async () => { assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner, signer); await transport.assertCurrent(); } });
       const p: CurrentSharedPoolApprovalPrepared = Object.freeze({ ...identity, token, amount: 0n, cleanup: true, recovery: true,
         canonicalIndex, marketId, data: currentTokenFundingAbi.encodeFunctionData('approve', [policy.core, input]), readyToSign: false });
       approvals.set(p, { before, deadline: now() + 300n, funding }); poolApprovalSessions.set(p, { signer, funding }); await validateApproval(p, true); return p;
@@ -583,7 +584,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
           undefined, async request => { await assertAdmission(p.action, p.token, saved.preparedQuote); await resources(await b.currentHead(saved.deadline, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP), request.nonce!);
             if(authorizeInitialClaimSigning)await authorizeInitialClaimSigning(request);
           }, undefined, undefined, authorizeInitialClaimSigning?signer:undefined,
-          candidate==='cheap-history'?{action:p.action,token:p.token}:undefined);
+          candidate==='cheap-history'?{action:p.action,token:p.token,signer}:undefined);
         if(rememberSwapApprovalHash && authorizeInitialClaimSigning)await rememberSwapApprovalHash(sent);
         return Object.freeze({ ...identity, transactionHash: sent.transactionHash, readyToSign: false as const, recover: async () => {
           await validate(p, false); const pending = b.pending();

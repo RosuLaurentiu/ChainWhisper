@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DirectTradeV2ChatEntry } from '../../lib/directTradeV2ChatProjection';
 import {
   buildDirectTradeNotificationStorageKey,
+  buildDirectTradeNotificationView,
   markDirectTradeNotificationsRead,
   parseDirectTradeNotifications,
   reconcileDirectTradeNotifications,
@@ -47,6 +48,25 @@ const opening = (
 });
 
 describe('direct trade notification persistence', () => {
+  it('suppresses muted/hidden contacts in both incoming offers and counters without changing saved read state', () => {
+    const direct = opening('muted-direct', '1', '0');
+    const counter = opening('hidden-counter', '2', '1');
+    const visible = opening('visible', '3', '0');
+    const openings = [direct, counter, visible].map((entry, index) => ({
+      ...entry, contact: address(['aa', 'bb', 'cc'][index]!)
+    }));
+    const saved = reconcileDirectTradeNotifications({ scope, previous: [],
+      newOpenings: openings, canonicalOpenings: openings, canonicalComplete: true });
+    const before = serializeDirectTradeNotifications(saved);
+    const view = buildDirectTradeNotificationView(saved, new Set([address('aa'), address('bb')]));
+    expect(view.items.map(item => item.tradeId)).toEqual(['3']);
+    expect(view.unreadCount).toBe(1);
+    expect(serializeDirectTradeNotifications(saved)).toBe(before);
+    expect(buildDirectTradeNotificationView(saved, new Set()).items).toEqual(saved);
+    expect(buildDirectTradeNotificationView(markDirectTradeNotificationsRead(saved, visible.message.id),
+      new Set([address('aa'), address('bb')])).unreadCount).toBe(0);
+  });
+
   it('keeps the original escrow for retained offers with the same local ID', () => {
     const current = opening('current', '1', '0');
     const old = opening('old', '1', '0');

@@ -136,8 +136,10 @@ const makeDependencies = ({
     readCanonicalBlock: vi.fn(async (_chainId: bigint, blockNumber: bigint) =>
       blocksByNumber.get(blockNumber.toString()) ?? null
     ),
-    readMessagePage: vi.fn(async () => events),
-    readConversationMessageCountAtBlock: vi.fn(async () => messageCount),
+    readMessagePage: vi.fn(async (_input: Parameters<DirectChatV2SyncDependencies['readMessagePage']>[0]) => events),
+    readConversationMessageCountAtBlock: vi.fn(async (
+      _input: Parameters<DirectChatV2SyncDependencies['readConversationMessageCountAtBlock']>[0]
+    ) => messageCount),
     resolveEpochKey: vi.fn(async () => EPOCH_KEY),
     clearEpochKeys: vi.fn()
   } satisfies DirectChatV2SyncDependencies;
@@ -153,6 +155,98 @@ const legacyMessage = (): ChatMessage => ({
 });
 
 describe('directChatV2SyncCoordinator', () => {
+  it('loads a recent contiguous ID suffix, then finds leading same-block messages through the inclusive older cursor', async () => {
+    const events = await Promise.all([1n, 2n, 3n].map(messageId => makeEvent({ messageId,
+      blockNumber: messageId === 3n ? 10_000n : 9_999n, blockHash: hashFor(messageId === 3n ? 10_000 : 9_999) })));
+    const blocks = [9_999n, 10_000n].map(number => ({ number, hash: hashFor(Number(number)) }));
+    const dependencies = makeDependencies({ latestBlock: 10_000n, blocks, events: events.slice(1), messageCount: 3n });
+    const paging = { direction: 'recent' as const, messageCount: 3n, lastMessageBlock: 10_000n };
+    const recent = await syncDirectChatV2HistoryPage({ config: CONFIG, scope: { ...SCOPE, firstMessageBlock: 100n },
+      viewerAddress: ALICE, previousMessages: {}, dependencies, paging });
+    expect(recent).toMatchObject({ hasMore: false, hasOlder: true, appliedEntries: 2,
+      checkpoint: { firstMessageId: '2', lastMessageId: '3', olderToBlock: '9999' } });
+    expect(dependencies.readMessagePage).toHaveBeenCalledExactlyOnceWith({ scope: { ...SCOPE, firstMessageBlock: 100n }, fromBlock: 9_990n, toBlock: 10_000n });
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    dependencies.readMessagePage.mockResolvedValueOnce(events.slice(0, 2));
+    const older = await syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: recent.messagesByContact, checkpoint: recent.checkpoint, dependencies,
+      paging: { ...paging, direction: 'older' } });
+    expect(older).toMatchObject({ hasMore: false, hasOlder: false, appliedEntries: 1,
+      checkpoint: { firstMessageId: '1', lastMessageId: '3' } });
+    expect(dependencies.readMessagePage.mock.calls[1]?.[0]).toMatchObject({ fromBlock: 9_989n, toBlock: 9_999n });
+    expect(older.messagesByContact[BOB.toLowerCase()]).toHaveLength(3);
+  });
+
+  it.each([{ ids: [1n, 3n] }, { ids: [2n] }, { ids: [] as bigint[] }])('rejects missing internal or terminal suffix records ($ids)', async ({ ids }) => {
+    const events = await Promise.all(ids.map(messageId => makeEvent({ messageId, blockNumber: 10_000n, blockHash: hashFor(10_000) })));
+    const dependencies = makeDependencies({ latestBlock: 10_000n, blocks: [{ number: 10_000n, hash: hashFor(10_000) }], events });
+    await expect(syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, dependencies, paging: { direction: 'recent', messageCount: 3n, lastMessageBlock: 10_000n } }))
+      .rejects.toThrow('incomplete');
+    expect(dependencies.resolveEpochKey).not.toHaveBeenCalled();
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+  });
+
+  it('waits for finality before any historical count or message-page scan', async () => {
+    const dependencies = makeDependencies({ latestBlock: 10_000n, blocks: [] });
+    await expect(syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, dependencies, paging: { direction: 'recent', messageCount: 3n, lastMessageBlock: 10_001n } }))
+      .rejects.toThrow('waiting for the latest message to finalize');
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+    expect(dependencies.readMessagePage).not.toHaveBeenCalled();
+  });
+
+  it('moves an explicit older page across an empty gap without claiming its missing IDs complete', async () => {
+    const checkpoint = { ...createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 10_000n,
+      blockHash: hashFor(10_000), lastMessageId: 3n }), firstMessageId: '3', olderToBlock: '9000' };
+    const dependencies = makeDependencies({ latestBlock: 10_000n,
+      blocks: [9_000n, 10_000n].map(number => ({ number, hash: hashFor(Number(number)) })) });
+    const result = await syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, checkpoint, dependencies,
+      paging: { direction: 'older', messageCount: 3n, lastMessageBlock: 10_000n } });
+    expect(result).toMatchObject({ hasOlder: true, appliedEntries: 0,
+      checkpoint: { firstMessageId: '3', lastMessageId: '3', olderToBlock: '8989' } });
+    expect(dependencies.readMessagePage).toHaveBeenCalledOnce();
+    expect(dependencies.readConversationMessageCountAtBlock).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing older coverage when a refreshed snapshot adds messages inside a retained head block', async () => {
+    const checkpoint = { ...createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 10_000n,
+      blockHash: hashFor(10_000), lastMessageId: 3n }), firstMessageId: '1', olderToBlock: '100' };
+    const events = await Promise.all([2n, 3n, 4n].map(messageId => makeEvent({ messageId,
+      blockNumber: 10_000n, blockHash: hashFor(10_000) })));
+    const dependencies = makeDependencies({ latestBlock: 10_000n,
+      blocks: [{ number: 10_000n, hash: hashFor(10_000) }], events });
+    const result = await syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, checkpoint, dependencies,
+      paging: { direction: 'recent', messageCount: 4n, lastMessageBlock: 10_000n } });
+    expect(result).toMatchObject({ hasOlder: false, checkpoint: { firstMessageId: '1', lastMessageId: '4', olderToBlock: '100' } });
+    expect(dependencies.readMessagePage).toHaveBeenCalledOnce();
+  });
+
+  it('does not advance the recent tail for newer messages while loading an older page', async () => {
+    const checkpoint = { ...createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 10_000n,
+      blockHash: hashFor(10_000), lastMessageId: 3n }), firstMessageId: '2', olderToBlock: '9999' };
+    const event = await makeEvent({ messageId: 1n, blockNumber: 9_999n, blockHash: hashFor(9_999) });
+    const dependencies = makeDependencies({ latestBlock: 10_010n,
+      blocks: [9_999n, 10_000n, 10_010n].map(number => ({ number, hash: hashFor(Number(number)) })), events: [event] });
+    const result = await syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, checkpoint, dependencies,
+      paging: { direction: 'older', messageCount: 5n, lastMessageBlock: 10_005n } });
+    expect(result).toMatchObject({ hasOlder: false,
+      checkpoint: { blockNumber: '10000', firstMessageId: '1', lastMessageId: '3' } });
+  });
+
+  it('rejects missing earlier IDs when an older page reaches the verified first-message block', async () => {
+    const checkpoint = { ...createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 110n,
+      blockHash: hashFor(110), lastMessageId: 3n }), firstMessageId: '3', olderToBlock: '105' };
+    const dependencies = makeDependencies({ latestBlock: 110n,
+      blocks: [105n, 110n].map(number => ({ number, hash: hashFor(Number(number)) })) });
+    await expect(syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, checkpoint, dependencies,
+      paging: { direction: 'older', messageCount: 3n, lastMessageBlock: 110n } })).rejects.toThrow('incomplete');
+  });
+
   it('does nothing and calls no injected dependency while dual-read is disabled', async () => {
     const previous = { [BOB.toLowerCase()]: [legacyMessage()] };
     const dependencies = makeDependencies({ blocks: [] });
@@ -261,7 +355,6 @@ describe('directChatV2SyncCoordinator', () => {
       events: [event]
     });
     dependencies.getLatestBlockNumber.mockResolvedValueOnce(109n);
-    dependencies.readMessagePage.mockResolvedValueOnce([]);
     dependencies.readConversationMessageCountAtBlock.mockResolvedValueOnce(0n);
     const config = { ...CONFIG, confirmationDepth: 5n };
 
@@ -273,9 +366,10 @@ describe('directChatV2SyncCoordinator', () => {
       previousMessages: previous,
       dependencies
     });
-    const beforeMessages = applyDirectChatV2SyncMutation(previous, beforeSafe.mutation!);
+    const beforeMessages = beforeSafe.messagesByContact;
     expect(beforeSafe.safeHead).toBe(104n);
     expect(beforeSafe.appliedEntries).toBe(0);
+    expect(dependencies.readMessagePage).not.toHaveBeenCalled();
     expect(beforeMessages[BOB.toLowerCase()]).toEqual([receiptMessage]);
     expect(beforeMessages[BOB.toLowerCase()][0].directV2?.finality).toBe('confirmed');
 
@@ -322,10 +416,10 @@ describe('directChatV2SyncCoordinator', () => {
     expect(dependencies.resolveEpochKey).not.toHaveBeenCalled();
   });
 
-  it('advances an empty bounded page and reports that the safe head has more work', async () => {
-    const boundary = { number: 104n, hash: hashFor(104), timestamp: 1_004 };
+  it('advances an old empty conversation directly to the checked safe head', async () => {
+    const boundary = { number: 100_000n, hash: hashFor(100_000), timestamp: 1_004 };
     const dependencies = makeDependencies({
-      latestBlock: 110n,
+      latestBlock: boundary.number,
       blocks: [boundary],
       events: [],
       messageCount: 0n
@@ -340,13 +434,107 @@ describe('directChatV2SyncCoordinator', () => {
     });
 
     expect(result).toMatchObject({
-      status: 'page-applied',
-      checkpoint: { blockNumber: '104', lastMessageId: '0' },
-      hasMore: true,
-      appliedEntries: 0,
-      page: { fromBlock: 100n, toBlock: 104n }
+      status: 'up-to-date',
+      checkpoint: { blockNumber: '100000', lastMessageId: '0' },
+      hasMore: false,
+      appliedEntries: 0
     });
+    expect(dependencies.readMessagePage).not.toHaveBeenCalled();
+    expect(dependencies.readCanonicalBlock).toHaveBeenCalledTimes(2);
     expect(dependencies.resolveEpochKey).not.toHaveBeenCalled();
+  });
+
+  it('starts at the first message and skips the unchanged tail after proving the finalized count', async () => {
+    const messageBlock = { number: 50_000n, hash: hashFor(50_000) };
+    const pageBoundary = { number: 50_010n, hash: hashFor(50_010) };
+    const safeBoundary = { number: 100_000n, hash: hashFor(100_000) };
+    const event = await makeEvent({ messageId: 1n, blockNumber: messageBlock.number, blockHash: messageBlock.hash });
+    const dependencies = makeDependencies({ latestBlock: safeBoundary.number,
+      blocks: [messageBlock, pageBoundary, safeBoundary], events: [event] });
+    const scope = { ...SCOPE, firstMessageBlock: messageBlock.number };
+    const first = await syncDirectChatV2HistoryPage({ config: CONFIG, scope, viewerAddress: ALICE,
+      previousMessages: {}, dependencies });
+    expect(first).toMatchObject({ hasMore: false, appliedEntries: 1,
+      page: { fromBlock: 50_000n, toBlock: 50_010n },
+      checkpoint: { blockNumber: '100000', lastMessageId: '1' } });
+    expect(dependencies.readMessagePage).toHaveBeenCalledOnce();
+    dependencies.getLatestBlockNumber.mockResolvedValue(100_100n);
+    dependencies.readCanonicalBlock.mockImplementation(async (_chain, number) => ({ number, hash: hashFor(Number(number)) }));
+    dependencies.readMessagePage.mockClear();
+    const idle = await syncDirectChatV2HistoryPage({ config: CONFIG, scope, viewerAddress: ALICE,
+      previousMessages: first.messagesByContact, checkpoint: first.checkpoint, dependencies });
+    expect(idle).toMatchObject({ hasMore: false, checkpoint: { blockNumber: '100100', lastMessageId: '1' } });
+    expect(dependencies.readMessagePage).not.toHaveBeenCalled();
+    expect(dependencies.readConversationMessageCountAtBlock).toHaveBeenLastCalledWith({ scope, blockNumber: 100_100n });
+    // A new finalized post must wake the same checkpoint; counts are never retained across syncs.
+    const nextEvent = await makeEvent({ messageId: 2n, blockNumber: 100_101n, blockHash: hashFor(100_101) });
+    dependencies.getLatestBlockNumber.mockResolvedValue(100_105n);
+    dependencies.readConversationMessageCountAtBlock.mockResolvedValue(2n);
+    dependencies.readMessagePage.mockResolvedValue([nextEvent]);
+    const next = await syncDirectChatV2HistoryPage({ config: CONFIG, scope, viewerAddress: ALICE,
+      previousMessages: idle.messagesByContact, checkpoint: idle.checkpoint, dependencies });
+    expect(next).toMatchObject({ hasMore: false, appliedEntries: 1,
+      page: { fromBlock: 100_101n, toBlock: 100_105n }, checkpoint: { lastMessageId: '2' } });
+  });
+
+  it.each(['safe-head', 'checkpoint', 'scope'] as const)('rejects a changed %s during an idle advance', async (change) => {
+    const checkpoint = createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 104n,
+      blockHash: hashFor(104), lastMessageId: 1n });
+    const dependencies = makeDependencies({ blocks: [], messageCount: 1n });
+    let current = true;
+    const reads = new Map<bigint, number>();
+    dependencies.readCanonicalBlock.mockImplementation(async (_chain, number) => {
+      const count = (reads.get(number) ?? 0) + 1;
+      reads.set(number, count);
+      return { number, hash: hashFor(Number(number) + (
+        (change === 'safe-head' && number === 110n || change === 'checkpoint' && number === 104n) && count > 1 ? 1_000 : 0
+      )) };
+    });
+    if (change === 'scope') dependencies.readConversationMessageCountAtBlock.mockImplementation(async () => {
+      current = false;
+      return 1n;
+    });
+    await expect(syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, checkpoint, dependencies, shouldContinue: () => current }))
+      .rejects.toThrow(change === 'scope' ? 'scope changed' : change === 'safe-head' ? 'safe head changed' : 'checkpoint boundary changed');
+    expect(dependencies.readMessagePage).not.toHaveBeenCalled();
+    expect(dependencies.resolveEpochKey).not.toHaveBeenCalled();
+    if (change === 'scope') expect(dependencies.readCanonicalBlock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains bounded paging when finalized messages remain beyond the current page', async () => {
+    const block = { number: 105n, hash: hashFor(105) };
+    const event = await makeEvent({ messageId: 1n, blockNumber: block.number, blockHash: block.hash });
+    const scope = { ...SCOPE, firstMessageBlock: 105n };
+    const dependencies = makeDependencies({ latestBlock: 100_000n, events: [event], blocks: [
+      block, { number: 115n, hash: hashFor(115) }, { number: 100_000n, hash: hashFor(100_000) }
+    ] });
+    dependencies.readConversationMessageCountAtBlock.mockImplementation(async ({ blockNumber }) => blockNumber === 100_000n ? 2n : 1n);
+    const result = await syncDirectChatV2HistoryPage({ config: CONFIG, scope, viewerAddress: ALICE,
+      previousMessages: {}, dependencies });
+    expect(result).toMatchObject({ hasMore: true, appliedEntries: 1,
+      checkpoint: { blockNumber: '115', lastMessageId: '1' }, page: { fromBlock: 105n, toBlock: 115n } });
+  });
+
+  it('returns the scoped reorg reset when the replacement history is empty', async () => {
+    const checkpoint = createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 104n,
+      blockHash: hashFor(104), lastMessageId: 1n });
+    const dependencies = makeDependencies({ blocks: [
+      { number: 104n, hash: hashFor(9_104) }, { number: 110n, hash: hashFor(110) }
+    ], messageCount: 0n });
+    const result = await syncDirectChatV2HistoryPage({ config: CONFIG, scope: SCOPE, viewerAddress: ALICE,
+      previousMessages: {}, checkpoint, dependencies });
+    expect(result).toMatchObject({ status: 'reorg-reset', reorged: true, hasMore: false,
+      mutation: { resetConversation: true, entries: [] },
+      checkpoint: { blockNumber: '110', lastMessageId: '0' } });
+    expect(dependencies.clearEpochKeys).toHaveBeenCalledOnce();
+    expect(dependencies.readMessagePage).not.toHaveBeenCalled();
+  });
+
+  it('does not report completion when a first-message hint contradicts the finalized count', async () => {
+    const dependencies = makeDependencies({ blocks: [{ number: 110n, hash: hashFor(110) }], messageCount: 1n });
+    await expect(syncDirectChatV2HistoryPage({ config: CONFIG, scope: { ...SCOPE, firstMessageBlock: 120n },
+      viewerAddress: ALICE, previousMessages: {}, dependencies })).rejects.toThrow('no readable block range');
   });
 
   it('rejects noncontiguous message IDs even when the event count looks complete', async () => {

@@ -5,6 +5,25 @@ import {
 
 export type AppPage = 'home' | 'chat' | 'swap' | 'dex' | 'treasury' | 'trades';
 
+const TRADING_SESSION_KEY = 'chainwhisper:trading-product';
+
+export const getSessionTradingPage = (): 'dex' | 'trades' => {
+  try {
+    return window.sessionStorage.getItem(TRADING_SESSION_KEY) === 'trades' ? 'trades' : 'dex';
+  } catch {
+    return 'dex';
+  }
+};
+
+export const rememberSessionTradingPage = (page: AppPage): void => {
+  if (page !== 'dex' && page !== 'trades') return;
+  try {
+    window.sessionStorage.setItem(TRADING_SESSION_KEY, page);
+  } catch {
+    // Navigation must still work when session storage is unavailable.
+  }
+};
+
 export type AppRoute = {
   page: AppPage;
 };

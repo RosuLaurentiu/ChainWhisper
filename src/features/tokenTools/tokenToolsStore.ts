@@ -13,12 +13,6 @@ import { resolveStateUpdate, type StateUpdate } from '../../shared/state/storeUt
 
 type TokenToolsState = {
   tipNativeBalanceWei: bigint | null;
-  groupRewardsContractAddress: string;
-  groupRewardsPaused: boolean | null;
-  rewardsContractPaused: boolean | null;
-  rewardsCallerAllowed: boolean | null;
-  rewardsPublicPerInteractionWei: bigint | null;
-  rewardsPublicReserveWei: bigint | null;
   shieldVaultTokenBalanceWei: bigint | null;
   rewardTokenBalanceWei: bigint | null;
   privateRewardTokenBalanceWei: bigint | null;
@@ -27,7 +21,6 @@ type TokenToolsState = {
   rewardTokenDecimals: number;
   privateRewardTokenDecimals: number;
   swapFeeWei: bigint | null;
-  swapTokenFeeAmount: bigint | null;
   groupFeeModeSelection: GroupFeeModeSelection;
   swapFeeModeSelection: SwapFeeModeSelection;
   swapDirection: SwapDirection;
@@ -43,12 +36,6 @@ type TokenToolsState = {
   privacyRecoveryOpen: boolean;
   loadingRewardBalances: boolean;
   setTipNativeBalanceWei: (next: StateUpdate<bigint | null>) => void;
-  setGroupRewardsContractAddress: (next: StateUpdate<string>) => void;
-  setGroupRewardsPaused: (next: StateUpdate<boolean | null>) => void;
-  setRewardsContractPaused: (next: StateUpdate<boolean | null>) => void;
-  setRewardsCallerAllowed: (next: StateUpdate<boolean | null>) => void;
-  setRewardsPublicPerInteractionWei: (next: StateUpdate<bigint | null>) => void;
-  setRewardsPublicReserveWei: (next: StateUpdate<bigint | null>) => void;
   setShieldVaultTokenBalanceWei: (next: StateUpdate<bigint | null>) => void;
   setRewardTokenBalanceWei: (next: StateUpdate<bigint | null>) => void;
   setPrivateRewardTokenBalanceWei: (next: StateUpdate<bigint | null>) => void;
@@ -57,7 +44,6 @@ type TokenToolsState = {
   setRewardTokenDecimals: (next: StateUpdate<number>) => void;
   setPrivateRewardTokenDecimals: (next: StateUpdate<number>) => void;
   setSwapFeeWei: (next: StateUpdate<bigint | null>) => void;
-  setSwapTokenFeeAmount: (next: StateUpdate<bigint | null>) => void;
   setGroupFeeModeSelection: (next: StateUpdate<GroupFeeModeSelection>) => void;
   setSwapFeeModeSelection: (next: StateUpdate<SwapFeeModeSelection>) => void;
   setSwapDirection: (next: StateUpdate<SwapDirection>) => void;
@@ -76,12 +62,6 @@ type TokenToolsState = {
 
 export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   tipNativeBalanceWei: null,
-  groupRewardsContractAddress: '',
-  groupRewardsPaused: null,
-  rewardsContractPaused: null,
-  rewardsCallerAllowed: null,
-  rewardsPublicPerInteractionWei: null,
-  rewardsPublicReserveWei: null,
   shieldVaultTokenBalanceWei: null,
   rewardTokenBalanceWei: null,
   privateRewardTokenBalanceWei: null,
@@ -90,7 +70,6 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   rewardTokenDecimals: FALLBACK_REWARD_TOKEN_DECIMALS,
   privateRewardTokenDecimals: FALLBACK_REWARD_TOKEN_DECIMALS,
   swapFeeWei: null,
-  swapTokenFeeAmount: null,
   groupFeeModeSelection: 'coti',
   swapFeeModeSelection: 'coti',
   swapDirection: 'shield',
@@ -107,22 +86,6 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   loadingRewardBalances: false,
   setTipNativeBalanceWei: (next) =>
     set((state) => ({ tipNativeBalanceWei: resolveStateUpdate(next, state.tipNativeBalanceWei) })),
-  setGroupRewardsContractAddress: (next) =>
-    set((state) => ({
-      groupRewardsContractAddress: resolveStateUpdate(next, state.groupRewardsContractAddress)
-    })),
-  setGroupRewardsPaused: (next) =>
-    set((state) => ({ groupRewardsPaused: resolveStateUpdate(next, state.groupRewardsPaused) })),
-  setRewardsContractPaused: (next) =>
-    set((state) => ({ rewardsContractPaused: resolveStateUpdate(next, state.rewardsContractPaused) })),
-  setRewardsCallerAllowed: (next) =>
-    set((state) => ({ rewardsCallerAllowed: resolveStateUpdate(next, state.rewardsCallerAllowed) })),
-  setRewardsPublicPerInteractionWei: (next) =>
-    set((state) => ({
-      rewardsPublicPerInteractionWei: resolveStateUpdate(next, state.rewardsPublicPerInteractionWei)
-    })),
-  setRewardsPublicReserveWei: (next) =>
-    set((state) => ({ rewardsPublicReserveWei: resolveStateUpdate(next, state.rewardsPublicReserveWei) })),
   setShieldVaultTokenBalanceWei: (next) =>
     set((state) => ({ shieldVaultTokenBalanceWei: resolveStateUpdate(next, state.shieldVaultTokenBalanceWei) })),
   setRewardTokenBalanceWei: (next) =>
@@ -140,8 +103,6 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   setPrivateRewardTokenDecimals: (next) =>
     set((state) => ({ privateRewardTokenDecimals: resolveStateUpdate(next, state.privateRewardTokenDecimals) })),
   setSwapFeeWei: (next) => set((state) => ({ swapFeeWei: resolveStateUpdate(next, state.swapFeeWei) })),
-  setSwapTokenFeeAmount: (next) =>
-    set((state) => ({ swapTokenFeeAmount: resolveStateUpdate(next, state.swapTokenFeeAmount) })),
   setGroupFeeModeSelection: (next) =>
     set((state) => ({ groupFeeModeSelection: resolveStateUpdate(next, state.groupFeeModeSelection) })),
   setSwapFeeModeSelection: (next) =>

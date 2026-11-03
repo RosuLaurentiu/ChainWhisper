@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getPathForAppPage,
   getTitleForAppPage,
+  getSessionTradingPage,
+  rememberSessionTradingPage,
   resolveAppRouteFromLocation,
   resolveCanonicalTradingPath,
   resolveNavigationPathFromLocation,
@@ -22,6 +24,30 @@ const stubLocation = (pathname: string, search = '', hash = '') => {
 describe('app routing', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('defaults Trading to DEX and remembers only the last trading product in this session', () => {
+    const data = new Map<string, string>();
+    const storage = { getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value); } };
+    vi.stubGlobal('window', { sessionStorage: storage });
+    expect(getSessionTradingPage()).toBe('dex');
+    rememberSessionTradingPage('trades');
+    rememberSessionTradingPage('chat');
+    expect(getSessionTradingPage()).toBe('trades');
+    rememberSessionTradingPage('dex');
+    expect(getSessionTradingPage()).toBe('dex');
+    rememberSessionTradingPage('trades');
+    data.clear(); // A new tab session has no saved product.
+    expect(getSessionTradingPage()).toBe('dex');
+    storage.setItem('chainwhisper:trading-product', '/otc/order/private-link');
+    expect(getSessionTradingPage()).toBe('dex');
+  });
+
+  it('keeps navigation available when session storage is blocked', () => {
+    vi.stubGlobal('window', { get sessionStorage() { throw new Error('Storage blocked'); } });
+    expect(() => rememberSessionTradingPage('trades')).not.toThrow();
+    expect(getSessionTradingPage()).toBe('dex');
   });
 
   it('uses the domain root as the canonical home route', () => {

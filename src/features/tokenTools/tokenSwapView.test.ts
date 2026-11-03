@@ -10,17 +10,12 @@ import {
 } from '../../lib/privacyPortal';
 import {
   derivePrivacyPortalView,
-  deriveTokenSwapView,
-  resolveLegacyRecoverySpendableAmount,
-  resolveTokenSwapDirectionFallback
+  deriveTokenSwapView
 } from './tokenSwapView';
 import { useTokenToolsStore } from './tokenToolsStore';
 
 const baseInput = {
   hasAesReady: true,
-  legacyPrivateRewardTokenBalanceWei: 1_000000n,
-  legacyPrivateRewardTokenDecimals: 6,
-  legacyPrivateRewardTokenSymbol: 'pWISP',
   loadingRewardBalances: false,
   onCotiNetwork: true,
   privateRewardTokenBalanceWei: 2_000000n,
@@ -60,17 +55,6 @@ describe('deriveTokenSwapView', () => {
     expect(view.tokenToolsSummary).toBe('WISP 3 | pWISP locked');
   });
 
-  it('uses legacy private token details for legacy unshield', () => {
-    const view = deriveTokenSwapView({
-      ...baseInput,
-      legacyPrivateRewardTokenSymbol: '',
-      swapDirection: 'legacy-unshield'
-    });
-
-    expect(view.swapInputSymbol).toBe('p.WISP (old)');
-    expect(view.swapPrivateRewardTokenBalanceWei).toBe(1_000000n);
-  });
-
   it('shows selected owner balances when loading is false', () => {
     const view = deriveTokenSwapView({
       ...baseInput,
@@ -83,100 +67,6 @@ describe('deriveTokenSwapView', () => {
     expect(view.canSwapRewardTokens).toBe(true);
   });
 
-  it('uses selected legacy private balance and label', () => {
-    const view = deriveTokenSwapView({
-      ...baseInput,
-      legacyPrivateRewardTokenBalanceWei: 7_000000n,
-      legacyPrivateRewardTokenSymbol: 'pWISP',
-      swapDirection: 'legacy-unshield'
-    });
-
-    expect(view.swapInputSymbol).toBe('pWISP (old)');
-    expect(view.tokenToolsSummary).toBe('WISP 3 | pWISP (old) 7');
-  });
-
-  it('selects the verified earlier legacy vault explicitly', () => {
-    const view = deriveTokenSwapView({
-      ...baseInput,
-      swapDirection: 'legacy-unshield-earlier'
-    });
-
-    expect(view.activeSwapVaultContractAddress.toLowerCase()).toBe(
-      '0xae80b55d78a88dd65afb692dff5bf3e71ab9fe7a'
-    );
-    expect(view.legacySwapVaultContractUrl.toLowerCase()).toContain(
-      '0xae80b55d78a88dd65afb692dff5bf3e71ab9fe7a'
-    );
-    expect(view.canEarlierLegacyUnshieldTokens).toBe(true);
-    expect(view.swapInputSymbol).toBe('pWISP (old)');
-  });
-});
-
-describe('resolveLegacyRecoverySpendableAmount', () => {
-  it('reserves the earlier vault private-token fee when it can be collected', () => {
-    expect(resolveLegacyRecoverySpendableAmount({
-      balanceWei: 20_000000n,
-      direction: 'legacy-unshield-earlier',
-      tokenFeeWei: 5_000000n
-    })).toBe(15_000000n);
-  });
-
-  it('allows the whole balance when the earlier vault must fall through to its native fee', () => {
-    expect(resolveLegacyRecoverySpendableAmount({
-      balanceWei: 4_000000n,
-      direction: 'legacy-unshield-earlier',
-      tokenFeeWei: 5_000000n
-    })).toBe(4_000000n);
-  });
-
-  it('does not subtract a token fee from the newer legacy vault native-only route', () => {
-    expect(resolveLegacyRecoverySpendableAmount({
-      balanceWei: 20_000000n,
-      direction: 'legacy-unshield',
-      tokenFeeWei: 2_500000n
-    })).toBe(20_000000n);
-  });
-});
-
-describe('resolveTokenSwapDirectionFallback', () => {
-  it('keeps current WISP shielding when the bridge is enabled', () => {
-    expect(
-      resolveTokenSwapDirectionFallback({
-        canEarlierLegacyUnshieldTokens: true,
-        canLegacyUnshieldTokens: true,
-        canShieldTokens: true,
-        canUnshieldTokens: true,
-        currentSwapDirectionEnabled: true,
-        swapDirection: 'shield'
-      })
-    ).toBe('shield');
-  });
-
-  it('keeps current unshield explicit even when legacy recovery is available', () => {
-    expect(
-      resolveTokenSwapDirectionFallback({
-        canEarlierLegacyUnshieldTokens: true,
-        canLegacyUnshieldTokens: true,
-        canShieldTokens: true,
-        canUnshieldTokens: true,
-        currentSwapDirectionEnabled: true,
-        swapDirection: 'unshield'
-      })
-    ).toBe('unshield');
-  });
-
-  it('keeps current unshield when the wallet has current pWISP', () => {
-    expect(
-      resolveTokenSwapDirectionFallback({
-        canEarlierLegacyUnshieldTokens: true,
-        canLegacyUnshieldTokens: true,
-        canShieldTokens: true,
-        canUnshieldTokens: true,
-        currentSwapDirectionEnabled: true,
-        swapDirection: 'unshield'
-      })
-    ).toBe('unshield');
-  });
 });
 
 const privacyPair = PRIVACY_TOKEN_PAIRS[0];
@@ -324,7 +214,7 @@ describe('privacy portal state', () => {
 });
 
 describe('TokenSwapPage', () => {
-  it('renders WISP in the unified selector and only shows legacy recovery while WISP is selected', () => {
+  it('renders the current WISP and official bridges without old recovery controls', () => {
     const pageProps: Parameters<typeof TokenSwapPage>[0] = {
         pairs: PRIVACY_TOKEN_PAIRS,
         selectedPair: privacyPair,
@@ -361,8 +251,6 @@ describe('TokenSwapPage', () => {
           onDirectionChange: () => {},
           canShield: true,
           canUnshield: true,
-          canLegacyUnshield: true,
-          canEarlierLegacyUnshield: true,
           publicSymbol: 'WISP',
           privateSymbol: 'pWISP',
           inputSymbol: 'pWISP',
@@ -393,11 +281,12 @@ describe('TokenSwapPage', () => {
     expect(officialHtml).toContain('WISP');
     expect(officialHtml).not.toContain('privacy-legacy-recovery');
     expect(wispHtml).toContain('ChainWhisper bridge');
-    expect(wispHtml).toContain('Legacy pWISP');
-    expect(wispHtml).toContain('Newer legacy vault');
-    expect(wispHtml).toContain('Earlier legacy vault');
-    expect(wispHtml).toContain('Selected vault liquidity');
-    expect(wispHtml).toMatch(/privacy-wisp-card[\s\S]*privacy-legacy-recovery/);
+    expect(wispHtml).not.toContain('Legacy pWISP');
+    expect(wispHtml).not.toContain('Newer legacy vault');
+    expect(wispHtml).not.toContain('Earlier legacy vault');
+    expect(wispHtml).toContain('Portal fee');
+    expect(wispHtml).toContain('privacy-wisp-card');
+    expect(wispHtml).not.toContain('privacy-legacy-recovery');
     expect(wispHtml).toContain('Balance: 7 WISP');
     expect(wispHtml).not.toContain('Move between WISP and pWISP');
   });

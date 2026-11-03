@@ -66,6 +66,18 @@ const message = ({
 });
 
 describe('directChatV2ReadCursor', () => {
+  it('passes each candidate anchor as a lookup hint and does not let a forged hint poison a valid cursor for the same ID', async () => {
+    const valid = cursorAt(8n);
+    const forged = { ...valid, lastReadBlockNumber: '999' };
+    const hints: bigint[] = [];
+    const merged = await mergeDirectChatV2ReadCursors({ scope: SCOPE, canonicalMessageCount: 20n,
+      cursors: [forged, valid], readCanonicalMessageAnchor: async (messageId, hint) => {
+        hints.push(hint!.blockNumber);
+        return hint?.blockNumber === 108n ? { messageId, blockNumber: 108n, blockHash: BLOCK_HASH } : null;
+      } });
+    expect(hints).toEqual([999n, 108n]);
+    expect(merged.lastReadMessageId).toBe('8');
+  });
   it('round-trips a JSON-safe cursor and derives a scope-isolated storage key', () => {
     const cursor = cursorAt(9n);
     const encoded = serializeDirectChatV2ReadCursor(cursor);
@@ -207,6 +219,7 @@ describe('directChatV2ReadCursor', () => {
     expect(countDirectChatV2UnreadMessages({
       cursor,
       scope: SCOPE,
+      canonicalMessageCount: 6n,
       messages: [
         message({ messageId: 1n }),
         message({ messageId: 3n }),
@@ -217,6 +230,21 @@ describe('directChatV2ReadCursor', () => {
         { id: 'legacy', direction: 'incoming', text: 'legacy' }
       ]
     })).toBe(1);
+  });
+
+  it('does not report zero unread from an outgoing-only suffix when earlier unread IDs are unloaded', () => {
+    expect(countDirectChatV2UnreadMessages({ cursor: createDirectChatV2ReadCursor(SCOPE), scope: SCOPE,
+      canonicalMessageCount: 3n, messages: [message({ messageId: 3n, direction: 'outgoing' })] })).toBeNull();
+  });
+
+  it('returns known zero when the cursor covers the unloaded gap, and a positive lower bound for loaded incoming', () => {
+    expect(countDirectChatV2UnreadMessages({ cursor: cursorAt(2n), scope: SCOPE,
+      canonicalMessageCount: 3n, messages: [message({ messageId: 3n, direction: 'outgoing' })] })).toBe(0);
+    expect(countDirectChatV2UnreadMessages({ cursor: createDirectChatV2ReadCursor(SCOPE), scope: SCOPE,
+      canonicalMessageCount: 3n, messages: [message({ messageId: 3n })] })).toBe(1);
+    expect(countDirectChatV2UnreadMessages({ cursor: createDirectChatV2ReadCursor(SCOPE), scope: SCOPE,
+      canonicalMessageCount: 3n, messages: [message({ messageId: 3n, finality: 'confirmed' }),
+        message({ messageId: 1n, conversationId: OTHER_CONVERSATION })] })).toBeNull();
   });
 
   it('fails closed on malformed or noncanonical persisted values', () => {

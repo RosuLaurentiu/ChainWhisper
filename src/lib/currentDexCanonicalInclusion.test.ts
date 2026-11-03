@@ -4,7 +4,7 @@ import { verifyCurrentDexCanonicalInclusion } from './currentDexCanonicalInclusi
 import { issueCurrentDexSubmissionCapability } from '../features/wallet/currentDexSubmissionCapability';
 
 const wiring = vi.hoisted(() => ({ issue: vi.fn(), transport: null as CurrentTransport | null }));
-vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: wiring.issue }));
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: wiring.issue }));
 vi.mock('./currentDexPoolSubmission', () => ({ createCurrentPoolSubmissionAdapter: (args: { transport: CurrentTransport }) => { wiring.transport = args.transport; return {}; } }));
 type Inputs = Parameters<NonNullable<CurrentTransport['verifyCanonicalInclusion']>>;
 const h = (n: string) => `0x${n.repeat(64)}`, a = (n: string) => `0x${n.repeat(40)}`;

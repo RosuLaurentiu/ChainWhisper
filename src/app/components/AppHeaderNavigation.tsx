@@ -1,15 +1,15 @@
 import {
   preloadChatPage,
   preloadSwapPage,
-  preloadTradesPage,
+  preloadTradingPage,
   preloadPrivateTvlPage
 } from '../lazyRoutes';
-import type { AppPage } from '../../shell/routing';
+import { getSessionTradingPage, type AppPage } from '../../shell/routing';
 import { moveFocusWithin } from '../../shared/components/a11y';
 
 const APP_NAV_ITEMS: Array<{ page: AppPage; label: string; onPrefetch?: () => void }> = [
   { page: 'chat', label: 'Chat', onPrefetch: preloadChatPage },
-  { page: 'trades', label: 'Trading', onPrefetch: preloadTradesPage },
+  { page: 'trades', label: 'Trading', onPrefetch: preloadTradingPage },
   { page: 'swap', label: 'Privacy Portal', onPrefetch: preloadSwapPage },
   { page: 'treasury', label: 'Private TVL', onPrefetch: preloadPrivateTvlPage }
 ];
@@ -34,7 +34,7 @@ export function AppHeaderNavigation({ activePage, onNavigate }: AppHeaderNavigat
           className={activeNavPage === item.page ? 'active' : undefined}
           aria-current={activeNavPage === item.page ? 'page' : undefined}
           tabIndex={activeNavPage === item.page || (activeNavPage === 'home' && index === 0) ? 0 : -1}
-          onClick={() => onNavigate(item.page)}
+          onClick={() => onNavigate(item.page === 'trades' ? getSessionTradingPage() : item.page)}
           onFocus={item.onPrefetch}
           onMouseEnter={item.onPrefetch}
         >

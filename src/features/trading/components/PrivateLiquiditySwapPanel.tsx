@@ -183,7 +183,7 @@ export default function PrivateLiquiditySwapPanel({
   return (
     <section
       className="standalone-trades-section p2p-swap-section p2p-trade-workspace-panel"
-      aria-label="Recurring private-limit swap"
+      aria-label="Strategy trade review"
     >
       <div className="p2p-trade-entry-panel">
         {tradeEntryModeTabs}
@@ -193,14 +193,14 @@ export default function PrivateLiquiditySwapPanel({
           <div className="p2p-swap-order-empty p2p-private-liquidity-notice">
             <div className="p2p-private-liquidity-notice-head">
               <div>
-                <strong>Recurring swaps across fixed-price NFT strategies</strong>
+                <strong>Trade bid/ask strategies</strong>
                 <span className={`p2p-liquidity-availability is-${liquidityState}`} role="status">
                   <i aria-hidden="true" />
                   {liquidityLabel}
                 </span>
               </div>
               <button type="button" className="standalone-trade-secondary-btn" onClick={onOpenPools}>
-                Position workspace
+                Back to offers
               </button>
             </div>
             <p>

@@ -7,7 +7,10 @@ import { CURRENT_CHEAP_DEX_CANDIDATE as c, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, re
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import * as limitPolicy from '../../lib/currentDexC1SwapPolicy';
 const mocks=vi.hoisted(()=>({issue:vi.fn(),graph:vi.fn(),registry:vi.fn(),funds:vi.fn(),small:vi.fn(),wide:vi.fn(),decrypt:vi.fn()}));
-vi.mock('./ownerCotiMetaMaskCapability',()=>({issueOwnerCotiMetaMaskCapability:mocks.issue}));
+vi.mock('./ownerCotiMetaMaskCapability',async original=>({...await original<typeof import('./ownerCotiMetaMaskCapability')>(),issueOwnerCotiMetaMaskCapability:mocks.issue}));
+vi.mock('../../lib/appShared/core',async original=>({...await original<typeof import('../../lib/appShared/core')>(),
+  sendCotiScopedRead:(provider:{send:(method:string,params:readonly unknown[])=>Promise<unknown>},
+    guard:{run:(read:()=>Promise<unknown>)=>Promise<unknown>},method:string,params:readonly unknown[])=>guard.run(()=>provider.send(method,params))}));
 vi.mock('../../lib/dexV2Chain',async original=>({...await original<typeof import('../../lib/dexV2Chain')>(),readCurrentSharedPoolDexGraph:mocks.graph,readPreparedDexMarketRegistry:mocks.registry}));
 vi.mock('../../lib/currentSharedDexTokenFunds',()=>({readCurrentSharedDexTokenFunds:mocks.funds}));
 vi.mock('../../lib/privateUint256',()=>({encryptPrivateUint128Input:mocks.small,encryptPrivateUint256Input:mocks.wide,decryptPrivateUint256Output:mocks.decrypt}));
@@ -166,6 +169,24 @@ describe('approved receipt-only Limit top-up repair',()=>{
   });
 });
 describe('current owner Limit discovery capability',()=>{
+  it('stops an obsolete owner list inside real graph validation before its next request',async()=>{
+    const f=await ownerFixture(true,'cheap-history');
+    const actual=await vi.importActual<typeof import('../../lib/dexV2Chain')>('../../lib/dexV2Chain');
+    mocks.registry.mockImplementation(args=>actual.readPreparedDexMarketRegistry(args));
+    let active=true,release!:()=>void;
+    const held=new Promise<void>(resolve=>{release=resolve;});
+    const original=f.provider.send.getMockImplementation()!;
+    f.provider.send.mockClear();
+    f.provider.send.mockImplementation(async(method,params)=>{
+      if(method==='eth_chainId'){await held;return'0x6c11a0';}
+      return original(method,params);
+    });
+    const pending=f.cap.readOwnedOrders(()=>{if(!active)throw new Error('caller hidden');});
+    await vi.waitFor(()=>expect(f.provider.send.mock.calls.some(([method])=>method==='eth_chainId')).toBe(true));
+    active=false;release();
+    await expect(pending).rejects.toThrow('caller hidden');
+    expect(f.provider.send.mock.calls.map(([method])=>method)).toEqual(['eth_getBlockByNumber','eth_chainId']);
+  });
   it.each(['cheap-exit','cheap-history']as const)('finds the wallet Limit on %s without signing or decoding its amounts',async key=>{
     const f=await ownerFixture(true,key,2);f.set(f.c.core,11n,42n);mocks.decrypt.mockClear();
     const r=await f.cap.readOwnedOrders();expect(r).toMatchObject({complete:true,readyToSign:false,orders:[{positionId:9n,marketId:f.pair!.marketId,poolTokens:f.pair!.tokens,status:0n}]});

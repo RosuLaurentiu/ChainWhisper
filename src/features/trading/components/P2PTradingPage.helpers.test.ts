@@ -1,7 +1,7 @@
 import type { OnboardInfo } from '@coti-io/coti-ethers';
 import { createElement, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
@@ -11,9 +11,12 @@ import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledg
 import { buildWalletAccountScope } from '../../../lib/walletAccountScope';
 import {
   buildOtcV2DataScopeKey,
+  getVisibleOfferLiquiditySummary,
   mergeOnboardInfoByAddress,
   renderCarbonPriceReference,
-  resolveVisibleHiddenTermAmounts
+  resolveVisibleHiddenTermAmounts,
+  selectTerminalBalance,
+  type TerminalBalanceSelection
 } from './P2PTradingPage.helpers';
 import {
   buildRecurringTerminalHistoryConfig,
@@ -22,11 +25,34 @@ import {
   type TerminalHistoryConfigParams
 } from './tradeTerminalHistoryConfig';
 import TradeStandardOrderCard from './TradeStandardOrderCard';
-import { TradeTerminalHistoryRows } from './TradeTerminalHistoryPanel';
+import { TradeTerminalHistoryContent, TradeTerminalHistoryRows } from './TradeTerminalHistoryPanel';
 
 const owner = '0x1111111111111111111111111111111111111111';
 const chainwhisper = '0x2222222222222222222222222222222222222222';
 const maker = '0x3333333333333333333333333333333333333333';
+
+describe('terminal balance selection', () => {
+  const selection = () => ({ root: {}, owner, key: 'direct-v2:7082400:escrow:6', runtime: {} }) as TerminalBalanceSelection;
+  it('keeps the exact state object across fresh equal reference projections', () => {
+    const initial = selection();
+    let current = initial;
+    for (let render = 0; render < 10; render++) {
+      current = selectTerminalBalance(current, { ...initial })!;
+      expect(current).toBe(initial);
+    }
+  });
+  it.each(['root', 'owner', 'key', 'runtime'] as const)('accepts a changed %s', field => {
+    const previous = selection();
+    const next = { ...previous, [field]: field === 'owner' ? maker : field === 'key' ? 'direct-v2:7082400:escrow:7' : {} } as TerminalBalanceSelection;
+    expect(selectTerminalBalance(previous, next)).toBe(next);
+  });
+  it('accepts initial selection and clearing', () => {
+    const next = selection();
+    expect(selectTerminalBalance(null, next)).toBe(next);
+    expect(selectTerminalBalance(next, null)).toBeNull();
+    expect(selectTerminalBalance(null, null)).toBeNull();
+  });
+});
 
 it.each(['Verifying exact fill amounts…', 'Exact fill history could not be verified.'])('shows history status before any rows exist: %s', (statusMessage) => {
   const markup = renderToStaticMarkup(createElement(TradeTerminalHistoryRows, {
@@ -174,6 +200,42 @@ const standardTrade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot =>
     ...overrides
   }) as TradeSnapshot;
 
+it.each(['cancelled', 'declined', 'superseded', 'replaced'] as const)('shows no remaining liquidity for a %s public Direct trade while retaining its terms', (status) => {
+  const trade = standardTrade({
+    status, offer: asset('cwPTA', '1'), request: asset('cwPTB', '1'),
+    v2: { protocol: 'direct-v2', chainId: '1', contractAddress: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, amountMode: 'public' }
+  });
+  const summary = getVisibleOfferLiquiditySummary(trade);
+  expect(summary).toMatchObject({
+    totalAmountLabel: '0.000001 cwPTA', paymentAmountLabel: '0.000001 cwPTB',
+    filledAmountLabel: '0 cwPTA', paymentFilledAmountLabel: '0 cwPTB',
+    remainingAmountLabel: '0 cwPTA', paymentRemainingAmountLabel: '0 cwPTB'
+  });
+  expect(getVisibleOfferLiquiditySummary({ ...trade, status: 'open' })).toMatchObject({
+    remainingAmountLabel: '0.000001 cwPTA', paymentRemainingAmountLabel: '0.000001 cwPTB'
+  });
+  expect(getVisibleOfferLiquiditySummary({
+    ...trade, fillState: { filledOfferAmount: '0', filledRequestAmount: '0', remainingOfferAmount: '1', remainingRequestAmount: '1' }
+  })).toMatchObject({
+    totalAmountLabel: '0.000001 cwPTA', paymentAmountLabel: '0.000001 cwPTB',
+    remainingAmountLabel: '0 cwPTA', paymentRemainingAmountLabel: '0 cwPTB'
+  });
+  expect(getVisibleOfferLiquiditySummary({
+    ...trade, acceptedTxHash: '0xfill',
+    fillState: { filledOfferAmount: '1', filledRequestAmount: '1', remainingOfferAmount: '0', remainingRequestAmount: '0' }
+  })).toMatchObject({ filledAmountLabel: '0.000001 cwPTA', paymentFilledAmountLabel: '0.000001 cwPTB' });
+});
+
+it('does not infer a Direct refund from effective expiry alone', () => {
+  const trade = standardTrade({
+    status: 'expired', offer: asset('cwPTA', '1'), request: asset('cwPTB', '1'),
+    v2: { protocol: 'direct-v2', chainId: '1', contractAddress: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, amountMode: 'public' }
+  });
+  expect(getVisibleOfferLiquiditySummary(trade)).toMatchObject({
+    remainingAmountLabel: '0.000001 cwPTA', paymentRemainingAmountLabel: '0.000001 cwPTB'
+  });
+});
+
 describe('mergeOnboardInfoByAddress', () => {
   it('returns the same state object when onboard info is unchanged', () => {
     const walletKey = '0x1111111111111111111111111111111111111111';
@@ -306,6 +368,62 @@ describe('buildRecurringTerminalHistoryConfig', () => {
 });
 
 describe('buildStandardTerminalHistoryConfig', () => {
+  const currentTrade = () => standardTrade({
+    maker: owner,
+    status: 'declined',
+    v2: { protocol: 'direct-v2', chainId: '7082400', contractAddress: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, amountMode: 'public' }
+  });
+  const renderCurrentHistory = (params: Partial<TerminalHistoryConfigParams> = {}) => {
+    const config = buildStandardTerminalHistoryConfig(currentTrade(), {
+      ...terminalHistoryParams(owner), canonicalV2Rows: [], canonicalV2LifecycleEvents: [], ...params
+    });
+    return { config, markup: renderToStaticMarkup(createElement(TradeTerminalHistoryContent, {
+      config, renderActionNotice: () => null
+    })) };
+  };
+
+  it('renders explicit empty copy when complete canonical history has no rows', () => {
+    const { markup } = renderCurrentHistory({ canonicalV2Complete: true });
+    expect(markup).toContain('No wallet history for this trade yet.');
+    expect(markup).not.toContain('Load older history');
+  });
+
+  it('labels partial Activity counts as loaded and reuses the bounded older-page action', () => {
+    const loadOlder = vi.fn();
+    const { config, markup } = renderCurrentHistory({
+      canonicalV2Complete: false, canonicalV2HasMore: true, onLoadOlderCanonicalV2History: loadOlder
+    });
+    expect(markup).toContain('0 events loaded');
+    expect(markup).toContain('Older events are not loaded.');
+    expect(markup).toContain('Load older history');
+    expect(markup).not.toContain('No wallet history for this trade yet.');
+    expect(config.onLoadOlder).toBe(loadOlder);
+    expect(loadOlder).not.toHaveBeenCalled();
+  });
+
+  it('disables the existing older-page action while history is loading', () => {
+    const { markup } = renderCurrentHistory({
+      canonicalV2Complete: false, canonicalV2HasMore: true, canonicalV2Loading: true,
+      onLoadOlderCanonicalV2History: () => {}
+    });
+    expect(markup).toContain('Verifying exact fill amounts');
+    expect(markup).toContain('Load older history');
+    expect(markup).toContain('disabled=""');
+  });
+
+  it('keeps an incomplete error visible instead of an empty-history claim', () => {
+    const { markup } = renderCurrentHistory({ canonicalV2Complete: false, canonicalV2Error: 'Unavailable' });
+    expect(markup).toContain('Exact fill history could not be verified.');
+    expect(markup).not.toContain('No wallet history for this trade yet.');
+  });
+
+  it('does not claim complete history before a verified page is available', () => {
+    const { markup } = renderCurrentHistory({ canonicalV2Complete: false, canonicalV2HasMore: false });
+    expect(markup).toContain('History coverage has not been verified.');
+    expect(markup).toContain('0 events loaded');
+    expect(markup).not.toContain('Load older history');
+  });
+
   it('uses the connected wallet as the only terminal-history merge key', () => {
     const params = terminalHistoryParams(owner);
     expect(resolveTerminalHistoryMergeWalletKey(standardTrade(), params, chainwhisper)).toBe(owner);

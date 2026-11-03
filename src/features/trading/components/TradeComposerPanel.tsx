@@ -97,9 +97,11 @@ type TradeComposerPanelProps = {
   expiresNever?: boolean;
   onExpiresNeverChange?: (value: boolean) => void;
   expiryError?: string;
+  privateTokenAmounts?: boolean;
   hidePrivateLiquidity?: boolean;
   canHidePrivateLiquidity?: boolean;
   hiddenLiquidityUnavailableMessage?: string;
+  tradeVisibility?: 'public' | 'unlisted' | 'direct';
   onHidePrivateLiquidityChange?: (value: boolean) => void;
   sending: boolean;
   canSend: boolean;
@@ -572,9 +574,11 @@ export default function TradeComposerPanel({
   expiresNever = false,
   onExpiresNeverChange,
   expiryError,
+  privateTokenAmounts = false,
   hidePrivateLiquidity = false,
   canHidePrivateLiquidity = false,
   hiddenLiquidityUnavailableMessage = '',
+  tradeVisibility = 'public',
   onHidePrivateLiquidityChange,
   sending,
   canSend,
@@ -635,20 +639,27 @@ export default function TradeComposerPanel({
     showInvertedPriceDisplay && priceReverseReference ? priceReverseReference : priceReference;
   const displayedPriceInput = showInvertedPriceDisplay && priceReverseInput.trim() ? priceReverseInput : priceInput;
   const showHiddenLiquidityToggle = Boolean(onHidePrivateLiquidityChange);
-  const privateLiquidityStateLabel = hidePrivateLiquidity
+  const privateBudgetChoiceRequired = privateTokenAmounts && canHidePrivateLiquidity && !hidePrivateLiquidity;
+  const privateLiquidityStateLabel = privateBudgetChoiceRequired ? 'Choose hidden budget' : privateTokenAmounts
+    ? tradeVisibility === 'public' ? 'Private-token budget hidden' : 'Encrypted offer terms'
+    : hidePrivateLiquidity
     ? 'Private-token amounts hidden'
     : canHidePrivateLiquidity
       ? 'Private-token amounts visible'
       : 'Amounts visible';
-  const privateLiquidityHelpText = hidePrivateLiquidity
-    ? 'Public views show the price ratio; private-token order size and fill amounts stay hidden.'
+  const privateLiquidityHelpText = privateBudgetChoiceRequired
+    ? 'Choose Hide budget before creating. Set sharing after creation in Manage offer.'
+    : tradeVisibility !== 'public' && (privateTokenAmounts || canHidePrivateLiquidity)
+    ? 'Offer terms are encrypted on-chain. Public-token transfers can reveal amounts. Review the agreed terms before signing. Share the escrow balance after creation in Manage offer.'
+    : privateTokenAmounts || hidePrivateLiquidity
+    ? 'Public views show the price ratio; private-token order size and fill amounts stay hidden. Publish the original budget after creation in Manage offer.'
     : canHidePrivateLiquidity
       ? 'Public views can show the entered order size; private-token transfers and receipts still use COTI privacy.'
-      : hiddenLiquidityUnavailableMessage || 'Private liquidity requires the token you sell to be private.';
+      : hiddenLiquidityUnavailableMessage || 'Budget privacy requires the token you sell to be private.';
   const privateLiquidityPanelClassName = [
     'trade-compose-privacy-panel',
-    hidePrivateLiquidity ? 'is-private trade-compose-privacy-panel-active' : '',
-    !canHidePrivateLiquidity && !hidePrivateLiquidity ? 'trade-compose-privacy-panel-disabled' : ''
+    privateTokenAmounts || hidePrivateLiquidity ? 'is-private trade-compose-privacy-panel-active' : '',
+    !privateTokenAmounts && !canHidePrivateLiquidity && !hidePrivateLiquidity ? 'trade-compose-privacy-panel-disabled' : ''
   ]
     .filter(Boolean)
     .join(' ');
@@ -665,18 +676,18 @@ export default function TradeComposerPanel({
   const showOfferAmountError = shouldShowError('offerAmount', offerAmountError);
   const showRequestAmountError = shouldShowError('requestAmount', requestAmountError);
   const showExpiryError = shouldShowError('expiry', expiryError);
-  const hardReadinessBlocked = !canSend && isHardSendReadinessBlock(validationMessage);
+  const hardReadinessBlocked = privateBudgetChoiceRequired || !canSend && isHardSendReadinessBlock(validationMessage);
   const sendButtonDisabled = submissionBlocked || hardReadinessBlocked || (validationAfterInteraction ? sending : !canSend);
   const showSendDisabledStyle = validationAfterInteraction
     ? submissionBlocked || hardReadinessBlocked || (submitAttempted && !canSend && !sending)
-    : !canSend && !sending;
+    : hardReadinessBlocked || !canSend && !sending;
   const sendButtonClassName = [
     showSendDisabledStyle ? 'trade-compose-send trade-compose-send-disabled' : 'trade-compose-send',
     sending ? 'p2p-action-pending' : ''
   ]
     .filter(Boolean)
     .join(' ');
-  const sendReadinessLabel = resolveSendReadinessLabel({
+  const sendReadinessLabel = privateBudgetChoiceRequired ? 'Choose Hide budget in Advanced options.' : resolveSendReadinessLabel({
     canSend,
     sending,
     sendLabel,
@@ -687,7 +698,7 @@ export default function TradeComposerPanel({
     'trade-compose-readiness',
     sending || sendWhenReady
       ? 'trade-compose-readiness-busy'
-      : canSend
+      : canSend && !privateBudgetChoiceRequired
         ? 'trade-compose-readiness-ready'
         : 'trade-compose-readiness-blocked'
   ].join(' ');
@@ -698,6 +709,10 @@ export default function TradeComposerPanel({
     if (!sendWhenReady || sending) {
       return;
     }
+    if (privateBudgetChoiceRequired) {
+      setSendWhenReady(false);
+      return;
+    }
     if (canSend) {
       setSendWhenReady(false);
       onSendTradeOffer();
@@ -706,8 +721,9 @@ export default function TradeComposerPanel({
     if (!isDeferredSendValidationMessage(validationMessage)) {
       setSendWhenReady(false);
     }
-  }, [canSend, onSendTradeOffer, sendWhenReady, sending, validationMessage]);
+  }, [canSend, onSendTradeOffer, privateBudgetChoiceRequired, sendWhenReady, sending, validationMessage]);
   const handleSendClick = () => {
+    if (privateBudgetChoiceRequired) return;
     if (!canSend) {
       setSubmitAttempted(true);
       if (validationAfterInteraction && isDeferredSendValidationMessage(validationMessage)) {
@@ -961,6 +977,7 @@ export default function TradeComposerPanel({
                 type="text"
                 inputMode="decimal"
                 value={offerAmountInput}
+                aria-label={`${offerAmountLabel} ${selectedOfferDisplay.symbol}`}
                 aria-describedby={pairTokensLocked ? termsHelpId : undefined}
                 onChange={(event) => {
                   markTouched('offerAmount');
@@ -1071,6 +1088,7 @@ export default function TradeComposerPanel({
                 type="text"
                 inputMode="decimal"
                 value={requestAmountInput}
+                aria-label={`${requestAmountLabel} ${selectedRequestDisplay.symbol}`}
                 aria-describedby={pairTokensLocked ? termsHelpId : undefined}
                 onChange={(event) => {
                   markTouched('requestAmount');
@@ -1095,40 +1113,40 @@ export default function TradeComposerPanel({
           <SlidersHorizontal size={15} aria-hidden="true" />
           <span>Advanced options</span>
           <small>
-            {showHiddenLiquidityToggle ? privateLiquidityStateLabel : 'Visible amounts'} ·{' '}
+            {showHiddenLiquidityToggle || privateTokenAmounts ? privateLiquidityStateLabel : 'Visible amounts'} ·{' '}
             {expiresNever ? 'Permanent' : `${expiresHoursInput || '—'}h`}
           </small>
           <ChevronDown size={15} aria-hidden="true" />
         </summary>
         <div className="trade-compose-advanced-body">
-          {showHiddenLiquidityToggle ? (
+          {showHiddenLiquidityToggle || privateTokenAmounts ? (
             <div className={privateLiquidityPanelClassName}>
               <div className="trade-compose-privacy-copy">
                 <span>Order privacy</span>
                 <strong>{privateLiquidityStateLabel}</strong>
               </div>
               <p className="trade-compose-privacy-help">{privateLiquidityHelpText}</p>
-              <div className="trade-compose-privacy-toggle" role="group" aria-label="Private liquidity">
+              {showHiddenLiquidityToggle && (!privateTokenAmounts || canHidePrivateLiquidity && !hidePrivateLiquidity) ? <div className="trade-compose-privacy-toggle" role="group" aria-label="Trade budget">
                 <button
                   type="button"
                   className={hidePrivateLiquidity ? 'active' : undefined}
                   onClick={() => onHidePrivateLiquidityChange?.(true)}
                   aria-pressed={hidePrivateLiquidity}
                   disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
-                  title={canHidePrivateLiquidity ? 'Publish only the ratio; keep amounts and fills private' : hiddenLiquidityUnavailableMessage}
+                  title={canHidePrivateLiquidity ? (tradeVisibility === 'public' ? 'Publish only the ratio; keep amounts and fills private' : 'Keep the trade budget private') : hiddenLiquidityUnavailableMessage}
                 >
-                  Private liquidity
+                  Hide budget
                 </button>
-                <button
+                {!privateTokenAmounts ? <button
                   type="button"
                   className={!hidePrivateLiquidity ? 'active' : undefined}
                   onClick={() => onHidePrivateLiquidityChange?.(false)}
                   aria-pressed={!hidePrivateLiquidity}
-                  disabled={sending}
+                  disabled={sending || privateTokenAmounts || canHidePrivateLiquidity}
                 >
                   Visible amounts
-                </button>
-              </div>
+                </button> : null}
+              </div> : null}
             </div>
           ) : null}
           <div className="trade-compose-advanced-settings">

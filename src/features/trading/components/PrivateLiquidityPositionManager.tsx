@@ -31,6 +31,7 @@ export type PrivateLiquidityInventoryDisplay = Readonly<{
 
 type PrivateLiquidityPositionManagerProps = {
   position: PrivateLiquidityPosition;
+  recoveryOnly?: boolean;
   baseToken?: PrivateLiquidityPositionToken;
   quoteToken?: PrivateLiquidityPositionToken;
   inventory: PrivateLiquidityInventoryDisplay;
@@ -68,6 +69,7 @@ const termsLabel = (
 
 export default function PrivateLiquidityPositionManager({
   position,
+  recoveryOnly = false,
   baseToken,
   quoteToken,
   inventory,
@@ -181,12 +183,12 @@ export default function PrivateLiquidityPositionManager({
         <div className="p2p-private-liquidity-activation" role="status">
           <div>
             <strong>Privacy activation required after transfer</strong>
-            <p>The new NFT owner must re-encrypt the live inventory before this position can resume.</p>
+            <p>The new NFT owner must re-encrypt the live inventory before this position can be managed.</p>
           </div>
           <button
             type="button"
             disabled={disabled}
-            onClick={() => onAction({ kind: 'activate-privacy', position, resume: true })}
+            onClick={() => onAction({ kind: 'activate-privacy', position, resume: !recoveryOnly })}
           >
             {processingAction === 'activate-privacy' ? 'Activating…' : 'Activate privacy'}
           </button>
@@ -224,20 +226,22 @@ export default function PrivateLiquidityPositionManager({
 
       {!isClosed ? (
         <div className="p2p-private-liquidity-manager-actions" aria-label="Position actions">
-          <button type="button" disabled={disabled || privacyActivationRequired || !baseToken || !quoteToken} onClick={() => openDraft('update-terms')}>Edit prices</button>
-          <button type="button" disabled={disabled || privacyActivationRequired || !baseToken || !quoteToken} onClick={() => openDraft('add-liquidity')}>Add liquidity</button>
+          {!recoveryOnly ? <>
+            <button type="button" disabled={disabled || privacyActivationRequired || !baseToken || !quoteToken} onClick={() => openDraft('update-terms')}>Edit prices</button>
+            <button type="button" disabled={disabled || privacyActivationRequired || !baseToken || !quoteToken} onClick={() => openDraft('add-liquidity')}>Add liquidity</button>
+          </> : null}
           <button type="button" disabled={disabled || privacyActivationRequired || !baseToken || !quoteToken} onClick={() => openDraft('remove-liquidity')}>Withdraw liquidity</button>
           {position.status === 'active' ? (
             <button type="button" disabled={disabled} onClick={() => onAction({ kind: 'pause', position })}>Pause</button>
-          ) : (
+          ) : !recoveryOnly ? (
             <button type="button" disabled={disabled || privacyActivationRequired} onClick={() => onAction({ kind: 'resume', position })}>Resume</button>
-          )}
+          ) : null}
           <button type="button" disabled={disabled} onClick={() => openDraft('transfer')}>Transfer NFT</button>
           <button type="button" className="p2p-private-liquidity-danger" disabled={disabled || privacyActivationRequired} onClick={() => onAction({ kind: 'close', position })}>Close &amp; withdraw all</button>
         </div>
       ) : null}
 
-      {draftAction ? (
+      {draftAction && (!recoveryOnly || (draftAction !== 'update-terms' && draftAction !== 'add-liquidity')) ? (
         <section className="p2p-private-liquidity-action-form" aria-label={`${draftAction} Position NFT`}>
           <div className="p2p-private-liquidity-action-form-head">
             <div>

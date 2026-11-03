@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createTradeHistoryV2LedgerState,
+  getTradeHistoryV2LedgerRevision,
   projectTradeHistoryV2Rows,
   type TradeHistoryV2Observation,
   type TradeHistoryV2RangePage
@@ -82,6 +83,45 @@ const dependencies = ({
 };
 
 describe('tradeHistoryV2Sync', () => {
+  it('loads recent activity first, then contiguous older pages without duplicate fills', async () => {
+    let state = createTradeHistoryV2SyncState(createTradeHistoryV2LedgerState());
+    const ranges: unknown[] = [];
+    for (const mode of ['latest', 'older', 'older'] as const) {
+      const result = await syncTradeHistoryV2Range({ previous: state, scope, confirmationDepth: 5n,
+        maxBlockSpan: 10n, overlapBlocks: 2n, mode,
+        expectedRevision: getTradeHistoryV2LedgerRevision({ state: state.ledger, ...scope }),
+        dependencies: dependencies({ latest: 130n,
+          pageObservations: (from, to) => from <= 123n && to >= 123n ? [observation(123n)] : [] }) });
+      state = result.state;
+      ranges.push(result.page);
+      expect(result.hasMore).toBe(mode === 'latest' || ranges.length === 2);
+    }
+    expect(ranges).toEqual([{ fromBlock: '116', toBlock: '125' },
+      { fromBlock: '106', toBlock: '115' }, { fromBlock: '100', toBlock: '105' }]);
+    expect(projectTradeHistoryV2Rows({ state: state.ledger, viewerAddress: MAKER })).toHaveLength(1);
+    expect(Object.values(state.checkpointsByScope)[0].blockNumber).toBe('125');
+  });
+
+  it('retains older coverage on a near refresh and restarts at the newest window after a long gap or reorg', async () => {
+    let state = createTradeHistoryV2SyncState(createTradeHistoryV2LedgerState());
+    const read = async (latest: bigint, mode: 'latest' | 'older', hashOffset = 0n) => {
+      const result = await syncTradeHistoryV2Range({ previous: state, scope, confirmationDepth: 5n,
+        maxBlockSpan: 10n, overlapBlocks: 2n, mode,
+        expectedRevision: getTradeHistoryV2LedgerRevision({ state: state.ledger, ...scope }),
+        dependencies: dependencies({ latest, hashOffset }) });
+      state = result.state; return result;
+    };
+    await read(130n, 'latest');
+    await read(130n, 'older');
+    await read(133n, 'latest');
+    expect((await read(133n, 'older')).page).toEqual({ fromBlock: '100', toBlock: '105' });
+    const gap = await read(160n, 'latest');
+    expect(gap.page).toEqual({ fromBlock: '146', toBlock: '155' });
+    expect(gap.reset).toBe(true);
+    const reorg = await read(160n, 'older', 1000n);
+    expect(reorg.reorged).toBe(true);
+    expect(reorg.page).toEqual({ fromBlock: '146', toBlock: '155' });
+  });
   it('reconstructs the same finalized history from chain logs in a fresh runtime after reload', async () => {
     const rebuildFromChain = async () => {
       let state = createTradeHistoryV2SyncState(createTradeHistoryV2LedgerState());

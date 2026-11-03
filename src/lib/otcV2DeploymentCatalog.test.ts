@@ -13,25 +13,10 @@ const hash = (label: string): string => keccak256(toUtf8Bytes(label));
 const preparedBinding = { ...CURRENT_P2P_BINDING, status: 'prepared' as const };
 const privateOnlyBinding = { ...CURRENT_P2P_BINDING, directPublicAppActivated: false, directPublicCounterAppActivated: false, publicBookLinkAppState: 'held' as const };
 
-describe('retained financial graph catalog', () => {
-  it('retains all five exact old targets together and rejects an incomplete parent graph', () => {
-    const deployments = Object.values(CURRENT_P2P_BINDING.deployments).map((manifest, index) => ({ ...manifest,
-      contractAddress: `0x${String(80 + index).repeat(20)}` }));
-    const graph = { previousBindingSha256: 'ab'.repeat(32), proofSha256: 'cd'.repeat(32), deployments };
-    const selected = { ...CURRENT_P2P_BINDING, repairQualification: undefined, retainedFinancialGraphs: [graph] };
-    const catalog = resolveOtcV2DeploymentCatalog(activeCandidate(), selected);
-    if (catalog.status !== 'active') throw new Error('expected active');
-    for (const manifest of deployments) {
-      const descriptor = findOtcV2Deployment(catalog, manifest.chainId, manifest.contractAddress);
-      expect(descriptor?.manifest).toEqual(manifest); expect(descriptor?.retainedFinancialGraph).toEqual(graph);
-    }
-    expect(resolveOtcV2DeploymentCatalog(activeCandidate(), { ...selected,
-      retainedFinancialGraphs: [{ ...graph, deployments: deployments.slice(1) }] }).status).toBe('invalid');
-  });
-});
+
 
 describe('public Book and Link catalog admission', () => {
-  it('selects the current Book only with the public proof and explicit activation', () => {
+  it('keeps current Book identity while separating public action admission', () => {
     const held = resolveOtcV2DeploymentCatalog(activeCandidate(), { ...CURRENT_P2P_BINDING, publicBookLinkAppState: 'held' });
     const active = resolveOtcV2DeploymentCatalog(activeCandidate(), { ...CURRENT_P2P_BINDING, publicBookLinkAppState: 'active' });
     if (held.status !== 'active' || active.status !== 'active' || !active.preparedP2p) throw new Error('expected active');
@@ -41,7 +26,6 @@ describe('public Book and Link catalog admission', () => {
     expect(active.fingerprint).not.toBe(held.fingerprint);
     expect(active.preparedP2p.status).toBe('book-admitted');
     expect(active.preparedP2p.directAdmission).toEqual(held.preparedP2p?.directAdmission);
-    expect(active.preparedP2p.retainedDeployments['standard-v2']).toEqual(held.deployments['standard-v2']);
   });
   it('keeps current public discovery and exits in recovery while blocking new funding', () => {
     const recovery = resolveOtcV2DeploymentCatalog(activeCandidate(), { ...CURRENT_P2P_BINDING, publicBookLinkAppState: 'recovery' });
@@ -64,7 +48,7 @@ describe('public Book and Link catalog admission', () => {
       if (catalog.status !== 'active' || !catalog.preparedP2p) throw new Error('expected active');
       expect(catalog.preparedP2p.publicBookLinkAdmitted).toBe(false);
       expect(catalog.preparedP2p.publicBookLinkRecoveryAdmitted).toBe(false);
-      expect(catalog.deployments['standard-v2']).not.toBe(catalog.preparedP2p.deployments['standard-v2']);
+      expect(catalog.deployments['standard-v2']).toBe(catalog.preparedP2p.deployments['standard-v2']);
     }
   });
 });
@@ -136,7 +120,7 @@ describe('otcV2DeploymentCatalog', () => {
     expect(held.preparedP2p?.bookBudgetAdmission?.mode).toBe('held');
     expect(admitted.preparedP2p?.bookBudgetAdmission).toMatchObject({ chainId: book.chainId, contractAddress: book.contractAddress,
       runtimeBytecodeHash: book.runtimeBytecodeHash, mode: 'active', proofSha256: 'ab'.repeat(32) });
-    expect(admitted.deployments).toEqual(held.deployments); expect(admitted.preparedP2p?.retainedDeployments).toEqual(held.preparedP2p?.retainedDeployments);
+    expect(admitted.deployments).toEqual(held.deployments);
     expect(admitted.preparedP2p?.directAdmission).toEqual(held.preparedP2p?.directAdmission); expect(admitted.fingerprint).not.toBe(held.fingerprint);
   });
   it('changes only private Counter admission and its fingerprint after explicit qualified activation', () => {
@@ -149,7 +133,6 @@ describe('otcV2DeploymentCatalog', () => {
     expect(enabled.preparedP2p?.privateCounterRecoveryAdmitted).toBe(true);
     expect(recovery.preparedP2p).toMatchObject({ privateCounterAdmitted: false, privateCounterRecoveryAdmitted: true });
     expect(enabled.preparedP2p?.status).toBe('book-admitted'); expect(enabled.deployments).toEqual(held.deployments);
-    expect(enabled.preparedP2p?.retainedDeployments).toEqual(held.preparedP2p?.retainedDeployments);
     expect(enabled.fingerprint).not.toBe(held.fingerprint);
     expect(recovery.fingerprint).not.toBe(enabled.fingerprint);
     expect(recovery.deployments).toEqual(enabled.deployments);
@@ -166,7 +149,6 @@ describe('otcV2DeploymentCatalog', () => {
     expect(counter.preparedP2p?.directAdmission.publicCounter).toBe(true);
     expect(new Set([held.fingerprint, forward.fingerprint, counter.fingerprint]).size).toBe(3);
     expect(forward.deployments).toEqual(held.deployments); expect(counter.deployments).toEqual(held.deployments);
-    expect(counter.preparedP2p?.retainedDeployments).toEqual(held.preparedP2p?.retainedDeployments);
   });
 
   it('selects qualified public Direct without admitting private Direct or the rest of the graph', () => {
@@ -180,22 +162,20 @@ describe('otcV2DeploymentCatalog', () => {
     expect(catalog.deployments['direct-v2']).toBe(catalog.preparedP2p.deployments['direct-v2']);
     expect(catalog.deployments['standard-v2']).toEqual(held.deployments['standard-v2']);
     expect(catalog.deployments['private-v2']).toEqual(held.deployments['private-v2']);
-    expect(catalog.preparedP2p.retainedDeployments).toEqual(held.preparedP2p?.retainedDeployments);
     expect(catalog.fingerprint).not.toBe(held.fingerprint);
   });
 
-  it('changes the policy fingerprint for admitted private counters without changing selected or retained deployment identities', () => {
+  it('changes the policy fingerprint for admitted private counters without changing current deployment identities', () => {
     const candidate = activeCandidate(), held = resolveOtcV2DeploymentCatalog(candidate, { ...CURRENT_P2P_BINDING, directCounterAppActivated: false });
     const enabled = resolveOtcV2DeploymentCatalog(candidate);
     if (held.status !== 'active' || enabled.status !== 'active') throw new Error('expected active');
     expect(held.preparedP2p?.directAdmission.privateCounter).toBe(false);
     expect(enabled.preparedP2p?.directAdmission.privateCounter).toBe(true);
     expect(enabled.deployments).toEqual(held.deployments);
-    expect(enabled.preparedP2p?.retainedDeployments).toEqual(held.preparedP2p?.retainedDeployments);
     expect(enabled.fingerprint).not.toBe(held.fingerprint);
   });
 
-  it('selects verified Direct independently only after explicit activation and retains the previous scope', () => {
+  it('admits verified Direct actions only after explicit activation', () => {
     const candidate = activeCandidate();
     const held = resolveOtcV2DeploymentCatalog(candidate, { ...privateOnlyBinding, directPrivateVerified: true, directAppActivated: false });
     const catalog = resolveOtcV2DeploymentCatalog(candidate, privateOnlyBinding);
@@ -203,7 +183,6 @@ describe('otcV2DeploymentCatalog', () => {
     expect(catalog.preparedP2p.status).toBe('book-admitted');
     expect(catalog.deployments['direct-v2']).toBe(catalog.preparedP2p.deployments['direct-v2']);
     expect(catalog.preparedP2p.directAdmission.mode).toBe('private-forward');
-    expect(catalog.preparedP2p.retainedDeployments['direct-v2']).toEqual(held.deployments['direct-v2']);
     expect(catalog.deployments['standard-v2']).toEqual(held.deployments['standard-v2']);
     expect(catalog.fingerprint).not.toBe(held.fingerprint);
   });
@@ -214,7 +193,7 @@ describe('otcV2DeploymentCatalog', () => {
       const catalog = resolveOtcV2DeploymentCatalog(candidate, { ...privateOnlyBinding, ...flags });
       if (catalog.status !== 'active' || !catalog.preparedP2p) throw new Error('expected active');
       expect(catalog.preparedP2p.directAdmission.mode).toBe('held');
-      expect(catalog.deployments['direct-v2']).not.toBe(catalog.preparedP2p.deployments['direct-v2']);
+      expect(catalog.deployments['direct-v2']).toBe(catalog.preparedP2p.deployments['direct-v2']);
     }
   });
 
@@ -228,49 +207,17 @@ describe('otcV2DeploymentCatalog', () => {
       expect(next.fingerprint).not.toBe(initial.fingerprint);
     }
   });
-  it('retains the old Link address and selects the new Link without admitting Counter or other graph modes', () => {
+  it('rejects the old Link address and selects the current Link without widening admission', () => {
     const catalog = resolveOtcV2DeploymentCatalog(activeCandidate());
     if (catalog.status !== 'active' || !catalog.preparedP2p) throw new Error('expected active');
     expect(catalog.preparedP2p.linkAdmitted).toBe(true);
     expect(catalog.preparedP2p.status).toBe('book-admitted');
     expect(catalog.preparedP2p.deployments['link-v2'].manifest.contractAddress).toBe(CURRENT_P2P_BINDING.deployments['link-v2'].contractAddress);
     const old = findOtcV2Deployment(catalog, catalog.chainId, '0xcdf70597ebd1e4eb440e292a23003d129d9c5859');
-    expect(old?.manifest).toMatchObject({ protocol: 'link-v2', contractAddress: '0xcdf70597ebd1e4eb440e292a23003d129d9c5859', deploymentBlock: '10225108' });
+    expect(old).toBeUndefined();
     expect(findOtcV2Deployment(catalog, '1', '0xcdf70597ebd1e4eb440e292a23003d129d9c5859')).toBeUndefined();
   });
-  it('selects only the repaired Book and retains both replaced Books for exact-reference recovery', () => {
-    const candidate = activeCandidate();
-    const catalog = resolveOtcV2DeploymentCatalog(candidate, { ...privateOnlyBinding, directAppActivated: false });
-    const prior = resolveOtcV2DeploymentCatalog(candidate, { ...CURRENT_P2P_BINDING, status: 'prepared' });
-    if (catalog.status !== 'active' || prior.status !== 'active') throw new Error('expected active');
-    expect(catalog.deployments['private-v2'].manifest.contractAddress).toBe(CURRENT_P2P_BINDING.deployments['private-v2'].contractAddress);
-    for (const protocol of ['standard-v2', 'direct-v2', 'recurring-v2', 'private-recurring-v2'] as const) {
-      expect(catalog.deployments[protocol]).toEqual(prior.deployments[protocol]);
-    }
-    for (const contractAddress of ['0x53d5a94a884533df7e79bef37a4818f5c5746787', '0x846340d4d85b91542d386688249169146ec73215']) {
-      const retained = findOtcV2Deployment(catalog, '7082400', contractAddress);
-      expect(retained?.manifest).toMatchObject({ protocol: 'private-v2', contractAddress });
-      expect(retained).not.toBe(catalog.deployments['private-v2']);
-    }
-    expect(catalog.fingerprint).not.toBe(prior.fingerprint);
-  });
-  it('selects an explicitly admitted graph while retaining every older deployment', () => {
-    const candidate = activeCandidate();
-    const catalog = resolveOtcV2DeploymentCatalog(candidate, { ...CURRENT_P2P_BINDING, status: 'admitted' });
-    const prior = resolveOtcV2DeploymentCatalog(candidate, preparedBinding);
-    if (catalog.status !== 'active' || prior.status !== 'active' || !catalog.preparedP2p) throw new Error('expected active');
-    for (const protocol of ['standard-v2', 'private-v2', 'direct-v2'] as const) {
-      expect(catalog.deployments[protocol]).toBe(catalog.preparedP2p.deployments[protocol]);
-      expect(catalog.preparedP2p.retainedDeployments[protocol]).toEqual(prior.deployments[protocol]);
-      expect(findOtcV2Deployment(catalog, catalog.chainId, prior.deployments[protocol].manifest.contractAddress)).toBe(catalog.preparedP2p.retainedDeployments[protocol]);
-    }
-    expect(catalog.deployments['recurring-v2']).toEqual(prior.deployments['recurring-v2']);
-    expect(catalog.deployments['private-recurring-v2']).toEqual(prior.deployments['private-recurring-v2']);
-    expect(catalog.fingerprint).not.toBe(prior.fingerprint);
-    expect(catalog.preparedP2p.status).toBe('admitted');
-    expect(CURRENT_P2P_BINDING.status).toBe('book-admitted');
-  });
-  it('resolves current and retained escrows by chain and address without activating a prepared graph', () => {
+  it('resolves current escrows by chain and address without activating a prepared graph', () => {
     const catalog = resolveOtcV2DeploymentCatalog(activeCandidate(), preparedBinding);
     if (catalog.status !== 'active' || !catalog.preparedP2p) throw new Error('expected active');
     for (const deployment of [...Object.values(catalog.deployments), ...Object.values(catalog.preparedP2p.deployments)]) {
@@ -281,21 +228,6 @@ describe('otcV2DeploymentCatalog', () => {
     expect(findOtcV2Deployment({ status: 'inactive' }, catalog.chainId, catalog.deployments['standard-v2'].manifest.contractAddress)).toBeUndefined();
     expect(catalog.preparedP2p.status).toBe('prepared');
   });
-  it('prepares the registered graph without replacing any selected or retained deployment', () => {
-    const candidate = activeCandidate();
-    const catalog = resolveOtcV2DeploymentCatalog(candidate, preparedBinding);
-    if (candidate.status !== 'active' || catalog.status !== 'active') throw new Error('expected active');
-    const prepared = catalog.preparedP2p;
-    expect(prepared?.status).toBe('prepared');
-    expect(Object.keys(prepared!.deployments)).toEqual([...CURRENT_P2P_PROTOCOLS]);
-    for (const protocol of CURRENT_P2P_PROTOCOLS) {
-      expect(prepared!.deployments[protocol].manifest).toEqual(CURRENT_P2P_BINDING.deployments[protocol]);
-      expect(prepared!.deployments[protocol].rpcUrl).toBe(catalog.rpcUrl);
-    }
-    expect(prepared!.retainedDeployments).toBe(catalog.deployments);
-    expect(catalog.deployments['private-v2'].manifest.contractAddress).toBe(candidate.components.privateOtcV2.address);
-    expect(prepared!.deployments['private-v2'].manifest.contractAddress).not.toBe(catalog.deployments['private-v2'].manifest.contractAddress);
-  });
   it('stays atomically inactive or invalid with its candidate suite', () => {
     expect(resolveOtcV2DeploymentCatalog({ status: 'inactive' })).toEqual({ status: 'inactive' });
     expect(resolveOtcV2DeploymentCatalog({ status: 'invalid', error: 'redacted' })).toEqual({
@@ -303,34 +235,26 @@ describe('otcV2DeploymentCatalog', () => {
       error: 'OTC V2 testnet candidate is invalid.'
     });
   });
+});
 
-  it('maps all five protocols to exact candidate components and one policy', () => {
-    const candidate = activeCandidate();
-    expect(candidate.status).toBe('active');
-    const catalog = resolveOtcV2DeploymentCatalog(candidate, preparedBinding);
-    expect(catalog.status).toBe('active');
-    if (candidate.status !== 'active' || catalog.status !== 'active') throw new Error('expected active');
-    expect(Object.keys(catalog.deployments)).toEqual([
-      'standard-v2',
-      'private-v2',
-      'direct-v2',
-      'recurring-v2',
-      'private-recurring-v2'
-    ]);
-    expect(catalog.deployments['standard-v2'].manifest.contractAddress)
-      .toBe(candidate.components.standardOtcV2.address);
-    expect(catalog.deployments['private-v2'].manifest.contractAddress)
-      .toBe(candidate.components.privateOtcV2.address);
-    expect(catalog.deployments['direct-v2'].manifest.contractAddress)
-      .toBe(candidate.components.directOtcV2.address);
-    expect(catalog.deployments['recurring-v2'].manifest.contractAddress)
-      .toBe(candidate.components.recurringOtcV2.address);
-    expect(catalog.deployments['private-recurring-v2'].manifest.contractAddress)
-      .toBe(candidate.components['private-recurringOtcV2'].address);
-    expect(new Set(Object.values(catalog.deployments).map(({ finalityLagBlocks }) => finalityLagBlocks)))
-      .toEqual(new Set([5n]));
-    expect(new Set(Object.values(catalog.deployments).map(({ rpcUrl }) => rpcUrl)))
-      .toEqual(new Set(['https://testnet.coti.io/rpc']));
-    expect(Object.isFrozen(catalog.deployments)).toBe(true);
-  });
+
+it('uses only current contracts, even when historical records exist or current actions are held', () => {
+  const candidate = activeCandidate();
+  if (candidate.status !== 'active') throw new Error('expected active candidate');
+  for (const status of ['prepared', 'book-admitted', 'admitted'] as const) {
+    const catalog = resolveOtcV2DeploymentCatalog(candidate, { ...CURRENT_P2P_BINDING, status });
+    if (catalog.status !== 'active' || !catalog.preparedP2p) throw new Error('expected active catalog');
+    expect(Object.keys(catalog.deployments)).toEqual(['standard-v2', 'private-v2', 'direct-v2']);
+    for (const protocol of CURRENT_P2P_PROTOCOLS) {
+      expect(findOtcV2Deployment(catalog, catalog.chainId, CURRENT_P2P_BINDING.deployments[protocol].contractAddress)?.manifest)
+        .toEqual(CURRENT_P2P_BINDING.deployments[protocol]);
+    }
+    for (const component of ['standardOtcV2', 'privateOtcV2', 'directOtcV2', 'recurringOtcV2', 'private-recurringOtcV2'] as const) {
+      expect(findOtcV2Deployment(catalog, catalog.chainId, candidate.components[component].address)).toBeUndefined();
+    }
+    for (const graph of CURRENT_P2P_BINDING.retainedFinancialGraphs) for (const old of graph.deployments) {
+      expect(findOtcV2Deployment(catalog, old.chainId, old.contractAddress)).toBeUndefined();
+    }
+    expect(catalog.preparedP2p).not.toHaveProperty('retainedDeployments');
+  }
 });

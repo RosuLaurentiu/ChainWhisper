@@ -15,7 +15,14 @@ type ContactGroupPanelRatio = {
 };
 
 type ContactsSidebarProps = {
+  directDiscoveryState?: 'loading' | 'partial' | 'ready' | 'error';
+  directDiscoveryError?: string;
+  hasOlderContacts?: boolean;
+  refreshingContacts: boolean;
+  canRefreshContacts: boolean;
   groupDiscoveryState?: 'loading' | 'ready' | 'error';
+  groupDiscoveryError?: string;
+  hasOlderGroups?: boolean;
   nicknameEditorRef: Ref<HTMLDivElement>;
   nicknameMaxBytes: number;
   hasAesReady: boolean;
@@ -56,12 +63,18 @@ type ContactsSidebarProps = {
   messagesByGroup: Record<string, ChatMessage[]>;
   unreadGroupMap: Record<string, boolean>;
   onActivateGroup: (groupId: number) => void;
-  onPrefetchGroup: (groupId: number) => void;
   error: string;
 };
 
 function ContactsSidebar({
+  directDiscoveryState = 'loading',
+  directDiscoveryError,
+  hasOlderContacts,
+  refreshingContacts,
+  canRefreshContacts,
   groupDiscoveryState,
+  groupDiscoveryError,
+  hasOlderGroups,
   nicknameEditorRef,
   nicknameMaxBytes,
   hasAesReady,
@@ -102,10 +115,26 @@ function ContactsSidebar({
   messagesByGroup,
   unreadGroupMap,
   onActivateGroup,
-  onPrefetchGroup,
   error
 }: ContactsSidebarProps) {
-  const syncInProgress = syncingHistory || syncingGroups;
+  if (!hasAesReady) {
+    visibleSortedContacts = [];
+    sortedGroups = [];
+    sortedGroupInvites = [];
+    hiddenContactsCount = 0;
+    hiddenContactsLabel = '';
+    showHiddenContacts = false;
+  }
+  const syncInProgress = syncingHistory || syncingGroups || refreshingContacts;
+  const directDiscoveryMessage = !hasAesReady
+    ? 'Unlock privacy to load Direct conversations.'
+    : directDiscoveryState === 'error'
+      ? !canRefreshContacts ? 'Direct Chat setup is unavailable.' : visibleSortedContacts.length > 0
+        ? 'Direct conversations may be incomplete. Use Force sync to retry.'
+        : 'Direct conversations unavailable. Use Force sync to retry.'
+      : directDiscoveryState === 'partial' || hasOlderContacts
+        ? 'More Direct conversations may remain. Use Force sync to load more.'
+        : directDiscoveryState === 'loading' ? 'Loading Direct conversations…' : '';
 
   return (
     <aside className="contacts-sidebar">
@@ -217,9 +246,17 @@ function ContactsSidebar({
             <span className="contact-view-badge">{hiddenContactsLabel}</span>
           ) : null}
         </div>
+        {directDiscoveryMessage ? (
+          <div className="contacts-empty-state" role="status">
+            {directDiscoveryMessage}
+            {hasAesReady && directDiscoveryState === 'error' && directDiscoveryError ? (
+              <details><summary>Details</summary>{directDiscoveryError}</details>
+            ) : null}
+          </div>
+        ) : null}
         <ul className="contacts-list contacts-list-scroll contacts-main-list">
           {visibleSortedContacts.length === 0 ? (
-            <li className="contacts-empty-state">{contactsListEmptyMessage}</li>
+            directDiscoveryMessage ? null : <li className="contacts-empty-state">{contactsListEmptyMessage}</li>
           ) : (
             visibleSortedContacts.map((contact) => {
               const normalizedAddress = contact.address.toLowerCase();
@@ -444,20 +481,28 @@ function ContactsSidebar({
         ) : null}
 
         <ul className="contacts-list contacts-list-scroll groups-main-list">
+          {sortedGroups.length > 0 && groupDiscoveryState === 'loading' ? (
+            <li className="contacts-empty-state" role="status">More group details are loading…</li>
+          ) : null}
+          {hasAesReady && hasOlderGroups && sortedGroups.length > 0 && groupDiscoveryState === 'ready' ? (
+            <li className="contacts-empty-state" role="status">Older groups load in the background.</li>
+          ) : null}
           {groupDiscoveryState === 'error' ? (
             <li className="contacts-empty-state" role="status">
-              {sortedGroups.length === 0 ? 'Groups unavailable. Refresh to retry.' : 'Groups may be incomplete. Refresh to retry.'}
+              {sortedGroups.length === 0 ? 'Groups unavailable. Use Force sync to retry.' : 'Groups may be incomplete. Use Force sync to retry.'}
+              {groupDiscoveryError ? <details><summary>Details</summary><p>{groupDiscoveryError}</p></details> : null}
             </li>
           ) : null}
           {sortedGroups.length === 0 && groupDiscoveryState === 'loading' ? (
             <li className="contacts-empty-state" role="status">Loading groups…</li>
           ) : sortedGroups.length === 0 ? (
-            groupDiscoveryState === 'error' ? null : <li className="contacts-empty-state">No groups yet.</li>
+            groupDiscoveryState === 'error' ? null : <li className="contacts-empty-state">{!hasAesReady ? 'Unlock privacy to load groups.' : hasOlderGroups ? 'Older groups load in the background.' : 'No groups yet.'}</li>
           ) : sortedGroups.map((group) => {
             const isActive = activeGroupId === group.id;
             const groupTitle = group.title || `Group ${group.id}`;
             const groupKey = String(group.id);
-            const hasConversation = group.lastTimestamp > 0 || (messagesByGroup[groupKey]?.length ?? 0) > 0;
+            const hasConversation = (!group.membershipEnded && group.lastTimestamp > 0) || (messagesByGroup[groupKey]?.length ?? 0) > 0;
+            const hasUnread = !group.membershipEnded && unreadGroupMap[groupKey];
 
             return (
               <li key={`group-${group.id}`}>
@@ -465,8 +510,6 @@ function ContactsSidebar({
                   className={isActive ? 'contact-card active' : 'contact-card'}
                   role="button"
                   tabIndex={0}
-                  onPointerEnter={() => onPrefetchGroup(group.id)}
-                  onFocus={() => onPrefetchGroup(group.id)}
                   onClick={() => onActivateGroup(group.id)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
@@ -485,9 +528,9 @@ function ContactsSidebar({
                     {hasConversation ? (
                       <span
                         className="contact-chat-icon"
-                        aria-label={unreadGroupMap[groupKey] ? 'Unread group messages' : 'Has group messages'}
-                        title={unreadGroupMap[groupKey] ? 'Unread group messages' : 'Has group messages'}
-                        style={{ marginRight: 6, color: unreadGroupMap[groupKey] ? '#e33' : undefined }}
+                        aria-label={hasUnread ? 'Unread group messages' : 'Has group messages'}
+                        title={hasUnread ? 'Unread group messages' : 'Has group messages'}
+                        style={{ marginRight: 6, color: hasUnread ? '#e33' : undefined }}
                       >
                         <svg
                           viewBox="0 0 24 24"
@@ -506,7 +549,9 @@ function ContactsSidebar({
                     ) : null}
                   </div>
                   <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                    M: {group.memberCount} | Last: {group.lastTimestamp > 0 ? formatMessageTimestamp(group.lastTimestamp) : 'N/A'}
+                    {group.membershipEnded ? 'Membership ended' : <>
+                      M: {group.memberCount} | Last: {group.lastTimestamp > 0 ? formatMessageTimestamp(group.lastTimestamp) : 'N/A'}
+                    </>}
                   </div>
                 </div>
               </li>

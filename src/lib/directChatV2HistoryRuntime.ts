@@ -33,12 +33,11 @@ import {
   type DirectChatV2IncomingDiscoveryStorage
 } from './directChatV2IncomingDiscovery';
 
-const MAX_PAGES_PER_BATCH = 4;
-
 export type DirectChatV2HistoryBatch = Readonly<{
   appliedEntries: number;
   unavailableEntries: number;
   hasMore: boolean;
+  hasOlder: boolean;
   reorged: boolean;
   apply: (messagesByContact: Record<string, ChatMessage[]>) => Record<string, ChatMessage[]>;
 }>;
@@ -49,29 +48,36 @@ export type DirectChatV2HistoryRuntime = Readonly<{
     messagesByContact: Record<string, ChatMessage[]>,
     shouldContinue?: () => boolean
   ) => Promise<DirectChatV2HistoryBatch>;
+  loadOlder: (
+    peer: string,
+    messagesByContact: Record<string, ChatMessage[]>,
+    shouldContinue?: () => boolean
+  ) => Promise<DirectChatV2HistoryBatch>;
   watch: (
     peer: string,
     onHint: () => void | Promise<void>
   ) => Promise<(() => Promise<void>) | null>;
   watchIncoming: (
-    onHint: (peer: string) => void | Promise<void>
+    onHint: (peer: string) => void | Promise<void>,
+    shouldPause?: () => boolean
   ) => Promise<() => Promise<void>>;
   discoverIncoming: (
     shouldContinue?: () => boolean
   ) => Promise<DirectChatV2IncomingDiscoveryResult>;
+  /** null is unknown; a positive count can be a lower bound while older IDs are unloaded. */
   getUnreadCount: (
     peer: string,
     messagesByContact: Record<string, ChatMessage[]>
-  ) => Promise<number>;
+  ) => Promise<number | null>;
   markVisible: (
     peer: string,
     visibleMessage: ChatMessage,
     messagesByContact: Record<string, ChatMessage[]>
-  ) => Promise<number>;
+  ) => Promise<number | null>;
   watchUnread: (
     peer: string,
     getMessagesByContact: () => Record<string, ChatMessage[]>,
-    onUnreadCount: (unreadCount: number) => void | Promise<void>,
+    onUnreadCount: (unreadCount: number | null) => void | Promise<void>,
     onError?: (error: unknown) => void
   ) => Promise<(() => Promise<void>) | null>;
   close: () => void;
@@ -140,6 +146,7 @@ export const createDirectChatV2HistoryRuntime = ({
   let syncTail: Promise<void> = Promise.resolve();
   let memoryState: DirectChatV2HistoryMemoryState = createDirectChatV2HistoryMemoryState();
   const pendingProjectionResets = new Map<string, object>();
+  const batchVersions = new Map<string, object>();
   let incomingDiscovery: ReturnType<typeof createDirectChatV2IncomingDiscovery> | null = null;
   const activeWatchers = new Set<() => Promise<void>>();
   const current = (external?: () => boolean): boolean =>
@@ -148,6 +155,55 @@ export const createDirectChatV2HistoryRuntime = ({
     if (!current(external)) {
       throw new Error('Direct-chat V2 history scope changed while synchronizing.');
     }
+  };
+
+  const canonicalAnchorReader = (
+    access: NonNullable<Awaited<ReturnType<DirectChatV2SessionController['history']>>>
+  ) => async (messageId: bigint, candidateAnchor?: DirectChatV2ReadCursorAnchor): Promise<DirectChatV2ReadCursorAnchor | null> => {
+    assertCurrent();
+    let projected: ChatMessage['directV2'] | undefined;
+    for (const messages of Object.values(memoryState.messagesByContact)) {
+      projected = messages.find((message) => (
+        message.directV2?.protocol === 'direct-v2' &&
+        message.directV2.finality === 'finalized' &&
+        message.directV2.chainId === access.scope.chainId.toString() &&
+        message.directV2.contractAddress.toLowerCase() === access.scope.contractAddress.toLowerCase() &&
+        message.directV2.conversationId.toLowerCase() === access.scope.conversationId.toLowerCase() &&
+        message.directV2.messageId === messageId.toString()
+      ))?.directV2;
+      if (projected) break;
+    }
+    const hint = candidateAnchor?.messageId === messageId ? candidateAnchor : projected ? {
+      messageId, blockNumber: BigInt(projected.blockNumber), blockHash: projected.blockHash
+    } : null;
+    if (!hint) return null;
+    const blockNumber = hint.blockNumber;
+    if (blockNumber < access.scope.conversationStartBlock || blockNumber > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    const [block, events] = await Promise.all([
+      access.dependencies.readCanonicalBlock(access.scope.chainId, blockNumber),
+      access.dependencies.readMessagePage({
+        scope: access.scope,
+        fromBlock: blockNumber,
+        toBlock: blockNumber
+      })
+    ]);
+    assertCurrent();
+    const event = events.find((candidate) => candidate.messageId === messageId);
+    if (
+      !block ||
+      !event ||
+      event.blockNumber !== blockNumber ||
+      event.blockHash.toLowerCase() !== block.hash.toLowerCase() ||
+      hint.blockHash.toLowerCase() !== block.hash.toLowerCase() ||
+      block.number !== blockNumber
+    ) {
+      return null;
+    }
+    return {
+      messageId,
+      blockNumber,
+      blockHash: block.hash
+    };
   };
 
   const readCursorContext = async (
@@ -165,58 +221,14 @@ export const createDirectChatV2HistoryRuntime = ({
     const latestBlock = await access.dependencies.getLatestBlockNumber(access.scope.chainId);
     assertCurrent();
     const safeHead = latestBlock >= confirmationDepth ? latestBlock - confirmationDepth : 0n;
-    const canonicalMessageCount = safeHead < access.scope.conversationStartBlock
-      ? 0n
-      : await access.dependencies.readConversationMessageCountAtBlock({
-          scope: access.scope,
-          blockNumber: safeHead
-        });
+    if (access.conversation.lastMessageBlock > safeHead) {
+      throw new Error('Direct-chat V2 history is waiting for the latest message to finalize.');
+    }
+    const canonicalMessageCount = safeHead < access.scope.conversationStartBlock ? 0n : access.conversation.messageCount;
     assertCurrent();
-    const readCanonicalMessageAnchor = async (
-      messageId: bigint
-    ): Promise<DirectChatV2ReadCursorAnchor | null> => {
-      let projected: ChatMessage['directV2'] | undefined;
-      for (const messages of Object.values(memoryState.messagesByContact)) {
-        projected = messages.find((message) => (
-          message.directV2?.protocol === 'direct-v2' &&
-          message.directV2.finality === 'finalized' &&
-          message.directV2.chainId === access.scope.chainId.toString() &&
-          message.directV2.contractAddress.toLowerCase() === access.scope.contractAddress.toLowerCase() &&
-          message.directV2.conversationId.toLowerCase() === access.scope.conversationId.toLowerCase() &&
-          message.directV2.messageId === messageId.toString()
-        ))?.directV2;
-        if (projected) break;
-      }
-      if (!projected) return null;
-      const blockNumber = BigInt(projected.blockNumber);
-      const [block, events] = await Promise.all([
-        access.dependencies.readCanonicalBlock(access.scope.chainId, blockNumber),
-        access.dependencies.readMessagePage({
-          scope: access.scope,
-          fromBlock: blockNumber,
-          toBlock: blockNumber
-        })
-      ]);
-      assertCurrent();
-      const event = events.find((candidate) => candidate.messageId === messageId);
-      if (
-        !block ||
-        !event ||
-        event.blockNumber !== blockNumber ||
-        event.blockHash.toLowerCase() !== block.hash.toLowerCase() ||
-        projected.blockHash.toLowerCase() !== block.hash.toLowerCase()
-      ) {
-        return null;
-      }
-      return {
-        messageId,
-        blockNumber,
-        blockHash: block.hash
-      };
-    };
     return {
       scope: cursorScope,
-      context: { canonicalMessageCount, readCanonicalMessageAnchor }
+      context: { canonicalMessageCount, readCanonicalMessageAnchor: canonicalAnchorReader(access) }
     };
   };
 
@@ -244,7 +256,8 @@ export const createDirectChatV2HistoryRuntime = ({
   const runSync = async (
     peer: string,
     messagesByContact: Record<string, ChatMessage[]>,
-    shouldContinue?: () => boolean
+    shouldContinue?: () => boolean,
+    older = false
   ): Promise<DirectChatV2HistoryBatch> => {
     assertCurrent(shouldContinue);
         const access = await session.history(peer);
@@ -254,6 +267,7 @@ export const createDirectChatV2HistoryRuntime = ({
             appliedEntries: 0,
             unavailableEntries: 0,
             hasMore: false,
+            hasOlder: false,
             reorged: false,
             apply: (currentMessages: Record<string, ChatMessage[]>) => currentMessages
           });
@@ -262,6 +276,7 @@ export const createDirectChatV2HistoryRuntime = ({
           scope: access.scope,
           walletAddress: ownerAddress
         });
+        const readRevision = getDirectChatV2HistoryMemoryRevision({ state: memoryState, scope: access.scope, walletAddress: ownerAddress });
         let workingState: DirectChatV2HistoryMemoryState = {
           ...memoryState,
           messagesByContact
@@ -288,11 +303,12 @@ export const createDirectChatV2HistoryRuntime = ({
           }
         }
         let hasMore = false;
+        let hasOlder = false;
         let reorged = false;
         let appliedEntries = 0;
         let unavailableEntries = 0;
 
-        for (let page = 0; page < MAX_PAGES_PER_BATCH; page += 1) {
+        {
           const expectedRevision = getDirectChatV2HistoryMemoryRevision({
             state: workingState,
             scope: access.scope,
@@ -306,7 +322,9 @@ export const createDirectChatV2HistoryRuntime = ({
             previousMessages: workingState.messagesByContact,
             checkpoint,
             dependencies: access.dependencies,
-            shouldContinue: () => current(shouldContinue)
+            shouldContinue: () => current(shouldContinue),
+            paging: { direction: older ? 'older' : 'recent', messageCount: access.conversation.messageCount,
+              lastMessageBlock: access.conversation.lastMessageBlock }
           });
           assertCurrent(shouldContinue);
           workingState = reduceDirectChatV2HistoryMemorySync({
@@ -318,11 +336,11 @@ export const createDirectChatV2HistoryRuntime = ({
           });
           if (result.mutation) mutations.push(result.mutation);
           checkpoint = workingState.checkpointsByScope[scopeKey];
-          hasMore = result.hasMore;
+          hasMore = false;
+          hasOlder = result.hasOlder ?? false;
           reorged = reorged || result.reorged;
           appliedEntries += result.appliedEntries;
           unavailableEntries += result.unavailableEntries;
-          if (!hasMore) break;
         }
 
         assertCurrent(shouldContinue);
@@ -335,20 +353,39 @@ export const createDirectChatV2HistoryRuntime = ({
           });
           assertCurrent(shouldContinue);
         }
-        memoryState = workingState;
         // A returned reset is not consumed until the App applies its projection.
         const resetToken = replayScope || reorged ? Object.freeze({}) : undefined;
         if (resetToken) pendingProjectionResets.set(scopeKey, resetToken);
+        const batchVersion = Object.freeze({});
+        batchVersions.set(scopeKey, batchVersion);
+        let committed = false;
         const frozenMutations = Object.freeze([...mutations]);
         return Object.freeze({
           appliedEntries,
           unavailableEntries,
           hasMore,
+          hasOlder,
           reorged,
           apply: (currentMessages: Record<string, ChatMessage[]>) => {
-            assertCurrent();
+            assertCurrent(shouldContinue);
+            if (committed && batchVersions.get(scopeKey) !== batchVersion) return currentMessages;
             const applied = applyMutations(currentMessages, frozenMutations, replayScope);
-            if (resetToken && pendingProjectionResets.get(scopeKey) === resetToken) pendingProjectionResets.delete(scopeKey);
+            if (!committed) {
+              if (batchVersions.get(scopeKey) !== batchVersion ||
+                  getDirectChatV2HistoryMemoryRevision({ state: memoryState, scope: access.scope, walletAddress: ownerAddress }) !== readRevision) {
+                throw new Error('Direct-chat V2 history batch was superseded before apply.');
+              }
+              if (!Number.isSafeInteger(readRevision + 1)) throw new Error('Direct-chat V2 history-memory revision is exhausted.');
+              const checkpointsByScope = { ...memoryState.checkpointsByScope };
+              delete checkpointsByScope[scopeKey];
+              const backed = selectDirectChatV2MemoryBackedCheckpoint({ checkpoint: workingState.checkpointsByScope[scopeKey],
+                messagesByContact: applied, scope: access.scope, walletAddress: ownerAddress });
+              if (backed) checkpointsByScope[scopeKey] = backed;
+              memoryState = { messagesByContact: applied, checkpointsByScope,
+                revisionsByScope: { ...memoryState.revisionsByScope, [scopeKey]: readRevision + 1 } };
+              committed = true;
+              if (resetToken && pendingProjectionResets.get(scopeKey) === resetToken) pendingProjectionResets.delete(scopeKey);
+            }
             return applied;
           }
         });
@@ -359,6 +396,14 @@ export const createDirectChatV2HistoryRuntime = ({
       const pending = syncTail.then(
         () => runSync(peer, messagesByContact, shouldContinue),
         () => runSync(peer, messagesByContact, shouldContinue)
+      );
+      syncTail = pending.then(() => undefined, () => undefined);
+      return pending;
+    },
+    loadOlder: (peer, messagesByContact, shouldContinue) => {
+      const pending = syncTail.then(
+        () => runSync(peer, messagesByContact, shouldContinue, true),
+        () => runSync(peer, messagesByContact, shouldContinue, true)
       );
       syncTail = pending.then(() => undefined, () => undefined);
       return pending;
@@ -384,12 +429,12 @@ export const createDirectChatV2HistoryRuntime = ({
       activeWatchers.add(closeWatcher);
       return closeWatcher;
     },
-    watchIncoming: async (onHint) => {
+    watchIncoming: async (onHint, shouldPause) => {
       assertCurrent();
       const stop = await session.watchIncoming(async (peer) => {
         if (!current()) return;
         await onHint(peer);
-      });
+      }, shouldPause);
       if (!current()) {
         await stop().catch(() => undefined);
       }
@@ -431,6 +476,7 @@ export const createDirectChatV2HistoryRuntime = ({
       return countDirectChatV2UnreadMessages({
         cursor,
         scope,
+        canonicalMessageCount: context.canonicalMessageCount,
         messages: conversationMessages(messagesByContact, scope)
       });
     },
@@ -450,6 +496,7 @@ export const createDirectChatV2HistoryRuntime = ({
       return countDirectChatV2UnreadMessages({
         cursor,
         scope,
+        canonicalMessageCount: context.canonicalMessageCount,
         messages: conversationMessages(messagesByContact, scope)
       });
     },
@@ -458,15 +505,23 @@ export const createDirectChatV2HistoryRuntime = ({
       const access = await session.history(peer);
       assertCurrent();
       if (!access) return null;
-      const { scope } = await readCursorContext(access);
+      const scope = {
+        chainId: access.scope.chainId,
+        contractAddress: access.scope.contractAddress,
+        walletAddress: ownerAddress,
+        conversationId: access.scope.conversationId
+      } satisfies DirectChatV2ReadCursorScope;
+      let canonicalMessageCount = access.conversation.messageCount;
       const stop = selectedCursorStore.subscribe({
         scope,
-        getCanonicalMessageCount: async () => (
-          await readCursorContext(access)
-        ).context.canonicalMessageCount,
-        readCanonicalMessageAnchor: async (messageId) => (
-          await readCursorContext(access)
-        ).context.readCanonicalMessageAnchor(messageId),
+        getCanonicalMessageCount: async () => {
+          const latestAccess = await session.history(peer);
+          assertCurrent();
+          if (!latestAccess) { canonicalMessageCount = 0n; return 0n; }
+          canonicalMessageCount = (await readCursorContext(latestAccess)).context.canonicalMessageCount;
+          return canonicalMessageCount;
+        },
+        readCanonicalMessageAnchor: canonicalAnchorReader(access),
         onCursor: (cursor) => {
           if (!current()) return;
           const messagesByContact = getMessagesByContact();
@@ -474,6 +529,7 @@ export const createDirectChatV2HistoryRuntime = ({
           const unreadCount = countDirectChatV2UnreadMessages({
             cursor,
             scope,
+            canonicalMessageCount,
             messages: conversationMessages(messagesByContact, scope)
           });
           void Promise.resolve(onUnreadCount(unreadCount)).catch((error) => onError?.(error));
@@ -500,6 +556,7 @@ export const createDirectChatV2HistoryRuntime = ({
       incomingDiscovery = null;
       memoryState = createDirectChatV2HistoryMemoryState();
       pendingProjectionResets.clear();
+      batchVersions.clear();
     }
   });
   return runtime;

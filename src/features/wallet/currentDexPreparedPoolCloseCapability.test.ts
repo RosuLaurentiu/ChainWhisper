@@ -8,7 +8,7 @@ import type { PreparedPoolStoredState } from '../../lib/currentDexPreparedPoolSn
 // The financial/snapshot checkers are real. Chain access and owner encryption are
 // isolated inputs here; the unmocked reader suite supplies its separate boundary.
 const mocks = vi.hoisted(() => ({ issue: vi.fn(), graph: vi.fn(), reader: vi.fn(), wide: vi.fn(), decrypt: vi.fn() }));
-vi.mock('./ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: mocks.issue }));
+vi.mock('./ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: mocks.issue }));
 vi.mock('../../lib/dexV2Chain', async original => ({ ...await original<typeof import('../../lib/dexV2Chain')>(), readCurrentSharedPoolDexGraph: mocks.graph }));
 vi.mock('../../lib/currentDexPreparedPoolSnapshot', async original => ({ ...await original<typeof import('../../lib/currentDexPreparedPoolSnapshot')>(), createPreparedOwnerPoolSnapshotReader: mocks.reader }));
 vi.mock('../../lib/privateUint256', () => ({ encryptPrivateUint256Input: mocks.wide, decryptPrivateUint256Output: mocks.decrypt, encryptPrivateUint128Input: vi.fn() }));

@@ -14,10 +14,11 @@ import {CURRENT_DEX_NATIVE_RELOAD_KEY,writeCurrentDexNativeReload} from '../../l
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY as ledgerRecovery, CURRENT_APP_PARTIAL_REFUND_TRIAL as partialTrial, CURRENT_APP_SWAP_OWNER } from '../../lib/currentDexC1SwapPolicy';
 
 const mocks = vi.hoisted(() => ({ issue: vi.fn(), receiptIssue: vi.fn(), graph: vi.fn(), sharedGraph: vi.fn(),
-  wide: vi.fn(), reveal: vi.fn(), rate: vi.fn(), inclusion: vi.fn(), issued: vi.fn(), current: vi.fn(), operation: vi.fn(), slippage: false }));
+  wide: vi.fn(), reveal: vi.fn(), rate: vi.fn(), inclusion: vi.fn(), issued: vi.fn(), current: vi.fn(), operation: vi.fn(), browser: new WeakSet<object>(), slippage: false }));
+vi.mock('../../lib/currentDexOwnerBetaPolicy',async original=>({...await original<typeof import('../../lib/currentDexOwnerBetaPolicy')>(),isCurrentOwnerBeta:()=>false}));
 vi.mock('../../lib/currentDexCanonicalInclusion',()=>({verifyCurrentDexCanonicalInclusion:mocks.inclusion}));
 vi.mock('@coti-io/coti-sdk-typescript',async original=>({...await original<typeof import('@coti-io/coti-sdk-typescript')>(),decryptUint:mocks.rate}));
-vi.mock('./ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: mocks.issue }));
+vi.mock('./ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:(signer:object|undefined)=>Boolean(signer&&mocks.browser.has(signer)), issueOwnerCotiMetaMaskCapability: mocks.issue }));
 vi.mock('./currentDexReceiptCapability', () => ({ issueCurrentDexReceiptCapability: mocks.receiptIssue }));
 vi.mock('../../lib/appChain', () => ({ readCurrentDexGraph: mocks.graph, readCurrentDexIssuedQuote: mocks.issued,
   readCurrentDexOperation: mocks.current }));
@@ -332,6 +333,7 @@ describe('current DEX owner quote preparation', () => {
   });
   it.each(['fast-pool','cheap-async'] as const)('restores an owner %s Quote above the former trial cap without signing',async profile=>{
     const f=await restoreFixture('cheap-history',profile,CURRENT_APP_SWAP_OWNER,100_000_000n);
+    mocks.browser.add(f.signer);
     const restored=await f.capability.restoreCurrentQuote({quoteHash:f.tx.hash});
     expect(restored.intent.maximumInput).toBe(100_000_000n);
     expect(()=>assertCurrentDexQuoteNotRestored(currentDexRestoredPlan(restored,f.signer))).toThrow('cannot be submitted again');

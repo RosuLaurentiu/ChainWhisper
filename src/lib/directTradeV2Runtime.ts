@@ -53,6 +53,8 @@ export type DirectTradeV2RuntimeSyncBatch = Readonly<{
   canonicalIncomingOpenings: readonly DirectTradeV2ChatEntry[];
   newIncomingOpenings: readonly DirectTradeV2ChatEntry[];
   incomingContacts: readonly string[];
+  /** Older current-contract history can remain outside the notification window. */
+  historyComplete: boolean;
   hasMore: boolean;
   reorged: boolean;
   safeHead: string;
@@ -66,7 +68,6 @@ export type DirectTradeV2Runtime = Readonly<{
   deployment: AttestedTradeHistoryV2Deployment;
   ownerAddress: string;
   supportedContracts?: readonly string[];
-  forReference?(reference: TradeHistoryV2OrderRef): Promise<DirectTradeV2Runtime>;
   sync(): Promise<DirectTradeV2RuntimeSyncBatch>;
   readTradeTerms(
     tradeId: bigint | number | string,
@@ -202,19 +203,12 @@ export const createDirectTradeV2Runtime = async ({
     expectedChainId: BigInt(config.manifest.chainId),
     assertCurrent
   });
-  const deployments: AttestedTradeHistoryV2Deployment[] = [];
-  for (const manifest of [config.manifest, ...(config.retainedManifests ?? [])]) {
-    if (manifest.protocol !== 'direct-v2' || manifest.chainId !== config.manifest.chainId ||
-        deployments.some(item => item.contractAddress === manifest.contractAddress.toLowerCase())) {
-      throw new Error('Direct Trade V2 retained deployment scope is invalid.');
-    }
-    deployments.push(await attestTradeHistoryV2Deployment({
-      capability: readCapability,
-      manifest,
-      finalityLagBlocks: config.finalityLagBlocks
-    }));
-  }
-  const records = deployments.map(deployment => ({
+  const deployment = await attestTradeHistoryV2Deployment({
+    capability: readCapability,
+    manifest: config.manifest,
+    finalityLagBlocks: config.finalityLagBlocks
+  });
+  const record = {
     deployment,
     scope: Object.freeze({
       chainId: deployment.chainId,
@@ -226,7 +220,7 @@ export const createDirectTradeV2Runtime = async ({
       sync: createTradeHistoryV2SyncState(createTradeHistoryV2LedgerState()),
       materialization: createTradeHistoryV2MaterializationState()
     }) as TradeHistoryV2PipelineState
-  }));
+  };
   let alive = true;
   let operationTail = Promise.resolve();
 
@@ -247,7 +241,7 @@ export const createDirectTradeV2Runtime = async ({
     }
   };
 
-  const syncScope = async (record: typeof records[number]) => {
+  const syncScope = async () => {
     const { deployment, scope, state, caughtUp } = record;
     const previousEntries = listTradeHistoryV2DirectChatEntries({
       state: state.materialization,
@@ -265,6 +259,7 @@ export const createDirectTradeV2Runtime = async ({
       confirmationDepth: config.finalityLagBlocks,
       maxBlockSpan,
       overlapBlocks,
+      mode: 'latest',
       reads: {
         getLatestBlockNumber: () => readTradeHistoryV2LatestBlockNumber(readCapability),
         readCanonicalBlock: async (_chainId, blockNumber) => readTradeHistoryV2CanonicalBlock({
@@ -311,7 +306,7 @@ export const createDirectTradeV2Runtime = async ({
       entries,
       previousIds,
       replacementTradeIds,
-      enabled: wasCaughtUp && !result.reorged
+      enabled: wasCaughtUp && !result.reorged && !result.reset
     });
     const incomingContacts = Object.freeze([
       ...new Set(newIncomingOpenings.map((entry) => entry.contact))
@@ -322,7 +317,8 @@ export const createDirectTradeV2Runtime = async ({
       canonicalIncomingOpenings,
       newIncomingOpenings,
       incomingContacts,
-      hasMore: result.hasMore,
+      historyComplete: !result.hasMore,
+      hasMore: false,
       reorged: result.reorged,
       safeHead: result.safeHead,
       apply: (previous: MessagesByContact) => reconcileDirectTradeV2ChatMessages({
@@ -333,98 +329,70 @@ export const createDirectTradeV2Runtime = async ({
         viewerAddress: owner
       })
     });
-    return { batch, state: result.state, caughtUp: !result.hasMore };
+    return { batch, state: result.state, caughtUp: true };
   };
 
   const sync = (): Promise<DirectTradeV2RuntimeSyncBatch> => exclusive(async () => {
-    const results = [];
-    for (const record of records) results.push(await syncScope(record));
+    const result = await syncScope();
     await assertCurrent();
     if (!alive) throw new Error('Direct Trade V2 runtime is closed.');
-    // Commit all scopes together so a failed retained read cannot consume another scope's alerts.
-    results.forEach((result, index) => Object.assign(records[index], { state: result.state, caughtUp: result.caughtUp }));
-    const batches = results.map(result => result.batch);
-    return Object.freeze({
-      applied: batches.some(batch => batch.applied),
-      contacts: Object.freeze([...new Set(batches.flatMap(batch => batch.contacts))]),
-      canonicalIncomingOpenings: Object.freeze(batches.flatMap(batch => batch.canonicalIncomingOpenings)),
-      newIncomingOpenings: Object.freeze(batches.flatMap(batch => batch.newIncomingOpenings)),
-      incomingContacts: Object.freeze([...new Set(batches.flatMap(batch => batch.incomingContacts))]),
-      hasMore: batches.some(batch => batch.hasMore),
-      reorged: batches.some(batch => batch.reorged),
-      safeHead: batches.map(batch => batch.safeHead).reduce((left, right) => BigInt(left) < BigInt(right) ? left : right),
-      apply: (previous: MessagesByContact) => batches.reduce((value, batch) => batch.apply(value), previous)
+    Object.assign(record, { state: result.state, caughtUp: result.caughtUp });
+    return result.batch;
+  });
+
+  const execute = async (action: DirectTradeV2Action): Promise<ConfirmedDirectTradeV2Action> => {
+    const intent = captureWalletActionIntent(action);
+    const boundAction = readWalletActionIntent(intent);
+    assertCurrentP2PDirectActionAdmission(deployment, boundAction.kind, config.actionAdmission);
+    return exclusive(
+      () => runOwnerTransactionFlow(async () => {
+        if (!alive) throw new Error('Direct Trade V2 runtime is closed.');
+        const capability = await getOwnerCapability(actionNeedsPrivacy(boundAction));
+        if (!alive) throw new Error('Direct Trade V2 runtime closed before submission.');
+        await ensureDirectTradeV2ActionAllowance({ capability, deployment, action: boundAction, actionAdmission: config.actionAdmission });
+        if (!alive) throw new Error('Direct Trade V2 runtime closed before submission.');
+        const submission = await submitDirectTradeV2Action({ capability, deployment, action: boundAction, actionAdmission: config.actionAdmission });
+        return confirmDirectTradeV2Action(submission);
+      })
+    );
+  };
+
+  const readTradeTerms = (
+    tradeId: bigint | number | string,
+    options?: Readonly<{ decryptPrivateAmounts?: boolean }>
+  ): Promise<DirectTradeV2TradeTerms> => exclusive(async () => {
+    const publicTerms = await readDirectTradeV2PublicTradeTerms({
+      capability: readCapability,
+      deployment,
+      ownerAddress: owner,
+      tradeId
+    });
+    if (publicTerms.amountMode === 'public' || options?.decryptPrivateAmounts !== true) {
+      return publicTerms;
+    }
+    const privateCapability = await getOwnerCapability(true);
+    return readDirectTradeV2TradeTerms({
+      capability: privateCapability,
+      readCapability,
+      deployment,
+      tradeId,
+      decryptPrivateAmounts: true
     });
   });
 
-  const supportedContracts = Object.freeze(deployments.map(item => item.contractAddress));
-  const runtimes = new Map<string, DirectTradeV2Runtime>();
-  const forReference = async (reference: TradeHistoryV2OrderRef): Promise<DirectTradeV2Runtime> => {
-    await assertCurrent();
-    const runtime = runtimes.get(reference.contractAddress.toLowerCase());
-    if (!alive || !runtime || reference.chainId !== runtime.deployment.chainId ||
-        !/^[1-9][0-9]*$/.test(reference.orderId) || BigInt(reference.orderId) >= (1n << 256n)) {
-      throw new Error('Direct Trade V2 reference is outside this runtime scope.');
-    }
-    return runtime;
-  };
-  for (const { deployment } of records) {
-    const execute = async (action: DirectTradeV2Action): Promise<ConfirmedDirectTradeV2Action> => {
-      const intent = captureWalletActionIntent(action);
-      const boundAction = readWalletActionIntent(intent);
-      assertCurrentP2PDirectActionAdmission(deployment, boundAction.kind, config.actionAdmission);
-      return exclusive(
-        () => runOwnerTransactionFlow(async () => {
-          if (!alive) throw new Error('Direct Trade V2 runtime is closed.');
-          const capability = await getOwnerCapability(actionNeedsPrivacy(boundAction));
-          if (!alive) throw new Error('Direct Trade V2 runtime closed before submission.');
-          await ensureDirectTradeV2ActionAllowance({ capability, deployment, action: boundAction, actionAdmission: config.actionAdmission });
-          if (!alive) throw new Error('Direct Trade V2 runtime closed before submission.');
-          const submission = await submitDirectTradeV2Action({ capability, deployment, action: boundAction, actionAdmission: config.actionAdmission });
-          return confirmDirectTradeV2Action(submission);
-        })
-      );
-    };
-
-    const readTradeTerms = (
-      tradeId: bigint | number | string,
-      options?: Readonly<{ decryptPrivateAmounts?: boolean }>
-    ): Promise<DirectTradeV2TradeTerms> => exclusive(async () => {
-      const publicTerms = await readDirectTradeV2PublicTradeTerms({
-        capability: readCapability,
-        deployment,
-        ownerAddress: owner,
-        tradeId
-      });
-      if (publicTerms.amountMode === 'public' || options?.decryptPrivateAmounts !== true) {
-        return publicTerms;
-      }
-      const privateCapability = await getOwnerCapability(true);
-      return readDirectTradeV2TradeTerms({
-        capability: privateCapability,
-        readCapability,
-        deployment,
-        tradeId,
-        decryptPrivateAmounts: true
-      });
-    });
-
-    const runtime = Object.freeze({
-      contractAddress: deployment.contractAddress,
-      deployment,
-      ownerAddress: owner,
-      supportedContracts,
-      forReference,
-      sync,
-      readTradeTerms,
-      execute,
-      isCurrent: () => alive,
-      close: () => { alive = false; }
-    }) as DirectTradeV2Runtime;
-    RUNTIMES.add(runtime);
-    runtimes.set(deployment.contractAddress, runtime);
-  }
-  return runtimes.get(deployments[0].contractAddress)!;
+  const runtime = Object.freeze({
+    contractAddress: deployment.contractAddress,
+    deployment,
+    ownerAddress: owner,
+    supportedContracts: Object.freeze([deployment.contractAddress]),
+    sync,
+    readTradeTerms,
+    execute,
+    isCurrent: () => alive,
+    close: () => { alive = false; }
+  }) as DirectTradeV2Runtime;
+  RUNTIMES.add(runtime);
+  return runtime;
 };
 
 export const resolveDirectTradeV2RuntimeReference = async (
@@ -432,13 +400,12 @@ export const resolveDirectTradeV2RuntimeReference = async (
   reference: TradeHistoryV2OrderRef
 ): Promise<DirectTradeV2Runtime> => {
   if (!runtime?.isCurrent()) throw new Error('Reconnect the owner browser wallet to manage this Direct V2 offer.');
-  const selected = runtime.forReference ? await runtime.forReference(reference) : runtime;
-  if (!runtime.isCurrent() || !selected.isCurrent() || reference.chainId !== selected.deployment.chainId ||
-      reference.contractAddress.toLowerCase() !== selected.contractAddress.toLowerCase() ||
+  if (!runtime.isCurrent() || reference.chainId !== runtime.deployment.chainId ||
+      reference.contractAddress.toLowerCase() !== runtime.contractAddress.toLowerCase() ||
       !/^[1-9][0-9]*$/.test(reference.orderId) || BigInt(reference.orderId) >= (1n << 256n)) {
     throw new Error('Direct Trade V2 reference is outside this runtime scope.');
   }
-  return selected;
+  return runtime;
 };
 
 export const assertDirectTradeV2Runtime = (

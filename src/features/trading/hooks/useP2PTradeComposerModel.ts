@@ -50,8 +50,6 @@ type UseP2PTradeComposerModelArgs = {
   rewardTokenBalanceWei: bigint | null;
   rewardTokenDecimals: number;
   rewardTokenSymbol: string;
-  setRecurringBuyPriceInput: StateSetter<string>;
-  setRecurringSellPriceInput: StateSetter<string>;
   setSwapBuyAmountInput: StateSetter<string>;
   setSwapBuyTokenSelection: StateSetter<TradeTokenPresetKey>;
   setSwapInputMode: StateSetter<OtcSwapInputMode>;
@@ -91,8 +89,6 @@ export default function useP2PTradeComposerModel({
   rewardTokenBalanceWei,
   rewardTokenDecimals,
   rewardTokenSymbol,
-  setRecurringBuyPriceInput,
-  setRecurringSellPriceInput,
   setSwapBuyAmountInput,
   setSwapBuyTokenSelection,
   setSwapInputMode,
@@ -146,7 +142,7 @@ export default function useP2PTradeComposerModel({
           hasCounterParentTrade
             ? 'Hidden amount orders are only available for fixed-price offers.'
             : editingVisibleTrade
-              ? 'Private liquidity cannot be added to a visible-order edit.'
+              ? 'Budget privacy cannot be added to a visible-order edit.'
               : '',
         rewardTokenSymbol,
         rewardTokenDecimals,
@@ -292,32 +288,6 @@ export default function useP2PTradeComposerModel({
     updateTradePriceInput(invertPriceInput(sanitized) || '');
   }, [updateTradePriceInput]);
 
-  const updateRecurringBuyPriceInput = useCallback((value: string) => {
-    setRecurringBuyPriceInput(sanitizeTokenAmountInput(value));
-  }, [setRecurringBuyPriceInput]);
-
-  const updateRecurringSellPriceInput = useCallback((value: string) => {
-    setRecurringSellPriceInput(sanitizeTokenAmountInput(value));
-  }, [setRecurringSellPriceInput]);
-
-  const updateRecurringBuyReversePriceInput = useCallback((value: string) => {
-    const sanitized = sanitizeTokenAmountInput(value);
-    if (!sanitized.trim()) {
-      updateRecurringBuyPriceInput('');
-      return;
-    }
-    updateRecurringBuyPriceInput(invertPriceInput(sanitized) || '');
-  }, [updateRecurringBuyPriceInput]);
-
-  const updateRecurringSellReversePriceInput = useCallback((value: string) => {
-    const sanitized = sanitizeTokenAmountInput(value);
-    if (!sanitized.trim()) {
-      updateRecurringSellPriceInput('');
-      return;
-    }
-    updateRecurringSellPriceInput(invertPriceInput(sanitized) || '');
-  }, [updateRecurringSellPriceInput]);
-
   return {
     ensureDistinctSwapTokenSelection,
     resolveSwapTokenSelection,
@@ -327,10 +297,6 @@ export default function useP2PTradeComposerModel({
     swapSellTokenKey,
     swapTokenOptions,
     tradeComposerModel,
-    updateRecurringBuyPriceInput,
-    updateRecurringBuyReversePriceInput,
-    updateRecurringSellPriceInput,
-    updateRecurringSellReversePriceInput,
     updateSwapBuyAmountInput,
     updateSwapSellAmountInput,
     updateTradeOfferAmountInput,

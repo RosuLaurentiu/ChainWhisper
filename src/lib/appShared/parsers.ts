@@ -360,6 +360,9 @@ export const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: st
     const existingContact = fullByLower.get(key);
     if (!existingContact) {
       const nextContact: Contact = normalizedName ? { address, name: normalizedName } : { address };
+      if (typeof incomingContact.savedName === 'string') {
+        nextContact.savedName = incomingContact.savedName;
+      }
       if (normalizedState && typeof normalizedState.muted === 'boolean') {
         nextContact.muted = normalizedState.muted;
       }
@@ -371,6 +374,9 @@ export const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: st
     }
 
     let nextContact = existingContact;
+    if (typeof nextContact.savedName !== 'string' && typeof incomingContact.savedName === 'string') {
+      nextContact = { ...nextContact, savedName: incomingContact.savedName };
+    }
     const existingName = normalizeContactName(existingContact.name ?? '');
     if (!existingName && normalizedName) {
       nextContact = { ...nextContact, name: normalizedName };
@@ -418,6 +424,9 @@ export const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: st
     const existingContact = unresolvedByLower.get(key);
     if (!existingContact) {
       const nextContact: Contact = normalizedName ? { address, name: normalizedName } : { address };
+      if (typeof incomingContact.savedName === 'string') {
+        nextContact.savedName = incomingContact.savedName;
+      }
       if (normalizedState && typeof normalizedState.muted === 'boolean') {
         nextContact.muted = normalizedState.muted;
       }
@@ -429,6 +438,9 @@ export const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: st
     }
 
     let nextContact = existingContact;
+    if (typeof nextContact.savedName !== 'string' && typeof incomingContact.savedName === 'string') {
+      nextContact = { ...nextContact, savedName: incomingContact.savedName };
+    }
     const existingName = normalizeContactName(existingContact.name ?? '');
     if (!existingName && normalizedName) {
       nextContact = { ...nextContact, name: normalizedName };
@@ -459,6 +471,9 @@ export const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: st
         const resolvedContact = fullByLower.get(resolvedFull);
         if (resolvedContact) {
           let nextResolvedContact = resolvedContact;
+          if (typeof nextResolvedContact.savedName !== 'string' && typeof contact.savedName === 'string') {
+            nextResolvedContact = { ...nextResolvedContact, savedName: contact.savedName };
+          }
           if (shortName && !normalizeContactName(resolvedContact.name ?? '')) {
             nextResolvedContact = { ...nextResolvedContact, name: shortName };
           }

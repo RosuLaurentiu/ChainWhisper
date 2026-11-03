@@ -1,3 +1,4 @@
+import { isCurrentDexBrowserSigner, assertCurrentDexBrowserWindow } from './currentDexBrowserPolicy';
 import { STAGED_NATIVE_DEX_CANDIDATE as native, assertCurrentCheapDexNativeAdmission,
   currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate, type CurrentCheapDexIdentity } from './dexV2Deployment';
 import type { CurrentCheapDexPreparedQuote } from './currentDexSubmission';
@@ -9,7 +10,7 @@ import {CURRENT_APP_HISTORY_FAST_REPLACEMENT_TRIAL,hasCurrentHistoryFastReplacem
 import { CURRENT_APP_PARTIAL_REFUND_TRIAL, hasCurrentPartialRefundProof } from './currentDexC1SwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY, currentPartialLedgerRecoveryAllowed } from './currentDexC1SwapPolicy';
 import { keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
-import { CURRENT_OWNER_BETA, isCurrentOwnerBeta, assertCurrentOwnerBetaWindow } from './currentDexOwnerBetaPolicy';
+import { CURRENT_OWNER_BETA, isCurrentOwnerBeta } from './currentDexOwnerBetaPolicy';
 
 export const CURRENT_NATIVE_SWAP_LIMITS = Object.freeze({ commitmentWei: 40_000_000_000_000_000n,
   starts: 8, normalSeconds: 900n, recoverySeconds: 1800n, recoveryGasCap: 50_000_000n,
@@ -26,21 +27,21 @@ export const assertCurrentSwapIdentity = (c: CurrentCheapDexIdentity) => {
   catch { throw new Error('Native swap candidate identity changed.'); }
   if (JSON.stringify(c) !== JSON.stringify(registered)) throw new Error('Native swap candidate identity changed.');
 };
-export const assertCurrentSwapCandidate = (c: CurrentCheapDexIdentity, scope?: CurrentAppSwapScope) => {
+export const assertCurrentSwapCandidate = (c: CurrentCheapDexIdentity, scope?: CurrentAppSwapScope, signer?: object) => {
   assertCurrentSwapIdentity(c);
-  assertCurrentD06AppAuthority(c.graph, scope);
+  assertCurrentD06AppAuthority(c.graph, scope, signer);
   if (c.graph === STAGED_D06_DEX_CANDIDATE.graph || usesCurrentSwapAccounting(c)) return;
   if (!isCurrentNativeSwapCandidate(c)) return assertCurrentCheapDexNativeAdmission(c);
   // Full registry identity includes runtime, release, attestation, economic and token bindings.
   if (JSON.stringify(c) !== JSON.stringify(native)) throw new Error('Native swap candidate identity changed.');
 };
-export const assertCurrentNativeSwapIntent = (prepared: CurrentCheapDexPreparedQuote, now: bigint, expired = false, funding = false) => {
+export const assertCurrentNativeSwapIntent = (prepared: CurrentCheapDexPreparedQuote, now: bigint, expired = false, funding = false, signer?: object) => {
   if (!prepared.intent.candidate || !usesCurrentNativeSwapChecks(prepared.intent.candidate)) throw new Error('Native swap intent candidate is absent.');
-  assertCurrentSwapCandidate(prepared.intent.candidate, prepared.intent);
+  assertCurrentSwapCandidate(prepared.intent.candidate, prepared.intent, signer);
   const i = prepared.intent, limits = usesCurrentSwapAccounting(prepared.intent.candidate)
     ? CURRENT_EXIT_SWAP_LIMITS : CURRENT_NATIVE_SWAP_LIMITS;
   const partial = CURRENT_APP_PARTIAL_REFUND_TRIAL;
-  if (!isCurrentOwnerBeta(i.candidate!.graph, i.principal) && i.candidate?.graph === CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.graph && i.principal?.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.owner && now >= partial.approvedAt &&
+  if (!isCurrentDexBrowserSigner(signer,i.candidate!.graph,i.principal) && i.candidate?.graph === CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.graph && i.principal?.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.owner && now >= partial.approvedAt &&
       (now >= partial.expiresAt || i.profile !== 'cheap-async' || i.maximumInput !== partial.maximumInput ||
         i.minimumInput !== 0n || i.minimumOutput !== 1n || i.rateNumerator !== 0n || i.rateDenominator !== 1n || i.toleranceBps !== 50)) {
     throw new Error('Approved partial-refund trial terms or window changed.');
@@ -51,7 +52,7 @@ export const assertCurrentNativeSwapIntent = (prepared: CurrentCheapDexPreparedQ
     throw new Error('Not enough time for asynchronous settlement. Cancel this Quote and request a new one.');
   }
   if (i.quoteProtocol !== 'quote-slippage' || !Number.isInteger(i.toleranceBps) || i.toleranceBps! < 0 || i.toleranceBps! > limits.maximumToleranceBps ||
-      i.maximumInput <= 0n || i.maximumInput > (isCurrentOwnerBeta(i.candidate!.graph,i.principal) ? (1n << 256n) - 1n : limits.maximumInput) || i.minimumInput < 0n || i.minimumInput > i.maximumInput ||
+      i.maximumInput <= 0n || i.maximumInput > (isCurrentDexBrowserSigner(signer,i.candidate!.graph,i.principal) ? (1n << 256n) - 1n : limits.maximumInput) || i.minimumInput < 0n || i.minimumInput > i.maximumInput ||
       i.minimumOutput < 0n || i.rateNumerator < 0n || i.rateDenominator <= 0n ||
       (!expired && (now >= i.deadline || i.deadline - now > limits.normalSeconds))) {
     throw new Error('Native swap amount, protection or lifetime exceeds the finite profile.');
@@ -69,7 +70,7 @@ const partialTrialCommitment = (graph: string, owner: string, charges: readonly 
   hasCurrentPartialRefundProof(graph, owner, charges)
     ? charges.slice(0, CURRENT_APP_PARTIAL_REFUND_TRIAL.retainedLedgerStarts).reduce((sum, c) => sum + BigInt(c.gasCap) * currentNativeSwapChargeGasPrice(c), 0n) + CURRENT_APP_PARTIAL_REFUND_TRIAL.additionalOwnerCommitmentWei
     : CURRENT_NATIVE_SWAP_LIMITS.commitmentWei;
-export type CurrentNativeSwapCheckpoint = Readonly<{ version: 1; owner: string; candidateGraph: string; start: string;
+export type CurrentNativeSwapCheckpoint = Readonly<{ version: 1 | 2; owner: string; candidateGraph: string; start: string;
   windowStart?: string; committedWei: string; activeSwap: string | null; charges: readonly Readonly<SwapCharge>[] }>;
 // Builds public reservations only. The consumer must prove canonical calls and private Fast7 settlement before installation.
 export const recoverCurrentPartialLedger = (owner:string,candidate:CurrentCheapDexIdentity,now:bigint,
@@ -94,7 +95,7 @@ export const recoverCurrentPartialLedger = (owner:string,candidate:CurrentCheapD
   validateCurrentNativeSwapCheckpoint(budget,owner,candidate);
   return budget;
 };
-type Budget = { owner: string; candidateGraph: string; start: bigint; windowStart?: bigint; committed: bigint; keys: Set<string>; activeSwap: string | null;
+type Budget = { version: 1 | 2; owner: string; candidateGraph: string; start: bigint; windowStart?: bigint; committed: bigint; keys: Set<string>; activeSwap: string | null;
   poolScope: string | null; poolStarted: boolean; poolFundSigningStarted:boolean; poolCommitted: bigint; poolApprovals: Set<string>;
   poolTailCommitted: bigint; poolFunded: boolean; poolFailed: boolean; poolClosed: boolean; poolTail: Set<Phase>;
   poolActiveSnapshots: number; poolCleanups: Set<string>; charges: SwapCharge[] };
@@ -105,28 +106,27 @@ export const hasCurrentNativeSigningBudget = (signer: object) => budgets.has(sig
 export const currentNativeSigningBudget = (signer: object, owner: string, now: () => bigint, candidate: CurrentCheapDexIdentity = native) => {
   assertCurrentSwapIdentity(candidate);
   let budget = budgets.get(signer);
-  if (!budget) { budget = { owner: owner.toLowerCase(), candidateGraph: candidate.graph, start: now(), committed: 0n, keys: new Set(), activeSwap: null,
+  if (!budget) { budget = { version: isCurrentDexBrowserSigner(signer,candidate.graph,owner)?2:1, owner: owner.toLowerCase(), candidateGraph: candidate.graph, start: now(), committed: 0n, keys: new Set(), activeSwap: null,
     poolScope: null, poolStarted: false, poolFundSigningStarted:false, poolCommitted: 0n, poolApprovals: new Set(), poolTailCommitted: 0n,
     poolFunded: false, poolFailed: false, poolClosed: false, poolTail: new Set(), poolActiveSnapshots: 0, poolCleanups: new Set(), charges: [] }; budgets.set(signer, budget); }
   const state = budget, l = CURRENT_NATIVE_SWAP_LIMITS, fixedGasPrice = currentSwapFixedGasPrice(candidate);
   const check = (phase: Phase, key: string, gasCap: bigint, swapScope?: string) => {
     if (state.candidateGraph !== candidate.graph) throw new Error('Native signing budget candidate changed.');
-    if (isCurrentOwnerBeta(candidate.graph, owner)) {
-      validateCurrentNativeSwapCheckpoint(currentNativeSwapCheckpoint(signer), owner, candidate);
+    if (isCurrentDexBrowserSigner(signer,candidate.graph,owner)) {
+      validateCurrentNativeSwapCheckpoint(currentNativeSwapCheckpoint(signer), owner, candidate, signer);
       const scope = swapScope ?? key, approval = phase === 'token-funding';
       const caps = phase === 'quote' ? [110_000_000n] : phase === 'accept' ? [35_000_000n,110_000_000n] :
         phase === 'cancel' ? [30_000_000n] : phase === 'recover' ? [50_000_000n] : approval ? [5_000_000n] : [];
       const prior = state.charges.filter(row => row.scope === scope);
       if (state.owner !== owner.toLowerCase() || !caps.includes(gasCap) || !/^quote:0x[0-9a-f]{64}$/.test(scope) ||
-          state.keys.has(key) || state.charges.slice(0,CURRENT_OWNER_BETA.legacyStarts).some(row => row.scope === scope) ||
+          state.keys.has(key) || state.charges.slice(0,state.version===1?CURRENT_OWNER_BETA.legacyStarts:0).some(row => row.scope === scope) ||
           (approval ? !key.startsWith(`token-funding:${scope}:`) || !/^0x[0-9a-f]{64}$/.test(key.slice(`token-funding:${scope}:`.length)) : key !== (phase === 'quote' ? scope : `${phase}:${scope}`)) ||
           ((phase === 'quote' || approval) ? state.activeSwap !== null && (state.activeSwap !== scope || prior.some(row => row.phase !== 'token-funding')) :
             state.activeSwap !== scope || !prior.some(row => row.phase === 'quote'))) {
         throw new Error('Owner beta swap scope, phase or prior reservation changed.');
       }
-      assertCurrentOwnerBetaWindow(candidate.graph, owner, candidate.core, 7082400n, now(),
-        Math.max(CURRENT_OWNER_BETA.activation!.startingNonce, (state.charges[state.charges.length - 1]?.nonce ?? -1) + 1),
-        phase === 'cancel' || phase === 'recover', gasCap, fixedGasPrice);
+      assertCurrentDexBrowserWindow(signer, candidate.graph, owner, candidate.core, 7082400n, now(),
+        (state.charges[state.charges.length - 1]?.nonce ?? -1) + 1, gasCap, fixedGasPrice);
       return;
     }
     const exitSwap = usesCurrentSwapAccounting(candidate);
@@ -199,9 +199,8 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
   };
   return Object.freeze({ check, assertUnfundedAbandon, commit: (phase: Phase, key: string, gasCap: bigint, swapScope?: string, nonce?: number) => {
     check(phase, key, gasCap, swapScope);
-    if (isCurrentOwnerBeta(candidate.graph, owner)) {
-      assertCurrentOwnerBetaWindow(candidate.graph, owner, candidate.core, 7082400n, now(), nonce!,
-        phase === 'cancel' || phase === 'recover', gasCap, fixedGasPrice);
+    if (isCurrentDexBrowserSigner(signer,candidate.graph,owner)) {
+      assertCurrentDexBrowserWindow(signer,candidate.graph,owner,candidate.core,7082400n,now(),nonce!,gasCap,fixedGasPrice);
       if (state.charges.some(row => row.nonce >= nonce!)) throw new Error('Owner beta nonce was already reserved.');
     }
     state.keys.add(key); if (phase === 'quote' || usesCurrentSwapAccounting(candidate) && phase === 'token-funding') state.activeSwap = swapScope ?? key;
@@ -220,8 +219,8 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
     }
   }, snapshot: () => Object.freeze({ committedWei: state.committed, signingStarts: state.keys.size,
     poolFundSigningStarted:state.poolFundSigningStarted,
-    normalExpiresAt: isCurrentOwnerBeta(candidate.graph,owner) ? null : hasCurrentPartialRefundProof(candidate.graph,owner,state.charges) && (state.windowStart??state.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt ? CURRENT_APP_PARTIAL_REFUND_TRIAL.expiresAt : (state.windowStart ?? state.start) + l.normalSeconds,
-    recoveryExpiresAt: isCurrentOwnerBeta(candidate.graph,owner) ? null : hasCurrentPartialRefundProof(candidate.graph,owner,state.charges) && (state.windowStart??state.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt ? CURRENT_APP_PARTIAL_REFUND_TRIAL.expiresAt : (state.windowStart ?? state.start) + l.recoverySeconds,
+    normalExpiresAt: isCurrentDexBrowserSigner(signer,candidate.graph,owner) ? null : hasCurrentPartialRefundProof(candidate.graph,owner,state.charges) && (state.windowStart??state.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt ? CURRENT_APP_PARTIAL_REFUND_TRIAL.expiresAt : (state.windowStart ?? state.start) + l.normalSeconds,
+    recoveryExpiresAt: isCurrentDexBrowserSigner(signer,candidate.graph,owner) ? null : hasCurrentPartialRefundProof(candidate.graph,owner,state.charges) && (state.windowStart??state.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt ? CURRENT_APP_PARTIAL_REFUND_TRIAL.expiresAt : (state.windowStart ?? state.start) + l.recoverySeconds,
     poolRemainingNormalWei: 10_500_000_000_000_000n - state.poolCommitted,
     poolRemainingTailWei: (state.poolFailed ? 500_000_000_000_000n : 8_000_000_000_000_000n) - state.poolTailCommitted }) });
 };
@@ -231,7 +230,7 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
 export const currentNativeSwapCheckpoint = (signer: object): CurrentNativeSwapCheckpoint => {
   const b = budgets.get(signer);
   if (!b || b.charges.length !== b.keys.size || b.poolStarted || b.poolScope !== null) throw new Error('Original native budget has no complete reload reservation.');
-  return Object.freeze({ version: 1, owner: b.owner, candidateGraph: b.candidateGraph, start: String(b.start), committedWei: String(b.committed),
+  return Object.freeze({ version: b.version, owner: b.owner, candidateGraph: b.candidateGraph, start: String(b.start), committedWei: String(b.committed),
     ...(b.windowStart === undefined ? {} : {windowStart: String(b.windowStart)}),
     activeSwap: b.activeSwap, charges: Object.freeze(b.charges.map(c=>Object.freeze({...c}))) });
 };
@@ -282,28 +281,37 @@ export const currentOwnerBetaLegacyReservationHash = (value: CurrentNativeSwapCh
   charges:value.charges.slice(0,CURRENT_OWNER_BETA.legacyStarts).map(row=>({phase:row.phase,key:row.key,scope:row.scope,
     gasCap:row.gasCap,gasPrice:row.gasPrice,nonce:row.nonce,hash:row.hash}))
 })));
-export const validateCurrentNativeSwapCheckpoint = (value: CurrentNativeSwapCheckpoint, owner: string, candidate: CurrentCheapDexIdentity) => {
-  if (!isCurrentOwnerBeta(candidate.graph, owner)) return validateLegacyCurrentNativeSwapCheckpoint(value, owner, candidate);
-  const count = CURRENT_OWNER_BETA.legacyStarts;
+export const validateCurrentNativeSwapCheckpoint = (value: CurrentNativeSwapCheckpoint, owner: string, candidate: CurrentCheapDexIdentity, signer?: object) => {
+  if (!(value?.version===2 && isCurrentDexBrowserSigner(signer,candidate.graph,owner)) && !isCurrentOwnerBeta(candidate.graph,owner)) return validateLegacyCurrentNativeSwapCheckpoint(value, owner, candidate);
+  const normalUse=value?.version===2;
+  if(normalUse){
+    if(Object.keys(value).sort().join(',')!=='activeSwap,candidateGraph,charges,committedWei,owner,start,version'||
+        value.owner!==owner.toLowerCase()||value.candidateGraph!==candidate.graph||typeof value.start!=='string'||
+        !/^[1-9][0-9]*$/.test(value.start)||BigInt(value.start)<(isCurrentDexBrowserSigner(signer,candidate.graph,owner)?1n:CURRENT_OWNER_BETA.activation!.activatedAt)||
+        typeof value.committedWei!=='string'||!/^(0|[1-9][0-9]*)$/.test(value.committedWei)||!Array.isArray(value.charges))
+      throw new Error('Owner normal-use reload record is invalid.');
+    assertCurrentSwapIdentity(candidate);
+  }
+  const count = normalUse?0:CURRENT_OWNER_BETA.legacyStarts;
   if (!value || !Array.isArray(value.charges) || value.charges.length < count) {
     throw new Error('Owner beta requires all retained legacy reservations.');
   }
   const legacy = value.charges.slice(0,count), suffix = value.charges.slice(count);
   const legacyFees = legacy.reduce((sum,row) => sum + BigInt(row.gasCap) * currentNativeSwapChargeGasPrice(row), 0n);
-  validateLegacyCurrentNativeSwapCheckpoint({ ...value, charges: legacy, committedWei: String(legacyFees), activeSwap: null }, owner, candidate);
-  if(currentOwnerBetaLegacyReservationHash(value)!==CURRENT_OWNER_BETA.activation!.legacyReservationHash)
+  if(!normalUse)validateLegacyCurrentNativeSwapCheckpoint({ ...value, charges: legacy, committedWei: String(legacyFees), activeSwap: null }, owner, candidate);
+  if(!normalUse&&currentOwnerBetaLegacyReservationHash(value)!==CURRENT_OWNER_BETA.activation!.legacyReservationHash)
     throw new Error('Owner beta retained legacy reservation changed.');
   const terminalHashes = [
     '0x2e8c953987b9da4dd5149b8053b503bc152ae4fcb699a0597f74e7686201e57e',
     '0xf0555667b314df628eebefd04709adccbd64315e5ea244d6c7dfe0f526ad2bcc',
     '0x38f0f3117ec7985797aee9636754aa29186970329e07fb9f8918e55b4d990210'
   ];
-  if (!hasCurrentPartialRefundProof(candidate.graph,owner,legacy) || legacy.some(row => !row.hash) ||
-      legacy.slice(11).some((row,i) => row.nonce !== 217+i || row.hash !== terminalHashes[i] || row.phase !== ['token-funding','quote','accept'][i])) {
+  if (!normalUse&&(!hasCurrentPartialRefundProof(candidate.graph,owner,legacy) || legacy.some(row => !row.hash) ||
+      legacy.slice(11).some((row,i) => row.nonce !== 217+i || row.hash !== terminalHashes[i] || row.phase !== ['token-funding','quote','accept'][i]))) {
     throw new Error('Owner beta legacy reservation identity changed.');
   }
   const keys = new Set(legacy.map(row => row.key)), scopes = new Set(legacy.map(row => row.scope));
-  let fees = 0n, lastNonce = CURRENT_OWNER_BETA.activation!.startingNonce - 1;
+  let fees = 0n, lastNonce = normalUse && isCurrentDexBrowserSigner(signer,candidate.graph,owner) ? -1 : CURRENT_OWNER_BETA.activation!.startingNonce - 1;
   for (const [index,row] of suffix.entries()) {
     const approval = row?.phase === 'token-funding';
     const caps = row?.phase === 'quote' ? ['110000000'] : row?.phase === 'accept' ? ['35000000','110000000'] :
@@ -321,6 +329,7 @@ export const validateCurrentNativeSwapCheckpoint = (value: CurrentNativeSwapChec
   const lastScope = suffix[suffix.length-1]?.scope;
   const unquotedFunding = lastScope !== undefined && suffix.filter(row => row.scope === lastScope).every(row => row.phase === 'token-funding' && row.hash !== null);
   if (value.committedWei !== String(legacyFees + fees) ||
+      normalUse && suffix.some(row=>row.hash===null&&value.activeSwap!==row.scope) ||
       value.activeSwap !== null && (!/^quote:0x[0-9a-f]{64}$/.test(value.activeSwap) || scopes.has(value.activeSwap) ||
         !suffix.some(row => row.scope === value.activeSwap) && !unquotedFunding)) {
     throw new Error('Owner beta reload totals or active scope changed.');
@@ -329,8 +338,8 @@ export const validateCurrentNativeSwapCheckpoint = (value: CurrentNativeSwapChec
 // The consumer first proves every funding transaction and the fresh exact private allowance.
 export const bindCurrentNativeSwapFundingScope = (signer:object,scope:string) => {
   const b=budgets.get(signer);
-  if (b && isCurrentOwnerBeta(b.candidateGraph,b.owner)) {
-    const lastScope=b.charges[b.charges.length-1]?.scope, funding=b.charges.slice(CURRENT_OWNER_BETA.legacyStarts).filter(row=>row.scope===lastScope);
+  if (b && isCurrentDexBrowserSigner(signer,b.candidateGraph,b.owner)) {
+    const lastScope=b.charges[b.charges.length-1]?.scope, funding=b.charges.slice(b.version===1?CURRENT_OWNER_BETA.legacyStarts:0).filter(row=>row.scope===lastScope);
     if (!/^quote:0x[0-9a-f]{64}$/.test(scope) || !funding.length || funding.some(row=>!row.hash||row.phase!=='token-funding') ||
         b.charges.some(row=>row.scope===scope)) throw new Error('Owner beta funding needs confirmed unquoted approval and a fresh scope.');
     b.activeSwap=scope;return;
@@ -397,10 +406,10 @@ export const renewCurrentNativeSwapClosedWindow = (signer:object,owner:string,ca
   b.windowStart=now;return true;
 };
 export const restoreCurrentNativeSwapCheckpoint = (signer: object, owner: string, candidate: CurrentCheapDexIdentity, value: CurrentNativeSwapCheckpoint) => {
-  validateCurrentNativeSwapCheckpoint(value,owner,candidate);
+  validateCurrentNativeSwapCheckpoint(value,owner,candidate,signer);
   if(budgets.has(signer)){if(JSON.stringify(currentNativeSwapCheckpoint(signer))!==JSON.stringify(value))throw new Error('Live native budget differs from reload reservation.');return;}
   currentNativeSigningBudget(signer,owner,()=>BigInt(value.start),candidate);
-  const b=budgets.get(signer)!;b.windowStart=value.windowStart===undefined?undefined:BigInt(value.windowStart);b.committed=BigInt(value.committedWei);b.keys=new Set(value.charges.map(c=>c.key));b.activeSwap=value.activeSwap;b.charges=value.charges.map(c=>({...c}));
+  const b=budgets.get(signer)!;b.version=value.version;b.windowStart=value.windowStart===undefined?undefined:BigInt(value.windowStart);b.committed=BigInt(value.committedWei);b.keys=new Set(value.charges.map(c=>c.key));b.activeSwap=value.activeSwap;b.charges=value.charges.map(c=>({...c}));
 };
 
 export const recordCurrentNativePoolOutcome = (signer: object, scope: string, outcome: 'funded' | 'unfunded-failed' | 'closed') => {

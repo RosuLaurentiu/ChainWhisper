@@ -40,7 +40,7 @@
     "build:testnet-candidate": "npm run prepare:testnet-candidate && tsc -b && vite build --mode coti-testnet-candidate",
     "build:testnet-suite": "npm run refresh:testnet-suite && tsc -b && vite build --mode coti-testnet-candidate",
     "preview": "vite preview",
-    "lint": "eslint .",
+    "lint": "eslint src tests scripts workers supabase/functions eslint.config.js vite.config.ts playwright.config.ts playwright.real-wallet.config.ts playwright.real-wallet-recovery.config.ts",
     "knip": "knip --no-exit-code",
     "knip:json": "knip --no-exit-code --reporter json",
     "test": "vitest run src",

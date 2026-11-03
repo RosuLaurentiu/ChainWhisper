@@ -1,4 +1,5 @@
-import type { BrowserProvider, OnboardInfo } from '@coti-io/coti-ethers';
+import type { BrowserProvider, JsonRpcError, OnboardInfo } from '@coti-io/coti-ethers';
+import type { createBrowserWalletRuntimeReadGuard } from '../browserWalletRuntimeScope';
 import { zlibSync } from 'fflate';
 import { TEXT_DECODER, TEXT_ENCODER } from '../byteEncoding';
 import { unzlibBounded } from './boundedCompression';
@@ -255,9 +256,11 @@ export type GroupSummary = {
   title: string;
   isPrivate: boolean;
   archived?: boolean;
+  membershipEnded?: boolean;
   createdAt: number;
   memberCount: number;
   members: string[];
+  membersLoaded?: boolean;
   lastBlock: number;
   lastTimestamp: number;
 };
@@ -309,7 +312,7 @@ export type GroupMessageEntry = {
 };
 
 export type GroupFeeModeSelection = 'coti' | 'token';
-export type SwapDirection = 'shield' | 'unshield' | 'legacy-unshield' | 'legacy-unshield-earlier';
+export type SwapDirection = 'shield' | 'unshield';
 export type SwapFeeModeSelection = 'token' | 'coti';
 
 export const AUTO_SYNC_INTERVAL_MS = 30000;
@@ -317,7 +320,8 @@ export const WS_HEALTHCHECK_TTL_MS = 12000;
 export const WS_RETRY_COOLDOWN_MS = 15000;
 export const REALTIME_SYNC_DEBOUNCE_MS = 250;
 export const REALTIME_SYNC_BURST_THROTTLE_MS = 1500;
-export const REALTIME_SYNC_FALLBACK_INTERVAL_MS = 5000;
+// Each fallback tick can refresh balances, owner orders and canonical history.
+export const REALTIME_SYNC_FALLBACK_INTERVAL_MS = AUTO_SYNC_INTERVAL_MS;
 export const INITIAL_SYNC_LOOKBACK_BLOCKS = 2500;
 export const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 export const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
@@ -755,8 +759,10 @@ export type CotiHttpProvider = InstanceType<CotiEthersModule['JsonRpcProvider']>
 export type CotiReadProvider = CotiWsProvider | CotiHttpProvider;
 let cotiEthersModulePromise: Promise<CotiEthersModule> | null = null;
 let cotiWsProviderPromise: Promise<CotiWsProvider> | null = null;
-let cotiHttpProviderPromise: Promise<CotiHttpProvider> | null = null;
-let cotiHttpGetUrl: InstanceType<CotiEthersModule['FetchRequest']>['getUrlFunc'] | null = null;
+const cotiHttpProviderPromises: Record<'normal' | 'startup', Promise<CotiHttpProvider> | null> = { normal: null, startup: null };
+let cotiHttpGetUrl: ReturnType<typeof createPacedCotiRpc> | null = null;
+const admittedCotiHttpProviders = new WeakSet<CotiHttpProvider>();
+let nextCotiScopedReadId = 0;
 let cotiWsLastHealthyAt = 0;
 
 export const getCotiWsLastHealthyAt = (): number => cotiWsLastHealthyAt;
@@ -785,15 +791,40 @@ export const loadCotiWsProvider = async (): Promise<CotiWsProvider> => {
   return cotiWsProviderPromise;
 };
 
-export const loadCotiHttpProvider = async (): Promise<CotiHttpProvider> => {
-  if (!cotiHttpProviderPromise) {
+const loadCotiHttpProviderForPriority = async (priority: 'normal' | 'startup'): Promise<CotiHttpProvider> => {
+  if (!cotiHttpProviderPromises[priority]) {
     const providerPromise: Promise<CotiHttpProvider> = loadCotiEthersModule().then(
       async (cotiEthers) => {
         const request = new cotiEthers.FetchRequest(COTI_NETWORK.rpcUrl);
         request.timeout = 30_000;
         // Keep the queue and 403 stop when a failed startup clears the provider cache.
-        cotiHttpGetUrl ??= createPacedCotiRpc(request.getUrlFunc);
-        request.getUrlFunc = cotiHttpGetUrl;
+        if (!cotiHttpGetUrl) {
+          // Optional local comparison only; normal loading has no fixed start gap.
+          const comparison = import.meta.env.MODE === 'coti-testnet-candidate' &&
+            ['0', '334', '500'].includes(import.meta.env.VITE_RPC_COMPARISON) && typeof location !== 'undefined' &&
+            ['localhost', '127.0.0.1'].includes(location.hostname);
+          cotiHttpGetUrl = createPacedCotiRpc(request.getUrlFunc,
+          (import.meta.env.DEV || import.meta.env.MODE === 'coti-testnet-candidate') && typeof document !== 'undefined'
+            ? snapshot => document.documentElement.setAttribute('data-coti-rpc-queue', JSON.stringify(snapshot))
+            : undefined, comparison, import.meta.env.VITE_RPC_COMPARISON === '500' ? 500 : import.meta.env.VITE_RPC_COMPARISON === '334' ? 334 : 0);
+          if (comparison) {
+            const paced = cotiHttpGetUrl;
+            const checkCoverage = () => {
+              const raw = document.documentElement.getAttribute('data-coti-read-view');
+              if (!raw) return;
+              const view = JSON.parse(raw);
+              if (view.privateReadsEnabled === true) {
+                paced.beginComparison();
+                const history = document.documentElement.getAttribute('data-p2p-canonical-history');
+                if (view.page === 'trades' && history && JSON.parse(history).state === 'error') paced.stopComparison('history-error');
+              }
+            };
+            new MutationObserver(checkCoverage).observe(document.documentElement,
+              { attributes: true, attributeFilter: ['data-coti-read-view', 'data-p2p-canonical-history'] });
+            checkCoverage();
+          }
+        }
+        request.getUrlFunc = priority === 'startup' ? cotiHttpGetUrl.foreground : cotiHttpGetUrl;
         const provider = new cotiEthers.JsonRpcProvider(request, {
           name: COTI_NETWORK.chainName,
           chainId: COTI_NETWORK.chainIdDecimal
@@ -803,7 +834,7 @@ export const loadCotiHttpProvider = async (): Promise<CotiHttpProvider> => {
           if (disposed) return;
           disposed = true;
           provider.destroy();
-          if (cotiHttpProviderPromise === providerPromise) cotiHttpProviderPromise = null;
+          if (cotiHttpProviderPromises[priority] === providerPromise) cotiHttpProviderPromises[priority] = null;
         };
         try {
           // A retained failed startup keeps ethers' network-discovery retry alive.
@@ -817,6 +848,7 @@ export const loadCotiHttpProvider = async (): Promise<CotiHttpProvider> => {
           if (network.chainId !== BigInt(COTI_NETWORK.chainIdDecimal)) {
             throw new Error('Configured COTI RPC returned a different chain.');
           }
+          admittedCotiHttpProviders.add(provider);
           return provider;
         } catch (error) {
           disposeFailedStartup();
@@ -824,14 +856,69 @@ export const loadCotiHttpProvider = async (): Promise<CotiHttpProvider> => {
         }
       }
     ).catch((error: unknown) => {
-      if (cotiHttpProviderPromise === providerPromise) cotiHttpProviderPromise = null;
+      if (cotiHttpProviderPromises[priority] === providerPromise) cotiHttpProviderPromises[priority] = null;
       throw error;
     });
-    cotiHttpProviderPromise = providerPromise;
+    cotiHttpProviderPromises[priority] = providerPromise;
   }
 
-  return cotiHttpProviderPromise;
+  return cotiHttpProviderPromises[priority]!;
 };
+
+export const loadCotiHttpProvider = (): Promise<CotiHttpProvider> => loadCotiHttpProviderForPriority('normal');
+/** Exact same endpoint, chain admission and aggregate limiter; initial foreground admission only. */
+export const loadCotiStartupReadProvider = (): Promise<CotiHttpProvider> => loadCotiHttpProviderForPriority('startup');
+
+/** Raw read adapters only; Contract reads keep their existing provider boundary. */
+export const sendCotiScopedRead = (
+  provider: CotiReadProvider,
+  guard: ReturnType<typeof createBrowserWalletRuntimeReadGuard>,
+  method: string,
+  params: readonly unknown[]
+): Promise<unknown> => guard.run(async () => {
+  if (!['eth_chainId', 'eth_blockNumber', 'eth_getBlockByNumber', 'eth_getCode',
+    'eth_call', 'eth_getLogs', 'eth_getTransactionReceipt', 'eth_getTransactionByHash', 'eth_getStorageAt'].includes(method)) {
+    throw new Error('Unsupported scoped COTI read method.');
+  }
+  if (method === 'eth_getTransactionByHash' && (params.length !== 1 || typeof params[0] !== 'string' ||
+      !/^0x[0-9a-f]{64}$/i.test(params[0]))) throw new Error('Invalid scoped COTI transaction read.');
+  if (method === 'eth_getStorageAt') {
+    const [address, slot, block] = params;
+    if (params.length !== 3 || typeof address !== 'string' || !/^0x[0-9a-f]{40}$/i.test(address) ||
+        typeof slot !== 'string' || !/^0x[0-9a-f]{1,64}$/i.test(slot) || !block || typeof block !== 'object' ||
+        Array.isArray(block) || Object.keys(block).length !== 2 || !('blockHash' in block) ||
+        typeof block.blockHash !== 'string' || !/^0x[0-9a-f]{64}$/i.test(block.blockHash) ||
+        !('requireCanonical' in block) || block.requireCanonical !== true) throw new Error('Invalid scoped COTI storage read.');
+  }
+  if (!admittedCotiHttpProviders.has(provider as CotiHttpProvider) || provider.destroyed || !cotiHttpGetUrl) {
+    throw new Error('Scoped COTI reads require an admitted shared HTTP provider.');
+  }
+  const httpProvider = provider as CotiHttpProvider;
+  const request = httpProvider._getConnection();
+  const getUrl = request.getUrlFunc;
+  if (getUrl !== cotiHttpGetUrl && getUrl !== cotiHttpGetUrl.foreground) {
+    throw new Error('Scoped COTI reads require the shared RPC queue.');
+  }
+  const paced = getUrl as ReturnType<typeof createPacedCotiRpc>;
+  request.getUrlFunc = (value, signal) => paced(value, signal, guard.signal, guard.assertCurrent);
+  // Scoped requests do not enter the SDK batch queue; negative IDs stay separate.
+  const payload = { jsonrpc: '2.0' as const, id: --nextCotiScopedReadId, method, params: [...params] };
+  request.body = JSON.stringify(payload);
+  request.setHeader('content-type', 'application/json');
+  const response = await request.send();
+  response.assertOk();
+  const body = response.bodyJson;
+  const replies = Array.isArray(body) ? body : [body];
+  const matching = replies.filter(reply => reply && reply.id === payload.id);
+  if (matching.length !== 1 || matching[0].jsonrpc !== '2.0' ||
+    !('result' in matching[0]) && !('error' in matching[0])) {
+    const sdk = await loadCotiEthersModule();
+    throw sdk.makeError('Invalid scoped COTI RPC response.', 'BAD_DATA', { value: body });
+  }
+  const reply = matching[0];
+  if ('error' in reply) throw httpProvider.getRpcError(payload, reply as JsonRpcError);
+  return reply.result;
+});
 
 export const resetCotiWsProvider = async (): Promise<void> => {
   const providerPromise = cotiWsProviderPromise;
@@ -1067,8 +1154,13 @@ const providerErrorMessages = (
   ].filter(Boolean);
 };
 
+export const isAppModuleLoadError = (error: unknown): boolean =>
+  providerErrorMessages(error).some((message) =>
+    message.toLowerCase().includes('failed to fetch dynamically imported module')
+  );
+
 export const isProviderRpcTransportUnavailable = (error: unknown): boolean =>
-  providerErrorMessages(error).some((message) => {
+  !isAppModuleLoadError(error) && providerErrorMessages(error).some((message) => {
     const normalized = message.toLowerCase();
     return normalized.includes('failed to fetch') ||
       normalized.includes('network request failed') ||
@@ -1161,6 +1253,10 @@ export const getProviderErrorMessage = (error: unknown, fallbackMessage: string)
   const walletSessionMessage = browserWalletSessionChangedMessage(error);
   if (walletSessionMessage) {
     return walletSessionMessage;
+  }
+
+  if (isAppModuleLoadError(error)) {
+    return 'The app could not load a required file. Reload the app and try again.';
   }
 
   if (isProviderRpcTransportUnavailable(error)) {

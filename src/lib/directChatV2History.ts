@@ -44,6 +44,8 @@ export type DirectChatV2HistoryScope = {
   deploymentBlock: bigint;
   /** Canonical ConversationCreated block, attested by the verified V2 adapter. */
   conversationStartBlock: bigint;
+  /** Verified first-post block; a scan hint, separate from creation identity. */
+  firstMessageBlock?: bigint;
 };
 
 export type DirectChatV2HistoryCheckpoint = {
@@ -54,6 +56,10 @@ export type DirectChatV2HistoryCheckpoint = {
   blockNumber: string;
   blockHash: string;
   lastMessageId: string;
+  /** Loaded contiguous ID suffix, separate from complete earlier block coverage. */
+  firstMessageId?: string;
+  /** Inclusive older-read end; can precede the first message while crossing an empty gap. */
+  olderToBlock?: string;
 };
 
 export type DirectChatV2HistoryPagePlan = {
@@ -109,12 +115,18 @@ const normalizeHistoryScope = (scope: DirectChatV2HistoryScope): DirectChatV2His
   if (conversationStartBlock < deploymentBlock) {
     throw new Error('Direct-chat V2 conversation history cannot start before deployment.');
   }
+  const firstMessageBlock = scope.firstMessageBlock === undefined ? undefined
+    : normalizeUint256(scope.firstMessageBlock, 'History first message block');
+  if (firstMessageBlock !== undefined && firstMessageBlock < conversationStartBlock) {
+    throw new Error('Direct-chat V2 first message cannot predate the conversation.');
+  }
   return {
     chainId: normalizeUint256(scope.chainId, 'History chain ID'),
     contractAddress: getAddress(scope.contractAddress.trim()),
     conversationId: normalizeBytes32(scope.conversationId, 'History conversation ID'),
     deploymentBlock,
-    conversationStartBlock
+    conversationStartBlock,
+    firstMessageBlock
   };
 };
 
@@ -135,10 +147,18 @@ const assertCheckpointScope = (
   if (blockNumber < scope.conversationStartBlock) {
     throw new Error('Direct-chat V2 history checkpoint predates the conversation.');
   }
+  const lastMessageId = parseCanonicalDecimal(checkpoint.lastMessageId, 'Checkpoint message ID', UINT64_MAX);
+  if (checkpoint.firstMessageId !== undefined || checkpoint.olderToBlock !== undefined) {
+    const first = parseCanonicalDecimal(checkpoint.firstMessageId ?? '', 'Checkpoint first message ID', UINT64_MAX + 1n);
+    const olderBlock = parseCanonicalDecimal(checkpoint.olderToBlock ?? '', 'Checkpoint older block', UINT256_MAX);
+    if (first < 1n || first > lastMessageId + 1n || olderBlock < scope.conversationStartBlock - 1n || olderBlock > blockNumber) {
+      throw new Error('Direct-chat V2 checkpoint suffix coverage is invalid.');
+    }
+  }
   return {
     blockNumber,
     blockHash: normalizeBytes32(checkpoint.blockHash, 'Checkpoint block hash'),
-    lastMessageId: parseCanonicalDecimal(checkpoint.lastMessageId, 'Checkpoint message ID', UINT64_MAX)
+    lastMessageId
   };
 };
 
@@ -452,7 +472,7 @@ export const planDirectChatV2HistoryPage = ({
 
   let checkpointStatus: DirectChatV2HistoryPagePlan['checkpointStatus'] = 'none';
   let resetConversation = false;
-  let nextBlock = scope.conversationStartBlock;
+  let nextBlock = scope.firstMessageBlock ?? scope.conversationStartBlock;
   let expectedPreviousMessageId = 0n;
   if (checkpoint) {
     const normalizedCheckpoint = assertCheckpointScope(checkpoint, scope);
@@ -474,7 +494,7 @@ export const planDirectChatV2HistoryPage = ({
     } else {
       checkpointStatus = 'reorg';
       resetConversation = true;
-      nextBlock = scope.conversationStartBlock;
+      nextBlock = scope.firstMessageBlock ?? scope.conversationStartBlock;
     }
   }
 

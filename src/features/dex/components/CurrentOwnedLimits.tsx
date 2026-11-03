@@ -13,7 +13,7 @@ export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',se
   const privacyReady=privacy?.ownerAesReady??false;
   const getOrders=session?.actions?.getCurrentDexLimitCapability;
   const context={owner:session?.walletAddress.toLowerCase(),chain:session?.chainId,provider:session?.browserProvider,candidateKey,graph:candidate.graph,core:candidate.core,walletId:session?.browserWalletId,
-    source:session?.activeSignerSource,onboard:session?.sessionOnboardInfo,health:session?.walletAesHealthByAddress,getOrders,privacyReady,privacyKey:privacy?.ownerAesKey,pair:selectedPair.join(':')};
+    source:session?.activeSignerSource,onboard:session?.sessionOnboardInfo,health:session?.walletAesHealthByAddress,getOrders,privacyReady,privacyKey:privacy?.ownerAesKey,pair:selectedPair.join(':'),visible};
   const ref=useRef(context);if((Object.keys(context)as(keyof typeof context)[]).some(k=>context[k]!==ref.current[k]))ref.current=context;
   const scope=ref.current,[refresh,setRefresh]=useState(0),[view,setView]=useState<{scope:typeof scope;state:'loading'|'ready'|'error';inventory?:Inventory}|null>(null);
   const connected=Boolean(context.owner&&context.chain===7082400&&context.provider&&getOrders);
@@ -22,7 +22,7 @@ export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',se
     let active=true;const guard=()=>{if(!active||ref.current!==scope)throw Error('Order wallet or privacy session changed.');};
     setView({scope,state:'loading'});
     void(async()=>{const capability=await scope.getOrders!(7082400n,{candidate:scope.candidateKey,selectedPair:scope.pair.split(':')as[string,string]});guard();
-      const inventory=await capability.readOwnedOrders();guard();setView({scope,state:'ready',inventory});
+      const inventory=await capability.readOwnedOrders(guard);guard();setView({scope,state:'ready',inventory});
     })().catch(()=>{if(active&&ref.current===scope)setView({scope,state:'error'});});
     return()=>{active=false;};
   },[scope,visible,connected,refresh,refreshToken]);

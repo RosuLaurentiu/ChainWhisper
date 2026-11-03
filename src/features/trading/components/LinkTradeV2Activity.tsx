@@ -12,21 +12,21 @@ type EnsureToken = (token: { address: string; kind: 'erc20' | 'private-erc20' })
 export const useLinkTradeV2Activity = ({ runtime, ownerAddress, enabled, ensureTokenInfo }: {
   runtime?: Runtime; ownerAddress: string; enabled: boolean; ensureTokenInfo: EnsureToken;
 }) => {
-  const session = useMemo(() => ({ runtime, owner: ownerAddress.toLowerCase() }), [runtime, ownerAddress]);
+  const session = useMemo(() => ({ runtime, owner: ownerAddress.toLowerCase() }), [runtime, ownerAddress, enabled]);
   const active = useRef<typeof session | null>(null), running = useRef<typeof session | null>(null);
   const ensureRef = useRef(ensureTokenInfo);
   useEffect(() => { ensureRef.current = ensureTokenInfo; }, [ensureTokenInfo]);
   const [state, setState] = useState<{ session: typeof session; snapshot?: LinkTradeV2ActivitySnapshot; busy: boolean; error: string } | null>(null);
-  useEffect(() => { active.current = enabled ? session : null; return () => { if (active.current === session) active.current = null; }; }, [session, enabled]);
-  const refresh = useCallback(async () => {
+  useEffect(() => { active.current = enabled ? session : null; if (!enabled) setState(null);
+    return () => { if (active.current === session) active.current = null; }; }, [session, enabled]);
+  const load = useCallback(async (mode: 'latest' | 'older') => {
     if (!enabled || !runtime || runtime.ownerAddress.toLowerCase() !== session.owner || running.current === session || active.current !== session) return;
     running.current = session;
     setState(previous => ({ session, snapshot: previous?.session === session ? previous.snapshot : undefined, busy: true, error: '' }));
     try {
-      const loadedTokens = new Set<string>();
-      // Four finite steps per refresh; no timer or retry after an RPC failure.
-      for (let step = 0; step < 4 && active.current === session; step++) {
-        const snapshot = await runtime.syncActivity();
+        const snapshot = await runtime.syncActivity(snapshot => {
+          if (active.current === session) setState({ session, snapshot, busy: true, error: '' });
+        }, mode);
         if (active.current !== session) return;
         setState({ session, snapshot, busy: true, error: '' });
         const tokens = new Map<string, Parameters<EnsureToken>[0]>();
@@ -34,11 +34,9 @@ export const useLinkTradeV2Activity = ({ runtime, ownerAddress, enabled, ensureT
           const kind = row.privatePair ? 'private-erc20' : 'erc20';
           for (const address of [row.offerToken, row.requestToken]) tokens.set(`${kind}:${address}`, { address, kind });
         }
-        await Promise.all([...tokens.entries()].filter(([key]) => !loadedTokens.has(key)).map(async ([key, token]) => {
-          try { await ensureRef.current(token); loadedTokens.add(key); } catch { /* Unavailable metadata stays labelled. */ }
+        await Promise.all([...tokens.values()].map(async token => {
+          try { await ensureRef.current(token); } catch { /* Unavailable metadata stays labelled. */ }
         }));
-        if (snapshot.complete) break;
-      }
     } catch {
       if (active.current === session) setState(previous => ({ session, snapshot: previous?.session === session ? previous.snapshot : undefined,
         busy: false, error: 'Shared activity could not refresh. Saved results may be out of date.' }));
@@ -47,9 +45,11 @@ export const useLinkTradeV2Activity = ({ runtime, ownerAddress, enabled, ensureT
       setState(previous => previous?.session === session ? { ...previous, busy: false } : previous);
     }
   }, [enabled, runtime, session]);
+  const refresh = useCallback(() => load('latest'), [load]);
+  const loadOlder = useCallback(() => load('older'), [load]);
   useEffect(() => { void refresh(); }, [refresh]);
   const current = enabled && state?.session === session ? state : null;
-  return { snapshot: current?.snapshot, busy: current?.busy ?? false, error: current?.error ?? '', refresh };
+  return { snapshot: current?.snapshot, busy: current?.busy ?? false, error: current?.error ?? '', refresh, loadOlder };
 };
 
 export default function LinkTradeV2Activity({ activity, runtime, lifecycle, activeFilter, tokenInfoByKey, ensureTokenInfo,
@@ -59,6 +59,15 @@ export default function LinkTradeV2Activity({ activity, runtime, lifecycle, acti
   search: string; pairFilter: string; typeFilter: string; sortMode: string;
   confirmFunding: (input: TradeFundingPreflightInput) => Promise<void>; runWalletFlow: <T>(operation: () => Promise<T>) => Promise<T>; onBusyChange: (busy: boolean) => void;
 }) {
+  const olderSentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onScroll = () => {
+      const bounds = olderSentinel.current?.getBoundingClientRect();
+      if (bounds && bounds.top <= window.innerHeight + 200 && bounds.bottom >= 0 && activity.snapshot && !activity.snapshot.complete && !activity.busy && !activity.error) void activity.loadOlder();
+    };
+    window.addEventListener('scroll', onScroll, true);
+    return () => window.removeEventListener('scroll', onScroll, true);
+  }, [activity.snapshot, activity.busy, activity.error, activity.loadOlder]);
   const [selection, setSelection] = useState<{ runtime: Runtime; reference: LinkTradeV2Reference; lifecycle: 'active' | 'history' } | null>(null);
   const selected = selection?.runtime === runtime && selection.lifecycle === lifecycle && activity.snapshot?.orders.some(row => row.reference.id === selection.reference.id && row.reference.escrow === selection.reference.escrow) ? selection.reference : null;
   const meta = (row: { privatePair: boolean; offerToken: string; requestToken: string }) => {
@@ -89,10 +98,10 @@ export default function LinkTradeV2Activity({ activity, runtime, lifecycle, acti
   }
   return <section className="p2p-management-group-block" aria-label="Shared trades" aria-busy={activity.busy}>
     <header className="p2p-management-group-head"><strong>Shared trades</strong>
-      {!activity.snapshot?.complete ? <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.refresh(); }}>{activity.busy ? 'Loading…' : 'Load more'}</button> : null}
+      <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.refresh(); }}>Refresh latest</button>
     </header>
     {activity.error ? <p role="alert">{activity.error}</p> : null}
-    {!activity.error && activity.snapshot && !activity.snapshot.complete ? <p role="status">More activity is available.</p> : null}
+    {!activity.error && activity.snapshot && !activity.snapshot.complete ? <p role="status">History is incomplete. Older trades and events may not be loaded.</p> : null}
     {!activity.busy && !activity.error && activity.snapshot?.complete && (lifecycle === 'active' ? !orders.length : !history.length) ? <p>No shared trades in this view.</p> : null}
     {lifecycle === 'active' ? orders.map(row => <article key={`${row.reference.escrow}:${row.reference.id}`} className="p2p-management-group-block">
       <div><strong>{meta(row).pair}</strong><span> · {row.expiresAt !== '0' && BigInt(row.expiresAt) <= BigInt(Math.floor(Date.now() / 1000)) ? 'Expired · refund available' : row.enabled ? 'Open' : 'Link revoked'}</span></div>
@@ -112,6 +121,8 @@ export default function LinkTradeV2Activity({ activity, runtime, lifecycle, acti
     {selected && (lifecycle === 'active' ? orders.some(row => row.reference.chainId === selected.chainId && row.reference.escrow === selected.escrow && row.reference.id === selected.id)
       : history.some(row => row.chainId === selected.chainId && row.escrow === selected.escrow && row.orderId === selected.id)) ? <OwnerControls runtime={runtime} reference={selected} tokenInfoByKey={tokenInfoByKey} ensureTokenInfo={ensureTokenInfo}
       confirmFunding={confirmFunding} runWalletFlow={runWalletFlow} onBusyChange={onBusyChange} /> : null}
-    {activity.snapshot ? <details><summary>History coverage</summary><p>Through block {activity.snapshot.throughBlock ?? 'not yet loaded'} of {activity.snapshot.safeHead}</p></details> : null}
+    <div ref={olderSentinel} aria-hidden="true" />
+    {!activity.snapshot?.complete ? <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.loadOlder(); }}>{activity.busy ? 'Loading…' : 'Load older'}</button> : null}
+    {activity.snapshot ? <details><summary>History coverage</summary><p>Blocks {activity.snapshot.fromBlock ?? 'not yet loaded'} to {activity.snapshot.throughBlock ?? 'not yet loaded'} of {activity.snapshot.safeHead}</p></details> : null}
   </section>;
 }

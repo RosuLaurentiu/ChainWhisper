@@ -10,7 +10,7 @@ import { verifyCurrentDexCanonicalInclusion } from './currentDexCanonicalInclusi
 import { issueCurrentDexSubmissionCapability } from '../features/wallet/currentDexSubmissionCapability';
 
 const wiring = vi.hoisted(() => ({ issue: vi.fn(), graph: vi.fn(), operation: vi.fn() }));
-vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: wiring.issue }));
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: wiring.issue }));
 vi.mock('./dexV2Chain', async original => ({ ...await original<typeof import('./dexV2Chain')>(), readCurrentSharedPoolDexGraph: wiring.graph, readCurrentDexOperation: wiring.operation }));
 afterEach(() => vi.unstubAllGlobals());
 type Tx = Parameters<NonNullable<CurrentTransport['verifyCanonicalInclusion']>>[0];

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const chain = vi.hoisted(() => ({
+  bindCapability: vi.fn(),
   assertCapability: vi.fn(),
   assertCapabilitySnapshot: vi.fn(),
   assertCapabilityScope: vi.fn(),
@@ -11,7 +12,11 @@ const chain = vi.hoisted(() => ({
   parseMessageReceipt: vi.fn(),
   readEpochKey: vi.fn(),
   readGroup: vi.fn(),
+  readCanonical: vi.fn(),
+  readCount: vi.fn(),
+  readMembership: vi.fn(),
   readHistory: vi.fn(),
+  readLatestBlock: vi.fn(),
   readMetadataHistory: vi.fn(),
   readMetadataVersion: vi.fn(),
   readCredit: vi.fn(),
@@ -24,9 +29,12 @@ const chain = vi.hoisted(() => ({
   verify: vi.fn(),
   withdrawCredit: vi.fn()
 }));
+const issuer = vi.hoisted(() => vi.fn());
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: issuer }));
 
 vi.mock('./groupChatV2Chain', async (importOriginal) => ({
   ...await importOriginal<typeof import('./groupChatV2Chain')>(),
+  bindGroupChatV2MetaMaskCapability: chain.bindCapability,
   assertGroupChatV2MetaMaskCapabilitySnapshotCurrent: chain.assertCapabilitySnapshot,
   assertGroupChatV2MetaMaskCapabilityScope: chain.assertCapabilityScope,
   createGroupChatV2Group: chain.createGroup,
@@ -36,7 +44,11 @@ vi.mock('./groupChatV2Chain', async (importOriginal) => ({
   parseGroupChatV2MessageReceipt: chain.parseMessageReceipt,
   readGroupChatV2EpochKey: chain.readEpochKey,
   readGroupChatV2Group: chain.readGroup,
+  readGroupChatV2CanonicalBlock: chain.readCanonical,
+  readGroupChatV2MessageCountAtBlock: chain.readCount,
+  readGroupChatV2MembershipRanges: chain.readMembership,
   readGroupChatV2MessageLogPage: chain.readHistory,
+  readGroupChatV2LatestBlockNumber: chain.readLatestBlock,
   readGroupChatV2MetadataLogPage: chain.readMetadataHistory,
   readGroupChatV2MetadataVersionAtBlock: chain.readMetadataVersion,
   readGroupChatV2NativeCredit: chain.readCredit,
@@ -55,6 +67,8 @@ import {
   createGroupChatV2Session
 } from './groupChatV2Session';
 import type { GroupChatV2MetaMaskCapability } from './groupChatV2Chain';
+import { issueGroupChatV2MetaMaskCapability, type IssueGroupChatV2MetaMaskCapabilityArgs } from '../features/wallet/groupChatV2MetaMaskCapability';
+import type { BrowserWalletSignerLease } from '../features/wallet/hooks/useWalletOnboarding';
 
 const OWNER = '0x1111111111111111111111111111111111111111';
 const CONTRACT = '0x2222222222222222222222222222222222222222';
@@ -136,6 +150,130 @@ describe('groupChatV2Session', () => {
     vi.clearAllMocks();
   });
 
+  it('forwards the optional capability priority callback without invoking it during issuance', async () => {
+    const shouldPrioritizeRead = vi.fn(() => true);
+    chain.bindCapability.mockResolvedValueOnce(CAPABILITY);
+    issuer.mockImplementationOnce(async (input: { bindCapability: (value: object) => Promise<unknown> }) => input.bindCapability({}));
+    const provider = { request: vi.fn(async () => null) };
+    const lease: BrowserWalletSignerLease = {
+      activeAddress: OWNER, activeChainId: Number(CHAIN_ID), activeProvider: provider,
+      activeSignerSource: 'metamask', address: OWNER, chainId: Number(CHAIN_ID), epoch: 1,
+      session: { address: OWNER, chainId: Number(CHAIN_ID), provider, source: 'injected',
+        walletId: 'group-test-wallet', walletLabel: 'Group test wallet' },
+      sessionProvider: provider, signingProvider: provider, source: 'injected'
+    };
+    const args: IssueGroupChatV2MetaMaskCapabilityArgs = {
+      assertLeaseCurrent: vi.fn(async () => undefined), assertLeaseSnapshotCurrent: vi.fn(),
+      expectedChainId: CHAIN_ID, expectedOwnerAddress: OWNER, lease, requirePrivacy: false, shouldPrioritizeRead
+    };
+    await expect(issueGroupChatV2MetaMaskCapability(args))
+      .resolves.toBe(CAPABILITY);
+    expect(chain.bindCapability).toHaveBeenCalledWith({ shouldPrioritizeRead });
+    expect(shouldPrioritizeRead).not.toHaveBeenCalled();
+  });
+
+  it('exposes pending read phases and balances success and rejection despite observer errors', async () => {
+    const dependencies = setup();
+    let releaseCapability!: (value: GroupChatV2MetaMaskCapability) => void;
+    let releaseHead!: (value: bigint) => void;
+    dependencies.getOwnerCapability.mockImplementationOnce(() => new Promise(resolve => { releaseCapability = resolve; }));
+    chain.readLatestBlock.mockImplementationOnce(() => new Promise(resolve => { releaseHead = resolve; }));
+    const events: Array<readonly [string, boolean]> = [];
+    const controller = createGroupChatV2Session({ ...dependencies, manifest: MANIFEST, ownerAddress: OWNER,
+      onReadPhase: (phase, pending) => { events.push([phase, pending]); throw new Error('observer only'); }
+    });
+
+    const pending = controller.latestBlock();
+    expect(events).toEqual([['capability', true]]);
+    releaseCapability(CAPABILITY);
+    await vi.waitFor(() => expect(chain.readLatestBlock).toHaveBeenCalledOnce());
+    expect(events).toEqual([
+      ['capability', true], ['capability', false], ['deployment', true], ['deployment', false], ['head', true]
+    ]);
+    releaseHead(120n);
+    await expect(pending).resolves.toBe(120n);
+    expect(events[events.length - 1]).toEqual(['head', false]);
+
+    const failure = new Error('read failed');
+    chain.readLatestBlock.mockRejectedValueOnce(failure);
+    await expect(controller.latestBlock()).rejects.toBe(failure);
+    expect(events.slice(-2)).toEqual([['head', true], ['head', false]]);
+    dependencies.getOwnerCapability.mockRejectedValueOnce(failure);
+    await expect(controller.latestBlock()).rejects.toBe(failure);
+    expect(events.slice(-2)).toEqual([['capability', true], ['capability', false]]);
+
+    chain.verify.mockRejectedValueOnce(failure);
+    const unverified = createGroupChatV2Session({ ...dependencies, manifest: MANIFEST, ownerAddress: OWNER,
+      onReadPhase: (phase, pending) => { events.push([phase, pending]); throw new Error('observer only'); }
+    });
+    await expect(unverified.latestBlock()).rejects.toBe(failure);
+    expect(events.slice(-2)).toEqual([['deployment', true], ['deployment', false]]);
+    for (const phase of ['capability', 'deployment', 'head']) {
+      expect(events.filter(event => event[0] === phase && event[1])).toHaveLength(
+        events.filter(event => event[0] === phase && !event[1]).length
+      );
+    }
+  });
+
+  it.each(['capability', 'deployment'] as const)('pauses the initial head after held %s and retains verified setup on resume', async phase => {
+    const dependencies = setup();
+    let paused = false, settled = false, release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    if (phase === 'capability') {
+      dependencies.getOwnerCapability.mockImplementationOnce(async () => { await held; return CAPABILITY; });
+    } else {
+      chain.verify.mockImplementationOnce(async () => { await held; return MANIFEST; });
+    }
+    chain.readLatestBlock.mockResolvedValue(120n);
+    const controller = createGroupChatV2Session({ ...dependencies, manifest: MANIFEST, ownerAddress: OWNER });
+    const pause = Symbol('pause');
+    const assertContinue = () => { if (paused) throw pause; };
+    const pending = controller.latestBlock(undefined, assertContinue).catch(error => error)
+      .finally(() => { settled = true; });
+    await vi.waitFor(() => expect(phase === 'capability' ? dependencies.getOwnerCapability : chain.verify).toHaveBeenCalledOnce());
+    paused = true;
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(chain.readLatestBlock).not.toHaveBeenCalled();
+    release();
+    expect(await pending).toBe(pause);
+    expect(chain.readLatestBlock).not.toHaveBeenCalled();
+    expect(chain.verify).toHaveBeenCalledTimes(phase === 'deployment' ? 1 : 0);
+
+    paused = false;
+    await expect(controller.latestBlock(undefined, assertContinue)).resolves.toBe(120n);
+    expect(dependencies.getOwnerCapability).toHaveBeenCalledTimes(2);
+    expect(chain.verify).toHaveBeenCalledOnce();
+    expect(chain.readLatestBlock).toHaveBeenCalledOnce();
+  });
+
+  it('checks current scope after held deployment and preserves genuine deployment failures', async () => {
+    const dependencies = setup();
+    let current = true, release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    chain.verify.mockImplementationOnce(async () => { await held; return MANIFEST; });
+    const controller = createGroupChatV2Session({ ...dependencies, manifest: MANIFEST, ownerAddress: OWNER });
+    const changed = new Error('scope changed');
+    const assertContinue = () => { if (!current) throw changed; };
+    const pending = controller.latestBlock(undefined, assertContinue).catch(error => error);
+    await vi.waitFor(() => expect(chain.verify).toHaveBeenCalledOnce());
+    current = false;
+    release();
+    expect(await pending).toBe(changed);
+    expect(chain.readLatestBlock).not.toHaveBeenCalled();
+
+    const failure = new Error('deployment rejected');
+    chain.verify.mockImplementationOnce(async () => { current = false; throw failure; });
+    const unverified = createGroupChatV2Session({ ...dependencies, manifest: MANIFEST, ownerAddress: OWNER });
+    current = true;
+    await expect(unverified.latestBlock(undefined, assertContinue)).rejects.toBe(failure);
+    expect(chain.readLatestBlock).not.toHaveBeenCalled();
+    current = true;
+    chain.readLatestBlock.mockResolvedValueOnce(120n);
+    await expect(unverified.latestBlock(undefined, assertContinue)).resolves.toBe(120n);
+    expect(chain.verify).toHaveBeenCalledTimes(3);
+  });
+
   it('mints a frozen runtime-branded controller and creates through the bound browser-wallet owner only', async () => {
     const dependencies = setup();
     chain.createGroup.mockResolvedValue(transaction());
@@ -191,6 +329,46 @@ describe('groupChatV2Session', () => {
     await controller.readEpochKey(1n);
     expect(chain.readEpochKey).toHaveBeenCalledTimes(2);
     expect(dependencies.getOwnerCapability).toHaveBeenCalledWith(true);
+  });
+
+  it('forwards selected history purpose through fresh state and epoch reads without splitting the key cache', async () => {
+    const dependencies = setup();
+    const controller = createGroupChatV2Session({ ...dependencies, manifest: MANIFEST, ownerAddress: OWNER });
+    const readContext = Object.freeze({ purpose: 'selected-history' as const, groupId: 1n });
+    await controller.readEpochKey(1n, 3n, readContext);
+    expect(chain.readGroup).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 1n, readContext }));
+    expect(chain.readEpochKey).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: 1n, epoch: 3n, readContext }));
+    await controller.readEpochKey(1n, 3n);
+    expect(chain.readEpochKey).toHaveBeenCalledOnce();
+    expect(chain.readGroup).toHaveBeenCalledTimes(2);
+    await controller.inspect(1n, readContext);
+    await controller.latestBlock(readContext);
+    await controller.canonicalBlock(111n, readContext);
+    await controller.historyPage(1n, 111n, 112n, readContext);
+    await controller.membershipRanges(1n, OWNER, readContext);
+    await controller.messageCountAtBlock(1n, 111n, readContext);
+    for (const mock of [chain.readGroup, chain.readLatestBlock, chain.readCanonical,
+      chain.readHistory, chain.readMembership, chain.readCount]) {
+      expect(mock).toHaveBeenLastCalledWith(expect.objectContaining({ readContext }));
+    }
+  });
+
+  it('shares an already pending background epoch key with selected history', async () => {
+    const dependencies = setup();
+    const controller = createGroupChatV2Session({ ...dependencies, manifest: MANIFEST, ownerAddress: OWNER });
+    let release!: () => void;
+    chain.readEpochKey.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { release = resolve; }); return KEY;
+    });
+    const background = controller.readEpochKey(1n, 3n);
+    await vi.waitFor(() => expect(chain.readEpochKey).toHaveBeenCalledOnce());
+    const selected = controller.readEpochKey(1n, 3n, Object.freeze({ purpose: 'selected-history', groupId: 1n }));
+    await vi.waitFor(() => expect(chain.readGroup).toHaveBeenCalledTimes(2));
+    expect(chain.readEpochKey).toHaveBeenCalledOnce();
+    expect(chain.readEpochKey.mock.calls[0][0].readContext).toBeUndefined();
+    release();
+    expect(await background).toBe(KEY);
+    expect(await selected).toBe(KEY);
   });
 
   it('serializes private epoch-key reads across different group epochs', async () => {

@@ -9,7 +9,7 @@ import { ARCHIVED_CHEAP_DEX_CANDIDATE as c, resolveCurrentCheapDexCandidate, typ
 const ARCHIVED_CHEAP_POOL_TOKENS=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1);
 const mocks=vi.hoisted(()=>({issue:vi.fn(),graph:vi.fn(),decrypt:vi.fn(),small:vi.fn(),wide:vi.fn(),reader:vi.fn()}));
 vi.mock('../../lib/currentDexPreparedPoolSnapshot',async original=>({...await original<typeof import('../../lib/currentDexPreparedPoolSnapshot')>(),createPreparedOwnerPoolSnapshotReader:mocks.reader}));
-vi.mock('./ownerCotiMetaMaskCapability',()=>({issueOwnerCotiMetaMaskCapability:mocks.issue}));
+vi.mock('./ownerCotiMetaMaskCapability',async original=>({...await original<typeof import('./ownerCotiMetaMaskCapability')>(),issueOwnerCotiMetaMaskCapability:mocks.issue}));
 vi.mock('../../lib/dexV2Chain',async original=>({...await original<typeof import('../../lib/dexV2Chain')>(),readCurrentSharedPoolDexGraph:mocks.graph}));
 vi.mock('../../lib/privateUint256',()=>({decryptPrivateUint256Output:mocks.decrypt,encryptPrivateUint128Input:mocks.small,encryptPrivateUint256Input:mocks.wide}));
 const owner=`0x${'22'.repeat(20)}`,recipient=`0x${'33'.repeat(20)}`,hash=toBeHex(30n,32),txHash=toBeHex(40n,32),context=toBeHex(50n,32);

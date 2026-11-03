@@ -10,6 +10,7 @@ import {
 import type { BrowserWalletSignerLease } from './hooks/useWalletOnboarding';
 
 export type IssueOtcV2MetaMaskCapabilityArgs = Readonly<{
+  assertCapabilityCurrent?: () => void;
   assertLeaseCurrent: (lease: BrowserWalletSignerLease) => Promise<void>;
   assertLeaseSnapshotCurrent: (lease: BrowserWalletSignerLease) => void;
   commitOnboardInfo?: OwnerCotiMetaMaskOnboardInfoCommitter;

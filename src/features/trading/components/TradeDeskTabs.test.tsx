@@ -47,6 +47,21 @@ describe('shared Trading navigation', () => {
     expect(markup).toContain('aria-current="page"');
   });
 
+  it.each([['public', 'Offers'], ['swap', 'Offers'], ['create', 'Create'], ['mine', 'My trades']] as const)(
+    'keeps %s orders within the existing %s section', (view, label) => {
+    const navigation = TradeViewTabs({
+      routeSurfaceView: view,
+      routeView: view,
+      onNavigateDeskView: () => undefined
+    });
+    const markup = renderToStaticMarkup(navigation);
+    expect(markup).not.toContain('Private Liquidity');
+    expect(markup).not.toContain('Bid/ask');
+    expect(markup).not.toContain('Hidden limit');
+    expect(markup.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(markup).toMatch(new RegExp(`aria-current="page"[^>]*><span>${label}</span>`));
+  });
+
   it('keeps Swap and recurring creation out of the Create workspace', () => {
     const markup = renderToStaticMarkup(createElement(TradeEntryModeTabs, {
       activeTradeMode: 'limit',

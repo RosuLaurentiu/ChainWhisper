@@ -9,7 +9,6 @@ import {
   ERC20_TOKEN_ABI,
   FALLBACK_REWARD_TOKEN_DECIMALS,
   LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
-  MAX_ERC20_APPROVAL,
   OTC_HISTORY_READER_CONTRACT_ABI,
   OTC_HISTORY_READER_CONTRACT_ADDRESS,
   OTC_READER_CONTRACT_ADDRESS,
@@ -3340,6 +3339,9 @@ export const ensurePrivateTokenAccountEncryptionAddress = async ({
   }
 
   const currentAddress = await readPrivateTokenAccountEncryptionAddress(tokenAddress, ownerAddress).catch(() => null);
+  if (currentAddress === null) {
+    throw new Error('Private token encryption address could not be read before setup.');
+  }
   if (currentAddress?.toLowerCase() === encryptionAddress.toLowerCase()) {
     privateTokenEncryptionSetupReadyAt.set(setupKey, Date.now());
     return false;
@@ -3536,11 +3538,14 @@ export const ensureTradeTokenAllowance = async (
       signer,
       true
     ).catch(() => null);
-    if (allowance !== null && allowance >= requiredAmount) {
+    if (allowance === null) {
+      throw new Error('Private token allowance could not be read before approval.');
+    }
+    if (allowance === requiredAmount) {
       return;
     }
 
-    await approvePrivateTokenSpender(signer, tokenAddress, spenderAddress, allowance);
+    await approvePrivateTokenSpender(signer, tokenAddress, spenderAddress, allowance, requiredAmount, 'exact');
     const refreshedAllowance = await readPrivateTokenAllowanceWei(
       tokenAddress,
       ownerAddress,
@@ -3551,8 +3556,8 @@ export const ensureTradeTokenAllowance = async (
     if (refreshedAllowance === null) {
       throw new Error('Private token approval could not be confirmed after the approval transaction.');
     }
-    if (refreshedAllowance < requiredAmount) {
-      throw new Error('Private token allowance is still below the required amount after approval.');
+    if (refreshedAllowance !== requiredAmount) {
+      throw new Error('Private token allowance does not match the required amount after approval.');
     }
     return;
   }
@@ -3560,18 +3565,28 @@ export const ensureTradeTokenAllowance = async (
   const cotiEthers = await loadCotiEthersModule();
   const tokenContract = new cotiEthers.Contract(tokenAddress, ERC20_TOKEN_ABI, signer);
   const allowanceRaw = await tokenContract.allowance(ownerAddress, spenderAddress).catch(() => null);
-  const allowance = typeof allowanceRaw === 'bigint' ? allowanceRaw : 0n;
-  if (allowance >= requiredAmount) {
+  if (typeof allowanceRaw !== 'bigint') {
+    throw new Error('Public token allowance could not be read before approval.');
+  }
+  if (allowanceRaw === requiredAmount) {
     return;
   }
 
   logMobileWalletDiagnostic('token-approval', {
     tokenKind: 'erc20'
   });
-  const approveTx = await tokenContract.approve(spenderAddress, MAX_ERC20_APPROVAL);
+  const approveTx = await tokenContract.approve(spenderAddress, requiredAmount);
   const approveReceipt = await waitForAppChainReceipt(approveTx, 'Public token approval');
   if (!approveReceipt || Number((approveReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
     throw new Error('Public token approval failed on-chain.');
+  }
+  const refreshedAllowance = await tokenContract.allowance(ownerAddress, spenderAddress).catch((cause: unknown) => {
+    const error = new Error('Public token allowance could not be read after approval.');
+    Object.defineProperty(error, 'cause', { value: cause });
+    throw error;
+  });
+  if (refreshedAllowance !== requiredAmount) {
+    throw new Error('Public token allowance does not match the required amount after approval.');
   }
 };
 

@@ -9,7 +9,7 @@ import { CURRENT_DEX_OPERATION_ABI, CURRENT_DEX_RECEIPT_ABI } from './currentDex
 import { CURRENT_DEX_ACCEPT_ABI, prepareCurrentDexAcceptance } from './currentDexQuoteReview';
 
 const mockIssuer = vi.hoisted(() => vi.fn());
-vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ issueOwnerCotiMetaMaskCapability: mockIssuer }));
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: mockIssuer }));
 
 // Derive from retained compiler artifacts, not a hand-written approximation of the graph.
 const native = createRequire(resolve('../ChainWhisper Contracts V2/validation/package.json'));

@@ -144,7 +144,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     message: 'Only your wallet can read these amounts. A transaction can cost network gas.' });
   const assertPoolAuthority = (action: 'create' | 'approve-create' | 'clear-create', intent: { classId: bigint; budgets: readonly [bigint, bigint];
     terms: readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint] }) =>
-    assertCurrentAppPoolAuthority(candidate.graph, { owner: context.owner!, action, budgets: intent.budgets, classId: intent.classId,
+    preparedScope?.key === 'cheap-history' ? undefined : assertCurrentAppPoolAuthority(candidate.graph, { owner: context.owner!, action, budgets: intent.budgets, classId: intent.classId,
       tolerance: [intent.terms[8], intent.terms[9]] });
   const currentSender = async (captured: typeof context) => {
     const next = await getSender!(chain, preparedCandidate ? { candidate: preparedScope!.key } : nativeTrial ? { nativePoolProfile: CURRENT_NATIVE_POOL_PROFILE } : undefined);
@@ -270,7 +270,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     if (candidateKey !== 'cheap-history' || !connected || !pair || inFlight.current || busy || savedActionPending || validFunding || validPreview || nftId !== null) return;
     const captured = scope.current; inFlight.current = true; setBusy(true);
     try {
-      assertCurrentAppPoolAllowanceCleanupAuthority(candidate.graph, context.owner!);
+      if (preparedScope?.key !== 'cheap-history') assertCurrentAppPoolAllowanceCleanupAuthority(candidate.graph, context.owner!);
       const next = await currentSender(captured);
       const prepared = await next.prepareSharedPoolAllowanceCleanup({ marketId: pair.marketId, canonicalIndex: index,
         confirm: async values => {

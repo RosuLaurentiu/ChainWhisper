@@ -1,4 +1,5 @@
 import { getAddress } from '@coti-io/coti-ethers';
+import current from './currentPrivateLiquidityBinding.json';
 import {
   CHAINWHISPER_TESTNET_CANDIDATE_CONFIG,
   resolveTestnetCandidateConfig,
@@ -265,78 +266,36 @@ export const resolvePrivateLiquidityV2DeploymentConfig = (
   if (candidate.status === 'invalid') {
     return Object.freeze({ status: 'invalid', error: 'Private Liquidity V2 testnet candidate is invalid.' });
   }
-  if (candidate.status === 'active') {
-    const book = candidate.components.privateLiquidityBookV2;
-    const hiddenIntentModule = candidate.components.privateLiquidityHiddenIntentV2;
-    const positionToken = candidate.components.privateLiquidityPositionNftV2;
-    if (!book.deploymentBlock || !hiddenIntentModule.deploymentBlock || !positionToken.deploymentBlock) {
-      return Object.freeze({ status: 'invalid', error: 'Private Liquidity V2 testnet candidate is invalid.' });
-    }
-    try {
-      const manifest = Object.freeze({
-      chainId: candidate.chainId,
-      book: Object.freeze({
-        address: book.address,
-        deploymentBlock: book.deploymentBlock,
-        deploymentBlockHash: hash(
-          required(env, PRIVATE_LIQUIDITY_V2_ENV_KEYS.bookDeploymentBlockHash),
-          'Private Liquidity V2 Book deployment block hash'
-        ),
-        creationTransactionHash: hash(
-          required(env, PRIVATE_LIQUIDITY_V2_ENV_KEYS.bookCreationTransactionHash),
-          'Private Liquidity V2 Book creation transaction hash'
-        ),
-        runtimeBytecodeHash: book.runtimeBytecodeHash
-      }),
-      hiddenIntentModule: Object.freeze({
-        address: hiddenIntentModule.address,
-        deploymentBlock: hiddenIntentModule.deploymentBlock,
-        deploymentBlockHash: hash(
-          required(env, PRIVATE_LIQUIDITY_V2_ENV_KEYS.moduleDeploymentBlockHash),
-          'Private Liquidity V2 module deployment block hash'
-        ),
-        creationTransactionHash: hash(
-          required(env, PRIVATE_LIQUIDITY_V2_ENV_KEYS.moduleCreationTransactionHash),
-          'Private Liquidity V2 module creation transaction hash'
-        ),
-        runtimeBytecodeHash: hiddenIntentModule.runtimeBytecodeHash
-      }),
-      positionToken: Object.freeze({
-        address: positionToken.address,
-        deploymentBlock: positionToken.deploymentBlock,
-        deploymentBlockHash: hash(
-          required(env, PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenDeploymentBlockHash),
-          'Private Liquidity V2 Position NFT deployment block hash'
-        ),
-        creationTransactionHash: hash(
-          required(env, PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenCreationTransactionHash),
-          'Private Liquidity V2 Position NFT creation transaction hash'
-        ),
-        runtimeBytecodeHash: positionToken.runtimeBytecodeHash
-      })
-      });
-      if (manifest.book.deploymentBlockHash !== manifest.positionToken.deploymentBlockHash ||
-          manifest.book.creationTransactionHash !== manifest.positionToken.creationTransactionHash) {
-        throw new Error('Private Liquidity V2 Position NFT provenance differs from its Book creation.');
-      }
-      requireAcceptedHiddenIntentRuntime(manifest);
-      return Object.freeze({
-        status: 'active',
-        manifest,
-        finalityLagBlocks: candidate.finalityLagBlocks,
-        rpcUrl: candidate.rpcUrl,
-        fingerprint: `${candidate.fingerprint}:private-liquidity-v2`
-      });
-    } catch {
-      return Object.freeze({ status: 'invalid', error: 'Private Liquidity V2 testnet candidate is invalid.' });
-    }
-  }
+  if (candidate.status === 'inactive') return Object.freeze({ status: 'inactive' });
   try {
-    return parsePrivateLiquidityV2DeploymentConfig(env);
+    if (candidate.chainId !== current.chainId || address(candidate.owner, 'Candidate owner') !== current.owner.toLowerCase()) {
+      throw new Error('Current Private Liquidity identity differs from candidate admission.');
+    }
+    const { book, hiddenIntentModule: module, positionToken: nft } = current.manifest;
+    return parsePrivateLiquidityV2DeploymentConfig({
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.enabled]: 'true',
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.chainId]: current.chainId,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.bookAddress]: book.address,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.bookDeploymentBlock]: book.deploymentBlock,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.bookDeploymentBlockHash]: book.deploymentBlockHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.bookCreationTransactionHash]: book.creationTransactionHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.bookRuntimeHash]: book.runtimeBytecodeHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.moduleAddress]: module.address,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.moduleDeploymentBlock]: module.deploymentBlock,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.moduleDeploymentBlockHash]: module.deploymentBlockHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.moduleCreationTransactionHash]: module.creationTransactionHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.moduleRuntimeHash]: module.runtimeBytecodeHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenAddress]: nft.address,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenDeploymentBlockHash]: nft.deploymentBlockHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenCreationTransactionHash]: nft.creationTransactionHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.positionTokenRuntimeHash]: nft.runtimeBytecodeHash,
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.finalityLagBlocks]: candidate.finalityLagBlocks.toString(),
+      [PRIVATE_LIQUIDITY_V2_ENV_KEYS.rpcUrl]: candidate.rpcUrl
+    });
   } catch {
     return Object.freeze({
       status: 'invalid',
-      error: 'Private Liquidity V2 deployment configuration is invalid.'
+      error: 'Private Liquidity V2 testnet candidate is invalid.'
     });
   }
 };

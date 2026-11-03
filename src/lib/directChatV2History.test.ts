@@ -55,6 +55,18 @@ const SCOPE = {
   conversationStartBlock: 100n
 } satisfies DirectChatV2HistoryScope;
 
+it('validates suffix checkpoint metadata separately from the canonical tail', () => {
+  const checkpoint = { ...createDirectChatV2HistoryCheckpoint({ scope: SCOPE, blockNumber: 110n,
+    blockHash: `0x${'55'.repeat(32)}`, lastMessageId: 3n }), firstMessageId: '2', olderToBlock: '105' };
+  const plan = () => planDirectChatV2HistoryPage({ scope: SCOPE, latestBlock: 110n, confirmationDepth: 0n,
+    checkpoint, canonicalCheckpointBlockHash: checkpoint.blockHash });
+  expect(plan().checkpointStatus).toBe('valid');
+  checkpoint.firstMessageId = '5';
+  expect(plan).toThrow('suffix coverage');
+  checkpoint.firstMessageId = '2'; checkpoint.olderToBlock = '111';
+  expect(plan).toThrow('suffix coverage');
+});
+
 const makeEvent = async ({
   messageId,
   senderSequence,
@@ -372,6 +384,22 @@ describe('directChatV2History', () => {
       expectedPreviousMessageId: 12n,
       expectedNextMessageId: 13n
     });
+  });
+
+  it('uses a first-message scan hint without moving the creation or checkpoint boundary', () => {
+    const scope = { ...SCOPE, firstMessageBlock: 50_000n };
+    expect(planDirectChatV2HistoryPage({ scope, latestBlock: 100_000n, confirmationDepth: 0n }))
+      .toMatchObject({ fromBlock: 50_000n, expectedPreviousMessageId: 0n });
+    const checkpoint = createDirectChatV2HistoryCheckpoint({ scope, blockNumber: 120n,
+      blockHash: `0x${'aa'.repeat(32)}`, lastMessageId: 0n });
+    expect(planDirectChatV2HistoryPage({ scope, latestBlock: 100_000n, confirmationDepth: 0n,
+      checkpoint, canonicalCheckpointBlockHash: checkpoint.blockHash }))
+      .toMatchObject({ fromBlock: 121n, checkpointStatus: 'valid' });
+    expect(planDirectChatV2HistoryPage({ scope, latestBlock: 100_000n, confirmationDepth: 0n,
+      checkpoint, canonicalCheckpointBlockHash: null }))
+      .toMatchObject({ fromBlock: 50_000n, resetConversation: true });
+    expect(() => planDirectChatV2HistoryPage({ scope: { ...scope, firstMessageBlock: 1n },
+      latestBlock: 100_000n, confirmationDepth: 0n })).toThrow('cannot predate');
   });
 
   it('falls back to a conversation-only V2 replay on a checkpoint hash mismatch', () => {

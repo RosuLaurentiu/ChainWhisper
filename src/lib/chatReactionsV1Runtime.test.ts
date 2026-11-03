@@ -109,6 +109,7 @@ const source: ChatReactionSource = Object.freeze({
   contractAddress: DIRECT,
   conversationId: CONVERSATION_ID,
   messageId: '7',
+  blockNumber: '50',
   blockHash: hash('77'),
   transactionHash: hash('88'),
   logIndex: 1
@@ -223,6 +224,190 @@ describe('ChatReactionsV1 runtime', () => {
     expect(result.states).toHaveLength(1);
     expect(result.states[0]?.active).toBe(false);
     expect(assertChatReactionsV1Runtime(runtime)).toBe(runtime);
+  });
+
+  it('does no synchronization RPC when the selected source list is empty', async () => {
+    const runtime = await createChatReactionsV1Runtime({ config, getOwnerCapability, readProvider, runOwnerTransactionFlow });
+    expect(await runtime.sync([])).toMatchObject({ accepted: [], states: [], ignored: [] });
+    expect(chainMocks.latest).not.toHaveBeenCalled();
+    expect(chainMocks.readRange).not.toHaveBeenCalled();
+  });
+
+  it('starts inclusively at source birth, expands for an older selection and never saves a suffix as global', async () => {
+    const storage = new MemoryStorage();
+    const cache = createChatReactionsV1Cache({ storage });
+    const runtime = await createChatReactionsV1Runtime({ config, cache, getOwnerCapability, readProvider, runOwnerTransactionFlow });
+    const recent = { ...source, blockNumber: '4000' };
+    await runtime.sync([recent]);
+    expect(chainMocks.readRange.mock.calls.map(([input]) => [input.fromBlock, input.toBlock]))
+      .toEqual([[4_000n, 4_195n], [4_195n, 4_195n]]);
+    expect(storage.values.size).toBe(0);
+    chainMocks.readRange.mockClear();
+    await runtime.sync([{ ...source, blockNumber: '2000' }]);
+    expect(chainMocks.readRange.mock.calls.some(([input]) => input.fromBlock === 2_000n && input.toBlock === 3_999n)).toBe(true);
+    expect(storage.values.size).toBe(0);
+  });
+
+  it('rejects missing, invalid and foreign read metadata without inventing a floor', async () => {
+    const runtime = await createChatReactionsV1Runtime({ config, getOwnerCapability, readProvider, runOwnerTransactionFlow });
+    for (const input of [
+      { ...source, blockNumber: undefined }, { ...source, blockNumber: '04000' },
+      { ...source, blockNumber: '0' }, { ...source, blockNumber: '9' },
+      { ...source, blockNumber: (2n ** 64n).toString() }, { ...source, contractAddress: GROUP }
+    ]) await expect(runtime.sync([input])).rejects.toThrow('canonical block number');
+    expect(chainMocks.latest).not.toHaveBeenCalled();
+    await expect(runtime.sync([{ ...source, blockNumber: '4196' }])).rejects.toThrow('newer than');
+    expect(chainMocks.readRange).not.toHaveBeenCalled();
+  });
+
+  it('includes same-block reactions for a finalized Group source', async () => {
+    const groupSource: ChatReactionSource = { ...source, kind: 'group', contractAddress: GROUP, groupId: '1', blockNumber: '4195' };
+    const sameBlock = { ...observation({ blockNumber: 4195n, active: true }), kind: 'group' as const,
+      targetContract: GROUP, groupId: '1', messageAnchor: deriveChatReactionSourceAnchor(groupSource) };
+    observations.set('4195:4195', [sameBlock]);
+    const runtime = await createChatReactionsV1Runtime({ config, getOwnerCapability, readProvider, runOwnerTransactionFlow });
+    expect((await runtime.sync([groupSource])).states).toEqual([sameBlock]);
+    expect(chainMocks.readRange.mock.calls.every(([input]) => input.fromBlock === 4195n)).toBe(true);
+  });
+
+  it('does not traverse an unrelated gap from an old complete cache to a recent source', async () => {
+    const storage = new MemoryStorage();
+    const cache = createChatReactionsV1Cache({ storage });
+    cache.save({ deployment, finalityLagBlocks: 5n, checkpointBlock: '125', checkpointHash: hash(125n), observations: [] });
+    const saved = [...storage.values.values()][0];
+    const runtime = await createChatReactionsV1Runtime({ config, cache, getOwnerCapability, readProvider, runOwnerTransactionFlow });
+    await runtime.sync([{ ...source, blockNumber: '4000' }]);
+    expect(chainMocks.readRange.mock.calls.map(([input]) => [input.fromBlock, input.toBlock]))
+      .toEqual([[125n, 125n], [125n, 125n], [4000n, 4195n], [4195n, 4195n]]);
+    expect([...storage.values.values()][0]).toBe(saved);
+  });
+
+  it('cancels between pages without committing coverage or a cache checkpoint', async () => {
+    let current = true;
+    const storage = new MemoryStorage();
+    const runtime = await createChatReactionsV1Runtime({ config, cache: createChatReactionsV1Cache({ storage }), getOwnerCapability, readProvider, runOwnerTransactionFlow });
+    chainMocks.readRange.mockImplementationOnce(async ({ fromBlock, toBlock }) => {
+      current = false;
+      return page(fromBlock, toBlock);
+    });
+    await expect(runtime.sync([source], () => current)).rejects.toThrow('selection changed');
+    expect(chainMocks.readRange).toHaveBeenCalledOnce();
+    expect(storage.values.size).toBe(0);
+    chainMocks.readRange.mockClear();
+    current = true;
+    await runtime.sync([source], () => current);
+    expect(chainMocks.readRange.mock.calls[0][0].fromBlock).toBe(100n);
+  });
+
+  it('rechecks the view before commit after reduction and preserves the old checkpoint', async () => {
+    let current = true;
+    const runtime = await createChatReactionsV1Runtime({ config, getOwnerCapability, readProvider, runOwnerTransactionFlow });
+    await runtime.sync([source]);
+    latestBlock = 4205n;
+    chainMocks.reduce.mockImplementationOnce((input: CanonicalChatReactionRangePage) => {
+      current = false;
+      return { accepted: input.observations, states: input.observations, ignored: [] };
+    });
+    await expect(runtime.sync([source], () => current)).rejects.toThrow('selection changed');
+    current = true;
+    chainMocks.readRange.mockClear();
+    await runtime.sync([source], () => current);
+    expect(chainMocks.readRange.mock.calls.map(([input]) => [input.fromBlock, input.toBlock]))
+      .toContainEqual([4196n, 4200n]);
+  });
+
+  it('cancels at the raw-read guard and does not prevent a later reaction write', async () => {
+    let current = true;
+    let assertReadCurrent!: () => Promise<void>;
+    let request!: (input: { method: string }) => Promise<unknown>;
+    let resume!: () => void;
+    let enter!: () => void;
+    const held = new Promise<void>((resolve) => { resume = resolve; });
+    const started = new Promise<void>((resolve) => { enter = resolve; });
+    const send = vi.fn(async () => { enter(); await held; return []; });
+    chainMocks.bindRead.mockImplementationOnce(async (input) => {
+      assertReadCurrent = input.assertCurrent; request = input.provider.request; return readCapability;
+    });
+    chainMocks.readRange.mockImplementation(async ({ fromBlock, toBlock }) => {
+      await assertReadCurrent(); await request({ method: 'eth_getLogs' }); await assertReadCurrent();
+      return page(fromBlock, toBlock);
+    });
+    const runtime = await createChatReactionsV1Runtime({ config, getOwnerCapability,
+      readProvider: { send, getTransactionReceipt: vi.fn() } as never, runOwnerTransactionFlow });
+    const result = runtime.sync([source], () => current).catch((error: unknown) => error);
+    await started; current = false; resume();
+    expect(await result).toEqual(new Error('Chat reaction selection changed.'));
+    expect(send).toHaveBeenCalledOnce();
+    actionMocks.setReaction.mockResolvedValue({ transactionHash: hash('aa') });
+    await expect(runtime.setReaction({ source: { ...source, blockNumber: undefined }, emoji: '👍', active: true, operationId: 'after-read-cancel' }))
+      .resolves.toMatchObject({ transactionHash: hash('aa') });
+  });
+
+  it('rejects startup invalidation after a held raw read before deployment admission', async () => {
+    let current = true;
+    let resume!: () => void;
+    let enter!: () => void;
+    const held = new Promise<void>((resolve) => { resume = resolve; });
+    const started = new Promise<void>((resolve) => { enter = resolve; });
+    const send = vi.fn(async () => { enter(); await held; return '0x6c11a0'; });
+    chainMocks.bindRead.mockImplementationOnce(async ({ provider, assertCurrent }) => {
+      await assertCurrent();
+      await provider.request({ method: 'eth_chainId' });
+      await assertCurrent();
+      return readCapability;
+    });
+    const pending = createChatReactionsV1Runtime({
+      config,
+      getOwnerCapability,
+      readProvider: { send, getTransactionReceipt: vi.fn() } as never,
+      runOwnerTransactionFlow,
+      assertCurrent: () => { if (!current) throw new Error('Reaction lease retired.'); }
+    });
+    const result = pending.catch((error: unknown) => error);
+    await started;
+    current = false;
+    resume();
+
+    expect(await result).toEqual(new Error('Reaction lease retired.'));
+    expect(send).toHaveBeenCalledOnce();
+    expect(chainMocks.attest).not.toHaveBeenCalled();
+  });
+
+  it('stops an active sync at its next raw-read guard after close', async () => {
+    let assertReadCurrent!: () => void | Promise<void>;
+    let request!: (input: { method: string }) => Promise<unknown>;
+    let resume!: () => void;
+    let enter!: () => void;
+    const held = new Promise<void>((resolve) => { resume = resolve; });
+    const started = new Promise<void>((resolve) => { enter = resolve; });
+    const send = vi.fn(async () => { enter(); await held; return []; });
+    chainMocks.bindRead.mockImplementationOnce(async (input) => {
+      assertReadCurrent = input.assertCurrent;
+      request = input.provider.request;
+      return readCapability;
+    });
+    chainMocks.readRange.mockImplementation(async ({ fromBlock, toBlock }) => {
+      await assertReadCurrent();
+      await request({ method: 'eth_getLogs' });
+      await assertReadCurrent();
+      return page(fromBlock, toBlock);
+    });
+    const runtime = await createChatReactionsV1Runtime({
+      config,
+      getOwnerCapability,
+      readProvider: { send, getTransactionReceipt: vi.fn() } as never,
+      runOwnerTransactionFlow
+    });
+    const pending = runtime.sync([source]).catch((error: unknown) => error);
+    await started;
+    runtime.close();
+    resume();
+
+    expect(await pending).toEqual(new Error('ChatReactionsV1 runtime is closed.'));
+    expect(send).toHaveBeenCalledOnce();
+    expect(chainMocks.readRange).toHaveBeenCalledOnce();
+    await expect(runtime.sync([source])).rejects.toThrow('closed');
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it('adaptively splits a dense range without weakening the per-page verifier', async () => {

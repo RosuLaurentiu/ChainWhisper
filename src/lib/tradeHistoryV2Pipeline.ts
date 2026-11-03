@@ -1,11 +1,19 @@
 import { getAddress } from '@coti-io/coti-ethers';
+import { readDirectTradeV2PublicTradeTerms } from './directTradeV2Actions';
+import type { DirectTradeV2AcceptanceTerms, ParsedDirectTradeV2Status } from './tradeHistoryV2Events';
 import {
   readCanonicalTradeHistoryV2LogRange,
+  assertTradeHistoryV2WalletIndex,
+  TradeHistoryV2RangeLimitError,
+  TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS,
   type AttestedTradeHistoryV2Deployment,
-  type TradeHistoryV2ReadCapability
+  type CanonicalTradeHistoryV2LogRange,
+  type TradeHistoryV2ReadCapability,
+  type TradeHistoryV2WalletIndex
 } from './tradeHistoryV2Chain';
 import {
   clearTradeHistoryV2MaterializationScope,
+  createTradeHistoryV2MaterializationState,
   getTradeHistoryV2MaterializationRevision,
   materializeCanonicalTradeHistoryV2Range,
   type TradeHistoryV2DirectPrivateAmountResolver,
@@ -13,6 +21,10 @@ import {
   type TradeHistoryV2PrivateAmountResolver
 } from './tradeHistoryV2Materialize';
 import {
+  buildTradeHistoryV2ScopeKey,
+  clearTradeHistoryV2Scope,
+  createTradeHistoryV2LedgerState,
+  replaceTradeHistoryV2Range,
   getTradeHistoryV2LedgerRevision
 } from './tradeHistoryV2Ledger';
 import {
@@ -28,8 +40,27 @@ export type TradeHistoryV2PipelineState = Readonly<{
   materialization: TradeHistoryV2MaterializationState;
 }>;
 
+// Keep only verified public input, in memory and bound to its committed state.
+const canonicalPagesByState = new WeakMap<TradeHistoryV2PipelineState, Readonly<{
+  deployment: AttestedTradeHistoryV2Deployment;
+  walletKey: string | undefined;
+  pages: readonly CanonicalTradeHistoryV2LogRange[];
+  directTerms: ReadonlyMap<string, DirectTradeV2AcceptanceTerms>;
+}>>();
+
+export const resetTradeHistoryV2Projection = (previous: TradeHistoryV2PipelineState): TradeHistoryV2PipelineState => {
+  const state = Object.freeze({
+    sync: { ...previous.sync, ledger: createTradeHistoryV2LedgerState() },
+    materialization: createTradeHistoryV2MaterializationState()
+  });
+  const saved = canonicalPagesByState.get(previous);
+  if (saved) canonicalPagesByState.set(state, saved);
+  return state;
+};
+
 export type TradeHistoryV2PipelineResult = Omit<TradeHistoryV2SyncResult, 'state'> & Readonly<{
   state: TradeHistoryV2PipelineState;
+  narrowedForLogLimit?: boolean;
 }>;
 
 export type TradeHistoryV2PipelineReadDependencies = Pick<
@@ -52,10 +83,13 @@ export const syncTradeHistoryV2PipelineRange = async ({
   overlapBlocks,
   reads,
   viewer,
+  walletIndex,
   resolvePrivateReceiptAmounts,
   resolveDirectPrivateAmounts,
   expectedLedgerRevision,
   expectedMaterializationRevision,
+  mode,
+  rebuildProjection = false,
   shouldContinue
 }: {
   previous: TradeHistoryV2PipelineState;
@@ -67,12 +101,16 @@ export const syncTradeHistoryV2PipelineRange = async ({
   overlapBlocks: bigint;
   reads: TradeHistoryV2PipelineReadDependencies;
   viewer?: string;
+  walletIndex?: TradeHistoryV2WalletIndex;
   resolvePrivateReceiptAmounts?: TradeHistoryV2PrivateAmountResolver;
   resolveDirectPrivateAmounts?: TradeHistoryV2DirectPrivateAmountResolver;
   expectedLedgerRevision: number;
   expectedMaterializationRevision: number;
+  mode?: 'latest' | 'older';
+  rebuildProjection?: boolean;
   shouldContinue?: () => boolean;
 }): Promise<TradeHistoryV2PipelineResult> => {
+  if (walletIndex) assertTradeHistoryV2WalletIndex(walletIndex, capability, deployment, viewer);
   if (
     deployment.chainId !== scope.chainId ||
     deployment.contractAddress !== getAddress(scope.contractAddress).toLowerCase() ||
@@ -98,22 +136,51 @@ export const syncTradeHistoryV2PipelineRange = async ({
     throw new Error('Trade-history pipeline started from a stale materialization revision.');
   }
 
+  const scopeKey = buildTradeHistoryV2ScopeKey(scope);
+  const saved = canonicalPagesByState.get(previous);
+  const walletKey = walletIndex && `${walletIndex.ownerAddress}:${walletIndex.complete === false ? 'all-events' : walletIndex.orderIds.join(',')}`;
+  if (saved && (saved.deployment !== deployment || saved.walletKey !== walletKey)) {
+    throw new Error('Trade-history public pages belong to another attested deployment.');
+  }
+  let canonicalPages = saved?.pages ?? [];
+  let directTerms = new Map(saved?.directTerms);
+  const resolveDirectTerms = mode && viewer ? async (status: ParsedDirectTradeV2Status): Promise<DirectTradeV2AcceptanceTerms> => {
+    const cached = directTerms.get(status.orderId);
+    if (cached) return cached;
+    const terms = await readDirectTradeV2PublicTradeTerms({ capability, deployment, ownerAddress: viewer, tradeId: status.orderId });
+    if (BigInt(terms.createdAt) > BigInt(status.changedAt) || terms.maker !== status.maker || terms.taker !== status.taker) {
+      throw new Error('Direct history terms do not match the canonical acceptance.');
+    }
+    const result = Object.freeze({ protocol: 'direct-v2' as const, chainId: deployment.chainId,
+      contractAddress: deployment.contractAddress, orderId: status.orderId, maker: terms.maker, taker: terms.taker,
+      amountMode: terms.amountMode, publicAmounts: Object.freeze(terms.amountMode === 'public'
+        ? { offerAmount: terms.offerAmount, requestAmount: terms.requestAmount } : {}) });
+    directTerms.set(status.orderId, result);
+    return result;
+  } : undefined;
+  if (rebuildProjection && previous.sync.checkpointsByScope[scopeKey] && !canonicalPages.length) {
+    throw new Error('Trade-history projection is missing its verified public pages.');
+  }
   let pendingMaterialization = previous.materialization;
   let materializedPage = false;
-  const syncResult = await syncTradeHistoryV2Range({
+  let canNarrowSuccessfulRange = false;
+  let syncResult: TradeHistoryV2SyncResult;
+  try {
+  syncResult = await syncTradeHistoryV2Range({
     previous: previous.sync,
     scope,
     confirmationDepth,
     maxBlockSpan,
     overlapBlocks,
     expectedRevision: expectedLedgerRevision,
+    mode,
     shouldContinue,
     dependencies: {
       ...reads,
-      readCompleteRange: async ({ fromBlock, toBlock, reorged }) => {
+      readCompleteRange: async ({ fromBlock, toBlock, reorged, reset }) => {
         let base = previous.materialization;
         let baseRevision = expectedMaterializationRevision;
-        if (reorged) {
+        if (reorged || reset) {
           base = clearTradeHistoryV2MaterializationScope({
             previous: base,
             chainId: scope.chainId,
@@ -122,12 +189,22 @@ export const syncTradeHistoryV2PipelineRange = async ({
           });
           baseRevision += 1;
         }
-        const canonicalPage = await readCanonicalTradeHistoryV2LogRange({
+        const readPage = () => readCanonicalTradeHistoryV2LogRange({
           capability,
           deployment,
+          walletIndex,
           fromBlock: BigInt(fromBlock),
           toBlock: BigInt(toBlock)
         });
+        const canonicalPage = await readPage().catch(cause => {
+          canNarrowSuccessfulRange = cause instanceof TradeHistoryV2RangeLimitError &&
+            BigInt(toBlock) - BigInt(fromBlock) + 1n > TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS;
+          throw cause;
+        });
+        if (reorged || reset) { canonicalPages = []; directTerms = new Map(); }
+        canonicalPages = [...canonicalPages.filter(page =>
+          BigInt(page.range.fromBlock) < BigInt(fromBlock) || BigInt(page.range.toBlock) > BigInt(toBlock)
+        ), canonicalPage];
         const materialized = await materializeCanonicalTradeHistoryV2Range({
           previous: base,
           canonicalPage,
@@ -135,8 +212,9 @@ export const syncTradeHistoryV2PipelineRange = async ({
           contractAddress: scope.contractAddress,
           expectedRevision: baseRevision,
           viewer,
-          resolvePrivateReceiptAmounts,
-          resolveDirectPrivateAmounts,
+          resolvePrivateReceiptAmounts: rebuildProjection ? undefined : resolvePrivateReceiptAmounts,
+          resolveDirectPrivateAmounts: rebuildProjection ? undefined : resolveDirectPrivateAmounts,
+          resolveDirectTerms,
           shouldContinue
         });
         pendingMaterialization = materialized.state;
@@ -145,8 +223,20 @@ export const syncTradeHistoryV2PipelineRange = async ({
       }
     }
   });
+  } catch (cause) {
+    // A successful oversized response has no committed state. Narrow once
+    // from the original checkpoint; all transport/validation failures stop.
+    if (!canNarrowSuccessfulRange) throw cause;
+    if (shouldContinue && !shouldContinue()) throw new Error('Trade-history pipeline scope changed before page fallback.');
+    return { ...await syncTradeHistoryV2PipelineRange({ previous, scope, capability, deployment,
+      confirmationDepth, maxBlockSpan: TRADE_HISTORY_V2_MAX_LOG_RANGE_BLOCKS, overlapBlocks,
+      reads, viewer, walletIndex, resolvePrivateReceiptAmounts, resolveDirectPrivateAmounts,
+      expectedLedgerRevision, expectedMaterializationRevision, rebuildProjection, mode, shouldContinue }), narrowedForLogLimit: true };
+  }
 
-  if (syncResult.reorged && !materializedPage) {
+  if ((syncResult.reorged || syncResult.reset) && !materializedPage) {
+    canonicalPages = [];
+    directTerms = new Map();
     pendingMaterialization = clearTradeHistoryV2MaterializationScope({
       previous: previous.materialization,
       chainId: scope.chainId,
@@ -154,14 +244,39 @@ export const syncTradeHistoryV2PipelineRange = async ({
       expectedRevision: expectedMaterializationRevision
     });
   }
+  if (rebuildProjection) {
+    let ledger = clearTradeHistoryV2Scope({ previous: syncResult.state.ledger, ...scope,
+      expectedRevision: getTradeHistoryV2LedgerRevision({ state: syncResult.state.ledger, ...scope }) });
+    pendingMaterialization = clearTradeHistoryV2MaterializationScope({ previous: pendingMaterialization, ...scope,
+      expectedRevision: getTradeHistoryV2MaterializationRevision({ state: pendingMaterialization, ...scope }) });
+    for (const canonicalPage of canonicalPages) {
+      const materialized = await materializeCanonicalTradeHistoryV2Range({
+        previous: pendingMaterialization, canonicalPage, ...scope, viewer,
+        expectedRevision: getTradeHistoryV2MaterializationRevision({ state: pendingMaterialization, ...scope }),
+        resolvePrivateReceiptAmounts, resolveDirectPrivateAmounts, resolveDirectTerms, shouldContinue
+      });
+      ledger = replaceTradeHistoryV2Range({ previous: ledger, page: materialized.page,
+        expectedRevision: getTradeHistoryV2LedgerRevision({ state: ledger, ...scope }) });
+      pendingMaterialization = materialized.state;
+    }
+    // Sync checked the retained checkpoint before reuse; check again after private work.
+    const checkpoint = syncResult.state.checkpointsByScope[scopeKey];
+    if (checkpoint) {
+      const latest = await reads.getLatestBlockNumber(scope.chainId);
+      if (!/^(0|[1-9][0-9]*)$/.test(latest) || BigInt(latest) < BigInt(checkpoint.blockNumber) + confirmationDepth) {
+        throw new Error('Trade-history checkpoint is no longer finalized after rebuilding the private projection.');
+      }
+      const block = await reads.readCanonicalBlock(scope.chainId, checkpoint.blockNumber);
+      if (!block || block.number !== checkpoint.blockNumber || block.hash.toLowerCase() !== checkpoint.blockHash.toLowerCase()) {
+        throw new Error('Trade-history checkpoint changed while rebuilding the private projection.');
+      }
+    }
+    syncResult = { ...syncResult, state: { ...syncResult.state, ledger } };
+  }
   if (shouldContinue && !shouldContinue()) {
     throw new Error('Trade-history pipeline scope changed before commit.');
   }
-  return {
-    ...syncResult,
-    state: {
-      sync: syncResult.state,
-      materialization: pendingMaterialization
-    }
-  };
+  const state = Object.freeze({ sync: syncResult.state, materialization: pendingMaterialization });
+  canonicalPagesByState.set(state, Object.freeze({ deployment, walletKey, pages: Object.freeze(canonicalPages), directTerms }));
+  return { ...syncResult, state };
 };

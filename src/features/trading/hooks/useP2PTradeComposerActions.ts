@@ -578,6 +578,7 @@ export default function useP2PTradeComposerActions({
         if (refreshError) setTradeActionError(refreshError);
         return result;
       }
+      if (v2Protocol === 'private-v2') throw new Error('The current private Book is unavailable.');
       if (editSourceTrade && getPrivateBookV2Projection(editSourceTrade)) throw new Error('This edit requires the promoted private book runtime.');
       if (isEditTrade && editSourceTrade.hiddenLiquidity && !hiddenLiquidity) {
         setComposerActionError('Hidden amount orders must stay hidden when edited. Cancel the edit to create a visible order.');
@@ -629,9 +630,7 @@ export default function useP2PTradeComposerActions({
       const v2Confirmation = buildOtcV2ConfirmationDetails({
         approvals: v2Approval ? [v2Approval] : [],
         cotiPrivateInputCount:
-          v2Protocol === 'private-v2'
-            ? 1
-            : v2Protocol === 'direct-v2' &&
+          v2Protocol === 'direct-v2' &&
                 offerToken.kind === 'private-erc20' &&
                 requestToken.kind === 'private-erc20'
               ? 2
@@ -696,30 +695,6 @@ export default function useP2PTradeComposerActions({
                     offerAsset: { ...publicAsset(offerToken), amount: offerAmount },
                     requestAsset: { ...publicAsset(requestToken), amount: requestAmount },
                     fillPolicy: { partialFillsAllowed: true, minPartialFillBps: 0n, minRequestAmount: 0n, maxRequestAmountPerWallet: 0n, oneFillPerWallet: false },
-                    expiresAt
-                  });
-            } else if (v2Protocol === 'private-v2') {
-              if (offerToken.kind !== 'private-erc20' && requestToken.kind !== 'private-erc20') {
-                throw new Error('Private OTC V2 requires at least one private token.');
-              }
-              const privateAsset = (value: Pick<TradeAssetPayload, 'kind' | 'tokenAddress'>, amount: bigint) => ({
-                assetType: value.kind,
-                ...(value.kind === 'native' ? {} : { token: value.tokenAddress }),
-                amount
-              });
-              confirmed = await otcV2ActionRuntime.privateTrade(isEditTrade
-                ? {
-                    kind: 'replace', originalOrderId: editSourceTrade.tradeId,
-                    offerAsset: privateAsset(offerToken, offerAmount),
-                    requestAsset: privateAsset(requestToken, requestAmount),
-                    fillPolicy: { partialFillsAllowed: true, minPartialFillBps: 0n, maxFills: 64n },
-                    expiresAt
-                  }
-                : {
-                    kind: 'create',
-                    offerAsset: privateAsset(offerToken, offerAmount),
-                    requestAsset: privateAsset(requestToken, requestAmount),
-                    fillPolicy: { partialFillsAllowed: true, minPartialFillBps: 0n, maxFills: 64n },
                     expiresAt
                   });
             } else {
@@ -820,8 +795,8 @@ export default function useP2PTradeComposerActions({
           filledOfferAmount: '0',
           filledRequestAmount: '0'
         },
-        hiddenLiquidity: v2Protocol === 'private-v2' || (v2Protocol === 'direct-v2' && Boolean(privateMode)),
-        makerPrivateProgress: v2Protocol === 'private-v2' || (v2Protocol === 'direct-v2' && Boolean(privateMode))
+        hiddenLiquidity: v2Protocol === 'direct-v2' && Boolean(privateMode),
+        makerPrivateProgress: v2Protocol === 'direct-v2' && Boolean(privateMode)
           ? {
               initialOfferAmount: offerAmount.toString(),
               remainingOfferAmount: offerAmount.toString(),
@@ -832,7 +807,7 @@ export default function useP2PTradeComposerActions({
           protocol: v2Protocol,
           chainId: v2Deployment.chainId,
           contractAddress: v2Deployment.contractAddress,
-          ...(v2Protocol === 'standard-v2' || v2Protocol === 'private-v2' ? { revision: '1' } : {}),
+          ...(v2Protocol === 'standard-v2' ? { revision: '1' } : {}),
           ...(v2Protocol === 'direct-v2' ? { amountMode: privateMode ? 'private' as const : 'public' as const } : {}),
           ...(privateMode ? { privateMode } : {})
         }

@@ -26,17 +26,20 @@ type MessageReactionSummary = {
 
 export const getGroupReplyActionPolicy = ({
   archived = false,
+  membershipEnded = false,
   groupChatV2RepliesEnabled,
   message,
   walletPromptSensitiveActionsDisabled,
   walletPromptSensitiveActionsTitle
 }: Readonly<{
   archived?: boolean;
+  membershipEnded?: boolean;
   groupChatV2RepliesEnabled: boolean;
   message: ChatMessage;
   walletPromptSensitiveActionsDisabled: boolean;
   walletPromptSensitiveActionsTitle: string;
 }>): Readonly<{ disabled: boolean; title: string }> => {
+  if (membershipEnded) return { disabled: true, title: 'Membership ended. New messages are disabled.' };
   if (archived) return { disabled: true, title: 'Archived groups cannot receive new messages.' };
   if (!walletPromptSensitiveActionsDisabled) return { disabled: false, title: 'Reply' };
   if (!groupChatV2RepliesEnabled) {
@@ -78,13 +81,14 @@ type GroupChatPanelProps = {
   desktopGroupActions: ReactNode;
   mobileGroupActions: ReactNode;
   isMobileNav: boolean;
-  syncingGroups: boolean;
   mobileGroupOptionsOpen: boolean;
   onToggleMobileGroupOptions: () => void;
-  onRefreshGroup: () => void;
   chatMessagesRef: Ref<HTMLDivElement>;
   activeGroupMessages: ChatMessage[];
   messageLoadPhase: 'initial' | 'history' | null;
+  hasOlderHistory?: boolean;
+  loadingOlderHistory?: boolean;
+  onLoadOlderHistory?: () => void;
   groupEpochSyncRequired: boolean;
   groupEpochSyncPending: boolean;
   onSynchronizeGroupEpoch: () => void;
@@ -168,13 +172,14 @@ export default function GroupChatPanel({
   desktopGroupActions,
   mobileGroupActions,
   isMobileNav,
-  syncingGroups,
   mobileGroupOptionsOpen,
   onToggleMobileGroupOptions,
-  onRefreshGroup,
   chatMessagesRef,
   activeGroupMessages,
   messageLoadPhase,
+  hasOlderHistory = false,
+  loadingOlderHistory = false,
+  onLoadOlderHistory,
   groupEpochSyncRequired,
   groupEpochSyncPending,
   onSynchronizeGroupEpoch,
@@ -233,6 +238,8 @@ export default function GroupChatPanel({
   onOpenInternalAppLink
 }: GroupChatPanelProps) {
   const archived = activeGroupMeta?.archived === true;
+  const membershipEnded = activeGroupMeta?.membershipEnded === true;
+  const canUseMemberTools = !archived && !membershipEnded;
   const chatMessagesNodeRef = useRef<HTMLDivElement | null>(null);
   const mobileGroupToolsButtonRef = useRef<HTMLButtonElement | null>(null);
   const setChatMessagesNode = useCallback(
@@ -301,12 +308,12 @@ export default function GroupChatPanel({
             <strong>{(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) + ` (#${activeGroupId})`}</strong>
             <span className="group-title-badges">
               <span className="group-title-badge">{activeGroupMeta?.isPrivate ? 'Private' : 'Public'}</span>
-              <span className={isActiveGroupAdmin ? 'group-title-badge admin' : 'group-title-badge'}>
-                {isActiveGroupAdmin ? 'Admin' : 'Member'}
+              <span className={!membershipEnded && isActiveGroupAdmin ? 'group-title-badge admin' : 'group-title-badge'}>
+                {membershipEnded ? 'Membership ended' : isActiveGroupAdmin ? 'Admin' : 'Member'}
               </span>
             </span>
           </div>
-          <div className="group-meta-dropdowns">
+          {!membershipEnded ? <div className="group-meta-dropdowns">
             <details className="group-members-dropdown" onKeyDown={closeDetailsOnEscape}>
               <summary>
                 Members {activeGroupMemberCount}
@@ -341,7 +348,7 @@ export default function GroupChatPanel({
                               {isParticipantCopied ? 'Copied' : participant.shortAddress}
                             </span>
                           </button>
-                          {!archived && isActiveGroupAdmin && !participant.isSelf ? (
+                          {canUseMemberTools && isActiveGroupAdmin && !participant.isSelf ? (
                             <>
                               {adminTransferEnabled ? (
                                 <button
@@ -374,24 +381,16 @@ export default function GroupChatPanel({
                     );
                   })
                 ) : (
-                  <li className="group-members-empty">No members loaded yet.</li>
+                  <li className="group-members-empty">{activeGroupMeta?.membersLoaded === false ? 'Loading members…' : 'No members loaded yet.'}</li>
                 )}
               </ul>
             </details>
-          </div>
+          </div> : null}
         </div>
         <div className="group-header-controls">
           {isMobileNav ? (
             <>
-              <button
-                type="button"
-                className="contact group-mobile-refresh-btn group-refresh-button"
-                onClick={onRefreshGroup}
-                disabled={syncingGroups}
-              >
-                {syncingGroups ? 'Refreshing...' : 'Refresh'}
-              </button>
-              {!archived ? <button
+              {canUseMemberTools ? <button
                 ref={mobileGroupToolsButtonRef}
                 type="button"
                 className={
@@ -408,20 +407,12 @@ export default function GroupChatPanel({
             </>
           ) : (
             <>
-              {!archived ? desktopInviteMenu : null}
-              {!archived ? desktopJoinCodeList : null}
-              <button
-                type="button"
-                className="contact group-refresh-button group-desktop-refresh-btn"
-                onClick={onRefreshGroup}
-                disabled={syncingGroups}
-              >
-                {syncingGroups ? 'Refreshing...' : 'Refresh'}
-              </button>
+              {canUseMemberTools ? desktopInviteMenu : null}
+              {canUseMemberTools ? desktopJoinCodeList : null}
             </>
           )}
         </div>
-        {!archived && isMobileNav && mobileGroupOptionsOpen ? (
+        {canUseMemberTools && isMobileNav && mobileGroupOptionsOpen ? (
           <div
             id="group-mobile-tools-panel"
             className="group-mobile-options-panel"
@@ -453,24 +444,39 @@ export default function GroupChatPanel({
               </div>
             </div>
           </div>
-        ) : !archived && !isMobileNav ? (
+        ) : canUseMemberTools && !isMobileNav ? (
           <div className="group-header-actions">{desktopGroupActions}</div>
         ) : null}
       </div>
 
       <div className="chat-messages" ref={setChatMessagesNode}>
+        {membershipEnded ? (
+          <div className="chat-empty-state" role="status">
+            <strong>Membership ended</strong>
+            <p>Only messages from your membership periods are available. New messages, replies, and reactions are disabled.</p>
+          </div>
+        ) : null}
         {archived ? (
           <div className="chat-empty-state" role="status">
             <strong>Archived</strong>
             <p>New messages are disabled. Existing messages and authorized history remain available.</p>
           </div>
         ) : null}
+        {hasOlderHistory && onLoadOlderHistory ? (
+          <div className="chat-empty-actions">
+            <button type="button" onClick={onLoadOlderHistory}
+              disabled={loadingOlderHistory || messageLoadPhase !== null || groupEpochSyncRequired}>
+              {loadingOlderHistory ? 'Loading older messages...' : 'Load older messages'}
+            </button>
+          </div>
+        ) : null}
         {groupEpochSyncRequired ? (
           <div className="chat-empty-state" role="alert" aria-live="polite">
             <strong>Sync this group’s privacy key</strong>
             <p>
-              The group membership changed. One wallet transaction lets this wallet decrypt the
-              new epoch and load its finalized messages.
+              {membershipEnded
+                ? 'One wallet transaction synchronizes an authorized history key so this wallet can load past messages.'
+                : 'The group membership changed. One wallet transaction lets this wallet decrypt the new epoch and load its finalized messages.'}
             </p>
             <div className="chat-empty-actions">
               <button
@@ -505,13 +511,10 @@ export default function GroupChatPanel({
           </div>
         ) : renderableMessages.length === 0 && !groupEpochSyncRequired ? (
           <div className="chat-empty-state" role="status" aria-live="polite">
-            <strong>No group messages yet</strong>
-            <p>Send the first message, or refresh this group if recent messages are still syncing.</p>
-            <div className="chat-empty-actions">
-              <button type="button" onClick={onRefreshGroup} disabled={syncingGroups}>
-                {syncingGroups ? 'Refreshing...' : 'Refresh'}
-              </button>
-            </div>
+            <strong>{hasOlderHistory ? 'No messages in this page' : membershipEnded ? 'No messages from your membership periods' : 'No group messages yet'}</strong>
+            <p>{hasOlderHistory ? 'Older group history remains available.'
+              : membershipEnded ? 'This wallet has no readable messages in the loaded history.'
+                : 'Send the first message, or use Force sync if recent messages are still missing.'}</p>
           </div>
         ) : (
           <div
@@ -560,6 +563,7 @@ export default function GroupChatPanel({
               Boolean(message.groupV2);
             const replyAction = getGroupReplyActionPolicy({
               archived,
+              membershipEnded,
               groupChatV2RepliesEnabled,
               message,
               walletPromptSensitiveActionsDisabled,
@@ -601,17 +605,17 @@ export default function GroupChatPanel({
                     <MessageActions
                       message={message}
                       pickerOpen={
-                        (!walletPromptSensitiveActionsDisabled || chatReactionV1Allowed) &&
+                        !membershipEnded && (!walletPromptSensitiveActionsDisabled || chatReactionV1Allowed) &&
                         reactionPickerMessageId === message.id
                       }
                       reactedEmojiSet={reactedEmojiSet}
                       sendingReaction={sendingReaction}
                       reactionDisabled={
-                        !message.txHash || sendingReaction ||
+                        membershipEnded || !message.txHash || sendingReaction ||
                         (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
                       }
                       reactionTitle={
-                        walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
+                        membershipEnded ? 'Membership ended. Reactions are disabled.' : walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
                           ? walletPromptSensitiveActionsTitle
                           : chatReactionV1Allowed
                             ? 'React publicly on-chain · 1 wallet transaction'
@@ -684,7 +688,7 @@ export default function GroupChatPanel({
                             onSendReaction(message, reaction.emoji).catch(() => {});
                           }}
                           disabled={
-                            !message.txHash ||
+                            membershipEnded || !message.txHash ||
                             sendingReaction ||
                             reaction.reactedByMe ||
                             (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
@@ -735,7 +739,7 @@ export default function GroupChatPanel({
         )}
       </div>
 
-      {!archived ? <GroupChatCompose
+      {canUseMemberTools ? <GroupChatCompose
         replyPreviewText={replyingPreviewText}
         onCancelReply={onCancelReply}
         tipComposerOpen={tipComposerOpen}

@@ -1,33 +1,22 @@
 import { useEffect } from 'react';
 import {
-  DIRECT_TRADE_ESCROW_CONTRACT_ABI,
+  COTI_NETWORK,
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-  getCotiWsLastHealthyAt,
-  loadCotiEthersModule,
-  loadCotiWsProvider,
-  markCotiWsHealthyNow,
-  PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+  RECURRING_OTC_CONTRACT_ADDRESS,
+  TRADE_ESCROW_CONTRACT_ADDRESS,
   REALTIME_SYNC_BURST_THROTTLE_MS,
   REALTIME_SYNC_DEBOUNCE_MS,
-  REALTIME_SYNC_FALLBACK_INTERVAL_MS,
-  RECURRING_OTC_CONTRACT_ABI,
-  RECURRING_OTC_CONTRACT_ADDRESS,
-  resetCotiWsProvider,
-  TRADE_ESCROW_CONTRACT_ABI,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
-  WS_HEALTHCHECK_TTL_MS,
-  WS_RETRY_COOLDOWN_MS
+  REALTIME_SYNC_FALLBACK_INTERVAL_MS
 } from '../../../lib/appShared';
+import { subscribeCotiEventHints, type CotiEventHintStatus } from '../../../lib/appShared/cotiEventHints';
+import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
 import type { P2PSyncDomain, P2PSyncReason } from '../../../lib/p2pSyncCoordinator';
 import {
   isWalletTransactionFlowActive,
   recordWalletTransactionFlowStage,
   type WalletTransactionSessionInput
 } from '../../../lib/walletTransactionFlow';
-import { P2P_VISIBLE_SYNC_INTERVAL_MS } from '../components/P2PTradingPage.helpers';
-import { ignoreRealtimeSubscriptionAction } from '../../../shell/realtimeConnection';
-
 type ScheduleP2PSyncInput = {
   domains: P2PSyncDomain[];
   escrowContract?: string;
@@ -38,7 +27,6 @@ type ScheduleP2PSyncInput = {
 type UseP2PRealtimeSyncArgs = {
   chainId: number | null;
   getTradeWalletFlowInput: () => WalletTransactionSessionInput;
-  hasActiveListRefresh: () => boolean;
   routeEscrowContract?: string;
   routeTradeId: number | null;
   routeView: string;
@@ -49,7 +37,6 @@ type UseP2PRealtimeSyncArgs = {
 export default function useP2PRealtimeSync({
   chainId,
   getTradeWalletFlowInput,
-  hasActiveListRefresh,
   routeEscrowContract,
   routeTradeId,
   routeView,
@@ -61,9 +48,9 @@ export default function useP2PRealtimeSync({
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
     let pollIntervalId: number | null = null;
-    let visibleSyncIntervalId: number | null = null;
-    let wsReconnectIntervalId: number | null = null;
-    let wsReconnectInFlight = false;
+    let hadConnected = false;
+
+
     let realtimeSyncTimerId: number | null = null;
     let lastRealtimeSyncDispatchAt = 0;
 
@@ -71,18 +58,17 @@ export default function useP2PRealtimeSync({
       if (cancelled || (typeof document !== 'undefined' && document.hidden)) {
         return;
       }
-      // A delayed event must not restart an unfinished paced read.
-      if (hasActiveListRefresh()) return;
+      // The existing sync queue holds and coalesces hints while readers are busy.
       if (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive()) {
         recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-realtime-dispatch-held');
-        return;
+        if (reason === 'interval') return;
       }
       lastRealtimeSyncDispatchAt = Date.now();
       scheduleP2PSync({
         domains: [
           'balances',
-          'public-trades',
-          ...(walletConnected ? (['wallet-trades'] as const) : []),
+          ...(['public', 'swap'].includes(routeView) ? (['public-trades'] as const) : []),
+          ...(walletConnected && routeView === 'mine' ? (['wallet-trades'] as const) : []),
           ...(routeView === 'trade' && routeTradeId ? (['trade-detail'] as const) : [])
         ],
         escrowContract: routeEscrowContract,
@@ -97,14 +83,13 @@ export default function useP2PRealtimeSync({
       }
       if (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive()) {
         recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-realtime-schedule-held');
-        return;
+        if (reason === 'interval') return;
       }
 
       const now = Date.now();
       const elapsedSinceLastDispatch = now - lastRealtimeSyncDispatchAt;
       const canDispatchImmediately =
         elapsedSinceLastDispatch >= REALTIME_SYNC_BURST_THROTTLE_MS &&
-        !hasActiveListRefresh() &&
         realtimeSyncTimerId === null;
       if (canDispatchImmediately) {
         dispatchRealtimeSync(reason);
@@ -130,206 +115,54 @@ export default function useP2PRealtimeSync({
         window.clearInterval(pollIntervalId);
         pollIntervalId = null;
       }
-      if (wsReconnectIntervalId !== null) {
-        window.clearInterval(wsReconnectIntervalId);
-        wsReconnectIntervalId = null;
+    };
+    const startPollFallback = () => {
+      if (!cancelled && pollIntervalId === null && typeof window !== 'undefined') {
+        pollIntervalId = window.setInterval(() => scheduleRealtimeSync('interval'), REALTIME_SYNC_FALLBACK_INTERVAL_MS);
       }
     };
-
     const handleVisibilityOrFocus = () => {
-      if (typeof document !== 'undefined' && document.hidden) {
-        return;
-      }
+      if (typeof document !== 'undefined' && document.hidden) return;
       scheduleRealtimeSync('focus');
     };
-
-    if (typeof window !== 'undefined') {
-      visibleSyncIntervalId = window.setInterval(() => scheduleRealtimeSync('interval'), P2P_VISIBLE_SYNC_INTERVAL_MS);
-      window.addEventListener('focus', handleVisibilityOrFocus);
-    }
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-    }
-
-    const setupTradeRealtimeSubscription = async () => {
-      try {
-        // These event addresses are Mainnet V1 only. Testnet retains the paced visible refresh.
-        if (cancelled || chainId !== 2632500) {
-          return;
-        }
-
-        const cotiEthers = await loadCotiEthersModule();
-        const wsProvider = await loadCotiWsProvider();
-        if (Date.now() - getCotiWsLastHealthyAt() > WS_HEALTHCHECK_TTL_MS) {
-          await wsProvider.getBlockNumber();
-        }
-        markCotiWsHealthyNow();
-
-        const eventSubscriptions: Array<{
-          abi: readonly string[];
-          address: string;
-          events: string[];
-        }> = [
-          {
-            abi: TRADE_ESCROW_CONTRACT_ABI,
-            address: TRADE_ESCROW_CONTRACT_ADDRESS,
-            events: [
-              'TradeOpened',
-              'TradeAccepted',
-              'TradeCancelled',
-              'TradeDeclined',
-              'TradeExpired',
-              'TradePartiallyFilled',
-              'TradeFilled',
-              'TradeReplaced',
-              'CounterTradeAccepted',
-              'ParentTradeClosedByDirectCounter'
-            ]
-          },
-          {
-            abi: PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
-            address: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
-            events: [
-              'PrivateOrderOpened',
-              'PrivateOrderFilled',
-              'TradeAccepted',
-              'TradeCancelled',
-              'TradeDeclined',
-              'TradeExpired',
-              'TradeFilled',
-              'TradeReplaced',
-              'ParentTradeClosedByDirectCounter'
-            ]
-          },
-          {
-            abi: DIRECT_TRADE_ESCROW_CONTRACT_ABI,
-            address: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-            events: [
-              'DirectTradeOpened',
-              'DirectTradeAccepted',
-              'DirectTradeFilled',
-              'DirectTradeCancelled',
-              'DirectTradeDeclined',
-              'DirectTradeExpired',
-              'DirectTradeReplaced',
-              'CounterTradeAccepted',
-              'ParentTradeClosedByCounter',
-              'SiblingCounterClosed'
-            ]
-          },
-          {
-            abi: RECURRING_OTC_CONTRACT_ABI,
-            address: RECURRING_OTC_CONTRACT_ADDRESS,
-            events: [
-              'RecurringOrderOpened',
-              'RecurringOrderEdited',
-              'RecurringOrderExecuted',
-              'RecurringOrderPaused',
-              'RecurringOrderResumed',
-              'RecurringOrderCancelled',
-              'RecurringOrderInventorySettled',
-              'PrivateRecurringFillReceipt',
-              'PrivateRecurringInventorySnapshot',
-              'PrivateRecurringAccountSnapshotUpdated'
-            ]
-          }
-        ];
-        const handleTradeEvent = () => {
-          scheduleRealtimeSync('chain-event');
-        };
-        const activeSubscriptions: Array<{
-          contract: { off: (filter: never, listener: () => void) => unknown };
-          filter: never;
-        }> = [];
-        const subscriptionRegistrations: Array<Promise<unknown>> = [];
-        for (const subscription of eventSubscriptions) {
-          const contract = new cotiEthers.Contract(subscription.address, subscription.abi, wsProvider);
-          for (const eventName of subscription.events) {
-            const filterFactory = (contract.filters as Record<string, (() => unknown) | undefined>)[eventName];
-            if (!filterFactory) {
-              continue;
-            }
-            const filter = filterFactory() as never;
-            subscriptionRegistrations.push(contract.on(filter, handleTradeEvent));
-            activeSubscriptions.push({
-              contract: contract as { off: (filter: never, listener: () => void) => unknown },
-              filter
-            });
-          }
-        }
-        await Promise.all(subscriptionRegistrations);
-
-        if (cancelled) {
-          for (const subscription of activeSubscriptions) {
-            ignoreRealtimeSubscriptionAction(() =>
-              subscription.contract.off(subscription.filter, handleTradeEvent)
-            );
-          }
-          return;
-        }
-
-        unsubscribe = () => {
-          for (const subscription of activeSubscriptions) {
-            ignoreRealtimeSubscriptionAction(() =>
-              subscription.contract.off(subscription.filter, handleTradeEvent)
-            );
-          }
-        };
-        clearPollFallback();
-      } catch {
-        await resetCotiWsProvider();
-        if (cancelled) {
-          return;
-        }
-
-        if (pollIntervalId === null) {
-          pollIntervalId = window.setInterval(() => scheduleRealtimeSync('interval'), REALTIME_SYNC_FALLBACK_INTERVAL_MS);
-        }
-
-        if (wsReconnectIntervalId === null) {
-          wsReconnectIntervalId = window.setInterval(() => {
-            if (wsReconnectInFlight || cancelled) {
-              return;
-            }
-
-            wsReconnectInFlight = true;
-            setupTradeRealtimeSubscription()
-              .catch(() => {})
-              .finally(() => {
-                wsReconnectInFlight = false;
-              });
-          }, WS_RETRY_COOLDOWN_MS);
-        }
-      }
+    const onStatus = (status: CotiEventHintStatus) => {
+      if (cancelled) return;
+      if (status === 'connected') {
+        // A hint can precede its canonical state; keep checking the selected trade.
+        if (routeView !== 'trade' || !routeTradeId) clearPollFallback();
+        // Reconcile the gap after socket loss through the existing canonical readers.
+        if (hadConnected) scheduleRealtimeSync('chain-event');
+        hadConnected = true;
+      } else startPollFallback();
     };
+    startPollFallback();
+    if (typeof window !== 'undefined') window.addEventListener('focus', handleVisibilityOrFocus);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
-    setupTradeRealtimeSubscription().catch(() => {});
+    const eventAddresses = chainId === Number(CURRENT_P2P_BINDING.chainId) && chainId === COTI_NETWORK.chainIdDecimal
+      ? Object.values(CURRENT_P2P_BINDING.deployments).map(deployment => deployment.contractAddress)
+      : chainId === 2632500 && COTI_NETWORK.chainIdDecimal === 2632500
+        ? [TRADE_ESCROW_CONTRACT_ADDRESS, PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+          DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ADDRESS]
+        : null;
+    if (eventAddresses) {
+      void subscribeCotiEventHints({
+        address: eventAddresses,
+        onHint: () => scheduleRealtimeSync('chain-event'),
+        onStatus
+      }).then(stop => {
+        if (cancelled) stop(); else unsubscribe = stop;
+      }).catch(() => onStatus('reconnecting'));
+    }
 
     return () => {
       cancelled = true;
       unsubscribe?.();
       clearPollFallback();
-      if (visibleSyncIntervalId !== null) {
-        window.clearInterval(visibleSyncIntervalId);
-      }
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('focus', handleVisibilityOrFocus);
-      }
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-      }
-      if (realtimeSyncTimerId !== null) {
-        window.clearTimeout(realtimeSyncTimerId);
-      }
+      if (typeof window !== 'undefined') window.removeEventListener('focus', handleVisibilityOrFocus);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      if (realtimeSyncTimerId !== null) window.clearTimeout(realtimeSyncTimerId);
     };
-  }, [
-    chainId,
-    getTradeWalletFlowInput,
-    hasActiveListRefresh,
-    routeEscrowContract,
-    routeTradeId,
-    routeView,
-    scheduleP2PSync,
-    walletConnected
-  ]);
+  }, [chainId, getTradeWalletFlowInput, routeEscrowContract, routeTradeId,
+    routeView, scheduleP2PSync, walletConnected]);
 }

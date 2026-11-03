@@ -7,8 +7,10 @@ import {
 } from '../../../lib/appShared/core';
 import { encodeTradeLink } from '../../../lib/tradeLinks';
 import { buildLinkTradeV2Path } from '../../../lib/linkTradeV2Links';
+import { resolveAppRouteFromPath, resolveCanonicalTradingPath } from '../../../shell/routing';
 import {
   buildPrivateLiquidityPositionPath,
+  buildPrivateLiquidityWorkspacePath,
   buildTradeRoutePath,
   buildTradeSurfacePath,
   buildTradeLinkPath,
@@ -21,6 +23,11 @@ import {
   resolveTradeRouteFromLocation,
   resolveTradeRouteFromParts
 } from './useP2PTradeRoute';
+
+const resolvePath = (path: string) => {
+  const url = new URL(path, 'https://chainwhisper.local');
+  return resolveTradeRouteFromParts(url.pathname, url.search, url.hash);
+};
 
 const ACCESS_SECRET = `0x${'12'.repeat(32)}`;
 
@@ -84,6 +91,68 @@ describe('P2P trade route helpers', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    ['discover', '/otc/desk'], ['create', '/otc/limit'],
+    ['mine', '/otc/orders?type=strategy'], ['intents', '/otc/orders?type=hidden-limit']
+  ] as const)('builds the %s path', (view, path) => {
+    expect(buildPrivateLiquidityWorkspacePath(view)).toBe(path);
+    expect(buildPrivateLiquidityWorkspacePath(view, 'mine')).toBe(path);
+    expect(resolveCanonicalTradingPath(path)).toBe(path);
+    expect(resolveAppRouteFromPath(path)).toEqual({ page: 'trades' });
+    expect(buildTradeRoutePath(resolvePath(path))).toBe(path);
+  });
+
+  it.each(['/otc/desk?type=strategy', '/otc/desk?type=strategy&action=fill',
+    '/otc/liquidity', '/otc/liquidity/swap', '/otc/pools'])(
+    'opens ordinary Offers for %s', path => {
+      expect(resolvePath(path)).toMatchObject({ view: 'public', tradeProduct: 'otc' });
+      expect(resolvePath(path).privateLiquidityView).toBeUndefined();
+      expect(resolvePath(path).swapVenue).toBeUndefined();
+    }
+  );
+  it.each(['/otc/limit?type=strategy', '/otc/limit?type=hidden-limit',
+    '/otc/liquidity/create', '/otc/pools/create'])(
+    'opens ordinary escrow Create for %s', path => {
+      expect(resolvePath(path)).toMatchObject({ view: 'create', tradeMode: 'limit' });
+      expect(resolvePath(path).privateLiquidityView).toBeUndefined();
+    }
+  );
+  it.each(['/otc/liquidity/intents', '/otc/pools/intents'])(
+    'opens hidden-limit recovery for %s', path => {
+      const route = resolvePath(path);
+      expect(route).toMatchObject({ view: 'mine', privateLiquidityView: 'intents' });
+      expect(buildTradeRoutePath(route)).toBe('/otc/orders?type=hidden-limit');
+    }
+  );
+
+  it('round-trips owner hidden intents and rejects invalid position IDs', () => {
+    const path = buildPrivateLiquidityWorkspacePath('intents', 'mine');
+    expect(path).toBe('/otc/orders?type=hidden-limit');
+    expect(resolvePath(path)).toMatchObject({ view: 'mine', privateLiquidityView: 'intents', tradeProduct: 'otc' });
+    expect(buildTradeRoutePath(resolvePath(path))).toBe(path);
+    for (const id of ['0', '01', (1n << 256n).toString()]) {
+      expect(resolvePath(`/otc/orders?type=strategy&position=${id}`).routeError).toMatch(/not valid/);
+    }
+  });
+
+  it('keeps full-width Private Liquidity position identity and swap in the P2P App', () => {
+    const positionId = ((1n << 256n) - 1n).toString();
+    const positionPath = buildPrivateLiquidityPositionPath(positionId);
+    expect(positionPath).toBe(`/otc/orders?type=strategy&position=${positionId}`);
+    expect(resolveAppRouteFromPath(positionPath)).toEqual({ page: 'trades' });
+    expect(resolvePath(positionPath)).toMatchObject({
+      view: 'mine', privateLiquidityView: 'mine', privateLiquidityPositionId: positionId, tradeProduct: 'otc'
+    });
+    expect(resolveTradeRouteFromParts('/otc/liquidity/position/0').routeError).toMatch(/not valid/);
+    const swapPath = buildTradeSurfacePath('swap', 'desk', 'swap', 'private-liquidity');
+    expect(swapPath).toBe('/otc/desk');
+    expect(resolveCanonicalTradingPath(swapPath)).toBe(swapPath);
+    expect(resolveAppRouteFromPath(swapPath)).toEqual({ page: 'trades' });
+    const route = resolvePath(swapPath);
+    expect(route).toMatchObject({ view: 'public', tradeProduct: 'otc', routeError: '' });
+    expect(buildTradeRoutePath(route)).toBe(swapPath);
+  });
+
   it('resolves top-level trade routes without changing route ownership', () => {
     expect(resolveTradeRouteFromParts('/otc')).toMatchObject({ view: 'public', tradeId: null, routeFamily: 'desk' });
     expect(resolveTradeRouteFromParts('/otc', '?venue=private-liquidity')).toMatchObject({ view: 'public' });
@@ -93,11 +162,11 @@ describe('P2P trade route helpers', () => {
       swapVenue: 'private-liquidity'
     });
     expect(resolveTradeRouteFromParts('/dex/desk')).toMatchObject({
-      view: 'pools',
+      view: 'public',
       privateLiquidityView: 'discover'
     });
     expect(resolveTradeRouteFromParts('/dex/orders')).toMatchObject({
-      view: 'pools',
+      view: 'mine',
       privateLiquidityView: 'mine'
     });
     expect(resolveTradeRouteFromParts('/dex/agent')).toMatchObject({
@@ -105,33 +174,32 @@ describe('P2P trade route helpers', () => {
       tradeProduct: 'dex'
     });
     expect(resolveTradeRouteFromParts('/dex/strategies')).toMatchObject({
-      view: 'pools',
+      view: 'public',
       privateLiquidityView: 'discover'
     });
     expect(resolveTradeRouteFromParts('/otc/pools')).toMatchObject({
-      view: 'pools',
-      privateLiquidityView: 'discover',
+      view: 'public',
       routeFamily: 'desk'
     });
     expect(resolveTradeRouteFromParts('/otc/pools/mine')).toMatchObject({
-      view: 'pools',
+      view: 'mine',
       privateLiquidityView: 'mine'
     });
     expect(resolveTradeRouteFromParts('/otc/pools/create')).toMatchObject({
-      view: 'pools',
-      privateLiquidityView: 'create'
+      view: 'create',
+      tradeMode: 'limit'
     });
     expect(resolveTradeRouteFromParts('/otc/pools/intents')).toMatchObject({
-      view: 'pools',
+      view: 'mine',
       privateLiquidityView: 'intents'
     });
     expect(resolveTradeRouteFromParts('/otc/pools/position/7')).toMatchObject({
-      view: 'pools',
+      view: 'mine',
       privateLiquidityView: 'mine',
       privateLiquidityPositionId: '7'
     });
     expect(resolveTradeRouteFromParts('/otc/pools/position/0')).toMatchObject({
-      view: 'pools',
+      view: 'mine',
       privateLiquidityView: 'mine',
       routeError: 'This private-liquidity position id is not valid.'
     });
@@ -188,26 +256,26 @@ describe('P2P trade route helpers', () => {
       accessSecret: '',
       routeFamily: 'desk',
       routeError: ''
-    })).toBe('/dex');
+    })).toBe('/otc/desk');
     expect(buildTradeRoutePath({ view: 'agent', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc/agent');
     expect(buildTradeRoutePath({
-      view: 'pools',
+      view: 'mine',
       privateLiquidityView: 'mine',
       tradeId: null,
       accessSecret: '',
       routeFamily: 'desk',
       routeError: ''
-    })).toBe('/dex/orders');
+    })).toBe('/otc/orders?type=strategy');
     expect(buildTradeRoutePath({
-      view: 'pools',
+      view: 'mine',
       privateLiquidityView: 'mine',
       privateLiquidityPositionId: '7',
       tradeId: null,
       accessSecret: '',
       routeFamily: 'desk',
       routeError: ''
-    })).toBe('/dex/orders/position/7');
-    expect(buildPrivateLiquidityPositionPath(7n)).toBe('/dex/orders/position/7');
+    })).toBe('/otc/orders?type=strategy&position=7');
+    expect(buildPrivateLiquidityPositionPath(7n)).toBe('/otc/orders?type=strategy&position=7');
     expect(() => buildPrivateLiquidityPositionPath('01')).toThrow(/positive uint256/);
     expect(buildTradeRoutePath({ view: 'public', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc/desk');
     expect(buildTradeRoutePath({ view: 'create', tradeMode: 'limit', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe(

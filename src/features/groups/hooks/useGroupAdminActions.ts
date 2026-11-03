@@ -14,7 +14,6 @@ import {
   shortenAddress,
   type ActiveGroupJoinCode,
   type GroupSummary,
-  type SyncGroupOptions
 } from '../../../lib/appShared';
 import type { GeneratedGroupJoinCode, GroupJoinCodeMode } from '../groupUiStore';
 import type { GroupChatV2SessionController } from '../../../lib/groupChatV2Session';
@@ -64,7 +63,7 @@ type UseGroupAdminActionsArgs = {
   setProcessingGroupAction: StateSetter<boolean>;
   setRevokingGroupJoinCodeHash: StateSetter<string>;
   setShowQuickActionsModal: StateSetter<boolean>;
-  syncGroupData: (options?: SyncGroupOptions) => Promise<void>;
+  onGroupChanged: () => void;
   walletAddress: string;
 };
 
@@ -120,7 +119,7 @@ export default function useGroupAdminActions({
   setProcessingGroupAction,
   setRevokingGroupJoinCodeHash,
   setShowQuickActionsModal,
-  syncGroupData,
+  onGroupChanged,
   walletAddress
 }: UseGroupAdminActionsArgs) {
   const loadActiveJoinCodesForGroup = useCallback(
@@ -206,7 +205,7 @@ export default function useGroupAdminActions({
         }
 
         await loadActiveJoinCodesForGroup(activeGroupId, { silent: true });
-        await syncGroupData({ background: true, overviewOnly: true });
+        onGroupChanged();
       } catch (revokeError) {
         const message = getGroupActionErrorMessage(revokeError, 'Failed to revoke join code.');
         setError(message);
@@ -227,7 +226,7 @@ export default function useGroupAdminActions({
       setGeneratedGroupJoinCode,
       setProcessingGroupAction,
       setRevokingGroupJoinCodeHash,
-      syncGroupData
+      onGroupChanged
     ]
   );
 
@@ -263,7 +262,7 @@ export default function useGroupAdminActions({
       setNewGroupTitle('');
       setNewGroupIsPrivate(false);
       setNewGroupMembersInput('');
-      await syncGroupData({ deep: true });
+      onGroupChanged();
       setShowQuickActionsModal(false);
       if (isGroupChatV2ScopeCurrent()) activateGroup(createdGroupId);
     } catch (createGroupError) {
@@ -285,7 +284,7 @@ export default function useGroupAdminActions({
     setNewGroupTitle,
     setProcessingGroupAction,
     setShowQuickActionsModal,
-    syncGroupData,
+    onGroupChanged,
     walletAddress
   ]);
 
@@ -307,6 +306,10 @@ export default function useGroupAdminActions({
     }
 
     const myAddress = walletAddress.trim().toLowerCase();
+    if (activeGroupMeta?.membersLoaded === false) {
+      setError('Wait for the group members to load before inviting.');
+      return;
+    }
     const existingMembers = new Set((activeGroupMeta?.members ?? []).map((member) => member.toLowerCase()));
     const accounts = parseWalletAddressListInput(groupInviteMembersInput).filter((address) => {
       const key = address.toLowerCase();
@@ -333,7 +336,7 @@ export default function useGroupAdminActions({
       await groupChatV2Session.inviteMembers(BigInt(activeGroupId), accounts, BigInt(ttlParsed));
 
       setGroupInviteMembersInput('');
-      await syncGroupData({ deep: true });
+      onGroupChanged();
     } catch (inviteError) {
       const message = getGroupActionErrorMessage(inviteError, 'Failed to send invites.');
       setError(message);
@@ -351,7 +354,7 @@ export default function useGroupAdminActions({
     setError,
     setGroupInviteMembersInput,
     setProcessingGroupAction,
-    syncGroupData,
+    onGroupChanged,
     walletAddress
   ]);
 
@@ -435,7 +438,7 @@ export default function useGroupAdminActions({
       });
 
       loadActiveJoinCodesForGroup(groupId, { silent: true }).catch(() => {});
-      await syncGroupData({ background: true, overviewOnly: true });
+      onGroupChanged();
     } catch (joinCodeError) {
       const message = getGroupActionErrorMessage(joinCodeError, 'Failed to create join code.');
       setError(message);
@@ -456,7 +459,7 @@ export default function useGroupAdminActions({
     setError,
     setGeneratedGroupJoinCode,
     setProcessingGroupAction,
-    syncGroupData,
+    onGroupChanged,
     walletAddress
   ]);
 
@@ -490,7 +493,7 @@ export default function useGroupAdminActions({
       if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
       await groupChatV2Session.acceptInvite(BigInt(groupId));
 
-      await syncGroupData({ deep: true });
+      onGroupChanged();
       activateGroup(groupId);
     } catch (acceptError) {
       const message = getProviderErrorMessage(acceptError, 'Failed to accept invite.');
@@ -504,7 +507,7 @@ export default function useGroupAdminActions({
     isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    syncGroupData
+    onGroupChanged
   ]);
 
   const joinGroupWithCode = useCallback(async () => {
@@ -576,7 +579,7 @@ export default function useGroupAdminActions({
       });
 
       setGroupJoinCodeInput('');
-      await syncGroupData({ deep: true });
+      onGroupChanged();
       activateGroup(parsedJoinCode.groupId);
       setShowQuickActionsModal(false);
     } catch (joinError) {
@@ -595,7 +598,7 @@ export default function useGroupAdminActions({
     setGroupJoinCodeInput,
     setProcessingGroupAction,
     setShowQuickActionsModal,
-    syncGroupData,
+    onGroupChanged,
     walletAddress
   ]);
 
@@ -632,7 +635,7 @@ export default function useGroupAdminActions({
       if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
       await groupChatV2Session.removeMembers(BigInt(activeGroupId), [account]);
 
-      await syncGroupData({ deep: true });
+      onGroupChanged();
     } catch (removeError) {
       const message = getProviderErrorMessage(removeError, 'Failed to remove member.');
       setError(message);
@@ -646,7 +649,7 @@ export default function useGroupAdminActions({
     isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    syncGroupData,
+    onGroupChanged,
     walletAddress
   ]);
 
@@ -670,7 +673,7 @@ export default function useGroupAdminActions({
       setProcessingGroupAction(true);
       if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
       await groupChatV2Session.transferAdmin(BigInt(activeGroupId), account);
-      await syncGroupData({ deep: true });
+      onGroupChanged();
     } catch (transferError) {
       setError(getGroupActionErrorMessage(transferError, 'Failed to transfer group administration.'));
     } finally {
@@ -684,7 +687,7 @@ export default function useGroupAdminActions({
     isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    syncGroupData
+    onGroupChanged
   ]);
 
   const beginRenameActiveGroup = useCallback(() => {
@@ -752,7 +755,7 @@ export default function useGroupAdminActions({
       await groupChatV2Session.setMetadata(BigInt(groupId), nextTitle);
 
       cancelRenameActiveGroup();
-      await syncGroupData({ deep: true });
+      onGroupChanged();
     } catch (renameError) {
       const message = getGroupActionErrorMessage(renameError, 'Failed to rename group.');
       setError(message);
@@ -769,7 +772,7 @@ export default function useGroupAdminActions({
     isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    syncGroupData
+    onGroupChanged
   ]);
 
   const leaveActiveGroup = useCallback(async () => {
@@ -804,7 +807,7 @@ export default function useGroupAdminActions({
       if (activeGroupIdRef.current === groupId) {
         setActiveGroupId(null);
       }
-      await syncGroupData({ deep: true });
+      onGroupChanged();
     } catch (leaveError) {
       const message = getGroupActionErrorMessage(leaveError, 'Failed to leave group.');
       setError(message);
@@ -821,7 +824,7 @@ export default function useGroupAdminActions({
     setActiveGroupId,
     setError,
     setProcessingGroupAction,
-    syncGroupData
+    onGroupChanged
   ]);
 
   const handoffAdminAndLeaveActiveGroup = useCallback(async () => {
@@ -861,7 +864,7 @@ export default function useGroupAdminActions({
       if (activeGroupIdRef.current === groupId) {
         setActiveGroupId(null);
       }
-      await syncGroupData({ deep: true });
+      onGroupChanged();
     } catch (disbandError) {
       const message = getGroupActionErrorMessage(disbandError, 'Failed to disband group.');
       setError(message);
@@ -878,7 +881,7 @@ export default function useGroupAdminActions({
     setError,
     setGeneratedGroupJoinCode,
     setProcessingGroupAction,
-    syncGroupData
+    onGroupChanged
   ]);
 
   const declineGroupInvite = useCallback(async (groupId: number) => {
@@ -893,7 +896,7 @@ export default function useGroupAdminActions({
       if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
       await groupChatV2Session.declineInvite(BigInt(groupId));
 
-      await syncGroupData({ deep: true });
+      onGroupChanged();
     } catch (declineError) {
       const message = getProviderErrorMessage(declineError, 'Failed to decline invite.');
       setError(message);
@@ -905,7 +908,7 @@ export default function useGroupAdminActions({
     isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    syncGroupData
+    onGroupChanged
   ]);
 
   return {

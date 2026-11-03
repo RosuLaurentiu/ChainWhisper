@@ -166,3 +166,14 @@ export const markDirectTradeNotificationsRead = (
 ): readonly DirectTradeNotificationItem[] => Object.freeze(items.map((item) =>
   (!id || item.id === id) && !item.read ? Object.freeze({ ...item, read: true }) : item
 ));
+
+export const buildDirectTradeNotificationView = (
+  items: readonly DirectTradeNotificationItem[],
+  suppressedContacts: ReadonlySet<string>
+) => {
+  const visibleItems = items.filter((item) => !suppressedContacts.has(item.contactAddress.toLowerCase()));
+  return Object.freeze({
+    items: visibleItems,
+    unreadCount: visibleItems.filter((item) => !item.read).length
+  });
+};

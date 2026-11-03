@@ -20,8 +20,10 @@ export default function useGroupChatV2History({ runtime, activeGroupId, activeGr
   const view = useRef({ runtime, activeGroupId, hasAesReady, refreshNonce });
   view.current = { runtime, activeGroupId, hasAesReady, refreshNonce };
   const [availability, setAvailability] = useState<Readonly<{
-    runtime: GroupChatV2Runtime; groupId: number; refreshNonce: number; unavailable: boolean
+    runtime: GroupChatV2Runtime; groupId: number; refreshNonce: number; unavailable: boolean;
+    hasOlder: boolean; loadingOlder: boolean
   }> | null>(null);
+  const olderRequest = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
     const selectedGroupId = activeGroupId;
     if (!runtime?.enabled || !hasAesReady || selectedGroupId === null) {
@@ -32,6 +34,8 @@ export default function useGroupChatV2History({ runtime, activeGroupId, activeGr
     let disposed = false;
     let timer: number | undefined;
     let loadPending = false;
+    let inFlight = false;
+    let hasOlder = false;
     const sameView = () => view.current.runtime === runtime && view.current.activeGroupId === selectedGroupId &&
       activeGroupIdRef.current === selectedGroupId;
     const isCurrent = () => !disposed && runtime.isCurrent() && view.current.runtime === runtime && view.current.hasAesReady &&
@@ -41,17 +45,26 @@ export default function useGroupChatV2History({ runtime, activeGroupId, activeGr
       loadPending = false;
       onLoadEnd?.(selectedGroupId);
     };
-    const setUnavailable = (unavailable: boolean) => setAvailability({ runtime, groupId: selectedGroupId, refreshNonce, unavailable });
+    const setUnavailable = (unavailable: boolean, loadingOlder = false) => setAvailability({ runtime,
+      groupId: selectedGroupId, refreshNonce, unavailable, hasOlder, loadingOlder });
     if (isCurrent()) {
       setUnavailable(false);
       loadPending = true;
       onLoadStart?.(selectedGroupId);
     }
-    const sync = async () => {
+    const sync = async (older = false) => {
+      if (!isCurrent() || inFlight) return;
+      inFlight = true;
+      if (older) {
+        if (timer !== undefined) window.clearTimeout(timer);
+        setUnavailable(false, true);
+        loadPending = true;
+        onLoadStart?.(selectedGroupId);
+      }
       try {
         const { mergeGroupMessageEntries } = await import('../../../lib/groupMessageSync');
         if (!isCurrent()) return;
-        const result = await runtime.history.sync(BigInt(selectedGroupId), page => {
+        const result = await (older ? runtime.history.loadOlder : runtime.history.sync)(BigInt(selectedGroupId), page => {
           if (!isCurrent()) return false;
           setMessagesByGroup(previous => {
             if (!runtime.isCurrent() || view.current.runtime !== runtime || !view.current.hasAesReady) return previous;
@@ -62,13 +75,13 @@ export default function useGroupChatV2History({ runtime, activeGroupId, activeGr
             return { ...previous, [groupKey]: mergeGroupMessageEntries(existing, [...page.entries]) };
           });
           return true;
-        });
+        }, isCurrent);
         if (!isCurrent()) return;
+        hasOlder = result.hasOlder;
         setUnavailable(false);
         setEpochSyncRequest(previous => previous?.groupId === selectedGroupId ? null : previous);
-        const caughtUp = !result.checkpoint || result.checkpoint.nextBlock > result.safeHead;
-        if (caughtUp) endLoad();
-        timer = window.setTimeout(() => { void sync(); }, caughtUp ? 5_000 : 0);
+        endLoad();
+        timer = window.setTimeout(() => { void sync(); }, 5_000);
       } catch (historyError) {
         if (!isCurrent()) return;
         endLoad();
@@ -78,19 +91,27 @@ export default function useGroupChatV2History({ runtime, activeGroupId, activeGr
           return;
         }
         setUnavailable(true);
-        timer = window.setTimeout(() => { void sync(); }, 5_000);
+      } finally {
+        inFlight = false;
       }
     };
+    const loadOlder = async () => { if (hasOlder) await sync(true); };
+    olderRequest.current = loadOlder;
     void sync();
     return () => {
       disposed = true;
+      if (olderRequest.current === loadOlder) olderRequest.current = null;
       if (timer !== undefined) window.clearTimeout(timer);
       // Cleanup precedes the next effect's start. Never clear a different
       // wallet/runtime/view that has already taken ownership of the phase.
       if (runtime.isCurrent() && sameView()) endLoad();
     };
   }, [activeGroupId, activeGroupIdRef, refreshNonce, runtime, hasAesReady, setMessagesByGroup, setEpochSyncRequest, onLoadStart, onLoadEnd]);
-  return { historyUnavailable: Boolean(runtime?.enabled && runtime.isCurrent() && hasAesReady &&
+  const currentAvailability = runtime?.enabled && runtime.isCurrent() && hasAesReady &&
     availability?.runtime === runtime && availability.groupId === activeGroupId &&
-    availability.refreshNonce === refreshNonce && availability.unavailable) };
+    availability.refreshNonce === refreshNonce ? availability : null;
+  return { historyUnavailable: currentAvailability?.unavailable ?? false,
+    hasOlderHistory: currentAvailability?.hasOlder ?? false,
+    loadingOlderHistory: currentAvailability?.loadingOlder ?? false,
+    loadOlderHistory: async () => { await olderRequest.current?.(); } };
 }
