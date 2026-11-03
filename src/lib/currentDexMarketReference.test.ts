@@ -9,7 +9,7 @@ import { CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT } from './currentDexHistoryDai
 import { HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS } from './currentDexHistoryDailyPriceTestnet';
 
 const runtimeHashes = vi.hoisted(() => new Map([
-  ['0x6001', '0xdf5bb9ac50ee3bf8f554d9d80c192918eebe2e8b43491d957bd9494ab457cc14'],
+  ['0x6001', '0xa5a60403d5c4ab01cd2baddb94cefdcd108bc99d249f21c6e217be2187cb3d34'],
   ['0x6002', '0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0']
 ]));
 vi.mock('@coti-io/coti-ethers', async importOriginal => {
