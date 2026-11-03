@@ -14,6 +14,7 @@ describe('owner-controlled Testnet App policy', () => {
       assertCurrentOwnerBetaWindow(graph, owner, CURRENT_OWNER_BETA.core, chain, activation.activatedAt, 220, false, 110_000_000n, 50_000_000n);
     expect(() => admitted()).not.toThrow();
     expect(() => admitted('changed')).toThrow('inactive');
+    expect(() => assertCurrentOwnerBetaWindow(CURRENT_OWNER_BETA.graph, CURRENT_OWNER_BETA.owner, '0x50e81201d656ce2ff41f097818346eda956a68c5', 7082400n, activation.activatedAt, 220, false, 110_000_000n, 50_000_000n)).toThrow('inactive');
     expect(() => admitted(undefined, '0x0000000000000000000000000000000000000001')).toThrow('inactive');
     expect(() => admitted(undefined, undefined, 1n)).toThrow('inactive');
   });

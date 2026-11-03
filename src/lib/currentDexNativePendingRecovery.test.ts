@@ -21,8 +21,8 @@ function fixture(profile: CurrentCheapDexProfile = 'fast-pool', phase: 'quote' |
   const c = resolveCurrentCheapDexCandidate(candidate), protocol = currentCheapDexQuoteProtocol(c), stages = currentCheapDexStages(c);
   const quote = new Interface(protocol ? CURRENT_SLIPPAGE_DEX_QUOTE_ABI : CURRENT_CHEAP_DEX_QUOTE_ABI), accept = new Interface(protocol ? CURRENT_SLIPPAGE_DEX_ACCEPT_ABI : CURRENT_DEX_ACCEPT_ABI);
   const actions = new Interface(['function cancelSwap(uint256)', 'function recoverSwap(uint256)']);
-  const data = phase === 'quote' ? encodeCurrentDexQuoteRequest({ profile, quoteProtocol: protocol, toleranceBps: protocol ? 50 : undefined,
-    inputToken: c.tokens[0][0], outputToken: c.tokens[1][0], destination: owner, deadline: 200n, maximumInput: wide, minimumInput: wide, minimumOutput: wide, minimumRateNumerator: small, minimumRateDenominator: small })
+  const data = phase === 'quote' ? encodeCurrentDexQuoteRequest({ profile, ...(protocol ? { quoteProtocol: protocol, toleranceBps: 50, minimumRate: wide } : { minimumRateNumerator: small, minimumRateDenominator: small }),
+    inputToken: c.tokens[0][0], outputToken: c.tokens[1][0], destination: owner, deadline: 200n, maximumInput: wide, minimumInput: wide, minimumOutput: wide })
     : phase === 'accept' ? accept.encodeFunctionData(profile === 'fast-pool' ? protocol ? 'acceptFastPool' : 'acceptFastPoolV1' : 'acceptPrivateSwapV1', [7n, context]) : actions.encodeFunctionData(phase === 'cancel' ? 'cancelSwap' : 'recoverSwap', [7n]);
   const caps = currentCheapDexGasCaps(c), gasLimit = phase === 'quote' || phase === 'accept' ? caps[profile][phase] : caps['cheap-async'][phase];
   const tx: Tx = { hash: txHash, chainId: 7082400n, from: owner, to: c.core, value: 0n, data, nonce: 4, gasLimit, blockNumber: 10, blockHash };

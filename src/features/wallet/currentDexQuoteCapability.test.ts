@@ -331,15 +331,35 @@ describe('current DEX owner quote preparation', () => {
     expect(()=>assertCurrentDexQuoteNotRestored(currentDexRestoredPlan(restored,f.signer))).toThrow('cannot be submitted again');
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
   });
-  it.each(['fast-pool','cheap-async'] as const)('restores an owner %s Quote above the former trial cap without signing',async profile=>{
+  it.each(['fast-pool','cheap-async'] as const)('restores an admitted browser %s quote and holds unbranded restoration',async profile=>{
     const f=await restoreFixture('cheap-history',profile,CURRENT_APP_SWAP_OWNER,100_000_000n);
     mocks.browser.add(f.signer);
-    const restored=await f.capability.restoreCurrentQuote({quoteHash:f.tx.hash});
-    expect(restored.intent.maximumInput).toBe(100_000_000n);
-    expect(()=>assertCurrentDexQuoteNotRestored(currentDexRestoredPlan(restored,f.signer))).toThrow('cannot be submitted again');
+    await expect(f.capability.restoreCurrentQuote({quoteHash:f.tx.hash})).resolves.toMatchObject({intent:{maximumInput:100_000_000n}});
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
     const other=await restoreFixture('cheap-history',profile,owner,100_000_000n);
     await expect(other.capability.restoreCurrentQuote({quoteHash:other.tx.hash})).rejects.toThrow('protected domain');
+  });
+  it.each(['fast-pool','cheap-async'] as const)('restores exact packed %s rate halves without new signatures', async profile => {
+    for (const [numerator, denominator] of [[0n, 1n], [(1n << 128n) - 1n, (1n << 128n) - 1n], [1n, 0n]]) {
+      const f = await restoreFixture('cheap-history', profile), abi = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
+      const method = profile === 'fast-pool' ? 'quoteFastPool' : 'quoteCheapAsync';
+      const args = abi.decodeFunctionData(method, f.tx.data).toArray(true), terms = profile === 'fast-pool' ? args : args[0];
+      terms[7] = [[(numerator << 128n) | denominator, 0n], signature];
+      f.tx.data = abi.encodeFunctionData(method, args);
+      if (denominator === 0n) await expect(f.capability.restoreCurrentQuote({ quoteHash: f.tx.hash })).rejects.toThrow();
+      else expect((await f.capability.restoreCurrentQuote({ quoteHash: f.tx.hash })).intent).toMatchObject({ rateNumerator: numerator, rateDenominator: denominator });
+      expect(mocks.wide).not.toHaveBeenCalled();
+      expect(f.signer.encryptValue).not.toHaveBeenCalled();
+      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
+    }
+  });
+  it('rejects an old separate-rate Quote instead of restoring through a fallback', async () => {
+    const f = await restoreFixture();
+    f.tx.data = retainedKeeperCalldata(f.tx.data);
+    await expect(f.capability.restoreCurrentQuote({ quoteHash: f.tx.hash })).rejects.toThrow();
+    expect(mocks.wide).not.toHaveBeenCalled();
+    expect(f.signer.encryptValue).not.toHaveBeenCalled();
+    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
   it('normalizes the SDK missing removed field before canonical Quote restoration',async()=>{
     const f=await restoreFixture(),r=await f.readProvider.getTransactionReceipt(f.tx.hash);
@@ -462,9 +482,9 @@ describe('current DEX owner quote preparation', () => {
     await expect(f.issued.readKeeperNomination()).rejects.toThrow();
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
-  it('adopts the actual exported App nomination with independent canonical keeper checks', async () => {
+  it('checks retained reader canonical guards using its retained quote ABI', async () => {
     const f = await keeperNominationFixture(), nomination = await f.issued.readKeeperNomination();
-    const rpc = canonicalKeeperRpc(nomination, f.prepared.data);
+    const rpc = canonicalKeeperRpc(nomination, retainedKeeperCalldata(f.prepared.data));
     const adopted = await appQuoteReader.createAppQuoteReader()({ nomination, rpc });
     expect(adopted).toMatchObject({ canonicalQuoteVerified: true, coreRuntimeVerified: true,
       nativeAdmission: false, completeGraphVerified: false, completeProtectedIssueAccounting: false,
@@ -473,6 +493,11 @@ describe('current DEX owner quote preparation', () => {
     expect(JSON.stringify(adopted)).not.toContain('ciphertext');
     expect(rpc.mock.calls.every(([method]) => !/send|sign|estimate/i.test(method))).toBe(true);
     expect(rpc.mock.calls.length).toBeLessThanOrEqual(32);
+  });
+  it('rejects packed current calldata at the retained old keeper reader', async () => {
+    const f = await keeperNominationFixture(), nomination = await f.issued.readKeeperNomination();
+    await expect(appQuoteReader.createAppQuoteReader()({ nomination, rpc: canonicalKeeperRpc(nomination, f.prepared.data) })).rejects.toThrow('APP_QUOTE_CALL');
+    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
   it('stops a hung read at the nomination deadline without native admission', async () => {
     const f = await keeperNominationFixture(), nomination = await f.issued.readKeeperNomination();
@@ -502,7 +527,7 @@ describe('current DEX owner quote preparation', () => {
     if (fault === 'principal') hint.principal = `0x${'77'.repeat(20)}`;
     if (fault === 'pair') hint.inputToken = hint.outputToken;
     if (fault === 'origin') hint.origin = { ...hint.origin, hash: `0x${'77'.repeat(32)}` };
-    const rpc = canonicalKeeperRpc(nomination, f.prepared.data, fault === 'caller-mutation' ? undefined : fault);
+    const rpc = canonicalKeeperRpc(nomination, retainedKeeperCalldata(f.prepared.data), fault === 'caller-mutation' ? undefined : fault);
     if (fault === 'caller-mutation') {
       const original = rpc.getMockImplementation()!;
       rpc.mockImplementation(async (method, args) => {
@@ -555,10 +580,22 @@ describe('current DEX owner quote preparation', () => {
     const abi = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI), method = profile === 'fast-pool' ? 'quoteFastPool' : 'quoteCheapAsync';
     const decoded = abi.decodeFunctionData(method, prepared.data), terms = profile === 'cheap-async' ? decoded.request : decoded;
     expect(terms.toleranceBps).toBe(50n);
+    expect(mocks.wide).toHaveBeenCalledTimes(4);
+    expect(mocks.wide.mock.calls[3][1]).toBe(1n);
+    expect(f.signer.encryptValue).not.toHaveBeenCalled();
     expect(prepared.intent).toMatchObject({ quoteProtocol: 'quote-slippage', toleranceBps: 50, rateNumerator: 0n, rateDenominator: 1n });
     expect(Object.isFrozen(prepared.intent)).toBe(true);
     expect(request.confirmPrivateInputs.mock.calls[0][0]).toMatchObject({ toleranceBps: 50 });
     for (const call of mocks.wide.mock.calls) expect(call.slice(2)).toEqual([historicalCandidate().core, abi.getFunction(method)!.selector]);
+    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
+  });
+  it.each(['fast-pool', 'cheap-async'] as const)('signs the maximum packed %s rate as one uint256 input', async profile => {
+    const f = await cheapFixture(profile, 'cheap-slippage'), max = (1n << 128n) - 1n;
+    const request = { ...f.request, terms: { ...f.request.terms, rateNumerator: max, rateDenominator: max, toleranceBps: 50 } };
+    await f.capability.prepareCurrentQuote(request);
+    expect(mocks.wide).toHaveBeenCalledTimes(4);
+    expect(mocks.wide.mock.calls[3][1]).toBe((1n << 256n) - 1n);
+    expect(f.signer.encryptValue).not.toHaveBeenCalled();
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
   it.each(['fast-pool', 'cheap-async'] as const)('rejects tolerance on the accepted old %s graph before private prompts', async profile => {
@@ -1167,7 +1204,7 @@ describe('current DEX owner quote preparation', () => {
 async function restoreFixture(candidate: 'cheap-exit' | 'cheap-history' = 'cheap-exit',profile:CurrentCheapDexProfile='cheap-async',selectedOwner=owner,maximumInput=20n){
   const owner=selectedOwner,f=await cheapFixture(profile,candidate,owner),c=resolveCurrentCheapDexCandidate(candidate),abi=new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
   Object.assign(f.signer,{getUserOnboardInfo:()=>({aesKey:'11'.repeat(16)})});
-  const q={inputToken:c.tokens[0][0],outputToken:c.tokens[1][0],destination:owner,deadline:100n,maximumInput:[[maximumInput,0n],signature],minimumInput:[[5n,0n],signature],minimumOutput:[[1n,0n],signature],minimumRateNumerator:[1n,signature],minimumRateDenominator:[1n,signature],toleranceBps:50};
+  const q={inputToken:c.tokens[0][0],outputToken:c.tokens[1][0],destination:owner,deadline:100n,maximumInput:[[maximumInput,0n],signature],minimumInput:[[5n,0n],signature],minimumOutput:[[1n,0n],signature],minimumRate:[[(1n<<128n)|1n,0n],signature],toleranceBps:50};
   const tx={hash:`0x${'55'.repeat(32)}`,from:owner,to:c.core as string,chainId:7082400n,value:0n,data:profile==='cheap-async'?abi.encodeFunctionData('quoteCheapAsync',[q]):abi.encodeFunctionData('quoteFastPool',Object.values(q)),nonce:4,gasLimit:110000000n,blockNumber:42,blockHash:hash};
   f.readProvider.getTransaction.mockResolvedValue(tx);f.readProvider.getTransactionReceipt.mockResolvedValue({hash:tx.hash,status:1,from:owner,to:c.core,blockNumber:42,blockHash:hash,logs:[]});
   f.readProvider.send.mockImplementation(async(method,params)=>method==='eth_getBlockByNumber'?{number:params[0]==='latest'?'0x2b':'0x2a',hash,timestamp:'0x63'}:undefined);
@@ -1253,7 +1290,7 @@ async function closedFastConsumerFixture(selectedOwner=owner,now=()=>99n){
 async function lostPartialLedgerFixture(){
  const f=await closedFastConsumerFixture(CURRENT_APP_SWAP_OWNER,()=>partialTrial.approvedAt),opening=new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
  const args=Array.from(opening.decodeFunctionData('quoteFastPool',f.tx.data));
- args[4]=[[1_000_000n,0n],signature];args[5]=[[0n,0n],signature];args[6]=[[1n,0n],signature];args[7]=[0n,signature];
+ args[4]=[[1_000_000n,0n],signature];args[5]=[[0n,0n],signature];args[6]=[[1n,0n],signature];args[7]=[[1n,0n],signature];
  const fastData=opening.encodeFunctionData('quoteFastPool',args),older=[...args];older[3]=101n;
  const quoteData=[opening.encodeFunctionData('quoteCheapAsync',[args]),opening.encodeFunctionData('quoteCheapAsync',[older]),opening.encodeFunctionData('quoteFastPool',older),fastData];
  const approval=new Interface(['function approve(address,((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature) input)']);
@@ -1272,7 +1309,7 @@ async function lostPartialLedgerFixture(){
  f.readProvider.getTransaction.mockResolvedValue(rows[9]);f.readProvider.getTransactionReceipt.mockResolvedValue(receipts[9]);
  f.observed.transactionHash=ledgerRecovery.hashes[9];
  Object.assign(f.original.amounts,{maximumInput:1_000_000n,actualInput:1_000_000n,refund:0n,grossOutput:959_969n,fee:1n,netOutput:959_968n});
- mocks.rate.mockReturnValueOnce(0n).mockReturnValueOnce(1n);
+
  const restored=await f.capability.restoreCurrentQuote({quoteHash:ledgerRecovery.hashes[9]});
  f.storage.removeItem(CURRENT_DEX_NATIVE_RELOAD_KEY);
  return{...f,restored};
@@ -1315,9 +1352,16 @@ async function keeperNominationFixture(profile: CurrentCheapDexProfile = 'cheap-
   return { ...f, prepared, issued, txHash, current };
 }
 
+
+const retainedKeeperAbi = new Interface(createRequire(import.meta.url)('../../../../ChainWhisper Contracts V2/validation/candidates/shared-core-exit-preview-native-2026-10-07/candidate.cjs').frozen().artifacts.ChainWhisperDexCore.abi);
+function retainedKeeperCalldata(data: string) {
+  const current = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI).decodeFunctionData('quoteCheapAsync', data).request;
+  return retainedKeeperAbi.encodeFunctionData('quoteCheapAsync', [[...current.toArray().slice(0, 7), [1n, signature], [1n, signature], current.toleranceBps]]);
+}
+
 // Synthetic chain responses plus retained public runtime bytes. No native reads or secret material.
 function canonicalKeeperRpc(n: CurrentDexKeeperNomination, data: string, fault?: string) {
-  const abi = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
+  const abi = retainedKeeperAbi;
   const publicAbi = new Interface(['function cheapAsyncPublic(uint256) view returns(uint8,bytes32,uint256)', 'function releaseId() view returns(bytes32)',
     'event CheapAsyncAdvanced(uint256 indexed quoteId,uint8 stage,bytes32 context)']);
   const headHash = `0x${'66'.repeat(32)}`, zero = `0x${'00'.repeat(32)}`, blockNumber = `0x${BigInt(n.origin.number).toString(16)}`;

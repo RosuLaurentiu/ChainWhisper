@@ -3,8 +3,8 @@ export const CURRENT_OWNER_BETA: Readonly<{
   graph: string; core: string; owner: string;
   legacyStarts: number; activation: Readonly<{ activatedAt: bigint; startingNonce: number; legacyReservationHash: string }> | null;
 }> = Object.freeze({
-  graph: '7b67bcbb7c5941a24471e62ba5a0d939c0800671b0bf121e81bad14cca737456',
-  core: '0xab5374daddea783c3e58de19db497b54c79fd4cc', owner: '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d',
+  graph: '9591af0d1ea77bdb952adf0a859ef895398f0bbf5600d8a1addd941cce4ff3eb',
+  core: '0xa3da6c8d5f9b1566bf965e94966ecba9f1deb758', owner: '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d',
   legacyStarts: 14, activation: Object.freeze({ activatedAt: 1792452366n, startingNonce: 220, legacyReservationHash: '0x8fc3d42c0f418a860455579df8cb8fde8bafc069e6065a35046713bedb5e4567' })
 });
 

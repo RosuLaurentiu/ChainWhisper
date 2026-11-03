@@ -10,6 +10,33 @@ import { CURRENT_DEX_OPEN_ABI, decodeCurrentDexQuoteIssue } from './currentDexOp
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI, CURRENT_FAST_DEX_RECEIPT_ABI,
   decodeCurrentCheapDexOperation, type CurrentCheapDexProfile } from './currentDexOperation';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE } from './dexV2Deployment';
+import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI, encodeCurrentDexQuoteRequest, packCurrentDexMinimumRate } from './currentDexOperation';
+
+describe('packed current Quote price input', () => {
+  it('packs the full uint128 price domain', () => {
+    const max = (1n << 128n) - 1n;
+    expect(packCurrentDexMinimumRate(0n, 1n)).toBe(1n);
+    expect(packCurrentDexMinimumRate(max, max)).toBe((1n << 256n) - 1n);
+    for (const [n, d] of [[-1n, 1n], [1n << 128n, 1n], [0n, 0n], [0n, 1n << 128n]]) {
+      expect(() => packCurrentDexMinimumRate(n, d)).toThrow();
+    }
+  });
+  it.each(['fast-pool', 'cheap-async'] as const)('roundtrips four signed uint256 inputs for %s', profile => {
+    const signature = `0x${'44'.repeat(65)}`, max = (1n << 256n) - 1n;
+    const wide = { ciphertext: { ciphertextHigh: max, ciphertextLow: max }, signature };
+    const request = { profile, quoteProtocol: 'quote-slippage' as const, toleranceBps: 50,
+      inputToken: `0x${'11'.repeat(20)}`, outputToken: `0x${'22'.repeat(20)}`, destination: `0x${'33'.repeat(20)}`,
+      deadline: 100n, maximumInput: wide, minimumInput: wide, minimumOutput: wide, minimumRate: wide };
+    const abi = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI), method = profile === 'fast-pool' ? 'quoteFastPool' : 'quoteCheapAsync';
+    const data = encodeCurrentDexQuoteRequest(request), decoded = abi.decodeFunctionData(method, data);
+    const terms = profile === 'fast-pool' ? decoded : decoded.request;
+    expect(terms[7].ciphertext.ciphertextHigh).toBe(max);
+    expect(terms[7].ciphertext.ciphertextLow).toBe(max);
+    expect(terms[8]).toBe(50n);
+    expect(abi.encodeFunctionData(method, decoded)).toBe(data);
+    expect(() => encodeCurrentDexQuoteRequest({ ...request, minimumRate: { ...wide, signature: '0x' } })).toThrow();
+  });
+});
 
 const frozen = createRequire(import.meta.url)('../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/current-async-adverse/native-accept-boundary.cjs').frozen();
 

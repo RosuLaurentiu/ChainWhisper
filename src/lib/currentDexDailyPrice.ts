@@ -34,7 +34,7 @@ export const CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE = Object.freeze({
   schema: CURRENT_DEX_DAILY_PRICE_SOURCE.schema, policy: CURRENT_DEX_DAILY_PRICE_SOURCE.policy
 });
 export const CURRENT_HISTORY_DEX_DAILY_PRICE_SOURCE = Object.freeze({
-  graph: '7b67bcbb7c5941a24471e62ba5a0d939c0800671b0bf121e81bad14cca737456',
+  graph: '9591af0d1ea77bdb952adf0a859ef895398f0bbf5600d8a1addd941cce4ff3eb',
   recorderArtifact: CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
   schema: CURRENT_DEX_DAILY_PRICE_SOURCE.schema, policy: CURRENT_DEX_DAILY_PRICE_SOURCE.policy
 });

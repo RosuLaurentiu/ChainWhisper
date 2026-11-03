@@ -25,12 +25,11 @@ describe('current history recorder admission boundary',()=>{
   it('admits the six canonical recorder exports through the existing dispatcher',()=>{
     expect(HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS).toHaveLength(6);
     expect(Object.isFrozen(HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS)).toBe(true);
-    const root='../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/primary-price-native-2026-10-14/';
+    const root='reports/packed-rate-adoption-2026-11-03/recorder-exports/';
     for(let i=0;i<6;i++){
-      const path=i===0?'create-export-1/':'market-'+(i+1)+'/create-export-1/';
-      const exported=JSON.parse(readFileSync(root+path+'stdout.log','utf8'));
+      const exported=JSON.parse(readFileSync(root+(i+1)+'.json','utf8'));
       const m=HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS[i];
-      expect(m).toEqual(exported.manifest);expect(exported.status).toBe('CURRENT_RECORDER_CANONICAL_EXPORT');
+      expect(m).toEqual(exported.manifest);expect(exported.status).toBe(i===3?'CURRENT_RECORDER_RECOVERED':'CURRENT_RECORDER_CANONICAL_EXPORT');
       expect(currentHistoryDexDailyPriceConfig(candidate,m.symbols)).toMatchObject({status:'active',manifest:m});
       expect(currentNativeDexDailyPriceConfig(candidate,[m.symbols[1],m.symbols[0]])).toMatchObject({status:'active',manifest:m});
     }
@@ -44,7 +43,7 @@ describe('current history recorder admission boundary',()=>{
     for(const patch of [{source:exit.core},{sourceRuntimeHash:`0x${'44'.repeat(32)}`},{sourceGraph:exit.graph},{recorderArtifact:'00'.repeat(32)},{decimals0:18},{pair:`0x${'44'.repeat(32)}`},{symbols:['BCN','HBR'] as const}])expect(currentHistoryDexDailyPriceManifestMatches(candidate,m.symbols,{...m,...patch})).toBe(false);
   });
   it('binds the exact graph-only compiled recorder artifact',()=>{
-    const dir='../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/recorder-build/build-1/';
+    const dir='../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/recorder-build/build-packed-1/';
     const raw=readFileSync(dir+'ChainWhisperDailyPoolPrice.json'),artifact=JSON.parse(raw.toString()),identity=JSON.parse(readFileSync(dir+'identity.json','utf8'));
     expect(createHash('sha256').update(raw).digest('hex')).toBe(CURRENT_HISTORY_DEX_DAILY_PRICE_SOURCE.recorderArtifact);expect(identity.sourceGraphOnlyChange).toBe(true);
     expect(CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT.abi).toEqual(artifact.abi);expect(CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT.deployedBytecode).toBe(artifact.deployedBytecode);

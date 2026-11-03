@@ -12,6 +12,11 @@ const graph = '../../../ChainWhisper Contracts V2/validation/candidates/quote-sl
 const artifactBytes = readFileSync(new URL(`${graph}snapshot/contracts/dex/ChainWhisperDexCore.sol/ChainWhisperDexCore.json`, import.meta.url));
 const native = new Interface(JSON.parse(artifactBytes.toString()).abi);
 const codec = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
+// Independent specification of the new wire format; compiled candidate binding is a separate check.
+const packed = new Interface([
+  'function quoteFastPool(address,address,address,uint256,((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),uint16)',
+  'function quoteCheapAsync((address,address,address,uint256,((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature),uint16))'
+]);
 const addr = (n: number) => `0x${n.toString(16).repeat(40)}`;
 const hash = (n: number) => `0x${n.toString(16).repeat(64)}`;
 
@@ -19,9 +24,9 @@ const issueFixture = (profile: CurrentCheapDexProfile, toleranceBps = 50) => {
   const principal = addr(2), core = addr(1), inputToken = addr(3), outputToken = addr(4);
   const name = profile === 'fast-pool' ? 'quoteFastPool' : 'quoteCheapAsync';
   const wide = [[(1n << 256n) - 1n, 2n], '0x1234'];
-  const terms = [inputToken, outputToken, principal, 100n, wide, wide, wide, [0n, '0x12'], [1n, '0x34'], toleranceBps];
-  // The compiled contract ABI is the independent encoder, not the client ABI.
-  const calldata = native.encodeFunctionData(name, profile === 'fast-pool' ? terms : [terms]);
+  const terms = [inputToken, outputToken, principal, 100n, wide, wide, wide, wide, toleranceBps];
+  // Encode with the independent packed wire specification.
+  const calldata = packed.encodeFunctionData(name, profile === 'fast-pool' ? terms : [terms]);
   const eventName = profile === 'fast-pool' ? 'FastPoolQuoteIssued' : 'CheapAsyncAdvanced';
   const log = { address: core, ...native.encodeEventLog(native.getEvent(eventName)!,
     profile === 'fast-pool' ? [7n, hash(5), 100n] : [7n, 1, hash(0)]) };
@@ -73,14 +78,14 @@ describe('new quote-slippage unsigned client codec', () => {
       const request = { profile, quoteProtocol: 'quote-slippage' as const, toleranceBps,
         inputToken: addr(3), outputToken: addr(4), destination: addr(2), deadline: 100n,
         maximumInput: wide, minimumInput: wide, minimumOutput: wide,
-        minimumRateNumerator: rate, minimumRateDenominator: rate };
+        minimumRate: wide };
       const terms = [addr(3), addr(4), addr(2), 100n, wide, wide, wide, rate, rate];
       const name = profile === 'fast-pool' ? 'quoteFastPool' : 'quoteCheapAsync';
       const data = encodeCurrentDexQuoteRequest(request);
-      expect(data).toBe(native.encodeFunctionData(name, profile === 'fast-pool' ? [...terms, toleranceBps] : [[...terms, toleranceBps]]));
-      expect(codec.decodeFunctionData(name, data).toArray()).toEqual(native.decodeFunctionData(name, data).toArray());
+      expect(data).toBe(packed.encodeFunctionData(name, profile === 'fast-pool' ? [...terms.slice(0, 7), wide, toleranceBps] : [[...terms.slice(0, 7), wide, toleranceBps]]));
+      expect(codec.decodeFunctionData(name, data).toArray()).toEqual(packed.decodeFunctionData(name, data).toArray());
       const oldName = profile === 'fast-pool' ? 'quoteFastPoolV1' : 'quoteCheapAsyncV1';
-      expect(encodeCurrentDexQuoteRequest({ ...request, quoteProtocol: undefined, toleranceBps: undefined }))
+      expect(encodeCurrentDexQuoteRequest({ ...request, quoteProtocol: undefined, toleranceBps: undefined, minimumRateNumerator: rate, minimumRateDenominator: rate }))
         .toBe(new Interface(CURRENT_CHEAP_DEX_QUOTE_ABI).encodeFunctionData(oldName, profile === 'fast-pool' ? terms : [terms]));
     }
   });
@@ -93,7 +98,7 @@ describe('new quote-slippage unsigned client codec', () => {
       maximumInput: { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n }, signature },
       minimumInput: { ciphertext: { ciphertextHigh: 0n, ciphertextLow: 0n }, signature },
       minimumOutput: { ciphertext: { ciphertextHigh: 0n, ciphertextLow: 1n }, signature },
-      minimumRateNumerator: { ciphertext: 0n, signature }, minimumRateDenominator: { ciphertext: 1n, signature }
+      minimumRate: { ciphertext: { ciphertextHigh: 0n, ciphertextLow: 1n }, signature }
     };
     const failures = [
       { profile: 'other' }, { quoteProtocol: 'other' }, { quoteProtocol: undefined },
@@ -103,19 +108,20 @@ describe('new quote-slippage unsigned client codec', () => {
       { maximumInput: { ...request.maximumInput, ciphertext: { ciphertextHigh: -1n, ciphertextLow: 0n } } },
       { minimumInput: { ...request.minimumInput, ciphertext: { ciphertextHigh: 0n, ciphertextLow: 1n << 256n } } },
       { minimumOutput: { ...request.minimumOutput, signature: '0x' } },
-      { minimumRateNumerator: { ciphertext: -1n, signature } },
-      { minimumRateDenominator: { ciphertext: 1n, signature: '0x12' } }
+      { minimumRate: { ciphertext: { ciphertextHigh: -1n, ciphertextLow: 0n }, signature } },
+      { minimumRate: { ciphertext: { ciphertextHigh: 0n, ciphertextLow: 1n }, signature: '0x12' } }
     ];
     for (const fault of failures) expect(() => encodeCurrentDexQuoteRequest(
       { ...request, ...fault } as Parameters<typeof encodeCurrentDexQuoteRequest>[0])).toThrow();
     expect(encodeCurrentDexQuoteRequest(request)).toMatch(/^0x/);
   });
 
-  it('matches the exact graph-build-3 ABI without modifying current selectors', () => {
+  it('keeps historical artifact evidence and uses only the new packed quote selectors', () => {
     expect(createHash('sha256').update(artifactBytes).digest('hex'))
       .toBe('a60a5e2e3d1536a673547fb70a9743093f8204c4cae6d64c032e4eedbb33a911');
     for (const name of ['quoteFastPool', 'quoteCheapAsync']) {
-      expect(codec.getFunction(name)?.format('sighash')).toBe(native.getFunction(name)?.format('sighash'));
+      expect(codec.getFunction(name)?.format('sighash')).toBe(packed.getFunction(name)?.format('sighash'));
+      expect(codec.getFunction(name)?.selector).not.toBe(native.getFunction(name)?.selector);
     }
     const accept = new Interface(CURRENT_SLIPPAGE_DEX_ACCEPT_ABI);
     for (const name of ['acceptFastPool', 'acceptPrivateSwapV1']) {

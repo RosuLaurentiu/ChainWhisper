@@ -200,7 +200,7 @@ describe('selected candidate acceptance review metadata', () => {
     let aesKey='11'.repeat(16);Object.assign(f.signer,{getUserOnboardInfo:()=>({aesKey})});
     vi.spyOn(f.options.transport,'readHead').mockResolvedValue({...f.receipt.block,timestamp:1000n,gasLimit:120_000_000n});
     const readBlockHash=vi.spyOn(f.options.transport,'readBlockHash').mockResolvedValue(blockHash);
-    const terms=[f.c.tokens[0][0],f.c.tokens[1][0],owner,deadline,encrypted,encrypted,encrypted,[0n,'0x'],[0n,'0x'],50],method=profile==='cheap-async'?'quoteCheapAsync':'quoteFastPool';
+    const terms=[f.c.tokens[0][0],f.c.tokens[1][0],owner,deadline,encrypted,encrypted,encrypted,encrypted,50],method=profile==='cheap-async'?'quoteCheapAsync':'quoteFastPool';
     const transaction={hash:canonicalHash,chainId:BigInt(f.c.chainId),from:owner,to:f.c.core,value:0n,data:abi.encodeFunctionData(method,profile==='cheap-async'?[terms]:terms),nonce:4,gasLimit:110_000_000n,blockNumber:100,blockHash};
     const event=profile==='cheap-async'?abi.encodeEventLog(abi.getEvent('CheapAsyncAdvanced')!,[7n,1,toBeHex(0n,32)]):abi.encodeEventLog(abi.getEvent('FastPoolQuoteIssued')!,[7n,toBeHex(88n,32),deadline]);
     vi.spyOn(f.options.transport,'readTransaction').mockImplementation(async requested=>requested===canonicalHash?transaction:null);
@@ -238,7 +238,7 @@ describe('selected candidate acceptance review metadata', () => {
     const encrypted = [[0n, 0n], '0x'];
     const quote = { hash: quoteHash, chainId: BigInt(f.c.chainId), from: owner, to: f.c.core, value: 0n,
       data: abi.encodeFunctionData('quoteCheapAsync', [[f.c.tokens[0][0], f.c.tokens[1][0], owner, 9000n,
-        encrypted, encrypted, encrypted, [0n, '0x'], [0n, '0x'], 50]]),
+        encrypted, encrypted, encrypted, encrypted, 50]]),
       nonce: 4, gasLimit: 5_000_000n, blockNumber: 100, blockHash };
     const worker = toBeHex(7n, 20), terminal = { ...quote, hash: terminalHash, from: worker, blockNumber: 5000,
       data: new Interface(['function cancelSwap(uint256)']).encodeFunctionData('cancelSwap', [7n]) };

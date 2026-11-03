@@ -71,6 +71,7 @@ describe('private Limit execution history',()=>{
   });
   it('rejects unsupported graphs and stale cursors before disclosing amounts',async()=>{
     const f=fixture([]);await expect(readCurrentLimitFillHistoryPage({...f.args,graph:'0'.repeat(64)})).rejects.toThrow('unavailable for this candidate');expect(f.rpc).not.toHaveBeenCalled();
+    await expect(readCurrentLimitFillHistoryPage({...f.args,graph:'7b67bcbb7c5941a24471e62ba5a0d939c0800671b0bf121e81bad14cca737456'})).rejects.toThrow('unavailable for this candidate');expect(f.rpc).not.toHaveBeenCalled();
     await expect(readCurrentLimitFillHistoryPage({...f.args,before:1n})).rejects.toThrow('cursor');expect(f.decrypt).not.toHaveBeenCalled();
   });
   it('checks canonical payloads, receipt blocks and session changes',async()=>{

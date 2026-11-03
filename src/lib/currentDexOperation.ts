@@ -28,26 +28,31 @@ export const CURRENT_CHEAP_DEX_QUOTE_ABI = [
   'event CheapAsyncAdvanced(uint256 indexed quoteId,uint8 stage,bytes32 context)'
 ] as const;
 const cheapQuoteInterface = new Interface(CURRENT_CHEAP_DEX_QUOTE_ABI);
-// Unsigned codec for the new candidate only. Existing wallet admission still
-// accepts the frozen current ABI, not these selectors.
+// Current candidate only. Old slippage selectors are not a fallback.
 export const CURRENT_SLIPPAGE_DEX_QUOTE_ABI = [
   CURRENT_CHEAP_DEX_QUOTE_ABI[0].replace('quoteFastPoolV1', 'quoteFastPool')
+    .replace('(uint256 ciphertext,bytes signature) encryptedMinimumRateNumerator,(uint256 ciphertext,bytes signature) encryptedMinimumRateDenominator', '((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature) encryptedMinimumRate')
     .replace(') returns (uint256)', ',uint16 toleranceBps) returns (uint256)'),
   CURRENT_CHEAP_DEX_QUOTE_ABI[1].replace('quoteCheapAsyncV1', 'quoteCheapAsync')
-    .replace(' minimumRateDenominator) request', ' minimumRateDenominator,uint16 toleranceBps) request'),
+    .replace('(uint256 ciphertext,bytes signature) minimumRateNumerator,(uint256 ciphertext,bytes signature) minimumRateDenominator', '((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature) minimumRate,uint16 toleranceBps'),
   ...CURRENT_CHEAP_DEX_QUOTE_ABI.slice(2)
 ] as const;
 const slippageQuoteInterface = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
 type EncryptedQuoteAmount = Readonly<{ ciphertext: Readonly<{ ciphertextHigh: bigint; ciphertextLow: bigint }>; signature: string }>;
 type EncryptedQuoteRate = Readonly<{ ciphertext: bigint; signature: string }>;
+export const packCurrentDexMinimumRate = (numerator: bigint, denominator: bigint): bigint => {
+  const max = (1n << 128n) - 1n;
+  if (numerator < 0n || numerator > max || denominator <= 0n || denominator > max) throw new Error('Invalid packed quote rate.');
+  return (numerator << 128n) | denominator;
+};
 // Encoding only. Ciphertext authentication and deployment/signing admission are
 // separate checks; an encoded call is not permission to submit it.
 export const encodeCurrentDexQuoteRequest = (request: Readonly<{
-  profile: CurrentCheapDexProfile; quoteProtocol?: 'quote-slippage'; toleranceBps?: number;
+  profile: CurrentCheapDexProfile;
   inputToken: string; outputToken: string; destination: string; deadline: bigint;
   maximumInput: EncryptedQuoteAmount; minimumInput: EncryptedQuoteAmount; minimumOutput: EncryptedQuoteAmount;
-  minimumRateNumerator: EncryptedQuoteRate; minimumRateDenominator: EncryptedQuoteRate;
-}>): string => {
+} & ({ quoteProtocol: 'quote-slippage'; toleranceBps: number; minimumRate: EncryptedQuoteAmount } |
+  { quoteProtocol?: undefined; toleranceBps?: undefined; minimumRateNumerator: EncryptedQuoteRate; minimumRateDenominator: EncryptedQuoteRate })>): string => {
   if (request.profile !== 'fast-pool' && request.profile !== 'cheap-async') throw new Error('Unknown current quote profile.');
   if (request.quoteProtocol !== undefined && request.quoteProtocol !== 'quote-slippage') throw new Error('Unknown quote protocol.');
   const slippage = request.quoteProtocol === 'quote-slippage';
@@ -57,18 +62,19 @@ export const encodeCurrentDexQuoteRequest = (request: Readonly<{
   if (tokens.some(token => BigInt(token) === 0n) || tokens[0] === tokens[1]) throw new Error('Invalid quote addresses.');
   uint(request.deadline);
   if (!request.deadline) throw new Error('Invalid quote deadline.');
-  for (const value of [request.maximumInput, request.minimumInput, request.minimumOutput]) {
+  const amounts = [request.maximumInput, request.minimumInput, request.minimumOutput, ...(slippage ? [request.minimumRate] : [])];
+  for (const value of amounts) {
     uint(value.ciphertext.ciphertextHigh); uint(value.ciphertext.ciphertextLow);
   }
-  for (const value of [request.minimumRateNumerator, request.minimumRateDenominator]) uint(value.ciphertext);
-  for (const value of [request.maximumInput, request.minimumInput, request.minimumOutput,
-    request.minimumRateNumerator, request.minimumRateDenominator]) {
+  const rates = slippage ? [] : [request.minimumRateNumerator, request.minimumRateDenominator];
+  for (const value of rates) uint(value.ciphertext);
+  for (const value of [...amounts, ...rates]) {
     if (!/^0x[0-9a-fA-F]{130}$/.test(value.signature)) throw new Error('Invalid private input signature shape.');
   }
   const method = request.profile === 'fast-pool' ? slippage ? 'quoteFastPool' : 'quoteFastPoolV1'
     : slippage ? 'quoteCheapAsync' : 'quoteCheapAsyncV1';
   const terms = [...tokens, request.deadline, request.maximumInput, request.minimumInput, request.minimumOutput,
-    request.minimumRateNumerator, request.minimumRateDenominator, ...(slippage ? [request.toleranceBps] : [])];
+    ...(slippage ? [request.minimumRate, request.toleranceBps] : [request.minimumRateNumerator, request.minimumRateDenominator])];
   return (slippage ? slippageQuoteInterface : cheapQuoteInterface)
     .encodeFunctionData(method, request.profile === 'cheap-async' ? [terms] : terms);
 };

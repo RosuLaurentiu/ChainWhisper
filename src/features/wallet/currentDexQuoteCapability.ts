@@ -1,9 +1,8 @@
 import { Interface, getAddress, hexlify, keccak256, toUtf8Bytes, toBeHex } from '@coti-io/coti-ethers';
-import { decryptUint } from '@coti-io/coti-sdk-typescript';
 import { readCurrentDexGraph, readCurrentDexIssuedQuote, readCurrentDexOperation } from '../../lib/appChain';
 import { createDexV2ReadCapability, readCurrentSharedPoolDexGraph } from '../../lib/dexV2Chain';
 import { CURRENT_SHARED_POOL_CANDIDATE, currentCheapDexQuoteProtocol, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
-import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_DEX_OPEN_ABI, encodeCurrentDexQuoteRequest, type CurrentCheapDexProfile } from '../../lib/currentDexOperation';
+import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_DEX_OPEN_ABI, encodeCurrentDexQuoteRequest, packCurrentDexMinimumRate, type CurrentCheapDexProfile } from '../../lib/currentDexOperation';
 import { decryptPrivateUint256Output, encryptPrivateUint256Input } from '../../lib/privateUint256';
 import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonicalInclusion';
 import { isCurrentDexBrowserSigner } from '../../lib/currentDexBrowserPolicy';
@@ -281,10 +280,11 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
       };
       const data = restoredData ?? await (async () => {
         const maximum = await wide(terms.maximumInput), minimum = await wide(terms.minimumInput), output = await wide(terms.minimumOutput);
-        const numerator = await rate(terms.rateNumerator), denominator = await rate(terms.rateDenominator);
-        return encodeCurrentDexQuoteRequest({ profile, quoteProtocol, toleranceBps: terms.toleranceBps, inputToken: terms.inputToken, outputToken: terms.outputToken,
+        const price = quoteProtocol ? { quoteProtocol, toleranceBps: terms.toleranceBps!, minimumRate: await wide(packCurrentDexMinimumRate(terms.rateNumerator, terms.rateDenominator)) }
+          : { minimumRateNumerator: await rate(terms.rateNumerator), minimumRateDenominator: await rate(terms.rateDenominator) };
+        return encodeCurrentDexQuoteRequest({ profile, inputToken: terms.inputToken, outputToken: terms.outputToken,
           destination: terms.destination, deadline: terms.deadline, maximumInput: maximum, minimumInput: minimum,
-          minimumOutput: output, minimumRateNumerator: numerator, minimumRateDenominator: denominator });
+          minimumOutput: output, ...price });
       })();
       await guard();
       const intent = Object.freeze({ ...terms, candidate, profile, quoteProtocol, principal: ownerAddress, chainId, core: graph.core,
@@ -373,14 +373,15 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
         const profile = call.name==='quoteFastPool'?'fast-pool':'cheap-async';
         const q = profile==='cheap-async'?call.args[0]:{maximumInput:call.args.encryptedMaximumInput,
           minimumInput:call.args.encryptedMinimumInput,minimumOutput:call.args.encryptedMinimumOutput,
-          minimumRateNumerator:call.args.encryptedMinimumRateNumerator,minimumRateDenominator:call.args.encryptedMinimumRateDenominator,
+          minimumRate:call.args.encryptedMinimumRate,
           inputToken:call.args.inputToken,outputToken:call.args.outputToken,destination:call.args.destination,deadline:call.args.deadline,toleranceBps:call.args.toleranceBps},
           aesKey = signer.getUserOnboardInfo()?.aesKey?.trim();
         if (!aesKey) throw new Error('Unlock owner privacy before restoring the Quote.');
+        const packedRate = decryptPrivateUint256Output(signer, q.minimumRate.ciphertext);
         const terms: Terms = Object.freeze({ inputToken: q.inputToken, outputToken: q.outputToken, destination: q.destination, deadline: q.deadline,
           maximumInput: decryptPrivateUint256Output(signer, q.maximumInput.ciphertext), minimumInput: decryptPrivateUint256Output(signer, q.minimumInput.ciphertext),
-          minimumOutput: decryptPrivateUint256Output(signer, q.minimumOutput.ciphertext), rateNumerator: decryptUint(q.minimumRateNumerator.ciphertext, aesKey),
-          rateDenominator: decryptUint(q.minimumRateDenominator.ciphertext, aesKey), toleranceBps: Number(q.toleranceBps) });
+          minimumOutput: decryptPrivateUint256Output(signer, q.minimumOutput.ciphertext), rateNumerator: packedRate >> 128n,
+          rateDenominator: packedRate & ((1n << 128n) - 1n), toleranceBps: Number(q.toleranceBps) });
         if ((!isCurrentDexBrowserSigner(signer,candidate.graph,ownerAddress) && terms.maximumInput > 20_000_000n) || terms.toleranceBps! > 50) throw new Error('Restored Quote exceeds the current protected domain.');
         const [origin,head] = await Promise.all([
           readProvider.send('eth_getBlockByNumber',[toBeHex(receipt.blockNumber),false]),

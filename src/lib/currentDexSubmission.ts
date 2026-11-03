@@ -1457,7 +1457,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     const terms = prepared.profile === 'cheap-async' ? decoded.request : decoded;
     if (!sameAddress(terms[0], i.inputToken) || !sameAddress(terms[1], i.outputToken) ||
         !sameAddress(terms[2], i.destination) || terms[3] !== i.deadline ||
-        (cheapProtocol && terms[9] !== BigInt(i.toleranceBps!))) throw new Error('Current-mode Quote calldata changed.');
+        (cheapProtocol && terms.toleranceBps !== BigInt(i.toleranceBps!))) throw new Error('Current-mode Quote calldata changed.');
   };
   const nativeSigning = (phase: 'quote' | 'accept' | 'cancel' | 'recover', cap: bigint,
     prepared: CurrentCheapDexPreparedQuote) => {

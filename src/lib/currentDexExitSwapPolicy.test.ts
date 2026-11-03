@@ -50,7 +50,7 @@ function sender(profile: 'fast-pool' | 'cheap-async', phase: 'quote' | 'accept' 
   const data = phase === 'quote' ? encodeCurrentDexQuoteRequest({ profile, quoteProtocol: 'quote-slippage', toleranceBps: 50,
     inputToken: current.tokens[0][0], outputToken: current.tokens[1][0], destination: owner, deadline: 200n,
     maximumInput: wide, minimumInput: wide, minimumOutput: wide,
-    minimumRateNumerator: { ciphertext: 1n, signature: wide.signature }, minimumRateDenominator: { ciphertext: 1n, signature: wide.signature } })
+    minimumRate: wide })
     : phase === 'accept' ? new Interface(CURRENT_SLIPPAGE_DEX_ACCEPT_ABI).encodeFunctionData(profile === 'fast-pool' ? 'acceptFastPool' : 'acceptPrivateSwapV1', [1n, context])
       : new Interface(['function cancelSwap(uint256)', 'function recoverSwap(uint256)']).encodeFunctionData(phase === 'cancel' ? 'cancelSwap' : 'recoverSwap', [1n]);
   const cap = phase === 'quote' || phase === 'accept' ? CURRENT_EXIT_SWAP_GAS_CAPS[profile][phase] : CURRENT_EXIT_SWAP_GAS_CAPS['cheap-async'][phase];
