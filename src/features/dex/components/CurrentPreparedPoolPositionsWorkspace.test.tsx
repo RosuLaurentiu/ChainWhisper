@@ -119,9 +119,10 @@ describe('prepared Positions owner snapshot view',()=>{
     (child.props as unknown as {onReleased:()=>void}).onReleased();
     expect(f.button('Check position status').props.disabled).toBe(false);
   });
-  it('keeps real hold before paid refresh touches a wallet',async()=>{
-    const f=fixture();f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(text(f.render())).toContain(key==='cheap-history'?'App signing hold remains active':'native App submission admission is absent'));
-    expect(f.getPositions).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();
+  it('requires live position capability before paid refresh preparation',async()=>{
+    const f=fixture();if(key==='cheap-history')f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
+    f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
+    expect(f.getPositions).toHaveBeenCalledTimes(key==='cheap-history'?1:0);expect(f.prepareSnapshot).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();
   });
   it.each([0,1,2,3,4,5])('uses authenticated market %i token labels and six decimals',async index=>{
     const f=fixture(index);hooks.allowNative=true;hooks.states[11]=hash;await f.load();
@@ -165,10 +166,11 @@ describe('prepared Positions owner snapshot view',()=>{
     const f=fixture();hooks.allowNative=true;f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(f.getSender).not.toHaveBeenCalled();expect(text(f.render())).toContain('Private snapshot cancelled');
   });
-  it('keeps Close held before acquiring a wallet capability',async()=>{
+  it('requires live position capability before Close preparation',async()=>{
     const f=fixture();hooks.allowNative=true;await f.load();hooks.allowNative=false;f.getPositions.mockClear();
+    if(key==='cheap-history')f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
     f.button('Close and withdraw all').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(text(f.render())).toContain(key==='cheap-history'?'App signing hold remains active':'admission is absent');expect(f.getPositions).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();
+    expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'admission is absent');expect(f.getPositions).toHaveBeenCalledTimes(key==='cheap-history'?1:0);expect(f.prepareAction).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();
   });
   it('binds exact six-decimal minimums, producer and close-to-snapshot recovery',async()=>{
     const f=fixture(4);hooks.allowNative=true;hooks.states[11]=hash;await f.load();hooks.states[2]='1.000001';hooks.states[3]='2.000002';
@@ -224,10 +226,11 @@ if(key!=='cheap-prepared')describe('private partial withdrawal consumer',()=>{
       f.button('Check position status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));};
     return{...f,prepared,preview,recover,submit,run};
   }
-  it('keeps preview held before wallet acquisition',async()=>{
+  it('requires live position capability before withdrawal preview preparation',async()=>{
     const f=await previewFixture();hooks.allowNative=false;f.getPositions.mockClear();
+    if(key==='cheap-history')f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
     f.button('Review private withdrawal preview').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(text(f.render())).toContain(key==='cheap-history'?'App signing hold remains active':'admission is absent');expect(f.getPositions).not.toHaveBeenCalled();
+    expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'admission is absent');expect(f.getPositions).toHaveBeenCalledTimes(key==='cheap-history'?1:0);
     expect(f.getSender).not.toHaveBeenCalled();expect(f.prepareExitPreview).not.toHaveBeenCalled();
   });
   it.each([0,1,2,3,4,5])('connects preview, withdrawal and remaining-share proof for pair%i',async index=>{

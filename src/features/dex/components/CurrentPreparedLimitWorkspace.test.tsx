@@ -183,10 +183,10 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(prepareSharedLimitApproval).toHaveBeenCalledOnce();
     expect(f.sender.submitSharedLimitApproval).not.toHaveBeenCalled();expect(f.sender.submitLimit).not.toHaveBeenCalled();expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();
   });
-  it.each(['create','topup']as const)('keeps cheap-history %s allowance behind the real App signing hold',async kind=>{
+  it.each(['create','topup']as const)('requires live funding capability before cheap-history %s allowance preparation',async kind=>{
     if(key!=='cheap-prepared')return;
     const f=fixture(0,'cheap-history');
-    const prepareFundingReview=vi.fn(async()=>({review:true}));
+    const prepareFundingReview=vi.fn(async()=>{throw new Error('Connected wallet lease is unavailable.');});
     if(kind==='create'){
       hooks.states[1]='1.25';hooks.states[2]='2';
       f.getLimit.mockImplementation(async()=>({prepareLimit:f.prepareLimit,prepareOwnerAction:f.prepareOwnerAction,prepareFundingReview}) as never);
@@ -197,8 +197,8 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     }
     f.button(kind==='create'?'Review exact order allowance':'Review exact top-up allowance').props.onClick!();
     await vi.waitFor(()=>expect(hooks.states[4]).toBe(false));
-    expect(text(f.render())).toContain('Shared-history DEX App signing hold remains active');
-    expect(prepareFundingReview).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.getLimit).not.toHaveBeenCalled();
+    expect(text(f.render())).toContain('Connected wallet lease is unavailable.');
+    expect(prepareFundingReview).toHaveBeenCalledOnce();expect(f.getSender).not.toHaveBeenCalled();expect(f.getLimit).toHaveBeenCalledTimes(kind==='create'?1:0);
     expect(hooks.confirm).not.toHaveBeenCalled();expect(f.sender.submitSharedLimitApproval).not.toHaveBeenCalled();
     expect(f.sender.submitLimit).not.toHaveBeenCalled();expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();
   });

@@ -80,12 +80,13 @@ describe('prepared Pool creation view', () => {
     expect(text(f.render())).toContain(`${pair.tokens[1].label} per ${pair.tokens[0].label}`);
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
   });
-  it('keeps the connected-wallet hold before provider, capability or private input prompts', async () => {
+  it('requires live submission capability before provider or private input prompts', async () => {
     const f = fixture(); hooks.states[0] = '1'; hooks.states[1] = '1'; hooks.states[2] = '2';
+    if (key === 'cheap-history') f.getSender.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
     const button = f.button('Review deposit'); expect(button.props.disabled).toBe(false);
     button.props.onClick!();
-    await vi.waitFor(() => expect(text(f.render())).toContain(key==='cheap-history'?'App signing hold remains active':'native App submission admission is absent'));
-    expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
+    expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).toHaveBeenCalledTimes(key==='cheap-history'?1:0); expect(f.request).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
   });
   it.each(['pair', 'candidate', 'owner'] as const)('hides an old private preview after %s changes', change => {
     const f = fixture();
@@ -102,10 +103,13 @@ describe('prepared Pool creation view', () => {
     const f = fixture(); f.props.selectedPair = [a, b]; expect(() => f.render()).toThrow();
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
   });
-  it('holds prepared approvals before capability reads or confirmations', async () => {
-    const f = fundingFixture(); f.button(`Approve exact ${f.pair.tokens[0].label}`).props.onClick!();
-    await vi.waitFor(() => expect(text(f.render())).toContain(key==='cheap-history'?'App signing hold remains active':'native App submission admission is absent'));
-    expect(f.getSender).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
+  it('requires live submission capability before approval preparation or confirmations', async () => {
+    const f = fundingFixture();
+    if (key === 'cheap-history') f.getSender.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
+    f.button(`Approve exact ${f.pair.tokens[0].label}`).props.onClick!();
+    await vi.waitFor(() => expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
+    expect(f.getSender).toHaveBeenCalledTimes(key==='cheap-history'?1:0); expect(hooks.confirm).not.toHaveBeenCalled();
+    expect(f.sender.prepareSharedPoolApproval).not.toHaveBeenCalled();
     expect(f.sender.submitSharedPoolApproval).not.toHaveBeenCalled();
   });
   it('stages the confirmed deposit before either approval or funding', async () => {
