@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <script>
+      (function () {
+        const currentUrl = new URL(window.location.href);
+        const restoredPath = currentUrl.searchParams.get('p');
+        if (!restoredPath) {
+          return;
+        }
+
+        const normalizedPath = restoredPath.startsWith('/') ? restoredPath : `/${restoredPath}`;
+        const normalizedCurrentPath = currentUrl.pathname.replace(/\/+$/, '') || '/';
+        if (normalizedCurrentPath.toLowerCase() === '/wallet-connect') {
+          return;
+        }
+
+        if (
+          normalizedCurrentPath.toLowerCase() === '/trades' &&
+          normalizedPath.toLowerCase().startsWith('/trades')
+        ) {
+          return;
+        }
+
+        currentUrl.searchParams.delete('p');
+        const nextSearch = currentUrl.searchParams.toString();
+        window.history.replaceState(
+          null,
+          '',
+          `${normalizedPath}${nextSearch ? `?${nextSearch}` : ''}${currentUrl.hash}`
+        );
+      })();
+    </script>
+    <title>COTI Messaging</title>
+    <link rel="icon" type="image/png" href="/assets/favicon-CqeG89Cb.png" />
+    <script type="module" crossorigin src="/assets/index-Ctx4s2Y7.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vite-runtime-BXl3LOEh.js">
+    <link rel="modulepreload" crossorigin href="/assets/react-vendor-ASV91pfg.js">
+    <link rel="modulepreload" crossorigin href="/assets/crypto-vendor-XuUCGn44.js">
+    <link rel="modulepreload" crossorigin href="/assets/ethers-vendor-B1OUPqz1.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-BFIG2KUL.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

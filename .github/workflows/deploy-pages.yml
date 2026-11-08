@@ -1,53 +1,38 @@
-name: Deploy to GitHub Pages
-
+name: Deploy checked Testnet App
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
   pages: write
   id-token: write
-
 concurrency:
   group: pages
   cancel-in-progress: true
-
 jobs:
   build:
     environment: github-pages
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build the reviewed Testnet App
-        run: npm run build:pages
-
-      - name: Preserve custom domain
+      - uses: actions/checkout@v4
+      - name: Verify the approved static tree
         run: |
-          test "$(cat CNAME)" = "chainwhisper.app"
-          cp CNAME dist/CNAME
-          printf '{"commit":"%s","network":"coti-testnet"}\n' "$GITHUB_SHA" > dist/release.json
-
-      - name: Disable Jekyll processing
-        run: touch dist/.nojekyll
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+          node <<'NODE'
+          const fs=require('node:fs'),crypto=require('node:crypto'),assert=require('node:assert/strict');
+          const bytes=fs.readFileSync('BUILD_MANIFEST.json');
+          assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'5696b178047fd72f6fa0b071c007ccb9830f74b589d11c5a8ff9ab111049f90d');
+          const m=JSON.parse(bytes);
+          const walk=p=>fs.readdirSync(p,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(p+'/'+e.name):[p+'/'+e.name]);
+          assert.deepEqual(walk('site').map(p=>p.slice(5)).sort(),Object.keys(m.files).sort());
+          for(const [name,hash] of Object.entries(m.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync('site/'+name)).digest('hex'),hash,name);
+          NODE
+      - name: Preserve deployment metadata
+        run: |
+          printf 'chainwhisper.app\n' > site/CNAME
+          touch site/.nojekyll
+          printf '{"commit":"%s","network":"coti-testnet","staticManifestSha256":"5696b178047fd72f6fa0b071c007ccb9830f74b589d11c5a8ff9ab111049f90d"}\n' "$GITHUB_SHA" > site/release.json
+      - uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
-
+          path: ./site
   deploy:
     environment:
       name: github-pages
@@ -55,6 +40,5 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - id: deployment
         uses: actions/deploy-pages@v4
