@@ -19,7 +19,7 @@ jobs:
           node <<'NODE'
           const fs=require('node:fs'),crypto=require('node:crypto'),assert=require('node:assert/strict');
           const bytes=fs.readFileSync('BUILD_MANIFEST.json');
-          assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'7c2aad370df0a2d080e9e5e1c6ca1f612da6c3d4506a8b73519801682c0f4608');
+          assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'3521279836cf05ad700ccb095b6667fc3b7bb008fcccaff525c823ba66f5fe43');
           const m=JSON.parse(bytes);
           const walk=p=>fs.readdirSync(p,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(p+'/'+e.name):[p+'/'+e.name]);
           assert.deepEqual(walk('site').map(p=>p.slice(5)).sort(),Object.keys(m.files).sort());
@@ -29,7 +29,7 @@ jobs:
         run: |
           printf 'chainwhisper.app\n' > site/CNAME
           touch site/.nojekyll
-          printf '{"commit":"%s","network":"coti-testnet","staticManifestSha256":"7c2aad370df0a2d080e9e5e1c6ca1f612da6c3d4506a8b73519801682c0f4608"}\n' "$GITHUB_SHA" > site/release.json
+          printf '{"commit":"%s","network":"coti-testnet","staticManifestSha256":"3521279836cf05ad700ccb095b6667fc3b7bb008fcccaff525c823ba66f5fe43"}\n' "$GITHUB_SHA" > site/release.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./site
