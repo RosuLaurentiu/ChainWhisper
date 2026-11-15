@@ -71,7 +71,10 @@ const partialTrialCommitment = (graph: string, owner: string, charges: readonly 
     ? charges.slice(0, CURRENT_APP_PARTIAL_REFUND_TRIAL.retainedLedgerStarts).reduce((sum, c) => sum + BigInt(c.gasCap) * currentNativeSwapChargeGasPrice(c), 0n) + CURRENT_APP_PARTIAL_REFUND_TRIAL.additionalOwnerCommitmentWei
     : CURRENT_NATIVE_SWAP_LIMITS.commitmentWei;
 export type CurrentNativeSwapCheckpoint = Readonly<{ version: 1 | 2; owner: string; candidateGraph: string; start: string;
-  windowStart?: string; committedWei: string; activeSwap: string | null; charges: readonly Readonly<SwapCharge>[] }>;
+  windowStart?: string; committedWei: string; activeSwap: string | null; charges: readonly Readonly<SwapCharge>[];
+  // decision-033: reservations that the wallet rejected and the chain never saw. Kept, never deleted.
+  // Present only when not empty, so that records with no release keep their exact bytes.
+  released?: readonly Readonly<SwapCharge>[] }>;
 // Builds public reservations only. The consumer must prove canonical calls and private Fast7 settlement before installation.
 export const recoverCurrentPartialLedger = (owner:string,candidate:CurrentCheapDexIdentity,now:bigint,
   transactions:readonly Readonly<{hash:string;nonce?:number;data:string;gasLimit?:bigint;gasPrice?:bigint;chainId:bigint;from:string;to:string|null;value:bigint}>[]):CurrentNativeSwapCheckpoint => {
@@ -98,7 +101,8 @@ export const recoverCurrentPartialLedger = (owner:string,candidate:CurrentCheapD
 type Budget = { version: 1 | 2; owner: string; candidateGraph: string; start: bigint; windowStart?: bigint; committed: bigint; keys: Set<string>; activeSwap: string | null;
   poolScope: string | null; poolStarted: boolean; poolFundSigningStarted:boolean; poolCommitted: bigint; poolApprovals: Set<string>;
   poolTailCommitted: bigint; poolFunded: boolean; poolFailed: boolean; poolClosed: boolean; poolTail: Set<Phase>;
-  poolActiveSnapshots: number; poolCleanups: Set<string>; charges: SwapCharge[] };
+  poolActiveSnapshots: number; poolCleanups: Set<string>; charges: SwapCharge[];
+  released: SwapCharge[]; lastCommit: { key: string; activeSwap: string | null } | null };
 const budgets = new WeakMap<object, Budget>();
 export const hasCurrentNativeSigningBudget = (signer: object) => budgets.has(signer);
 // Shared cost accounting only. This interface grants no phase, calldata or signer authority.
@@ -108,7 +112,8 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
   let budget = budgets.get(signer);
   if (!budget) { budget = { version: isCurrentDexBrowserSigner(signer,candidate.graph,owner)?2:1, owner: owner.toLowerCase(), candidateGraph: candidate.graph, start: now(), committed: 0n, keys: new Set(), activeSwap: null,
     poolScope: null, poolStarted: false, poolFundSigningStarted:false, poolCommitted: 0n, poolApprovals: new Set(), poolTailCommitted: 0n,
-    poolFunded: false, poolFailed: false, poolClosed: false, poolTail: new Set(), poolActiveSnapshots: 0, poolCleanups: new Set(), charges: [] }; budgets.set(signer, budget); }
+    poolFunded: false, poolFailed: false, poolClosed: false, poolTail: new Set(), poolActiveSnapshots: 0, poolCleanups: new Set(), charges: [],
+    released: [], lastCommit: null }; budgets.set(signer, budget); }
   const state = budget, l = CURRENT_NATIVE_SWAP_LIMITS, fixedGasPrice = currentSwapFixedGasPrice(candidate);
   const check = (phase: Phase, key: string, gasCap: bigint, swapScope?: string) => {
     if (state.candidateGraph !== candidate.graph) throw new Error('Native signing budget candidate changed.');
@@ -203,6 +208,7 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
       assertCurrentDexBrowserWindow(signer,candidate.graph,owner,candidate.core,7082400n,now(),nonce!,gasCap,fixedGasPrice);
       if (state.charges.some(row => row.nonce >= nonce!)) throw new Error('Owner beta nonce was already reserved.');
     }
+    const priorActiveSwap = state.activeSwap;
     state.keys.add(key); if (phase === 'quote' || usesCurrentSwapAccounting(candidate) && phase === 'token-funding') state.activeSwap = swapScope ?? key;
     if (phase === 'pool-preview') { state.poolStarted = true; state.poolScope = swapScope ?? key; }
     if(phase==='pool-fund')state.poolFundSigningStarted=true;
@@ -216,6 +222,8 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
     state.committed += gasCap * fixedGasPrice;
     if (usesCurrentSwapAccounting(candidate) && ['quote','accept','cancel','recover','token-funding','token-faucet'].includes(phase) && Number.isSafeInteger(nonce) && nonce! >= 0) {
       state.charges.push({ phase: phase as SwapCharge['phase'], key, scope: swapScope ?? key, gasCap: String(gasCap), gasPrice: String(fixedGasPrice), nonce: nonce!, hash: null });
+      // In memory only: a release in the same session restores the exact scope from before this reservation.
+      state.lastCommit = { key, activeSwap: priorActiveSwap };
     }
   }, snapshot: () => Object.freeze({ committedWei: state.committed, signingStarts: state.keys.size,
     poolFundSigningStarted:state.poolFundSigningStarted,
@@ -232,7 +240,42 @@ export const currentNativeSwapCheckpoint = (signer: object): CurrentNativeSwapCh
   if (!b || b.charges.length !== b.keys.size || b.poolStarted || b.poolScope !== null) throw new Error('Original native budget has no complete reload reservation.');
   return Object.freeze({ version: b.version, owner: b.owner, candidateGraph: b.candidateGraph, start: String(b.start), committedWei: String(b.committed),
     ...(b.windowStart === undefined ? {} : {windowStart: String(b.windowStart)}),
-    activeSwap: b.activeSwap, charges: Object.freeze(b.charges.map(c=>Object.freeze({...c}))) });
+    activeSwap: b.activeSwap, charges: Object.freeze(b.charges.map(c=>Object.freeze({...c}))),
+    ...(b.released.length ? { released: Object.freeze(b.released.map(c=>Object.freeze({...c}))) } : {}) });
+};
+// decision-033. The caller proves that the wallet rejected the request and that the chain shows the
+// reserved nonce unused, and then saves the record. The reservation moves to the released list; it is
+// never deleted. Returns an undo for a failed save, or null when this reservation was released before.
+export const releaseCurrentNativeSwapCharge = (signer: object, owner: string, candidate: CurrentCheapDexIdentity,
+  nonce: number, callHash: string, phase?: SwapCharge['phase']): (() => void) | null => {
+  const b = budgets.get(signer);
+  if (!b || b.version !== 2 || !isCurrentDexBrowserSigner(signer, candidate.graph, owner) || b.owner !== owner.toLowerCase() ||
+      b.candidateGraph !== candidate.graph || !Number.isSafeInteger(nonce) || nonce < 0 || !/^0x[0-9a-f]{64}$/.test(callHash))
+    throw new Error('Unsent reservation release has no current browser budget.');
+  const matches = (row: SwapCharge) => row.nonce === nonce && row.hash === null && (phase === undefined || row.phase === phase) &&
+    (row.phase === 'quote' ? row.scope === `quote:${callHash}` : row.phase !== 'token-funding' || row.key.endsWith(`:${callHash}`));
+  const last = b.charges[b.charges.length - 1];
+  if (!last || !matches(last)) {
+    // Repeat calls change nothing. A different open or later reservation is never released here.
+    if (b.released.some(matches) && !b.charges.some(row => row.hash === null || row.nonce >= nonce)) return null;
+    throw new Error('Unsent reservation release does not match the last reservation.');
+  }
+  const before = { charges: b.charges, released: b.released, keys: new Set(b.keys), committed: b.committed, activeSwap: b.activeSwap, lastCommit: b.lastCommit };
+  const restore = () => { b.charges = before.charges; b.released = before.released; b.keys = new Set(before.keys);
+    b.committed = before.committed; b.activeSwap = before.activeSwap; b.lastCommit = before.lastCommit; };
+  b.charges = b.charges.slice(0, -1); b.released = [...b.released, { ...last }]; b.keys.delete(last.key);
+  b.committed -= BigInt(last.gasCap) * currentNativeSwapChargeGasPrice(last);
+  if (before.lastCommit?.key === last.key) b.activeSwap = before.lastCommit.activeSwap;
+  else if (b.activeSwap === last.scope && !b.charges.some(row => row.scope === last.scope)) {
+    // After a reload the earlier scope is unknown. Keep the scope while confirmed funding still waits for its Quote.
+    const lastScope = b.charges[b.charges.length - 1]?.scope;
+    const fundingWaits = lastScope !== undefined && b.charges.filter(row => row.scope === lastScope).every(row => row.phase === 'token-funding' && row.hash !== null);
+    if (!fundingWaits) b.activeSwap = null;
+  }
+  b.lastCommit = null;
+  try { validateCurrentNativeSwapCheckpoint(currentNativeSwapCheckpoint(signer), owner, candidate, signer); }
+  catch (error) { restore(); throw error; }
+  return restore;
 };
 export const recordCurrentNativeSwapHash = (signer: object, nonce: number, callHash: string, transactionHash: string) => {
   const b=budgets.get(signer), charge=b?.charges.find(c=>c.nonce===nonce&&c.hash===null);
@@ -285,7 +328,16 @@ export const validateCurrentNativeSwapCheckpoint = (value: CurrentNativeSwapChec
   if (!(value?.version===2 && isCurrentDexBrowserSigner(signer,candidate.graph,owner)) && !isCurrentOwnerBeta(candidate.graph,owner)) return validateLegacyCurrentNativeSwapCheckpoint(value, owner, candidate);
   const normalUse=value?.version===2;
   if(normalUse){
-    if(Object.keys(value).sort().join(',')!=='activeSwap,candidateGraph,charges,committedWei,owner,start,version'||
+    if(value.released!==undefined){
+      const caps:Record<string,readonly string[]>={quote:['110000000'],accept:['35000000','110000000'],cancel:['30000000'],recover:['50000000'],'token-funding':['5000000']};
+      // Shape only. A released row grants nothing; only the browser release step can add one.
+      if(!Array.isArray(value.released)||value.released.length===0||
+          value.released.some(row=>!row||Object.keys(row).sort().join(',')!=='gasCap,gasPrice,hash,key,nonce,phase,scope'||row.hash!==null||
+            !Object.prototype.hasOwnProperty.call(caps,row.phase)||!caps[row.phase].includes(row.gasCap)||row.gasPrice!=='50000000'||!/^quote:0x[0-9a-f]{64}$/.test(row.scope)||
+            typeof row.key!=='string'||!row.key||!Number.isSafeInteger(row.nonce)||row.nonce<0))
+        throw new Error('Owner normal-use released reservation is invalid.');
+    }
+    if(Object.keys(value).filter(key=>key!=='released').sort().join(',')!=='activeSwap,candidateGraph,charges,committedWei,owner,start,version'||
         value.owner!==owner.toLowerCase()||value.candidateGraph!==candidate.graph||typeof value.start!=='string'||
         !/^[1-9][0-9]*$/.test(value.start)||BigInt(value.start)<(isCurrentDexBrowserSigner(signer,candidate.graph,owner)?1n:CURRENT_OWNER_BETA.activation!.activatedAt)||
         typeof value.committedWei!=='string'||!/^(0|[1-9][0-9]*)$/.test(value.committedWei)||!Array.isArray(value.charges))
@@ -410,6 +462,7 @@ export const restoreCurrentNativeSwapCheckpoint = (signer: object, owner: string
   if(budgets.has(signer)){if(JSON.stringify(currentNativeSwapCheckpoint(signer))!==JSON.stringify(value))throw new Error('Live native budget differs from reload reservation.');return;}
   currentNativeSigningBudget(signer,owner,()=>BigInt(value.start),candidate);
   const b=budgets.get(signer)!;b.version=value.version;b.windowStart=value.windowStart===undefined?undefined:BigInt(value.windowStart);b.committed=BigInt(value.committedWei);b.keys=new Set(value.charges.map(c=>c.key));b.activeSwap=value.activeSwap;b.charges=value.charges.map(c=>({...c}));
+  b.released=(value.released??[]).map(c=>({...c}));b.lastCommit=null;
 };
 
 export const recordCurrentNativePoolOutcome = (signer: object, scope: string, outcome: 'funded' | 'unfunded-failed' | 'closed') => {

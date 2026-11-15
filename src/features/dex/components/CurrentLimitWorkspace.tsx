@@ -1,3 +1,5 @@
+import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSubmission';
+import { CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
 import { useRef,useState, type ReactNode } from 'react';
 import type { SharedWalletSession } from '../../../lib/walletSession';
@@ -27,6 +29,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   const preparedScope=candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidateKey):null;
   const ownedDiscovery=candidateKey==='cheap-exit'||candidateKey==='cheap-history';
   const c=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),preparedCandidate=preparedScope!==null;
+  const recordScope=currentDexRecordScope(c,sharedWalletSession?.walletAddress);
   const display=preparedCandidate?readCurrentDexDisplay(c):null;
   const selectedTokens=display&&selectedPair?.map(label=>display.tokens.find(token=>token.label===label));
   const pair=preparedCandidate?(()=>{
@@ -65,8 +68,8 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   const editInput=useRef('');editInput.current=[topUp,editPrice,editMinimum].join(':');
   const {confirmation,requestConfirmation,resolveConfirmation}=useTradeActionConfirmationState(scope.current);
   const connected=Boolean(state.owner&&state.chain===Number(c.chainId)&&state.provider&&getLimit&&getSender);
-  const savedActionPending=hasCurrentDexPendingAction();
-  const savedAttempt=readCurrentDexPendingAttempt(currentDexPendingStorage());
+  const savedActionPending=hasCurrentDexPendingAction(recordScope);
+  const savedAttempt=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
   const recoveryTarget=topUpRecovery?.scope===scope.current?topUpRecovery:(savedAttempt?.verificationBlocked&&savedAttempt.phase==='limit-owner'&&savedAttempt.txHash&&message?.scope===scope.current&&/Limit top-up/.test(message.text)&&/^\d+$/.test(ownerId)&&BigInt(ownerId)>=8n?{positionId:BigInt(ownerId),transactionHash:savedAttempt.txHash}:null);
   const baseIndex:0|1=pair?(pair.tokens[0].address===(priceDisplayInverted?pair.tokenOut:pair.tokenIn).address?0:1):(priceDisplayInverted?0:1);
   const priceTermsInverted=baseIndex===0;
@@ -75,7 +78,8 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   const displayedQuote=tokenLabels[baseIndex===0?1:0];
   const assertScope=(captured:object)=>{if(captured!==scope.current)throw new Error('Limit terms or owner session changed. Review again.');};
   const notice=(text:string,view?:'create')=>setMessage({text,scope:scope.current,view});
-  const fail=(error:unknown,captured:object,view?:'create')=>notice(captured!==scope.current
+  const released=(error:unknown,captured:object)=>{if(captured!==scope.current||!wasCurrentDexUnsentReleased(error))return false;setBlocked(hasCurrentDexPendingAction(recordScope));return true;};
+  const fail=(error:unknown,captured:object,view?:'create')=>notice(released(error,captured)?CURRENT_UNSENT_RELEASED_MESSAGE:captured!==scope.current
     ?'Limit terms or owner session changed. Review again.'
     :isProviderActionRejected(error)?'The wallet request was rejected.':
       getProviderErrorMessage(error,'Limit action failed. Check its status before another request.'),view);
@@ -200,13 +204,15 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
         setBlocked(true);if(pending.phase==='limit-owner')setOwnerResult(null);fail(error,captured);return;
       }}
       const sender=await (preparedCandidate?getSender(BigInt(c.chainId),{candidate:candidateKey}):getSender(BigInt(c.chainId)));assertScope(captured);
-      if(readCurrentDexPendingAttempt(currentDexPendingStorage())?.phase==='token-approve'){
+      if(readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))?.phase==='token-approve'){
         const approval=await sender.recoverPendingSharedLimitApproval();assertScope(captured);
+        if(approval?.status==='released-unsent'){setPending(null);setBlocked(hasCurrentDexPendingAction(recordScope));notice(CURRENT_UNSENT_RELEASED_MESSAGE);return;}
         if(!approval||approval.status==='observed-mined'||approval.status==='observed-reverted'){setPending(null);setBlocked(false);notice(approval?.status==='observed-reverted'?'Limit allowance reverted. Review a fresh allowance.':'Limit allowance receipt reconciled. Review the order again with fresh funding checks.');}
         else{setBlocked(true);notice('Limit allowance is pending or uncertain. Do not resend.');}return;
       }
       const observed=await sender.recoverPendingLimitAttempt();assertScope(captured);
       if(!observed){setBlocked(false);notice('No pending Limit attempt found.');return;}
+      if(observed.status==='released-unsent'){setPending(null);setBlocked(hasCurrentDexPendingAction(recordScope));notice(CURRENT_UNSENT_RELEASED_MESSAGE);return;}
       if(observed.status==='observed-mined'||observed.status==='observed-reverted'){setPending(null);setBlocked(false);setCreation(null);setVerified(null);
         setOwnerResult(null);notice(observed.status==='observed-reverted'?'Limit transaction reverted. Review a fresh request.':observed.phase==='limit-owner'?'Limit owner transaction and public events verified. Private accounting was not restored. Refresh an active owned Limit explicitly before managing it.':'Limit transaction mined. This session has no authenticated private creation result.');}
       else{

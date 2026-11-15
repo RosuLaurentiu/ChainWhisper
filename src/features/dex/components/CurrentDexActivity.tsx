@@ -3,7 +3,7 @@ import { ArrowLeftRight, Clock3, Coins, Layers3, ListOrdered } from 'lucide-reac
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
-import { currentDexDisplayPair, formatDexCandidateTokenAmount, readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
+import { currentDexDisplayPair, formatDexCandidateTokenAmount, readCurrentDexDisplay, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import { readCurrentDexActivityPage, buildCurrentDexActivityEntries } from '../../../lib/currentDexActivity';
 import { CurrentDexActivitySourceError } from '../../../lib/currentDexActivityDiscovery';
 import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
@@ -35,6 +35,7 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
   managementNavigation?: ReactNode;
 }) {
   const candidate = resolveCurrentCheapDexCandidate(candidateKey);
+  const recordScope = currentDexRecordScope(candidate, sharedWalletSession?.walletAddress);
   const privacyReady = sharedWalletSession ? resolveBrowserWalletPrivacyState({ browserWalletAddress: sharedWalletSession.walletAddress,
     sessionOnboardInfo: sharedWalletSession.sessionOnboardInfo ?? {}, walletAesHealthByAddress: sharedWalletSession.walletAesHealthByAddress }).ownerAesReady : false;
   const context = { owner: sharedWalletSession?.walletAddress.toLowerCase(), chain: sharedWalletSession?.chainId,
@@ -146,7 +147,7 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
   let pending: ReturnType<typeof readCurrentDexPendingAttempt> = null, storageError = '';
   if (connected) {
     try {
-      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage());
+      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
       if (saved && saved.owner === context.owner && saved.chainId === candidate.chainId &&
           saved.core === candidate.core.toLowerCase() && saved.graph === `0x${candidate.graph}`) pending = saved;
     } catch (error) { storageError = error instanceof Error ? error.message : 'Saved action cannot be read.'; }

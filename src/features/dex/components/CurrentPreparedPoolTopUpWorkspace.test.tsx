@@ -367,6 +367,32 @@ describe('prepared Pool top-up money flow', () => {
     expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(f.props.onVerified).not.toHaveBeenCalled();
     expect(f.submitSnapshot).not.toHaveBeenCalled();expect(f.submitFunding).not.toHaveBeenCalled();expect(f.button('Review exact top-up')).toBeUndefined();
   });
+  // CW-086, decision-033: a release in recovery sent nothing. The view keeps its verified state and does not stop.
+  it('keeps the verified preview and the open top-up when a saved wallet rejection is released', async () => {
+    const f = fixture(); hooks.allowNative = true; await f.previewFlow();
+    f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify({ version: 1, chainId: candidate.chainId, owner, core: candidate.core,
+      graph: `0x${candidate.graph}`, phase: 'token-approve', nonce: 3, txHash: null, callHash: hash, walletRejected: true }));
+    f.sender.recoverPendingSharedPoolApproval.mockImplementationOnce(async () => {
+      f.journal.delete(CURRENT_DEX_PENDING_ATTEMPT_KEY); return { status: 'released-unsent', privateAccountingVerified: false } as never; });
+    await f.click('Check top-up status');
+    expect(text(f.render())).toContain('The wallet rejected this request.');
+    expect(f.button('Review exact top-up')).toBeDefined(); expect(f.button('Review exact top-up')!.disabled).toBe(false);
+    expect(f.props.onReleased).not.toHaveBeenCalled();
+    for (const mock of [f.submitFunding, f.submitApproval, f.submitSnapshot]) expect(mock).not.toHaveBeenCalled();
+    expect(f.submitPreview).toHaveBeenCalledOnce();
+  });
+  it('permits a new preview when a saved wallet rejection is released and this view has no private state', async () => {
+    const f = fixture(); hooks.allowNative = true;
+    f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify({ version: 1, chainId: candidate.chainId, owner, core: candidate.core,
+      graph: `0x${candidate.graph}`, phase: 'pool-preview', nonce: 3, txHash: null, callHash: hash, walletRejected: true }));
+    f.sender.recoverPendingPoolAttempt.mockImplementationOnce(async () => {
+      f.journal.delete(CURRENT_DEX_PENDING_ATTEMPT_KEY); return { status: 'released-unsent', privateAccountingVerified: false } as never; });
+    await f.click('Check top-up status');
+    expect(text(f.render())).toContain('The wallet rejected this request.');
+    expect(f.props.onReleased).toHaveBeenCalledOnce();
+    f.enter(); await f.click('Review top-up preview');
+    expect(f.submitPreview).toHaveBeenCalledOnce();
+  });
   it.each(['pool-preview', 'pool-fund', 'token-approve', 'pool-snapshot'] as const)('reloads %s as public metadata without private funding authority', async phase => {
     const f = fixture();
     f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify({ version: 1, chainId: candidate.chainId, owner,

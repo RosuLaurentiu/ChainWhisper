@@ -4,8 +4,8 @@ import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { assertCurrentAppInitialClaimAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, isCurrentAppCanonicalClaimRepair } from './currentDexC1SwapPolicy';
 import type { readCurrentSharedDexTokenFunds } from './currentSharedDexTokenFunds';
-import { createCurrentAttemptBoundary, CURRENT_NATIVE_RECOVERY_RESERVE, type CurrentTransport, type CurrentCheapDexPreparedQuote } from './currentDexSubmission';
-import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash, readCurrentDexOperationLookups } from './currentDexPendingAttempt';
+import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, CURRENT_NATIVE_RECOVERY_RESERVE, type CurrentTransport, type CurrentCheapDexPreparedQuote } from './currentDexSubmission';
+import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash, readCurrentDexOperationLookups, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
 import type { PrivateUint256Input, PrivateUint256Output } from './privateUint256';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedFunding, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
@@ -85,6 +85,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
   readFunds, readReceiptBlock, decrypt, encrypt, assertAdmission, assertApprovalAdmission = assertCurrentSharedTokenFundingAppAuthority,
   assertSwapApprovalAdmission = assertCurrentSharedTokenFundingAppAuthority,
   authorizeSwapApprovalSigning, authorizeInitialClaimSigning, rememberSwapApprovalHash, completeSwapAllowanceCleanup,
+  releaseUnsentLedgerReservation,
   assertAllowanceMutationIdle = async () => {},
   now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
   candidate?: CurrentCheapDexCandidateKey; signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport;
@@ -98,11 +99,13 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
   authorizeInitialClaimSigning?: (request: Request) => Promise<void>;
   rememberSwapApprovalHash?: (sent: {request: Request;transactionHash:string}) => Promise<void>;
   completeSwapAllowanceCleanup?: () => Promise<void>;
+  // decision-033: releases the owner-record reservation of a wallet-rejected swap approval. It throws to keep the lock.
+  releaseUnsentLedgerReservation?: (attempt: CurrentDexPendingAttempt) => Promise<void>;
   assertAdmission: (action: CurrentSharedTokenFundingAction, token: string, preparedQuote?: CurrentCheapDexPreparedQuote) => void | Promise<void>; now?: () => bigint;
 }) => {
   const policy = resolveCurrentSharedTokenDistribution(candidate), fixedGasPrice = currentSwapFixedGasPrice(policy);
   const identity = Object.freeze({ core: policy.core, graph: policy.graph, packageSha256: policy.packageSha256 });
-  const owner = getAddress(ownerAddress), storage = currentDexPendingStorage();
+  const owner = getAddress(ownerAddress), storage = currentDexPendingStorage({ chainId, graph: policy.graph, owner });
   if (!signer || chainId !== policy.chainId || same(owner, zero)) throw new Error('Wrong beta funding owner or Testnet chain.');
   const preparations = new WeakMap<object, { before: Funds; deadline: bigint; preparedQuote?: CurrentCheapDexPreparedQuote }>(), used = new WeakSet<object>();
   const inspect = async (head: Head): Promise<Funds> => {
@@ -118,7 +121,20 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
   };
   const fundingObservations = new WeakMap<Head, Funds>();
   const b = createCurrentAttemptBoundary({ storage, c: policy, core: policy.core, owner, chainId, transport,
-    attest: async head => { fundingObservations.set(head, await inspect(head)); }, now, bindTarget: true });
+    attest: async head => { fundingObservations.set(head, await inspect(head)); }, now, bindTarget: true,
+    // decision-033: a claim, a refill and a Limit or Pool approval reserve nothing outside the pending slot.
+    // A swap approval also reserves a charge in the owner record; with no step for that record, nothing is released.
+    releaseReservation: async attempt => {
+      if (attempt.phase !== 'token-approve' && attempt.phase !== 'token-faucet' && attempt.phase !== 'token-refill' || !attempt.target)
+        throw new Error('This adapter releases token actions only.');
+      // A refill calls the distribution vault. A claim and an approval call the beta token.
+      if (attempt.phase === 'token-refill') { if (!same(attempt.target, policy.vault.address)) throw new Error('Refill record target changed.'); }
+      else indexOf(attempt.target);
+      if (authorizeSwapApprovalSigning || authorizeInitialClaimSigning) {
+        if (!releaseUnsentLedgerReservation) throw new Error('The owner record release step is unavailable.');
+        await releaseUnsentLedgerReservation(attempt);
+      }
+    } });
   const indexOf = (token: string) => {
     const i = CURRENT_SHARED_DEX_TOKENS.findIndex(t => same(t.address, token));
     if (i < 0) throw new FundingProofError('Not a beta test token.'); return i;
@@ -412,6 +428,8 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
     const supplied = knownHash?.trim().toLowerCase();
     if (supplied && (!/^0x[0-9a-f]{64}$/.test(supplied) || BigInt(supplied) === 0n || pending.txHash && supplied !== pending.txHash)) throw new Error('Invalid or changed token approval transaction hash.');
     const hash = pending.txHash ?? supplied;
+    // decision-033: a saved wallet rejection can be checked again. Every other record with no hash stays held.
+    if (!hash && pending.walletRejected && await b.releaseUnsent(signer)) return Object.freeze({ ...identity, status: 'released-unsent' as const, privateAccountingVerified: false as const });
     if (!hash) return Object.freeze({ ...identity, status: 'manual-reconciliation-required' as const, privateAccountingVerified: false as const });
     const tx = await transport.readTransaction(hash);
     if (!tx || !await transport.waitForReceipt(hash)) return Object.freeze({ ...identity, status: 'awaiting-chain-confirmation' as const, privateAccountingVerified: false as const });
@@ -481,7 +499,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
               privateAccountingVerified: true as const, funds: result.after });
           } catch (error) { if (knownProofFailure(error)) blockCurrentTokenFundingVerification(storage, b.requireOwnPending(pending, sent.transactionHash)); throw error; }
         } });
-      } catch (error) { if (!signing) used.delete(p); throw error; }
+      } catch (error) { if (!signing || wasCurrentDexUnsentReleased(error)) used.delete(p); throw error; }
     },
     recoverPendingSharedLimitApproval: () => recoverPendingApproval(),
     recoverPendingSharedSwapApproval: async (knownHash?: string) => {
@@ -546,7 +564,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
           return Object.freeze({ ...identity, token: p.token, fundingOutcome: result.receipt.status === 0 ? 'reverted' as const : 'verified' as const,
             privateAccountingVerified: true as const, funds: result.after });
         } });
-      } catch (error) { if (!signing) used.delete(p); throw error; }
+      } catch (error) { if (!signing || wasCurrentDexUnsentReleased(error)) used.delete(p); throw error; }
     },
     prepareSharedPoolAllowanceCleanup: async ({ marketId, canonicalIndex, confirm }: {
       marketId: string; canonicalIndex: 0 | 1;
@@ -634,7 +652,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
               privateAccountingVerified: true as const, funds: result.after, cleanup: p.cleanup, recoveredCleanup: p.recovery === true });
           } catch (error) { if (knownProofFailure(error)) blockCurrentTokenFundingVerification(storage, b.requireOwnPending(pending, sent.transactionHash)); throw error; }
         } });
-      } catch (error) { if (!signing) used.delete(p); throw error; }
+      } catch (error) { if (!signing || wasCurrentDexUnsentReleased(error)) used.delete(p); throw error; }
     },
     recoverPendingSharedPoolApproval: () => recoverPendingApproval(),
     readSharedTokenFunding: async () => {
@@ -686,7 +704,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
             throw error;
           }
         } });
-      } catch (error) { if (!signing) used.delete(p); throw error; }
+      } catch (error) { if (!signing || wasCurrentDexUnsentReleased(error)) used.delete(p); throw error; }
     },
     recoverPendingSharedTokenFunding: async (knownHash?: string) => {
       await transport.assertCurrent(); const p = b.pending(); if (!p) return null;
@@ -696,6 +714,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       if (p.verificationBlocked && !supplied) throw new Error('Known beta funding verification failure. Enter its existing hash to recheck exact historical accounting. Do not resend.');
       if (supplied && (!/^0x[0-9a-f]{64}$/.test(supplied) || BigInt(supplied) === 0n || p.txHash && supplied !== p.txHash)) throw new Error('Invalid or changed beta funding transaction hash.');
       const hash = p.txHash ?? supplied;
+      if (!hash && p.walletRejected && await b.releaseUnsent(signer)) return Object.freeze({ ...identity, status: 'released-unsent' as const, privateAccountingVerified: false as const });
       if (!hash) return Object.freeze({ ...identity, status: 'manual-reconciliation-required' as const, privateAccountingVerified: false as const });
       const tx = await transport.readTransaction(hash);
       if (!tx || !await transport.waitForReceipt(hash)) return Object.freeze({ ...identity, status: 'awaiting-chain-confirmation' as const, privateAccountingVerified: false as const });

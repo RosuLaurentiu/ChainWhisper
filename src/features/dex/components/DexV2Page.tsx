@@ -26,7 +26,7 @@ import { CURRENT_APP_FURTHER_TRIAL } from '../../../lib/currentDexC1SwapPolicy';
 import { CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM } from '../../../lib/currentSharedDexTokenFunding';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt, currentDexOwnerRecovery, type CurrentDexOwnerRecoveryView } from '../../../lib/currentDexPendingAttempt';
 import { CURRENT_DEX_DISPLAY_PAIR, parseCurrentDexTokenAmount, readCurrentDexDisplay, currentDexDisplayPair,
-  parseDexCandidateTokenAmount, formatDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
+  parseDexCandidateTokenAmount, formatDexCandidateTokenAmount, CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import type { TradingPair } from '../../../app/components/TradingProductSwitch';
 import {
   type SharedWalletSession,
@@ -39,7 +39,7 @@ import { CURRENT_CHEAP_DEX_CANDIDATE, currentCheapDexQuoteProtocol, currentCheap
 import { assertCurrentSwapCandidate } from '../../../lib/currentDexNativeSwapPolicy';
 import { CURRENT_EXIT_SWAP_GAS_CAPS, currentSwapFixedGasPrice, usesCurrentSwapAccounting } from '../../../lib/currentDexExitSwapPolicy';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
-import { CurrentDexPrivateReceiptError, type CurrentCheapDexIssuedQuote, type CurrentCheapDexPreparedQuote } from '../../../lib/currentDexSubmission';
+import { CurrentDexPrivateReceiptError, wasCurrentDexUnsentReleased, type CurrentCheapDexIssuedQuote, type CurrentCheapDexPreparedQuote } from '../../../lib/currentDexSubmission';
 import type { CurrentCheapDexProfile } from '../../../lib/currentDexOperation';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 import { CurrentDexQuoteProtectionError, DEFAULT_CURRENT_DEX_SLIPPAGE_PERCENT, parseCurrentDexSlippagePercent } from '../../../lib/currentDexQuoteReview';
@@ -163,7 +163,10 @@ export const recoverOrReconcileCurrentTrial = async (
   }
 };
 type TrialAttempt = NonNullable<Awaited<ReturnType<TrialSubmission['recoverPendingCurrentCheapAttempt']>>>;
+// decision-033: the released-action message is shared with the other DEX screens.
+const DEX_PAGE_UNSENT_RELEASED_MESSAGE = CURRENT_UNSENT_RELEASED_MESSAGE;
 export const currentTrialAttemptPresentation = (attempt: TrialAttempt) => {
+  if (attempt.status === 'released-unsent') return { stage: 'idle', message: DEX_PAGE_UNSENT_RELEASED_MESSAGE };
   if (attempt.status === 'manual-reconciliation-required') return { stage: 'reconciling', message:
     'verificationBlocked' in attempt && attempt.verificationBlocked
       ? 'Private verification failed or is unavailable. The saved action remains blocked. Check its exact private receipt in the original session; do not resend.'
@@ -325,8 +328,8 @@ export function CurrentSwapWorkspace({
     verifiedScope.source === currentReviewScope.source && verifiedScope.walletId === currentReviewScope.walletId &&
     verifiedScope.onboard?.[wallet.address ?? '']?.aesKey === currentReviewScope.onboard?.[wallet.address ?? '']?.aesKey;
   const busy = ['preparing', 'open-pending', 'accepting', 'release-pending'].includes(stage);
-  const savedActionPending = typeof window !== 'undefined' && hasCurrentTrialSavedAction(currentDexPendingStorage());
-  const readOwnerRecovery = () => currentDexOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage()),
+  const savedActionPending = typeof window !== 'undefined' && hasCurrentTrialSavedAction(currentDexPendingStorage(currentDexRecordScope(candidate, sharedWalletSession?.walletAddress)));
+  const readOwnerRecovery = () => currentDexOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage(currentDexRecordScope(candidate, sharedWalletSession?.walletAddress))),
     { chainId: String(candidate.chainId), owner: wallet.address ?? '', core: candidate.core, graph: `0x${candidate.graph}` });
   let ownerRecovery: ReturnType<typeof readOwnerRecovery> = null;
   let ownerRecoveryError = '';
@@ -365,10 +368,16 @@ export function CurrentSwapWorkspace({
     setMinimumOutput('0');
     setPriceLimit('');
   };
-  const error = (cause: unknown) => {
+  const error = (cause: unknown, releasedStage?: typeof stage) => {
+    // A released wallet rejection is not an error state: nothing was sent and no record remains.
+    if (wasCurrentDexUnsentReleased(cause)) {
+      // A released approval or claim leaves no funding action to check. Found in the Testnet App check of 2026-11-15.
+      if (!fundingPending && !sharedFundingPending.current) setFundingRecovery(false);
+      setMessage(DEX_PAGE_UNSENT_RELEASED_MESSAGE); setStage(releasedStage ?? (issued ? 'ready' : 'idle')); return;
+    }
     if (!fundingPending && !sharedFundingPending.current) {
       try {
-        const saved = readCurrentDexPendingAttempt(currentDexPendingStorage());
+        const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(currentDexRecordScope(candidate, sharedWalletSession?.walletAddress)));
         setFundingRecovery(saved?.phase === 'token-approve' || saved?.phase === 'token-faucet' || saved?.phase === 'token-refill');
       } catch { /* Keep recovery held if its durable record cannot be read. */ }
     }
@@ -435,11 +444,11 @@ export function CurrentSwapWorkspace({
       const verified = await sharedFundingPending.current.recover();
       if (verified.fundingOutcome === 'reverted') return { fundingOutcome: 'reverted' as const };
     } else {
-      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage());
+      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(currentDexRecordScope(candidate, sharedWalletSession?.walletAddress)));
       const observed = saved?.phase === 'token-faucet' || saved?.phase === 'token-refill'
         ? await sender.recoverPendingSharedTokenFunding(existingTransactionHash)
         : await sender.recoverPendingSharedSwapApproval(existingTransactionHash);
-      if (observed && !['observed-mined', 'observed-reverted'].includes(observed.status)) throw new Error('Shared approval needs chain reconciliation. Do not resend.');
+      if (observed && !['observed-mined', 'observed-reverted', 'released-unsent'].includes(observed.status)) throw new Error('Shared approval needs chain reconciliation. Do not resend.');
     }
     return readCurrentSwapInputFunding(sender, candidateKey, currentWallet.current.address!, selectedTokens[inputIndex], inputIndex as 0 | 1, selectedTokens[outputIndex]);
   };
@@ -509,7 +518,7 @@ export function CurrentSwapWorkspace({
     return funds;
   };
   const showAttempt = (attempt: TrialAttempt) => {
-    setPublicAttempt(attempt);
+    setPublicAttempt(attempt.status === 'released-unsent' ? null : attempt);
     if (!issued && attempt.status === 'observed-mined') setProfile(attempt.profile);
     if ('transactionHash' in attempt && attempt.transactionHash) setTransactionHash(attempt.transactionHash);
     const presentation = currentTrialAttemptPresentation(attempt);
@@ -557,6 +566,7 @@ export function CurrentSwapWorkspace({
     setChecking(true);
     let activeIssued = issued;
     let activeSender = submission;
+    let releasedNote = '';
     try {
       const ownerAction = readOwnerRecovery();
       if (ownerAction) { setStage('reconciling'); setMessage(ownerAction.message); return; }
@@ -620,7 +630,10 @@ export function CurrentSwapWorkspace({
         if (currentWallet.current !== capturedWallet.current) throw new Error('Wallet changed during the operation check.');
         setSubmission(sender);
         activeSender = sender;
-        if (!activeIssued && (candidateKey === 'cheap-exit' || candidateKey === 'cheap-history') && (!attempt ||
+        // decision-033: a released attempt sent nothing and leaves no saved action. The check continues as
+        // if none was found, so an open Quote of this owner decides the next state.
+        const released = attempt?.status === 'released-unsent';
+        if (!activeIssued && (candidateKey === 'cheap-exit' || candidateKey === 'cheap-history') && (!attempt || released ||
             attempt.status === 'observed-mined' && ['fast-pool','cheap-async'].includes(attempt.profile!))) {
           const restored = await restoreCurrentTrialQuote(
             sharedWalletSession!.actions!.getCurrentDexQuoteCapability!, sender,
@@ -635,7 +648,10 @@ export function CurrentSwapWorkspace({
             setTransactionHash(restored.transactionHash); setVerifiedScope(currentReviewScope);
           }
         }
-        if (attempt) {
+        if (attempt && released) {
+          if (!activeIssued) { showAttempt(attempt); return; }
+          setPublicAttempt(null); releasedNote = `${DEX_PAGE_UNSENT_RELEASED_MESSAGE} `;
+        } else if (attempt) {
           if (!activeIssued) showAttempt(attempt);
           // Public lookup never restores a private brand. A live issued origin
           // can still verify its own terminal receipt after this public read.
@@ -663,7 +679,7 @@ export function CurrentSwapWorkspace({
         setMessage(`Preparing multi-source Quote: ${Number(current.operation.stage) - 1} of ${currentCheapDexStages(current.intent.candidate).workCalls} work steps complete. Checking progress automatically.`); return;
       }
       if (current.operation.ready) {
-        setIssued(current); setStage('ready'); setMessage('Private Quote is READY for review.');
+        setIssued(current); setStage('ready'); setMessage(`${releasedNote}Private Quote is READY for review.`);
         return;
       }
       if (current.operation.phase === 'settling') { setStage('settlement-pending'); setMessage('Accept is mined; settlement remains pending.'); return; }
@@ -694,7 +710,7 @@ export function CurrentSwapWorkspace({
       catch { throw new Error(`Price limit: enter a positive ${displayedSide === 'buy' ? 'maximum buy' : 'minimum sell'} price.`); }
       const { numerator, denominator } = rate;
       setStage('preparing'); setMessage('Checking current test contracts.');
-      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage());
+      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(currentDexRecordScope(candidate, sharedWalletSession?.walletAddress)));
       const { sender } = await verifyCurrentTrialCandidate(sharedWalletSession!.actions!.getCurrentDexSubmissionCapability!, attemptWallet.address!, candidateKey);
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during the contract check.');
       if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during the contract check.');
@@ -897,7 +913,7 @@ export function CurrentSwapWorkspace({
       assertWallet(); await sent.recover(); assertWallet(); setPending(null);
       const current = await issued.readCurrent(); assertWallet(); setIssued(current);
       await showDelivery(current, submission, sent.transactionHash);
-    } catch (cause) { error(cause); }
+    } catch (cause) { error(cause, previousStage); }
     finally { setChecking(false); }
   };
   const progressCheck = useRef(refresh);

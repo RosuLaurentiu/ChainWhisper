@@ -62,7 +62,7 @@ export const createCurrentTokenFundingAdapter = ({ signer, ownerAddress, chainId
 }) => {
   const c = resolveCurrentCheapDexCandidate(candidate);
   if (c.tokens.some(([, runtime]) => runtime !== CURRENT_TOKEN_FUNDING_NATIVE.tokenRuntime)) throw new Error('Current-token runtime has no funding evidence.');
-  const owner = getAddress(ownerAddress), core = getAddress(c.core), storage = currentDexPendingStorage();
+  const owner = getAddress(ownerAddress), core = getAddress(c.core), storage = currentDexPendingStorage({ chainId, graph: c.graph, owner });
   if (chainId !== BigInt(c.chainId) || same(owner, zero)) throw new Error('Wrong current-token owner or chain.');
   const b = createCurrentAttemptBoundary({ storage, c, core, owner, chainId, transport, attest, now, historical: false });
   let used = attempts.get(signer); if (!used) { used = new WeakSet(); attempts.set(signer, used); }

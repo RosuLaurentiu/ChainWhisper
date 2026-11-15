@@ -587,6 +587,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       authorizeSwapApprovalSigning: cheap.authorizeCurrentCheapSwapApproval,
       rememberSwapApprovalHash: cheap.rememberCurrentCheapSwapApproval,
       completeSwapAllowanceCleanup: cheap.reconcileCurrentCheapSwapAllowanceCleanup,
+      releaseUnsentLedgerReservation: cheap.releaseCurrentCheapUnsentLedgerReservation,
       encrypt: (amount, token, selector) => encryptPrivateUint256Input(signer, amount, token, selector),
       decrypt: cipher => decryptPrivateUint256Output(signer, cipher),
       readFunds: async head => {
@@ -758,7 +759,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         } finally { readScope.close(); }
       },
       recoverPendingCurrentCheapAttempt: async (transactionHash?: string) => {
-        const pending = readCurrentDexPendingAttempt(currentDexPendingStorage());
+        const pending = readCurrentDexPendingAttempt(currentDexPendingStorage({ chainId, graph: cheapCandidate.graph, owner: ownerAddress }));
         if (!pending || pending.graph === `0x${cheapCandidate.graph}` && pending.core === cheapCandidate.core) return cheap.recoverPendingCurrentCheapAttempt(transactionHash);
         const savedKey = (['cheap-archived', 'cheap-current', 'cheap-slippage', 'cheap-two-pool', 'cheap-reference', 'cheap-native', 'cheap-d06', 'cheap-prepared', 'cheap-exit'] as const).find(key => {
           const c = resolveCurrentCheapDexCandidate(key); return pending.graph === `0x${c.graph}` && pending.core === c.core;

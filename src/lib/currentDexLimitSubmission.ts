@@ -1,6 +1,6 @@
 import { getAddress,keccak256 } from '@coti-io/coti-ethers';
 import { assertCurrentLimitPrepared,type CurrentLimitPrepared,type CurrentLimitPreparedSnapshot,type CurrentLimitPreparedOwner,type CurrentLimitReconciledTopUp } from '../features/wallet/currentDexLimitCapability';
-import { createCurrentAttemptBoundary,type CurrentTransport } from './currentDexSubmission';
+import { createCurrentAttemptBoundary,wasCurrentDexUnsentReleased,type CurrentTransport } from './currentDexSubmission';
 import { currentDexPendingStorage,clearCurrentDexPendingAttempt,blockCurrentLimitVerification } from './currentDexPendingAttempt';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { currentLimitAbiForCandidate,resolveCurrentLimitScope,CURRENT_LIMIT_CREATE_GAS_CAP,CURRENT_LIMIT_SNAPSHOT_GAS_CAP,decodeCurrentLimitMint,decodeCurrentLimitOwnerEvent,CURRENT_LIMIT_OWNER_GAS_CAPS,currentLimitOwnerNativeAdmission,assertCurrentLimitNativeAdmission,currentLimitOwnerMethod,isKnownCurrentLimitProofMismatch,type CurrentLimitOwnerAction } from './currentDexLimit';
@@ -27,9 +27,13 @@ export const createCurrentLimitSubmissionAdapter=({signer,ownerAddress,chainId,t
 })=>{
   const c=resolveCurrentCheapDexCandidate(candidate);
   const abi=currentLimitAbiForCandidate(candidate),preparedMarket=candidate==='cheap-prepared'||candidate==='cheap-exit'||candidate==='cheap-history';
-  const owner=getAddress(ownerAddress),core=getAddress(c.core),storage=currentDexPendingStorage();
+  const owner=getAddress(ownerAddress),core=getAddress(c.core),storage=currentDexPendingStorage({chainId,graph:c.graph,owner});
   if(chainId!==BigInt(c.chainId)||BigInt(owner)===0n)throw new Error('Wrong Limit owner or chain.');
-  const boundary=createCurrentAttemptBoundary({storage,c,core,owner,chainId,transport,attest,now,historical:false});
+  // decision-033: a Limit action reserves only its pending slot and an in-memory key. No owner-record charge exists for it.
+  const boundary=createCurrentAttemptBoundary({storage,c,core,owner,chainId,transport,attest,now,historical:false,releaseReservation:async attempt=>{
+    if(attempt.phase!=='limit-create'&&attempt.phase!=='limit-snapshot'&&attempt.phase!=='limit-owner')throw new Error('This adapter releases Limit actions only.');
+    if(attempt.phase!=='limit-owner')reservations.get(signer)?.delete(`${attempt.phase}:${attempt.callHash}`);
+  }});
   let keys=reservations.get(signer);if(!keys){keys=new Set();reservations.set(signer,keys);}
   let ownerKeys=ownerReservations.get(signer);if(!ownerKeys){ownerKeys=new WeakSet();ownerReservations.set(signer,ownerKeys);}
   const ownerAction=(data:string):CurrentLimitOwnerAction=>{const call=abi.parseTransaction({data});if(!call)throw new Error('Invalid Limit owner call.');const action=call.name==='topUpPrivateOrder'?'topup':call.name==='repricePrivateOrder'?'reprice':call.name==='privateOrderSnapshot'?'refresh':call.name==='claimPrivateOrderProceeds'?'claim':call.name==='closePrivateOrder'?'close':call.name==='managePrivateOrderStatus'&&call.args[2]===0n?'pause':call.name==='managePrivateOrderStatus'&&call.args[2]===1n?'resume':null;if(!action)throw new Error('Unsupported Limit owner call.');return action;};
@@ -74,7 +78,7 @@ export const createCurrentLimitSubmissionAdapter=({signer,ownerAddress,chainId,t
           const canonical=snapshotReceipt(await boundary.verifyMinedCall(sent.request,sent.transactionHash));await validate();const result=await prepared.readResult(sent.transactionHash);await prepared.assertCurrent();if(!result)throw new Error('Limit authenticated result is unavailable.');await boundary.recheckMinedCall(sent.request,sent.transactionHash,canonical);clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,sent.transactionHash));return result;
         }catch(error){if(isKnownCurrentLimitProofMismatch(error))blockCurrentLimitVerification(storage,boundary.requireOwnPending(pending,sent.transactionHash));throw error;}
       }});
-    }catch(error){if(!signing){if(phase==='limit-owner')ownerKeys!.delete(prepared);else keys!.delete(key);}throw error;}
+    }catch(error){if(!signing||wasCurrentDexUnsentReleased(error)){if(phase==='limit-owner')ownerKeys!.delete(prepared);else keys!.delete(key);}throw error;}
   };
   const reconcileMinedTopUp=async(proof:CurrentLimitReconciledTopUp)=>{
     assertCurrentLimitPrepared(proof,signer);await proof.assertCurrent();await transport.assertCurrent();const p=boundary.pending();
@@ -102,6 +106,8 @@ export const createCurrentLimitSubmissionAdapter=({signer,ownerAddress,chainId,t
       }
       return Object.freeze({status:'manual-reconciliation-required' as const,verificationBlocked:true as const,readyToSign:false as const});
     }
+    // decision-033: a saved wallet rejection can be checked again. Every other record with no hash stays held.
+    if(!p.txHash&&p.walletRejected&&await boundary.releaseUnsent(signer))return Object.freeze({status:'released-unsent' as const,readyToSign:false as const});
     if(!p.txHash)return Object.freeze({status:'manual-reconciliation-required' as const,readyToSign:false as const});
     const tx=await transport.readTransaction(p.txHash),receipt=await transport.waitForReceipt(p.txHash);await transport.assertCurrent();if(!tx||!receipt)return Object.freeze({status:'awaiting-chain-confirmation' as const,readyToSign:false as const});
     if(keccak256(tx.data).toLowerCase()!==p.callHash)throw new Error('Limit pending calldata changed.');const decoded=shape(p.phase,tx.data);

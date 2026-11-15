@@ -1,7 +1,7 @@
 import { AbiCoder, Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type CurrentPoolPreparedFunding,
   type CurrentPoolPreparedTopUpPreview, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
-import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
+import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentTransport } from './currentDexSubmission';
 import { blockCurrentPoolVerification, clearCurrentDexPendingAttempt, currentDexPendingStorage } from './currentDexPendingAttempt';
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, encodePreparedPoolTopUp, usesPackedPoolInputs } from './currentDexPoolFunding';
 import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, currentCheapDexCandidateKey, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
@@ -104,12 +104,19 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
 }) => {
   const candidate = resolveCurrentCheapDexCandidate(candidateKey);
   const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
-  const owner = getAddress(ownerAddress), core = getAddress(candidate.core), storage = currentDexPendingStorage();
+  const owner = getAddress(ownerAddress), core = getAddress(candidate.core), storage = currentDexPendingStorage({ chainId, graph: candidate.graph, owner });
   if (chainId !== BigInt(candidate.chainId) || BigInt(owner) === 0n) throw new Error('Wrong Pool owner or chain.');
   let keys = reservations.get(signer);
   if (!keys) { keys = new Set(); reservations.set(signer, keys); }
   const boundary = createCurrentAttemptBoundary({ storage, c: candidate, core, owner, chainId, transport, attest, now, historical: false,
-    canonicalIndexProof: preparedScope !== null });
+    canonicalIndexProof: preparedScope !== null,
+    // decision-033: a Pool preview or creation funding reserves only its pending slot and an in-memory key.
+    // A native engineering budget keeps its Pool scope, so that profile is never released here.
+    releaseReservation: async attempt => {
+      if (attempt.phase !== 'pool-preview' && attempt.phase !== 'pool-fund' || isCurrentNativeSwapCandidate(candidate))
+        throw new Error('This adapter releases current Pool preview and funding actions only.');
+      reservations.get(signer)?.delete(`${attempt.phase}:${attempt.callHash}`);
+    } });
   const submit = async <T extends Prepared, R>(phase: Phase, prepared: T, read: (hash: string) => Promise<R | null>, mode: Mode = 'creation') => {
     const validate = async () => {
       assertCurrentPoolFundingPrepared(prepared, signer);
@@ -221,7 +228,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
       if(financialProof){let recoveries=fundingRecoveries.get(signer);if(!recoveries){recoveries=new Map();fundingRecoveries.set(signer,recoveries);}recoveries.set(key,result.recover);}
       return result;
     } catch (error) {
-      if (!signing) keys!.delete(key);
+      if (!signing || wasCurrentDexUnsentReleased(error)) keys!.delete(key);
       throw error;
     }
   };
@@ -251,6 +258,8 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
           pending.graph !== `0x${candidate.graph}` || (pending.phase !== 'pool-preview' && pending.phase !== 'pool-fund')) {
         throw new Error('Pending action belongs to another owner, candidate or adapter.');
       }
+      // decision-033: a saved wallet rejection can be checked again. Every other record with no hash stays held.
+      if (!pending.txHash && pending.walletRejected && await boundary.releaseUnsent(signer)) return Object.freeze({ status: 'released-unsent' as const, readyToSign: false as const, privateAccountingVerified: false as const });
       if (!pending.txHash) return Object.freeze({ status: 'manual-reconciliation-required' as const, readyToSign: false as const, privateAccountingVerified: false as const });
       if (pending.verificationBlocked) return Object.freeze({ status: 'manual-reconciliation-required' as const,
         verificationBlocked: true as const, readyToSign: false as const, privateAccountingVerified: false as const });

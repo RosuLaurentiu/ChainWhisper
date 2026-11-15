@@ -5,15 +5,22 @@ import { getAddress, keccak256, toBeHex } from '@coti-io/coti-ethers';
 import { createCurrentSharedDexTokenFundingAdapter, assertCurrentSharedTokenFundingAppAuthority, currentSharedTokenFundingAbi as abi,
   assertCurrentSharedPoolApprovalPrepared, type CurrentSharedTokenFundingAction } from './currentSharedDexTokenFunding';
 import { CURRENT_SHARED_TOKEN_DISTRIBUTION as policy, CURRENT_SHARED_DEX_TOKENS, resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
-import { readCurrentDexPendingAttempt, reserveCurrentDexPendingAttempt, CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY } from './currentDexPendingAttempt';
+import { readCurrentDexPendingAttempt, reserveCurrentDexPendingAttempt, CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY, currentDexScopedRecordKey } from './currentDexPendingAttempt';
 import { currentTokenFundingAbi as approvalAbi } from './currentDexTokenFunding';
 import { STAGED_PREPARED_DEX_CANDIDATE, STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './dexV2Deployment';
-import { createCurrentAttemptBoundary } from './currentDexSubmission';
+import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 import type { CurrentPoolPreparedFunding, CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
 import type { CurrentLimitFundingReview } from '../features/wallet/currentDexLimitCapability';
 
 const fundingBrands = vi.hoisted(() => new WeakMap<object, object>());
 const limitBrands = vi.hoisted(() => new WeakMap<object, object>());
+// CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.
+const browserContexts = vi.hoisted(() => new WeakMap<object, { owner: string }>());
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({
+  hasCurrentDexBrowserSigner: (signer: object | undefined, owner: string) =>
+    !!signer && browserContexts.get(signer)?.owner === owner.toLowerCase()
+}));
 vi.mock('../features/wallet/currentDexLimitCapability', () => ({
   assertCurrentLimitPrepared: (value: object, signer: object) => {
     if (limitBrands.get(value) !== signer) throw new Error('Limit was not prepared in this owner session.');
@@ -1223,6 +1230,132 @@ describe('sufficient and unlimited token approvals', () => {
 });
 
 
+// CW-086, decision-033: the normal browser App releases a token action that the wallet rejected and never sent.
+describe('release of a wallet-rejected token action in the browser App', () => {
+  const asBrowser = <T extends { args: Args; values: Map<string, string>; transport: Args['transport']; policy: { graph: string; chainId: bigint } }>(f: T): T => {
+    const browserOwner = f.args.ownerAddress.toLowerCase();
+    browserContexts.set(f.args.signer, { owner: browserOwner });
+    f.values.set(currentDexNormalUseReloadKey({ owner: browserOwner, graph: f.policy.graph, chainId: f.policy.chainId }), JSON.stringify({
+      budget: { version: 2, owner: browserOwner, candidateGraph: f.policy.graph, start: '1', committedWei: '0', activeSwap: null, charges: [] },
+      authentication: hash }));
+    (f.transport as { admitOwnerRecord?: unknown }).admitOwnerRecord = vi.fn(async () => {});
+    return f;
+  };
+  const rejection = () => Object.assign(new Error('User rejected the request.'), { code: 4001 });
+  it.each(['initial', 'refill'] as const)('releases a rejected %s claim and permits the same claim again', async action => {
+    allowLocalTechnicalSubmission();
+    const f = asBrowser(fixture('cheap-history')); if (action === 'refill') f.states[0].claimed = true;
+    const p = (await f.prepare(action))!, error = rejection();
+    vi.mocked(f.transport.send).mockRejectedValueOnce(error);
+    await expect(f.cap.submitSharedTokenFunding(p)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(true);
+    expect(readCurrentDexPendingAttempt(f.storage)).toBeNull();
+    const sent = await f.cap.submitSharedTokenFunding(p);
+    expect(await sent.recover()).toMatchObject({ fundingOutcome: 'verified', privateAccountingVerified: true });
+    expect(f.transport.send).toHaveBeenCalledTimes(2);
+  });
+  it('keeps an unknown wallet result locked in the browser App', async () => {
+    allowLocalTechnicalSubmission();
+    const f = asBrowser(fixture('cheap-history')), p = (await f.prepare())!; f.unknown();
+    await expect(f.cap.submitSharedTokenFunding(p)).rejects.toThrow('Unknown wallet result');
+    expect(readCurrentDexPendingAttempt(f.storage)).toMatchObject({ phase: 'token-faucet', txHash: null });
+    expect(readCurrentDexPendingAttempt(f.storage)).not.toHaveProperty('walletRejected');
+    await expect(f.cap.submitSharedTokenFunding(p)).rejects.toThrow();
+    expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+  it('keeps a rejected claim locked while its nonce is pending and releases it on a later check', async () => {
+    allowLocalTechnicalSubmission();
+    const f = asBrowser(fixture('cheap-history')), p = (await f.prepare())!, error = rejection();
+    let pendingNonce = 3;
+    vi.mocked(f.transport.readNativeResources!).mockImplementation(async h => ({ owner: f.args.ownerAddress, chainId: f.policy.chainId, head: { ...h },
+      latestNonce: 3, pendingNonce, baseFeePerGas: 1n, gasPrice: 50_000_000n, code: '0x', balance: 10n ** 18n }));
+    vi.mocked(f.transport.send).mockImplementationOnce(async () => { pendingNonce = 4; throw error; });
+    await expect(f.cap.submitSharedTokenFunding(p)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(false);
+    expect(readCurrentDexPendingAttempt(f.storage)).toMatchObject({ phase: 'token-faucet', txHash: null, walletRejected: true });
+    const reload = createCurrentSharedDexTokenFundingAdapter(f.args);
+    await expect(reload.recoverPendingSharedTokenFunding()).rejects.toThrow('nonce');
+    expect(readCurrentDexPendingAttempt(f.storage)).toMatchObject({ walletRejected: true });
+    pendingNonce = 3;
+    expect(await reload.recoverPendingSharedTokenFunding()).toMatchObject({ status: 'released-unsent', privateAccountingVerified: false });
+    expect(readCurrentDexPendingAttempt(f.storage)).toBeNull();
+    expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+  it('releases a rejected Limit approval and permits the same approval again', async () => {
+    allowLocalTechnicalSubmission();
+    const f = asBrowser(limitApprovalFixture('topup', 0, 'cheap-history')), p = (await f.prepare())!, error = rejection();
+    vi.mocked(f.transport.send).mockRejectedValueOnce(error);
+    await expect(f.cap.submitSharedLimitApproval(p)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(true);
+    expect(readCurrentDexPendingAttempt(f.storage)).toBeNull();
+    await f.cap.submitSharedLimitApproval(p);
+    expect(readCurrentDexPendingAttempt(f.storage)).toMatchObject({ phase: 'token-approve', txHash });
+    expect(f.transport.send).toHaveBeenCalledTimes(2);
+  });
+  it('releases a rejected Pool approval and permits the same approval again', async () => {
+    allowLocalTechnicalSubmission();
+    const f = asBrowser(approvalFixture(0, 0, false, 'cheap-history')), p = (await f.prepare())!, error = rejection();
+    vi.mocked(f.transport.send).mockRejectedValueOnce(error);
+    await expect(f.cap.submitSharedPoolApproval(p)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(true);
+    expect(readCurrentDexPendingAttempt(f.storage)).toBeNull();
+    await f.cap.submitSharedPoolApproval(p);
+    expect(readCurrentDexPendingAttempt(f.storage)).toMatchObject({ phase: 'token-approve', txHash });
+    expect(f.transport.send).toHaveBeenCalledTimes(2);
+  });
+  it('does not release while the owner record is in use and has no release step, and releases with the step', async () => {
+    allowLocalTechnicalSubmission();
+    const base = asBrowser(limitApprovalFixture('topup', 0, 'cheap-history'));
+    const cap = createCurrentSharedDexTokenFundingAdapter({ ...base.args, authorizeSwapApprovalSigning: async () => {} });
+    const p = (await cap.prepareSharedLimitApproval(base.request))!, error = rejection();
+    vi.mocked(base.transport.send).mockRejectedValueOnce(error);
+    await expect(cap.submitSharedLimitApproval(p)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(false);
+    expect(readCurrentDexPendingAttempt(base.storage)).toMatchObject({ phase: 'token-approve', txHash: null, walletRejected: true });
+    const release = vi.fn(async (_attempt: unknown) => {});
+    const withStep = createCurrentSharedDexTokenFundingAdapter({ ...base.args, authorizeSwapApprovalSigning: async () => {}, releaseUnsentLedgerReservation: release });
+    expect(await withStep.recoverPendingSharedLimitApproval()).toMatchObject({ status: 'released-unsent' });
+    expect(release).toHaveBeenCalledOnce();
+    expect(release.mock.calls[0][0]).toMatchObject({ phase: 'token-approve', walletRejected: true });
+    expect(readCurrentDexPendingAttempt(base.storage)).toBeNull();
+    expect(base.transport.send).toHaveBeenCalledOnce();
+  });
+});
+// CW-086 part B, decision-033: the adapter saves its records in durable storage that all tabs of the site share.
+describe('durable shared records in the token adapter', () => {
+  const memory = () => { const values = new Map<string, string>(); return { values, getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } }; };
+  it('moves the tab records, saves a sent claim for its wallet, and shows it to a new tab that cannot send again', async () => {
+    allowLocalTechnicalSubmission();
+    const f = fixture('cheap-history'), browserOwner = f.args.ownerAddress.toLowerCase(), durable = memory();
+    browserContexts.set(f.args.signer, { owner: browserOwner });
+    (f.transport as { admitOwnerRecord?: unknown }).admitOwnerRecord = vi.fn(async () => {});
+    const scope = { owner: browserOwner, graph: f.policy.graph, chainId: f.policy.chainId }, budgetKey = currentDexNormalUseReloadKey(scope);
+    const budget = JSON.stringify({ budget: { version: 2, owner: browserOwner, candidateGraph: f.policy.graph, start: '1', committedWei: '0',
+      activeSwap: null, charges: [] }, authentication: hash });
+    f.values.set(budgetKey, budget);
+    const request = { action: 'initial' as const, token: f.states[0].address, confirm: async () => true };
+    vi.stubGlobal('window', { sessionStorage: f.storage, localStorage: durable });
+    const first = createCurrentSharedDexTokenFundingAdapter(f.args);
+    await first.submitSharedTokenFunding((await first.prepareSharedTokenFunding(request))!);
+    const pendingKey = currentDexScopedRecordKey(CURRENT_DEX_PENDING_ATTEMPT_KEY, scope);
+    expect(JSON.parse(durable.values.get(pendingKey)!)).toMatchObject({ phase: 'token-faucet', owner: browserOwner, txHash });
+    // The budget record of the tab moved with identical bytes. The tab keeps no copy.
+    expect(durable.values.get(budgetKey)).toBe(budget);
+    expect(f.values.size).toBe(0);
+    expect([...durable.values.keys()].sort()).toEqual([pendingKey, budgetKey].sort());
+    expect([...durable.values.values()].join('')).not.toMatch(/aesKey|ciphertext|signature|privateKey|mnemonic/i);
+    // A new tab of the same wallet has empty tab storage and the same durable storage.
+    vi.stubGlobal('window', { sessionStorage: memory(), localStorage: durable });
+    const second = createCurrentSharedDexTokenFundingAdapter(f.args);
+    await expect((async () => second.submitSharedTokenFunding((await second.prepareSharedTokenFunding(request))!))()).rejects.toThrow();
+    expect(f.transport.send).toHaveBeenCalledOnce();
+    expect(JSON.parse(durable.values.get(pendingKey)!)).toMatchObject({ phase: 'token-faucet', txHash });
+    // The state check of the new tab reconciles the open action by its hash.
+    await expect(second.recoverPendingSharedTokenFunding()).resolves.toMatchObject({ status: 'observed-mined' });
+    expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+});
 describe('wallet menu durable approval reconciliation',()=>{
   it.each(['verified','changed-balance','parent-reorg']as const)('accounts for a lost revocation handle: %s',async fault=>{
     const f=approvalFixture(0,0,true),before=await f.args.readFunds(f.head),p=(await f.prepare())!;

@@ -1,3 +1,5 @@
+import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSubmission';
+import { CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
 import { MAX_TOKEN_ALLOWANCE } from '../../../lib/tokenAllowance';
 import { useEffect, useRef, useState } from 'react';
@@ -31,6 +33,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
   onBegin: () => void; onReleased: () => void;
 }) {
   const { key, candidate } = resolvePreparedDexScope(candidateKey);
+  const recordScope = currentDexRecordScope(candidate, session.walletAddress);
   const [budget0, setBudget0] = useState(''), [budget1, setBudget1] = useState(''), [tolerance, setTolerance] = useState('0.5');
   const [busy, setBusy] = useState(false), [stopState, setStopState] = useState<object | null>(null);
   const [message, setMessage] = useState(''), [preview, setPreview] = useState<{ value: Preview; scope: object } | null>(null);
@@ -63,7 +66,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
   const canAdvanceSnapshot = () => {
     const value=current(managed);if(!value)return false;
     try {
-      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage());
+      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
       return !!saved&&saved.phase==='pool-fund'&&saved.poolTopUpHash===null&&!saved.verificationBlocked&&saved.txHash===value.transactionHash.toLowerCase()&&
         saved.chainId===candidate.chainId&&saved.owner===context.owner&&saved.core===candidate.core.toLowerCase()&&saved.graph===`0x${candidate.graph}`;
     } catch { return false; }
@@ -92,12 +95,12 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     const value = await getSender(BigInt(candidate.chainId), { candidate: key }); assertScope(captured); return value;
   };
   const run = async (work: (captured: object) => Promise<void>, recovery = false, authority?: () => CurrentAppPoolScope, snapshotHandoff=false) => {
-    if (inFlight.current || busy || (!recovery && (disabled || pending || hasCurrentDexPendingAction()&&!(snapshotHandoff&&canAdvanceSnapshot())))) return;
+    if (inFlight.current || busy || (!recovery && (disabled || pending || hasCurrentDexPendingAction(recordScope)&&!(snapshotHandoff&&canAdvanceSnapshot())))) return;
     const captured = scope.current; inFlight.current = true; setBusy(true);
     try { if (!recovery) { assertCurrentPoolFundingNativeAdmission(candidate, 'top-up'); if(key!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph, authority!()); } await work(captured); }
     catch (error) {
-      if (captured === scope.current && !hasCurrentDexPendingAction() && !current(preview) && !current(funding) && !current(managed)) onReleased();
-      show(captured === scope.current && error instanceof Error ? error.message : 'Top-up session changed. Recover the pending action before another request.');
+      if (captured === scope.current && !hasCurrentDexPendingAction(recordScope) && !current(preview) && !current(funding) && !current(managed)) onReleased();
+      show(captured === scope.current && wasCurrentDexUnsentReleased(error) ? CURRENT_UNSENT_RELEASED_MESSAGE : captured === scope.current && error instanceof Error ? error.message : 'Top-up session changed. Recover the pending action before another request.');
     }
     finally { inFlight.current = false; setBusy(false); }
   };
@@ -185,7 +188,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
   }, false, () => appAuthority('snapshot'), true);
   const recover = () => run(async captured => {
     if (!pending || pending.scope !== captured) {
-      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage());
+      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
       if (!saved) {
         if (current(funding) && !current(managed) && !stopped) show(approvals.every(Boolean)
           ? 'Funding prepared. Select Submit liquidity top-up to confirm the transaction in your wallet.'
@@ -200,6 +203,12 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
           saved.phase === 'pool-snapshot' ? await next.recoverPendingPoolPositionAttempt() : null;
       assertScope(captured);
       if (!observed) throw new Error('Pending action belongs to another adapter. Reconcile it before another request.');
+      // decision-033: nothing was sent, so the verified state of this view stays valid and the top-up is not stopped.
+      if (observed.status === 'released-unsent') {
+        setPending(null); show(CURRENT_UNSENT_RELEASED_MESSAGE);
+        if (!current(preview) && !current(funding) && !current(managed)) onReleased();
+        return;
+      }
       if (observed.status === 'observed-mined' || observed.status === 'observed-reverted') {
         setPending(null); setPreview(null); setFunding(null); setManaged(null); setApprovalState(null); setStopped();
         show('Transaction ' + (observed.status === 'observed-mined' ? 'mined' : 'reverted') +
@@ -243,7 +252,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     }
     setPending(null);
   }, true);
-  const locked = busy || !!pending || disabled || hasCurrentDexPendingAction(), funded = !!current(managed), approvedFunding = current(funding);
+  const locked = busy || !!pending || disabled || hasCurrentDexPendingAction(recordScope), funded = !!current(managed), approvedFunding = current(funding);
   return <section className="dex-v2-test-form" aria-label="Top up owned liquidity" aria-busy={busy}>
     <h3>Top up this position</h3>
     {busy ? <p className="dex-owner-progress" role="status">Preparing or checking your top-up… If MetaMask opens, complete its request there. Keep this attempt open.</p> : null}

@@ -1,3 +1,5 @@
+import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSubmission';
+import { CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import { useRef, useState } from 'react';
 import { formatUnits } from '@coti-io/coti-ethers';
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
@@ -47,6 +49,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
 }) {
   const policy = resolveCurrentSharedTokenDistribution(candidateKey);
   const provider = sharedWalletSession?.browserProvider, owner = sharedWalletSession?.walletAddress ?? '';
+  const recordScope = currentDexRecordScope(policy, owner);
   const chainId = sharedWalletSession?.chainId ?? null;
   const getFunds = sharedWalletSession?.actions?.getCurrentSharedDexTokenFundsCapability;
   const getSender = sharedWalletSession?.actions?.getCurrentDexSubmissionCapability;
@@ -67,7 +70,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
   const readOwnerRecovery = (saved: ReturnType<typeof readCurrentDexPendingAttempt>) => currentDexOwnerRecovery(saved,
     { chainId: String(chainId), owner, core: policy.core, graph: `0x${policy.graph}` });
   try {
-    const saved = readCurrentDexPendingAttempt(currentDexPendingStorage()); hasPending = Boolean(saved);
+    const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope)); hasPending = Boolean(saved);
     ownerRecovery = readOwnerRecovery(saved);
     if (saved && saved.phase !== 'token-faucet' && saved.phase !== 'token-refill')
       otherAction = ownerRecovery?.message ?? 'Another DEX action needs verification. Use its Status and recovery controls. Do not resend.';
@@ -136,7 +139,9 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       setResult({ scope: captured, value: verified.funds, funds: verified.funds, message: verified.fundingOutcome === 'verified'
         ? 'Confirmed: exact private beta token credit verified.' : 'Claim reverted. Exact private state is unchanged.' });
     } catch (error) {
-      if (scope.current === captured) setResult({ scope: captured, message: error instanceof Error ? error.message : 'Beta token claim failed. Do not resend an uncertain action.' });
+      const releasedClaim = wasCurrentDexUnsentReleased(error);
+      if (scope.current === captured && releasedClaim) setBlocked(false);
+      if (scope.current === captured) setResult({ scope: captured, message: releasedClaim ? CURRENT_UNSENT_RELEASED_MESSAGE : error instanceof Error ? error.message : 'Beta token claim failed. Do not resend an uncertain action.' });
     } finally { running.current = false; setBusy(false); }
   };
   const reconcile = async () => {
@@ -144,7 +149,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
     const captured = scope.current, assertCurrent = () => { if (scope.current !== captured) throw new Error('Owner funding session changed. Check again.'); };
     running.current = true; setBusy(true); setResult(null);
     try {
-      const savedAttempt = readCurrentDexPendingAttempt(currentDexPendingStorage());
+      const savedAttempt = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
       if (savedAttempt && savedAttempt.phase !== 'token-faucet' && savedAttempt.phase !== 'token-refill') {
         const target = readOwnerRecovery(savedAttempt);
         setResult({ scope: captured, message: target?.message ?? 'Another DEX action needs verification. Use its Status and recovery controls. Do not resend.' }); return;
@@ -152,6 +157,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       const sender = await getSender(7082400n, { candidate: candidateKey }); assertCurrent();
       const exact = pending?.scope === captured ? await pending.recover() : null; assertCurrent();
       const observed = exact ? null : await sender.recoverPendingSharedTokenFunding(recoveryHash.trim() || savedAttempt?.txHash || undefined); assertCurrent();
+      if (observed?.status === 'released-unsent') { setPending(null); setBlocked(false); setResult({ scope: captured, message: CURRENT_UNSENT_RELEASED_MESSAGE }); return; }
       if (observed && !['observed-mined', 'observed-reverted'].includes(observed.status)) throw new Error(observed.status === 'manual-reconciliation-required'
         ? 'Beta funding has no saved hash. Enter its existing hash. Do not resend.' : 'Beta funding is pending. Check later; do not resend.');
       const funds = exact?.funds ?? await sender.readSharedTokenFunding(); assertCurrent();
@@ -225,11 +231,11 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       </article>;
     })}</div>
     <div className="dex-v2-beta-token-tools dex-v2-beta-token-footer">{ownerRecovery && onInspect ? <button type="button" disabled={!connected || busy || disabled} onClick={() => {
-      try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage())); if (target) onInspect(target.view); }
+      try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))); if (target) onInspect(target.view); }
       catch (cause) { setResult({ scope: scope.current, message: cause instanceof Error ? cause.message : 'Saved action unavailable. Do not resend.' }); }
     }}>{ownerRecovery.label}</button> : <button type="button" disabled={!connected || !privacyReady || !getSender || busy || disabled || Boolean(otherAction)} onClick={() => { void reconcile(); }}>Check confirmation</button>}
       {ownerRecovery?.alternateView && onInspect ? <button type="button" disabled={!connected || busy || disabled} onClick={() => {
-        try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage())); if (target?.alternateView) onInspect(target.alternateView); }
+        try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))); if (target?.alternateView) onInspect(target.alternateView); }
         catch (cause) { setResult({ scope: scope.current, message: cause instanceof Error ? cause.message : 'Saved action unavailable. Do not resend.' }); }
       }}>Open top-up recovery</button> : null}
       <a href={OFFICIAL_COTI_TESTNET_FAUCET_URL} target="_blank" rel="noopener noreferrer">Get Test COTI for gas</a>

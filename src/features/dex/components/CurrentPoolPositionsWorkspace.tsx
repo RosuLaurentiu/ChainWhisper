@@ -1,3 +1,5 @@
+import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSubmission';
+import { CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import { formatCurrentDexAveragePrice } from '../../../lib/currentDexPriceImpact';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { logMobileWalletDiagnostic } from '../../../lib/mobileWalletDiagnostics';
@@ -38,6 +40,7 @@ export const currentPoolWithdrawalFraction=(percentage:string):readonly [bigint,
 export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candidateKey='cheap-current',visible=true,managementNavigation,selectedPair,priceDisplayInverted=false}:{selectedPair?:readonly[string,string];priceDisplayInverted?:boolean;sharedWalletSession?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;visible?:boolean;managementNavigation?:ReactNode}){
   const preparedScope=candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidateKey):null;
   const candidate=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),nativeTrial=candidate.graph===STAGED_NATIVE_DEX_CANDIDATE.graph;
+  const recordScope=currentDexRecordScope(candidate,sharedWalletSession?.walletAddress);
   const preparedCandidate=preparedScope!==null,signedSnapshot=nativeTrial||preparedCandidate;
   const exitCandidate=preparedScope?.key==='cheap-exit'||preparedScope?.key==='cheap-history';
   const ownedDiscovery=exitCandidate;
@@ -73,10 +76,10 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const setMessage=(text:string)=>{messageScope.current=scope.current;setStoredMessage(text);};
   const current=snapshot?.scope===scope.current&&snapshot.value.positionId.toString()===id;
   const connected=Boolean(context.owner&&context.chain===Number(candidate.chainId)&&getPositions&&getSender&&context.provider);
-  const savedActionPending=hasCurrentDexPendingAction();
+  const savedActionPending=hasCurrentDexPendingAction(recordScope);
   const topUpOpen=topUpManagement?.scope===scope.current&&topUpManagement.id===id;
   const independentRefresh=(()=>{try{
-    const storage=currentDexPendingStorage();
+    const storage=currentDexPendingStorage(recordScope);
     return candidateKey==='cheap-history'&&current&&snapshot.value.status===1n&&
       storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null&&
       heldPoolSnapshotRefreshEligible(readCurrentDexPendingAttempt(storage),{chainId:String(candidate.chainId),owner:context.owner??'',core:candidate.core,
@@ -84,7 +87,8 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   }catch{return false;}})();
   const assertScope=(captured:object)=>{if(captured!==scope.current)throw new Error('Position owner or wallet session changed. Refresh this position.');};
   const actionTerms=useRef('');actionTerms.current=[id,percentage,minimum0,minimum1,recipient,producerHash].join(':');
-  const fail=(error:unknown,captured:object)=>setMessage(captured!==scope.current
+  const released=(error:unknown,captured:object)=>{if(captured!==scope.current||!wasCurrentDexUnsentReleased(error))return false;setBlocked(hasCurrentDexPendingAction(recordScope));return true;};
+  const fail=(error:unknown,captured:object)=>setMessage(released(error,captured)?CURRENT_UNSENT_RELEASED_MESSAGE:captured!==scope.current
     ?'Position owner or wallet session changed. Refresh this position.'
     :isProviderActionRejected(error)?'The wallet request was rejected.'
     :getProviderErrorMessage(error,'Position action failed. Check its status before another request.'));
@@ -227,7 +231,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     }
     if(result.action==='snapshot'){
       setProducerHash(result.producerHash);
-      if(readCurrentDexPendingAttempt(currentDexPendingStorage())?.verificationBlocked){
+      if(readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))?.verificationBlocked){
         setMessage('Fresh private claim verified. The old verification hold remains; spending actions stay locked.');return true;
       }
       setMessage(result.status==='closed-proof-verified'?'Close complete: exact private payouts and zero remaining shares verified.':
@@ -248,9 +252,9 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const refresh=async()=>{
     if(!getSender||inFlight.current||busy||topUpOpen||context.chain!==Number(candidate.chainId))return;inFlight.current = true; setBusy(true);const captured=scope.current;
     try{
-      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage());
+      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
       if(saved?.txHash)setTransactionHash(saved.txHash);
-      const snapshotHeld=saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&currentDexPendingStorage()?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null;
+      const snapshotHeld=saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&currentDexPendingStorage(recordScope)?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null;
       if(!snapshotHeld&&pending&&pending.scope===scope.current){
         const result=await pending.recover();
         if(!result)throw new Error('Private position result is not available yet.');
@@ -267,9 +271,10 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
             ?await capability.verifySupersededPlainSnapshot(positionId,hash,latestHash):await capability.verifyPlainSnapshot(positionId,hash);
           assertScope(captured);return result;}:undefined;
       const observed=await sender.recoverPendingPoolPositionAttempt(verifySnapshot);assertScope(captured);
+      if(observed?.status==='released-unsent'){setPending(null);setBlocked(hasCurrentDexPendingAction(recordScope));setMessage(CURRENT_UNSENT_RELEASED_MESSAGE);return;}
       if(observed?.status==='superseded-snapshot-recovery-only'){
         setTransactionHash(observed.transactionHash);setPending(null);setSnapshot(null);setExitPreview(null);setProducerHash(observed.latestSnapshotHash);
-        const held=hasCurrentDexPendingAction();setBlocked(held);
+        const held=hasCurrentDexPendingAction(recordScope);setBlocked(held);
         setMessage(held?'Saved snapshot verified for recovery only. Another saved hold remains. No prior amounts or accounting were reconstructed.':
           'Saved snapshot hold cleared with the later verified snapshot. No prior amounts or accounting were reconstructed. Load the position before another action.');return;
       }

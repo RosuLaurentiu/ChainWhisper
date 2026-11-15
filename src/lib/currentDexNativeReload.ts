@@ -1,6 +1,7 @@
 // Public financial reservations only. Authentication and signing stay in the wallet consumer.
 type PendingStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 import type { CurrentNativeSwapCheckpoint } from './currentDexNativeSwapPolicy';
+import { CurrentDexTabRecordConflict } from './currentDexPendingAttempt';
 export const CURRENT_DEX_NATIVE_RELOAD_KEY = 'chainwhisper:dex:native-reload:v1';
 export const CURRENT_DEX_NORMAL_USE_RELOAD_KEY = 'chainwhisper:dex:owner-normal-use:v2';
 export type CurrentDexReloadScope = Readonly<{ owner: string; graph: string; chainId: bigint }>;
@@ -18,7 +19,10 @@ export const readCurrentDexNativeReload = (storage: PendingStorage | null, norma
   let selected: CurrentDexNativeReloadRecord | null = null;
   for (const [key, version] of keys) {
     let raw: string | null;
-    try { raw = storage.getItem(key); } catch { throw new Error('Native reload storage is unavailable.'); }
+    try { raw = storage.getItem(key); } catch (error) {
+      if (error instanceof CurrentDexTabRecordConflict) throw error;
+      throw new Error('Native reload storage is unavailable.');
+    }
     if (raw === null) continue;
     let record: CurrentDexNativeReloadRecord;
     try {

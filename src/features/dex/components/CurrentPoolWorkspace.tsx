@@ -1,3 +1,5 @@
+import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSubmission';
+import { CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
 import { MAX_TOKEN_ALLOWANCE } from '../../../lib/tokenAllowance';
 import { useRef, useState } from 'react';
@@ -81,6 +83,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
 }) {
   const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
   const candidate = preparedScope?.candidate ?? resolveCurrentCheapDexCandidate(candidateKey), chain = BigInt(candidate.chainId);
+  const recordScope = currentDexRecordScope(candidate, sharedWalletSession?.walletAddress);
   const preparedCandidate = preparedScope !== null;
   const display = preparedCandidate ? readCurrentDexDisplay(candidate) : null;
   const selectedTokens = display && selectedPair?.map(label => display.tokens.find(token => token.label === label));
@@ -135,14 +138,15 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   const previewWalletCurrent = preview && ['candidateKey', 'graph', 'core', 'marketId', 'pair', 'owner', 'chainId', 'provider', 'getPool', 'getSender', 'walletId', 'source', 'privacyReady', 'onboard', 'health'].every(
     key => (preview.scope as Record<string, unknown>)[key] === (context as Record<string, unknown>)[key]);
   const connected = Boolean(context.owner && context.chainId === Number(chain) && context.provider && getPool && getSender);
-  const savedActionPending = hasCurrentDexPendingAction();
+  const savedActionPending = hasCurrentDexPendingAction(recordScope);
   const displayQuote = pair ? (priceDisplayInverted ? pair.tokenIn : pair.tokenOut) : null;
   const priceUnits = pair ? `${displayQuote!.label}/${(priceDisplayInverted ? pair.tokenOut : pair.tokenIn).label}` :
     `${tokenLabels[priceDisplayInverted ? 1 : 0]}/${tokenLabels[priceDisplayInverted ? 0 : 1]}`;
   const assertScope = (captured: object) => { if (scope.current !== captured) throw new Error('Pool terms or wallet session changed. Request a new preview.'); };
   const setMessage = (text: string) => { messageScope.current = scope.current; setStoredMessage(text); };
   const setNftId = (value: bigint | null) => { nftScope.current = scope.current; setStoredNftId(value); };
-  const fail = (cause: unknown, captured: object) => setMessage(captured !== scope.current
+  const released = (cause: unknown, captured: object) => { if (captured !== scope.current || !wasCurrentDexUnsentReleased(cause)) return false; setBlocked(hasCurrentDexPendingAction(recordScope)); return true; };
+  const fail = (cause: unknown, captured: object) => setMessage(released(cause, captured) ? CURRENT_UNSENT_RELEASED_MESSAGE : captured !== scope.current
     ? 'Pool terms or wallet session changed. Request a new preview.'
     : cause instanceof Error ? cause.message : 'Pool action failed. Check its status before another request.');
   const confirm = (title: string, rows: { label: string; value: string }[]) => requestConfirmation({ title, primaryLabel: 'Continue',
@@ -457,7 +461,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       }
       const next = sender?.scope === captured ? sender.value : await getSender(chain, preparedCandidate ? { candidate: preparedScope!.key } : nativeTrial ? { nativePoolProfile: CURRENT_NATIVE_POOL_PROFILE } : undefined);
       assertScope(captured);
-      const savedPhase = readCurrentDexPendingAttempt(currentDexPendingStorage())?.phase;
+      const savedPhase = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))?.phase;
       const tokenPending = currentPending?.phase.startsWith('approval-') || currentPending?.phase.startsWith('clear-') || savedPhase === 'token-approve';
       if (preparedCandidate && !tokenPending) {
         const result = await next.recoverCurrentPreparedPoolFundingResult(); assertScope(captured);
@@ -486,7 +490,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
           return;
         }
       }
-      if (nativeTrial && !readCurrentDexPendingAttempt(currentDexPendingStorage())) {
+      if (nativeTrial && !readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))) {
         const resumed = await next.readCurrentNativePoolResume(); assertScope(captured);
         if (resumed) {
           setSender({ value: next, scope: captured }); setPending(null); setBlocked(false); setUnfundedFailed(resumed.unfundedFailed); setAttemptComplete(resumed.completed);
@@ -513,6 +517,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       assertScope(captured);
       setSender({ value: next, scope: captured });
       if (!observed) { setBlocked(false); setMessage('No pending Pool attempt was found.'); return; }
+      if (observed.status === 'released-unsent') { setPending(null); setBlocked(hasCurrentDexPendingAction(recordScope)); setMessage(CURRENT_UNSENT_RELEASED_MESSAGE); return; }
       if (observed.status === 'observed-reverted' || observed.status === 'observed-mined') {
         setPending(null); setBlocked(false);
         if (!tokenPending) setPreview(null);

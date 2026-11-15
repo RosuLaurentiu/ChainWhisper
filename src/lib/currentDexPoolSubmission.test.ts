@@ -12,6 +12,15 @@ import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
 import { blockCurrentPoolVerification, readCurrentDexPendingAttempt } from './currentDexPendingAttempt';
 import * as currentDexC1SwapPolicy from './currentDexC1SwapPolicy';
 
+import { wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
+
+// CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.
+const browserContexts = vi.hoisted(() => new WeakMap<object, { owner: string }>());
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({
+  hasCurrentDexBrowserSigner: (signer: object | undefined, owner: string) =>
+    !!signer && browserContexts.get(signer)?.owner === owner.toLowerCase()
+}));
 // Adapter unit tests mock only the issuer brand. Genuine owner issuance is tested separately.
 const brands = vi.hoisted(() => new WeakMap<object, object>());
 vi.mock('../features/wallet/currentDexPoolFundingCapability', () => ({
@@ -381,6 +390,63 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
       Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]) }];
     return { ...f, prepared, funding, id, ownerContext, topInputs };
   }
+  // CW-086, decision-033: the normal browser App releases a Pool request that the wallet rejected and never sent.
+  describe.skipIf(candidateKey !== 'cheap-history')('release of a wallet-rejected Pool request in the browser App', () => {
+    const browser = (topUp = false) => {
+      if (topUp) vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
+      const f = topUp ? topUpFixture(0, true, true) : preparedFixture(0, true), signer = brands.get(f.prepared)!;
+      browserContexts.set(signer, { owner });
+      f.values.set(currentDexNormalUseReloadKey({ owner, graph: f.c.graph, chainId }), JSON.stringify({
+        budget: { version: 2, owner, candidateGraph: f.c.graph, start: '1', committedWei: '0', activeSwap: null, charges: [] }, authentication: blockHash }));
+      Object.assign(f.transport, { admitOwnerRecord: vi.fn(async () => {}) });
+      return f;
+    };
+    const rejection = () => Object.assign(new Error('User rejected the request.'), { code: 4001 });
+    const saved = (f: ReturnType<typeof browser>) => JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!);
+    it.each(['pool-preview', 'pool-fund'] as const)('releases a rejected %s request and permits the same request again', async phase => {
+      const f = browser(), error = rejection();
+      const submit = () => phase === 'pool-preview' ? f.adapter.submitPoolPreview(f.prepared as never) : f.adapter.submitPoolFunding(f.funding as never);
+      f.transport.send.mockRejectedValueOnce(error);
+      await expect(submit()).rejects.toBe(error);
+      expect(wasCurrentDexUnsentReleased(error)).toBe(true);
+      expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+      await submit();
+      expect(saved(f)).toMatchObject({ phase, txHash });
+      expect(f.transport.send).toHaveBeenCalledTimes(2);
+    });
+    it('keeps a rejected preview locked while its nonce is pending, then releases it in recovery and permits it again', async () => {
+      const f = browser(), error = rejection(); let pendingNonce = 4;
+      f.transport.readNativeResources.mockImplementation(async head => ({ owner, chainId, head, latestNonce: 4, pendingNonce,
+        baseFeePerGas: 1n, gasPrice: 50_000_000n, balance: 10n ** 18n, code: '0x' }));
+      f.transport.send.mockImplementationOnce(async () => { pendingNonce = 5; throw error; });
+      await expect(f.adapter.submitPoolPreview(f.prepared as never)).rejects.toBe(error);
+      expect(wasCurrentDexUnsentReleased(error)).toBe(false);
+      expect(saved(f)).toMatchObject({ phase: 'pool-preview', txHash: null, walletRejected: true });
+      await expect(f.adapter.recoverPendingPoolAttempt()).rejects.toThrow('The reserved wallet nonce is used or pending');
+      expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(true); pendingNonce = 4;
+      await expect(f.adapter.recoverPendingPoolAttempt()).resolves.toMatchObject({ status: 'released-unsent', readyToSign: false });
+      expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+      await f.adapter.submitPoolPreview(f.prepared as never);
+      expect(saved(f)).toMatchObject({ phase: 'pool-preview', txHash });
+      expect(f.transport.send).toHaveBeenCalledTimes(2);
+    });
+    it('keeps an unknown wallet result locked', async () => {
+      const f = browser(); f.transport.send.mockRejectedValueOnce(new Error('TEST_UNKNOWN_POOL_SEND'));
+      await expect(f.adapter.submitPoolPreview(f.prepared as never)).rejects.toThrow('TEST_UNKNOWN_POOL_SEND');
+      expect(saved(f)).toMatchObject({ phase: 'pool-preview', txHash: null });
+      expect(saved(f).walletRejected).toBeUndefined();
+      expect(f.transport.send).toHaveBeenCalledOnce();
+    });
+    it('keeps a rejected top-up funding locked, because a top-up handoff is not released', async () => {
+      const f = browser(true), error = rejection();
+      f.transport.send.mockRejectedValueOnce(error);
+      await expect(f.adapter.submitPoolTopUpFunding(f.funding as never)).rejects.toBe(error);
+      expect(wasCurrentDexUnsentReleased(error)).toBe(false);
+      expect(saved(f)).toMatchObject({ phase: 'pool-fund', txHash: null, poolTopUpHash: null });
+      expect(saved(f).walletRejected).toBeUndefined();
+      expect(f.transport.send).toHaveBeenCalledOnce();
+    });
+  });
   it('retains packed top-up pending recovery without a resend with isolated candidate selection', async () => {
     const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
     try {

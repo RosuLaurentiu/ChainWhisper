@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import { formatUnits } from '@coti-io/coti-ethers';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
@@ -62,7 +63,7 @@ export default function CurrentTokenRefillControls({ sharedWalletSession, tokenI
   const connected = Boolean(context.owner && context.chain === Number(c.chainId) && context.provider && getSender && privacyReady);
   const current = state?.scope === scope.current ? state.value : null, admitted = currentRefillUiAdmitted();
   let saved = null, journalUnavailable = false;
-  try { saved = readCurrentDexPendingAttempt(currentDexPendingStorage()); } catch { journalUnavailable = true; }
+  try { saved = readCurrentDexPendingAttempt(currentDexPendingStorage(currentDexRecordScope(c, sharedWalletSession?.walletAddress))); } catch { journalUnavailable = true; }
   const hasPending = Boolean(saved || blocked || pending), knownBlocked = saved?.phase === 'token-refill' && saved.verificationBlocked;
   const { confirmation, requestConfirmation, resolveConfirmation } = useTradeActionConfirmationState(scope.current);
   const fail = (error: unknown, captured: object) => setMessage(scope.current !== captured

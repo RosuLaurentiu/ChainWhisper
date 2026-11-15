@@ -49,9 +49,9 @@ import { assertCurrentSharedPoolIssuedQuote, assertCurrentSharedPoolPreparedQuot
 import { blockCurrentSwapVerification, blockCurrentDexOperationVerification, clearCurrentDexOperationLookup,
   readCurrentDexOperationLookups, recordCurrentDexOperationLookup,
   clearCurrentDexPendingAttempt, currentDexPendingStorage, readCurrentDexPendingAttempt,
-  recordCurrentDexPendingHash, reserveCurrentDexPendingAttempt, advanceCurrentPoolTopUpAttempt, heldPoolSnapshotRefreshEligible, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
+  recordCurrentDexPendingHash, reserveCurrentDexPendingAttempt, advanceCurrentPoolTopUpAttempt, heldPoolSnapshotRefreshEligible, markCurrentDexPendingWalletRejected, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
 import { readCurrentDexNativeReload, writeCurrentDexNativeReload, type CurrentDexNativeReloadRecord } from './currentDexNativeReload';
-import { recoverCurrentPartialLedger } from './currentDexNativeSwapPolicy';
+import { recoverCurrentPartialLedger, releaseCurrentNativeSwapCharge } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY, CURRENT_APP_PARTIAL_REFUND_TRIAL, currentPartialLedgerRecoveryAllowed, hasCurrentPartialRefundProof } from './currentDexC1SwapPolicy';
 import { CURRENT_OWNER_BETA } from './currentDexOwnerBetaPolicy';
 
@@ -413,10 +413,26 @@ const currentReservations = new WeakMap<object, { quote: Set<string>; accept: Se
   cheapReviewed?: Map<string, Readonly<{ actualInput: bigint; netOutput: bigint; context: string }>>;
   cheapRecovered?: Map<string, { prepared: CurrentCheapDexPreparedQuote; origin: { number: bigint; hash: string } }>;
   cheapClosedTrials?: Set<string> }>();
-export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId, transport, attest, now, historical = true, bindTarget = false, canonicalIndexProof = false, heldSnapshot }: {
+// decision-033 (CW-086). A send that the wallet rejected by code, with no returned hash, can be released
+// after a chain nonce check. The same error object marks a completed release for the calling adapter.
+const releasedUnsentErrors = new WeakSet<object>();
+export const wasCurrentDexUnsentReleased = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && releasedUnsentErrors.has(error);
+// EIP-1193 code 4001 only, direct or as the cause of the SDK error. Message text is never evidence.
+const walletRejectedByCode = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as { code?: unknown; info?: { error?: { code?: unknown } } };
+  return e.code === 4001 || e.code === 'ACTION_REJECTED' && e.info?.error?.code === 4001;
+};
+const UNSENT_RELEASE_HEAD_GAS_CAP = 5_000_000n;
+// decision-033 part C: the saved records are shared by all tabs. A reload reads them again.
+export const CURRENT_DEX_STALE_TAB_MESSAGE = 'Another tab changed the saved DEX records of this wallet. Nothing was sent. Reload this tab before another request.';
+export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId, transport, attest, now, historical = true, bindTarget = false, canonicalIndexProof = false, heldSnapshot, releaseReservation }: {
   storage: ReturnType<typeof currentDexPendingStorage>; c: { graph: string; packageSha256?: string }; core: string; owner: string; chainId: bigint;
   transport: CurrentTransport; attest: (head: CurrentHead) => Promise<void>; now: () => bigint; historical?: boolean; bindTarget?: boolean;
   canonicalIndexProof?: boolean; heldSnapshot?: CurrentDexPendingAttempt;
+  // The adapter releases its own reservation for the rejected record, or throws. No hook means no release.
+  releaseReservation?: (attempt: CurrentDexPendingAttempt) => Promise<void>;
 }) => {
   const nativeFit = [STAGED_NATIVE_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE]
     .some(candidate => c.graph === candidate.graph && core.toLowerCase() === candidate.core);
@@ -483,6 +499,31 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       throw new Error('Current native nonce, fee, payer resources or head changed.');
     }
     return resources;
+  };
+  // decision-033. Runs only for a saved record that carries the wallet rejection fact and no hash.
+  // It signs nothing and sends nothing. Any failed check leaves the record in place.
+  const releaseUnsent = async (browserSigner: object | undefined): Promise<boolean> => {
+    const saved = pending();
+    if (!saved || saved.txHash !== null || saved.walletRejected !== true) return false;
+    if (saved.chainId !== chainId.toString() || saved.owner !== owner.toLowerCase() || saved.core !== core.toLowerCase() ||
+        saved.graph !== `0x${c.graph}`.toLowerCase())
+      throw new Error('The saved action belongs to another wallet, network or contract. Restore that session to check it. Do not resend.');
+    if (!releaseReservation || heldSnapshot || saved.poolTopUpHash !== undefined || !isCurrentDexBrowserSigner(browserSigner, c.graph, owner) ||
+        !transport.readNativeResources) throw new Error('Release of an unsent action needs the current browser wallet session.');
+    const head = await currentHead(undefined, UNSENT_RELEASE_HEAD_GAS_CAP);
+    const resources = await transport.readNativeResources(head);
+    await transport.assertCurrent();
+    if (!sameAddress(resources.owner, owner) || resources.chainId !== chainId || resources.code !== '0x' ||
+        resources.head.number !== head.number || resources.head.hash.toLowerCase() !== head.hash.toLowerCase() ||
+        resources.head.timestamp !== head.timestamp || !Number.isSafeInteger(resources.latestNonce) ||
+        resources.latestNonce !== resources.pendingNonce || resources.latestNonce !== saved.nonce)
+      throw new Error('The reserved wallet nonce is used or pending. The action stays locked. Do not resend.');
+    await releaseReservation(saved);
+    await transport.assertCurrent();
+    const current = pending();
+    if (!current || JSON.stringify(current) !== JSON.stringify(saved)) throw new Error('Current DEX pending attempt changed; reconcile manually.');
+    clearCurrentDexPendingAttempt(storage, current);
+    return true;
   };
   const sendCurrent = async (phase: CurrentDexPendingAttempt['phase'], call: UnsignedTransaction, deadline: bigint | undefined,
     validate: () => void | Promise<void>, onSigningRequest: (request: TransactionRequest) => void,
@@ -718,6 +759,17 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       recordCurrentDexPendingHash(storage, attempt, knownHash);
       submittedHash = knownHash;
       observation?.hashReturned?.(knownHash);
+    }).catch(async (error: unknown) => {
+      // decision-033: only a rejection by wallet code with no returned hash can start a release.
+      // An unknown wallet result, a top-up handoff and a held refresh keep the existing lock.
+      try {
+        if (submittedHash === null && releaseReservation && !handoff && !heldSnapshot && poolTopUpHash === undefined &&
+            walletRejectedByCode(error) && normalBrowser()) {
+          markCurrentDexPendingWalletRejected(storage, attempt);
+          if (await releaseUnsent(browserSigner)) releasedUnsentErrors.add(error as object);
+        }
+      } catch { /* The record stays for a later check. The wallet error remains the result of this send. */ }
+      throw error;
     });
     if (!historical && sent.gasLimit !== gasCap) throw new Error('Wallet changed the current-mode gas cap.');
     const transactionHash = validateSubmitted(sent, request);
@@ -770,7 +822,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
         topics: log.topics.map(topic => topic.toLowerCase()), data: log.data.toLowerCase() })) });
     if (identity(before) !== identity(after)) throw new Error('Current native receipt changed after private verification.');
   };
-  return { pending, requireEmptyPending, requirePoolTopUpHandoff, requireOwnPending, currentHead, requireNativeResources, sendCurrent, verifyMinedCall, recheckMinedCall };
+  return { pending, requireEmptyPending, requirePoolTopUpHandoff, requireOwnPending, currentHead, requireNativeResources, sendCurrent, verifyMinedCall, recheckMinedCall, releaseUnsent };
 };
 
 export const createCurrentSharedPoolSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest,
@@ -790,9 +842,9 @@ export const createCurrentSharedPoolSubmissionAdapter = ({ signer, ownerAddress,
   const quoteKeys = reservations.quote, acceptKeys = reservations.accept, actionKeys = reservations.actions;
   const recoveredQuotes = new WeakMap<object, CurrentDexPreparedQuote>();
   const pendingAcceptRequests = reservations.acceptRequests;
-  const storage = currentDexPendingStorage();
   const c = CURRENT_SHARED_POOL_CANDIDATE, core = address(c.core, 'current shared-Pool Core');
   const owner = address(ownerAddress, 'current shared-Pool owner');
+  const storage = currentDexPendingStorage({ chainId, graph: c.graph, owner });
   const runtimeHash = c.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2];
   if (chainId !== BigInt(c.chainId)) throw new Error('Current shared-Pool chain differs.');
   const { pending, requireEmptyPending, requireOwnPending, currentHead, sendCurrent, verifyMinedCall } =
@@ -1263,7 +1315,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   }
   const recovered = reservations.cheapRecovered ??= new Map();
   const reviewed = reservations.cheapReviewed ??= new Map();
-  const storage = currentDexPendingStorage();
+  const storage = currentDexPendingStorage({ chainId, graph: c.graph, owner });
   const reloadScope = Object.freeze({owner,graph:c.graph,chainId});
   const closedTrialScopes = reservations.cheapClosedTrials ??= new Set<string>();
   const closedAccountingScopes = new Set<string>();
@@ -1310,8 +1362,40 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     }
     return captured.prepared;
   };
-  const { pending, requireEmptyPending, requirePoolTopUpHandoff, requireOwnPending, currentHead, requireNativeResources, sendCurrent, verifyMinedCall, recheckMinedCall } =
-    createCurrentAttemptBoundary({ storage, c, core, owner, chainId, transport, attest, now, historical: false });
+  // decision-033: releases the unsent reservation that the rejected record owns in this owner record.
+  // A swap action always owns one. A swap approval owns one. Other token actions own none. A throw keeps the lock.
+  const isSwapPhase = (phase: CurrentDexPendingAttempt['phase']): phase is 'quote' | 'accept' | 'cancel' | 'recover' =>
+    phase === 'quote' || phase === 'accept' || phase === 'cancel' || phase === 'recover';
+  const releaseUnsentLedgerReservation = async (attempt: CurrentDexPendingAttempt) => {
+    const swap = isSwapPhase(attempt.phase);
+    if (!swap && attempt.phase !== 'token-approve' && attempt.phase !== 'token-faucet' && attempt.phase !== 'token-refill')
+      throw new Error('This owner record has no release step for this action.');
+    if (!usesCurrentSwapAccounting(c)) return;
+    if (!isCurrentDexBrowserSigner(signer, c.graph, owner) || !authenticateReload) throw new Error('Owner-authenticated reload reservations are unavailable.');
+    const saved = readCurrentDexNativeReload(storage, reloadScope);
+    if (!saved) throw new Error('Owner normal-use record is unavailable.');
+    validateCurrentNativeSwapCheckpoint(saved.budget, owner, c, signer);
+    if (await authenticateReload(saved.budget) !== saved.authentication) throw new Error('Owner reload record authentication failed.');
+    await transport.assertCurrent();
+    if (!hasCurrentNativeSigningBudget(signer)) restoreCurrentNativeSwapCheckpoint(signer, owner, c, saved.budget);
+    else if (JSON.stringify(currentNativeSwapCheckpoint(signer)) !== JSON.stringify(saved.budget)) throw new Error('Live native budget differs from the saved owner record.');
+    const ledgerPhase = isSwapPhase(attempt.phase) ? attempt.phase : attempt.phase === 'token-approve' ? 'token-funding' as const : null;
+    const budget = currentNativeSwapCheckpoint(signer);
+    const releasedBefore = ledgerPhase === 'token-funding' && !!budget.released?.some(row =>
+      row.phase === 'token-funding' && row.nonce === attempt.nonce && row.key.endsWith(`:${attempt.callHash}`));
+    // A Limit or Pool approval, a claim and a refill reserve nothing here. Their admission proved that no reservation was open.
+    if (!swap && !releasedBefore && budget.charges.every(row => row.hash !== null)) return;
+    if (!ledgerPhase) throw new Error('The owner record has an open reservation that this action does not own.');
+    const undo = releaseCurrentNativeSwapCharge(signer, owner, c, attempt.nonce, attempt.callHash, ledgerPhase);
+    if (!undo) return;
+    try { await persistBudget(); } catch (error) { undo(); throw error; }
+  };
+  const { pending, requireEmptyPending, requirePoolTopUpHandoff, requireOwnPending, currentHead, requireNativeResources, sendCurrent, verifyMinedCall, recheckMinedCall, releaseUnsent } =
+    createCurrentAttemptBoundary({ storage, c, core, owner, chainId, transport, attest, now, historical: false,
+      releaseReservation: async attempt => {
+        if (!isSwapPhase(attempt.phase)) throw new Error('This adapter releases swap actions only.');
+        await releaseUnsentLedgerReservation(attempt);
+      } });
   const admitNormalOwnerRecord = async (requireIdle = true, swapScope?: string, actionGasCap?: bigint, heldSnapshot?: CurrentDexPendingAttempt, topUpHandoff?: CurrentDexPendingAttempt) => {
     if(!isCurrentDexBrowserSigner(signer,c.graph,owner))return;
     const saved=readCurrentDexNativeReload(storage,reloadScope), recordBytes=JSON.stringify(saved),
@@ -1326,6 +1410,10 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     await transport.assertCurrent();
     if(JSON.stringify(readCurrentDexNativeReload(storage,reloadScope))!==recordBytes||JSON.stringify(readCurrentDexNativeReload(storage,false,reloadScope))!==legacyBytes||retainedRecordBytes()!==retainedBytes)
       throw new Error('Owner records changed during normal-use admission.');
+    // decision-033 part C: all tabs share the saved owner record. A tab whose record in memory differs from it
+    // holds older data. It does not send, and it never writes its older record over the saved record.
+    if(saved&&hasCurrentNativeSigningBudget(signer)&&JSON.stringify(currentNativeSwapCheckpoint(signer))!==JSON.stringify(saved.budget))
+      throw new Error(CURRENT_DEX_STALE_TAB_MESSAGE);
     const lookups=readCurrentDexOperationLookups(storage);
     if (!requireIdle && swapScope && actionGasCap === 5_000_000n && saved?.budget.activeSwap && saved.budget.activeSwap !== swapScope && verifySwapAllowanceCleanup &&
         !pending() && !lookups.length && !saved.budget.charges.some(row => !row.hash) &&
@@ -1513,7 +1601,8 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         (hasCurrentPartialRefundProof(c.graph,owner,saved.budget.charges)?7200n:CURRENT_NATIVE_SWAP_LIMITS.normalSeconds);
     if(prepared && hasCurrentNativeSigningBudget(signer) && !pending() && !ownLookups().length &&
         currentNativeSwapCheckpoint(signer).activeSwap === null && (isCurrentDexBrowserSigner(signer,c.graph,owner) || !expired && saved.budget.charges.some(row=>closedTrialScopes.has(row.scope)))) {
-      if(JSON.stringify(currentNativeSwapCheckpoint(signer))!==JSON.stringify(saved.budget))throw new Error('Closed trial reservation changed.');
+      if(JSON.stringify(currentNativeSwapCheckpoint(signer))!==JSON.stringify(saved.budget))
+        throw new Error(isCurrentDexBrowserSigner(signer,c.graph,owner)?CURRENT_DEX_STALE_TAB_MESSAGE:'Closed trial reservation changed.');
       validateCurrentNativeSwapCheckpoint(saved.budget,owner,c,signer);
       await requireFunding(prepared,await currentHead(prepared.intent.deadline,gasCaps()[prepared.profile].quote,true),!!approvalRequest);
       return;
@@ -1795,6 +1884,9 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     // A wallet can reprice the same nonce. An explicit hash is only a lookup:
     // all saved-intent and canonical receipt checks below must still pass.
     const transactionHash = supplied || attempt.txHash;
+    // decision-033: a saved wallet rejection can be checked again. Every other record with no hash stays held.
+    if (!transactionHash && activeAttempt?.walletRejected && await releaseUnsent(signer)) return Object.freeze({ status: 'released-unsent' as const,
+      phase: attempt.phase, nonce: attempt.nonce, callHash: attempt.callHash, readyToSign: false as const, privateAccountingVerified: false as const });
     if (!transactionHash) return Object.freeze({ status: 'manual-reconciliation-required' as const, phase: attempt.phase,
       nonce: attempt.nonce, callHash: attempt.callHash, readyToSign: false as const,
       privateAccountingVerified: false as const });
@@ -2252,6 +2344,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       await persistBudget();
     },
     rememberCurrentCheapSwapApproval: rememberHash,
+    releaseCurrentCheapUnsentLedgerReservation: releaseUnsentLedgerReservation,
     admitCurrentOwnerNormalRecord: (swapScope?: string, gasCap?: bigint, heldSnapshot?: CurrentDexPendingAttempt, topUpHandoff?: CurrentDexPendingAttempt) => admitNormalOwnerRecord(false,swapScope,gasCap,heldSnapshot,topUpHandoff),
     checkCurrentCheapCandidate: async () => {
       assertCurrentSwapIdentity(c);
@@ -2370,7 +2463,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         }, () => { signing = true; }, undefined, gasCaps()[prepared.profile].quote, observeSend(prepared.profile, 'quote', progress), authorize, undefined, { prepared, signer });
         await rememberHash(sent);
         return Object.freeze({ ...sent, profile: prepared.profile, recover: () => recoverQuote(prepared, sent.transactionHash) });
-      } catch (error) { if (!signing) reservations.quote.delete(key); throw error; }
+      } catch (error) { if (!signing || wasCurrentDexUnsentReleased(error)) reservations.quote.delete(key); throw error; }
     },
     submitCurrentCheapAcceptance: async ({ issued, confirm, progress }: { issued: CurrentCheapDexIssuedQuote;
       confirm: (model: unknown) => Promise<boolean>; progress?: CurrentDexSendProgress }) => {
@@ -2422,7 +2515,11 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         await rememberHash(sent);
         return Object.freeze({ ...sent, operationId: ready.operationId, profile: ready.intent.profile, status: 'accepting' as const,
           recover: () => acceptanceResult(ready, preparedQuote, sent.request, sent.transactionHash) });
-      } catch (error) { if (!signing) reservations.accept.delete(key); throw error; }
+      } catch (error) {
+        if (!signing || wasCurrentDexUnsentReleased(error)) reservations.accept.delete(key);
+        if (wasCurrentDexUnsentReleased(error)) reservations.acceptRequests.delete(key);
+        throw error;
+      }
     },
     submitCurrentCheapOwnerAction: async ({ issued, action, confirm, progress }: { issued: CurrentCheapDexIssuedQuote;
       action: 'cancel' | 'recover'; confirm: (operation: CurrentCheapDexOperation) => Promise<boolean>; progress?: CurrentDexSendProgress }) => {
@@ -2482,7 +2579,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
             }
             return Object.freeze({ status: 'released' as const, operationId: issued.operationId, transactionHash: sent.transactionHash });
           } });
-      } catch (error) { if (!signing) reservations.actions.delete(key); throw error; }
+      } catch (error) { if (!signing || wasCurrentDexUnsentReleased(error)) reservations.actions.delete(key); throw error; }
     }
   });
   return adapter;

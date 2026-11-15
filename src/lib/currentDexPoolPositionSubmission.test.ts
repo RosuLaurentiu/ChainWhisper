@@ -9,6 +9,12 @@ import { CURRENT_DEX_PENDING_ATTEMPT_KEY as key, CURRENT_POOL_REFRESH_ATTEMPT_KE
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
 import { STAGED_GAP_DEX_CANDIDATE as currentGap } from './currentDexGapCandidate';
+import { wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
+// CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.
+const browserContexts=vi.hoisted(()=>new WeakMap<object,{owner:string}>());
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability',()=>({hasCurrentDexBrowserSigner:(signer:object|undefined,owner:string)=>
+  !!signer&&browserContexts.get(signer)?.owner===owner.toLowerCase()}));
 const preparedAdmission=vi.hoisted(()=>({allowed:false}));
 const localSubmissionAuthority=vi.hoisted(()=>({allowed:false}));
 vi.mock('./currentDexC1SwapPolicy',async importOriginal=>{
@@ -648,5 +654,48 @@ describe('archived owner canonical completion boundary',()=>{
       if(fault==='missing')inclusion.mockRejectedValue(new Error('Canonical inclusion unavailable'));
     }return f.receipt;});
     if(fault==='none'){await expect(adapter.recoverPendingPoolPositionAttempt()).resolves.toMatchObject({status:status===0?'observed-reverted':'observed-mined'});expect(f.storage.has(key)).toBe(false);}else{await expect(adapter.recoverPendingPoolPositionAttempt()).rejects.toThrow();expect(f.storage.has(key)).toBe(true);}expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+});
+
+// CW-086, decision-033: the normal browser App releases a position action that the wallet rejected and never sent.
+describe('release of a wallet-rejected Pool position action in the browser App',()=>{
+  const browser=()=>{
+    const f=preparedFixture('cheap-history');preparedAdmission.allowed=true;allowLocalTechnicalSubmission();
+    browserContexts.set(f.signer,{owner});
+    f.storage.set(currentDexNormalUseReloadKey({owner,graph:f.candidate.graph,chainId}),JSON.stringify({
+      budget:{version:2,owner,candidateGraph:f.candidate.graph,start:'1',committedWei:'0',activeSwap:null,charges:[]},authentication:hash}));
+    Object.assign(f.transport,{admitOwnerRecord:vi.fn(async()=>{})});
+    return f;
+  };
+  const rejection=()=>Object.assign(new Error('User rejected the request.'),{code:4001});
+  it('releases a rejected snapshot and permits the same snapshot again',async()=>{
+    const f=browser(),error=rejection();f.transport.send.mockRejectedValueOnce(error);
+    await expect(f.adapter.submitPoolPositionAction(f.prepared as never)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(true);expect(f.storage.has(key)).toBe(false);
+    await f.adapter.submitPoolPositionAction(f.prepared as never);
+    expect(JSON.parse(f.storage.get(key)!)).toMatchObject({phase:'pool-snapshot',txHash});
+    expect(f.transport.send).toHaveBeenCalledTimes(2);
+  });
+  it('keeps a rejected snapshot locked while its nonce is pending, then releases it in recovery and permits it again',async()=>{
+    const f=browser(),error=rejection();let pendingNonce=4;
+    f.transport.readNativeResources.mockImplementation(async head=>({owner,chainId,head:{...head},latestNonce:4,pendingNonce,baseFeePerGas:1n,gasPrice:50_000_000n,balance:10n**18n,code:'0x'}));
+    f.transport.send.mockImplementationOnce(async()=>{pendingNonce=5;throw error;});
+    await expect(f.adapter.submitPoolPositionAction(f.prepared as never)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(false);
+    expect(JSON.parse(f.storage.get(key)!)).toMatchObject({phase:'pool-snapshot',txHash:null,walletRejected:true});
+    await expect(f.adapter.recoverPendingPoolPositionAttempt()).rejects.toThrow('The reserved wallet nonce is used or pending');
+    expect(f.storage.has(key)).toBe(true);pendingNonce=4;
+    expect(await f.adapter.recoverPendingPoolPositionAttempt()).toMatchObject({status:'released-unsent',readyToSign:false});
+    expect(f.storage.has(key)).toBe(false);
+    await f.adapter.submitPoolPositionAction(f.prepared as never);
+    expect(JSON.parse(f.storage.get(key)!)).toMatchObject({phase:'pool-snapshot',txHash});
+    expect(f.transport.send).toHaveBeenCalledTimes(2);
+  });
+  it('keeps an unknown wallet result locked',async()=>{
+    const f=browser();f.transport.send.mockRejectedValueOnce(new Error('TEST_UNKNOWN_POSITION_SEND'));
+    await expect(f.adapter.submitPoolPositionAction(f.prepared as never)).rejects.toThrow('TEST_UNKNOWN_POSITION_SEND');
+    const saved=JSON.parse(f.storage.get(key)!);expect(saved).toMatchObject({phase:'pool-snapshot',txHash:null});expect(saved.walletRejected).toBeUndefined();
+    expect(await f.adapter.recoverPendingPoolPositionAttempt()).toMatchObject({status:'manual-reconciliation-required',readyToSign:false});
+    expect(f.storage.has(key)).toBe(true);expect(f.transport.send).toHaveBeenCalledOnce();
   });
 });

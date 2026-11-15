@@ -3,7 +3,8 @@ import * as limitCodec from './currentDexLimit';
 import { getAddress,toBeHex } from '@coti-io/coti-ethers';
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import { createCurrentLimitSubmissionAdapter } from './currentDexLimitSubmission';
-import { createCurrentAttemptBoundary } from './currentDexSubmission';
+import { createCurrentAttemptBoundary,wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 import { currentLimitAbi as abi,currentLimitAbiForCandidate,currentLimitOwnerNativeAdmission,currentLimitNftAbi,CurrentLimitProofMismatch } from './currentDexLimit';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
@@ -11,6 +12,10 @@ import { CURRENT_DEX_PENDING_ATTEMPT_KEY as key } from './currentDexPendingAttem
 // Adapter unit test only: issuer brand is mocked. Genuine preparation has separate tests.
 const brands=vi.hoisted(()=>new WeakMap<object,object>());
 const localSubmissionAuthority=vi.hoisted(()=>({allowed:false,receiptRepair:false}));
+// CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.
+const browserContexts=vi.hoisted(()=>new WeakMap<object,{owner:string}>());
+vi.mock('../features/wallet/ownerCotiMetaMaskCapability',()=>({hasCurrentDexBrowserSigner:(signer:object|undefined,owner:string)=>
+  !!signer&&browserContexts.get(signer)?.owner===owner.toLowerCase()}));
 vi.mock('./currentDexC1SwapPolicy',async importOriginal=>{
   const actual=await importOriginal<typeof import('./currentDexC1SwapPolicy')>();
   return {...actual,isCurrentAppLimitTopUpRepair:(...args:Parameters<typeof actual.isCurrentAppLimitTopUpRepair>)=>localSubmissionAuthority.receiptRepair||actual.isCurrentAppLimitTopUpRepair(...args),assertCurrentAppLimitAuthority:(...args:Parameters<typeof actual.assertCurrentAppLimitAuthority>)=>{
@@ -336,14 +341,15 @@ describe('current Limit edit sender boundaries',()=>{
     await expect(f.sender.reconcileMinedTopUp(f.proof as never)).rejects.toThrow();expect(f.storage.has(key)).toBe(true);expect(f.transport.send).toHaveBeenCalledOnce();
   });
 });
-describe('packed Limit pending boundary (local ABI selection only)',()=>{
-  const packedFixture=(reprice=false)=>{
+// Shared by the packed boundary tests and the CW-086 release tests.
+const packedFixture=(reprice=false)=>{
     const f=fixture(true,'cheap-history'),candidate=resolvePreparedDexScope('cheap-history').candidate,wide={ciphertext:{ciphertextHigh:1n,ciphertextLow:1n},signature};
     vi.spyOn(limitCodec,'currentLimitAbiForCandidate').mockReturnValue(limitCodec.packedLimitAbi);
     Object.assign(f.prepared,{phase:reprice?'limit-owner':'limit-create',...(reprice?{action:'reprice',expectedTermsRevision:3n,expectedLifecycleRevision:7n}:{}),data:limitCodec.packedLimitAbi.encodeFunctionData(reprice?'repricePrivateOrder':'createPrivateOrder',reprice?[9n,3n,Array(3).fill(wide)]:[candidate.pairs[2].marketId,wide,Array(3).fill(wide)])});
     if(reprice)f.receipt.logs=[{address:candidate.core,...limitCodec.packedLimitAbi.encodeEventLog(limitCodec.packedLimitAbi.getEvent('FixedPositionRepriced')!,[9n,4n])}];
     allowLocalTechnicalSubmission();return f;
   };
+describe('packed Limit pending boundary (local ABI selection only)',()=>{
   it.each([false,true])('restores canonical packed pending metadata without resend (reprice=%s)',async reprice=>{
     const f=packedFixture(reprice);await f.make().submitLimit(f.prepared as never);
     expect(await f.make().recoverPendingLimitAttempt()).toMatchObject({status:'observed-mined',privateAccountingVerified:false});
@@ -358,5 +364,50 @@ describe('packed Limit pending boundary (local ABI selection only)',()=>{
     const f=packedFixture();f.transport.send.mockImplementationOnce(async()=>{throw new Error('Unknown send');});
     await expect(f.make().submitLimit(f.prepared as never)).rejects.toThrow();expect(f.storage.has(key)).toBe(true);
     const restored=await f.make().recoverPendingLimitAttempt();expect(restored).toMatchObject({status:'manual-reconciliation-required'});expect(f.transport.send).toHaveBeenCalledOnce();expect(f.storage.has(key)).toBe(true);
+  });
+});
+
+// CW-086, decision-033: the normal browser App releases a Limit action that the wallet rejected and never sent.
+describe('release of a wallet-rejected Limit action in the browser App',()=>{
+  type Kind='create'|'snapshot'|'reprice';
+  const browser=(kind:Kind='create')=>{
+    allowLocalTechnicalSubmission();
+    const f=kind==='snapshot'?fixture(true,'cheap-history'):packedFixture(kind==='reprice'),signer=brands.get(f.prepared)!,current=resolveCurrentCheapDexCandidate('cheap-history');
+    browserContexts.set(signer,{owner});
+    f.storage.set(currentDexNormalUseReloadKey({owner,graph:current.graph,chainId}),JSON.stringify({
+      budget:{version:2,owner,candidateGraph:current.graph,start:'1',committedWei:'0',activeSwap:null,charges:[]},authentication:hash}));
+    Object.assign(f.transport,{admitOwnerRecord:vi.fn(async()=>{})});
+    return f;
+  };
+  const rejection=()=>Object.assign(new Error('User rejected the request.'),{code:4001});
+  it.each(['create','snapshot','reprice']as const)('releases a rejected Limit %s request and permits a new request',async kind=>{
+    const f=browser(kind),phase=kind==='create'?'limit-create':kind==='snapshot'?'limit-snapshot':'limit-owner',adapter=f.make(),error=rejection();f.transport.send.mockRejectedValueOnce(error);
+    await expect(adapter.submitLimit(f.prepared as never)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(true);expect(f.storage.has(key)).toBe(false);
+    await adapter.submitLimit(f.prepared as never);
+    expect(JSON.parse(f.storage.get(key)!)).toMatchObject({phase,txHash});
+    expect(f.transport.send).toHaveBeenCalledTimes(2);
+  });
+  it('keeps a rejected Limit request locked while its nonce is pending, then releases it in recovery and permits it again',async()=>{
+    const f=browser(),adapter=f.make(),error=rejection();let pendingNonce=4;
+    f.transport.readNativeResources.mockImplementation(async head=>({owner,chainId,head:{...head},latestNonce:4,pendingNonce,baseFeePerGas:1n,gasPrice:50_000_000n,balance:10n**18n,code:'0x'}));
+    f.transport.send.mockImplementationOnce(async()=>{pendingNonce=5;throw error;});
+    await expect(adapter.submitLimit(f.prepared as never)).rejects.toBe(error);
+    expect(wasCurrentDexUnsentReleased(error)).toBe(false);
+    expect(JSON.parse(f.storage.get(key)!)).toMatchObject({phase:'limit-create',txHash:null,walletRejected:true});
+    await expect(adapter.recoverPendingLimitAttempt()).rejects.toThrow('The reserved wallet nonce is used or pending');
+    expect(f.storage.has(key)).toBe(true);pendingNonce=4;
+    expect(await adapter.recoverPendingLimitAttempt()).toMatchObject({status:'released-unsent',readyToSign:false});
+    expect(f.storage.has(key)).toBe(false);
+    await adapter.submitLimit(f.prepared as never);
+    expect(JSON.parse(f.storage.get(key)!)).toMatchObject({phase:'limit-create',txHash});
+    expect(f.transport.send).toHaveBeenCalledTimes(2);
+  });
+  it('keeps an unknown wallet result locked',async()=>{
+    const f=browser(),adapter=f.make();f.transport.send.mockRejectedValueOnce(new Error('TEST_UNKNOWN_LIMIT_SEND'));
+    await expect(adapter.submitLimit(f.prepared as never)).rejects.toThrow('TEST_UNKNOWN_LIMIT_SEND');
+    const saved=JSON.parse(f.storage.get(key)!);expect(saved).toMatchObject({phase:'limit-create',txHash:null});expect(saved.walletRejected).toBeUndefined();
+    expect(await adapter.recoverPendingLimitAttempt()).toMatchObject({status:'manual-reconciliation-required',readyToSign:false});
+    expect(f.storage.has(key)).toBe(true);expect(f.transport.send).toHaveBeenCalledOnce();
   });
 });

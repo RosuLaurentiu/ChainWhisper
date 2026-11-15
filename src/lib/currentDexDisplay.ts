@@ -3,7 +3,7 @@ import {
   CURRENT_CHEAP_DEX_CANDIDATE, CURRENT_CHEAP_POOL_TOKENS, STAGED_PREPARED_DEX_CANDIDATE, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE,
   currentCheapDexCandidateKey, type CurrentCheapDexIdentity
 } from './dexV2Deployment';
-import { currentDexPendingStorage, readCurrentDexPendingAttempt } from './currentDexPendingAttempt';
+import { currentDexPendingStorage, readCurrentDexPendingAttempt, type CurrentDexRecordScope } from './currentDexPendingAttempt';
 
 // Safe labels identify addresses in the admitted trial; they do not claim token symbols.
 // Its token-funding admission requires 18 decimals before any funds can move.
@@ -113,8 +113,16 @@ export const formatDexCandidateTokenAmount = (identity: CurrentCheapDexIdentity,
 };
 
 // A saved or unreadable attempt blocks a new action; only the existing recovery path can resolve it.
-export const hasCurrentDexPendingAction = (): boolean => {
+// decision-033: the wallet rejected the request and the chain nonce check proved that nothing was sent.
+export const CURRENT_UNSENT_RELEASED_MESSAGE =
+  'The wallet rejected this request. The chain shows that nothing was sent, and the saved action is released. You can start again.';
+// decision-033 part B: saved DEX records are separate for each chain, candidate and wallet.
+// No connected wallet means no record scope: nothing is read and nothing can be saved.
+export const currentDexRecordScope = (candidate: { chainId: bigint | number | string; graph: string },
+  owner: string | null | undefined): CurrentDexRecordScope | undefined =>
+  owner && /^0x[0-9a-fA-F]{40}$/.test(owner) ? { chainId: candidate.chainId, graph: candidate.graph, owner } : undefined;
+export const hasCurrentDexPendingAction = (scope?: CurrentDexRecordScope): boolean => {
   if (typeof window === 'undefined') return false;
-  try { return Boolean(readCurrentDexPendingAttempt(currentDexPendingStorage())); }
+  try { return Boolean(readCurrentDexPendingAttempt(currentDexPendingStorage(scope))); }
   catch { return true; }
 };

@@ -971,6 +971,213 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     expect(f.values.get(CURRENT_DEX_NATIVE_RELOAD_KEY)).toBe(legacyBytes);
     expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledOnce();
   });
+  // CW-086, decision-033: a wallet rejection by code with no hash is released after the chain nonce check.
+  it.each(['fast-pool','cheap-async'] as const)('releases a wallet-rejected Quote for %s and permits the same Quote again',async profile=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture(profile,'history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0x0'):rpc(method,params));
+    f.signer.getNonce.mockResolvedValue(0);
+    await expect(f.capability.checkCurrentCheapCandidate()).resolves.toMatchObject({owner:getAddress(wallet),graph:history.graph});
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n};
+    const rejection=Object.assign(new Error('user rejected action'),{code:'ACTION_REJECTED',info:{error:{code:4001,message:'User rejected the request.'}}});
+    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(rejection);
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toBe(rejection);
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({version:2,activeSwap:null,committedWei:'0',charges:[],
+      released:[{phase:'quote',nonce:0,hash:null}]});
+    // The release sent nothing. The same reviewed Quote reserves the same nonce again.
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledOnce();
+    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(new Error('TEST_UNKNOWN_SECOND_SEND'));
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('TEST_UNKNOWN_SECOND_SEND');
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({charges:[{phase:'quote',nonce:0,hash:null}],
+      released:[{phase:'quote',nonce:0,hash:null}]});
+    // An unknown wallet result keeps the lock, as before.
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('pending attempt');
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledTimes(2);
+  });
+  it('releases a wallet-rejected swap approval with its owner-record reservation and permits a new approval',async()=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    f.capability=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history',sessionOnboardInfo:{[wallet]:{aesKey:'11'.repeat(16)}}} as never);
+    const policy=resolveCurrentSharedTokenDistribution('cheap-history');
+    const states=CURRENT_SHARED_DEX_TOKENS.map(t=>({...t,balance:100n,allowance:0n,encryptionAddress:wallet,claimed:true,quota:100n,nextClaimAt:0n,
+      initialAmount:policy.initialAmount,refillAmount:policy.refillAmount,initialClaimAvailability:'claimed' as const,refillAvailability:'ready' as const}));
+    vi.mocked(readCurrentSharedDexTokenFunds).mockImplementation(async({head})=>({owner:wallet,head,core:history.core,graph:history.graph,
+      packageSha256:history.packageSha256,vault:policy.vault,privateFundsVerified:true,readyToSign:false,tokens:states.map(t=>({...t}))}));
+    m.wide.mockImplementation(async(_signer,amount)=>({ciphertext:{ciphertextHigh:amount,ciphertextLow:0n},signature}));
+    f.setFunding(100n,0n);f.signer.estimateGas.mockResolvedValue(800_000n);f.signer.getNonce.mockResolvedValue(0);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation(async(method,params)=>{
+      if(method==='eth_getTransactionCount')return '0x0';
+      const result=await rpc(method,params);
+      if(method==='eth_getBlockByNumber')return {...result as Extract<typeof result,{gasLimit:unknown}>,timestamp:`0x${Math.floor(f.clock()/1000).toString(16)}`};
+      return result;
+    });
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},rejection=Object.assign(new Error('User rejected the request.'),{code:4001});
+    const request={token:f.prepared.intent.inputToken,amount:20n,preparedQuote:f.prepared,assertReviewCurrent:async()=>{},confirm:async()=>true};
+    const prepared=(await f.capability.prepareSharedSwapApproval(request))!;
+    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(rejection);
+    await expect(f.capability.submitSharedSwapApproval(prepared)).rejects.toBe(rejection);
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({version:2,activeSwap:null,committedWei:'0',charges:[],
+      released:[{phase:'token-funding',nonce:0,hash:null}]});
+    expect(states[0].allowance).toBe(0n);
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledOnce();
+    // An unknown wallet result for the next approval keeps the lock and its reservation.
+    const again=(await f.capability.prepareSharedSwapApproval(request))!;
+    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(new Error('TEST_UNKNOWN_APPROVAL_SEND'));
+    await expect(f.capability.submitSharedSwapApproval(again)).rejects.toThrow('TEST_UNKNOWN_APPROVAL_SEND');
+    expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({phase:'token-approve',nonce:0,txHash:null});
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({charges:[{phase:'token-funding',nonce:0,hash:null}],
+      released:[{phase:'token-funding',nonce:0,hash:null}]});
+  });
+  it('keeps a rejected Quote locked while its nonce is pending and releases it on a later state check',async()=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    const rpc=f.readProvider.send.getMockImplementation()!;let pendingNonce='0x0';
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve(params[1]==='pending'?pendingNonce:'0x0'):rpc(method,params));
+    f.signer.getNonce.mockResolvedValue(0);
+    await f.capability.checkCurrentCheapCandidate();
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},rejection=Object.assign(new Error('User rejected the request.'),{code:4001});
+    f.signer.sendUncheckedTransaction.mockImplementationOnce(async()=>{pendingNonce='0x1';throw rejection;});
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toBe(rejection);
+    expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({phase:'quote',nonce:0,txHash:null,walletRejected:true});
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({charges:[{phase:'quote',nonce:0,hash:null}]});
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow();
+    await expect(f.capability.recoverPendingCurrentCheapAttempt()).rejects.toThrow('nonce');
+    expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({txHash:null,walletRejected:true});
+    pendingNonce='0x0';
+    await expect(f.capability.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({status:'released-unsent',phase:'quote',nonce:0,readyToSign:false});
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({activeSwap:null,charges:[],released:[{phase:'quote',nonce:0,hash:null}]});
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledOnce();
+  });
+  // CW-086 parts B and C: with shared records, another tab can change the owner record. A tab whose record in
+  // memory differs from the saved record must not send and must not overwrite the saved record.
+  it('does not send or overwrite when the saved owner record differs from the record in memory',async()=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0x0'):rpc(method,params));
+    f.signer.getNonce.mockResolvedValue(0);
+    await f.capability.checkCurrentCheapCandidate();
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},key=currentDexNormalUseReloadKey(scope);
+    const rejection=Object.assign(new Error('User rejected the request.'),{code:4001});
+    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(rejection);
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toBe(rejection);
+    const mine=readCurrentDexNativeReload(window.sessionStorage,scope)!;
+    expect(mine.budget.released).toHaveLength(1);
+    // Another tab saved a different authentic record of this wallet: here, the same checkpoint with no released row.
+    const other={version:2 as const,owner:mine.budget.owner,candidateGraph:mine.budget.candidateGraph,start:mine.budget.start,committedWei:'0',activeSwap:null,charges:[]};
+    const hmac=await crypto.subtle.importKey('raw',Uint8Array.from({length:16},()=>0x11),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+    const bytes=new TextEncoder().encode(`ChainWhisper:7b67:owner-normal-use:v2:7082400:${wallet}:`+JSON.stringify(other));
+    const authentication=`0x${[...new Uint8Array(await crypto.subtle.sign('HMAC',hmac,bytes))].map(v=>v.toString(16).padStart(2,'0')).join('')}`;
+    const shared=JSON.stringify({budget:other,authentication});
+    f.values.set(key,shared);
+    // A new adapter instance of the same wallet session keeps the record in memory, as a tab does.
+    f.capability=await issueCurrentDexSubmissionCapability({admission:null,candidate:'cheap-history',sessionOnboardInfo:{[wallet]:{aesKey:'11'.repeat(16)}}} as never);
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toThrow('Reload this tab');
+    expect(f.values.get(key)).toBe(shared);
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledOnce();
+  });
+  it('stops an Accept at admission when another tab changed the saved owner record',async()=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    let nonce=220;
+    f.signer.getNonce.mockImplementation(async()=>nonce);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve(`0x${nonce.toString(16)}`):rpc(method,params));
+    await f.capability.checkCurrentCheapCandidate();
+    const issued=await f.quote();nonce++;
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},key=currentDexNormalUseReloadKey(scope);
+    const mine=readCurrentDexNativeReload(window.sessionStorage,scope)!,quote=mine.budget.charges[0];
+    // Another tab restored the same Quote, and the wallet rejected its Accept. That tab saved the released reservation.
+    const other={...mine.budget,released:[{...quote,phase:'accept' as const,nonce:221,hash:null,key:`accept:${quote.scope}`,gasCap:'35000000'}]};
+    const hmac=await crypto.subtle.importKey('raw',Uint8Array.from({length:16},()=>0x11),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+    const bytes=new TextEncoder().encode(`ChainWhisper:7b67:owner-normal-use:v2:7082400:${wallet}:`+JSON.stringify(other));
+    const authentication=`0x${[...new Uint8Array(await crypto.subtle.sign('HMAC',hmac,bytes))].map(v=>v.toString(16).padStart(2,'0')).join('')}`;
+    const shared=JSON.stringify({budget:other,authentication});
+    f.values.set(key,shared);
+    const sends=f.signer.sendUncheckedTransaction.mock.calls.length;
+    await expect(f.capability.submitCurrentCheapAcceptance({issued,confirm:async()=>true})).rejects.toThrow('Reload this tab');
+    expect(f.values.get(key)).toBe(shared);
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledTimes(sends);
+  });
+  it('releases a wallet-rejected Fast Accept and completes the same Accept on the next request',async()=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    let nonce=220;
+    f.signer.getNonce.mockImplementation(async()=>nonce);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve(`0x${nonce.toString(16)}`):rpc(method,params));
+    await f.capability.checkCurrentCheapCandidate();
+    const issued=await f.quote();nonce++;
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},quoteScope=`quote:${keccak256(f.prepared.data)}`;
+    const rejection=Object.assign(new Error('User rejected the request.'),{code:4001});
+    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(rejection);
+    await expect(f.capability.submitCurrentCheapAcceptance({issued,confirm:async()=>true})).rejects.toBe(rejection);
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({activeSwap:quoteScope,
+      charges:[{phase:'quote',nonce:220}],released:[{phase:'accept',nonce:221,hash:null}]});
+    const sent=(await f.capability.submitCurrentCheapAcceptance({issued,confirm:async()=>true}))!;
+    const result=await sent.recover();
+    expect(result.delivery).toMatchObject({principal:wallet,core:history.core,amounts:f.amounts});
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({
+      charges:[{phase:'quote',nonce:220},{phase:'accept',nonce:221}],released:[{phase:'accept',nonce:221,hash:null}]});
+  });
+  it.each(['cancel','recover'] as const)('releases a wallet-rejected %s and permits the same owner action again',async action=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('cheap-async','history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    let nonce=220;
+    f.signer.getNonce.mockImplementation(async()=>nonce);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve(`0x${nonce.toString(16)}`):rpc(method,params));
+    await f.capability.checkCurrentCheapCandidate();
+    const issued=await f.quote();nonce++;
+    if(action==='recover')f.setState(6);
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},quoteScope=`quote:${keccak256(f.prepared.data)}`;
+    const rejection=Object.assign(new Error('User rejected the request.'),{code:4001});
+    const sends=f.signer.sendUncheckedTransaction.mock.calls.length;
+    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(rejection);
+    await expect(f.capability.submitCurrentCheapOwnerAction({issued,action,confirm:async()=>true})).rejects.toBe(rejection);
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({activeSwap:quoteScope,
+      charges:[{phase:'quote',nonce:220}],released:[{phase:action,nonce:221,hash:null}]});
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledTimes(sends+1);
+    // The release sent nothing. The same owner action reserves the same nonce again.
+    await f.capability.submitCurrentCheapOwnerAction({issued,action,confirm:async()=>true});
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledTimes(sends+2);
+    expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({phase:action,nonce:221});
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({
+      charges:[{phase:'quote',nonce:220},{phase:action,nonce:221}],released:[{phase:action,nonce:221,hash:null}]});
+  });
+  it.each(['locked','changed'] as const)('keeps a rejected Quote locked while privacy is %s, and releases it after the privacy key returns',async privacy=>{
+    ownerBeta.active=true;
+    const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,9n,ownerBeta.activation.activatedAt+900n);
+    const rpc=f.readProvider.send.getMockImplementation()!;
+    f.readProvider.send.mockImplementation((method,params)=>method==='eth_getTransactionCount'?Promise.resolve('0x0'):rpc(method,params));
+    f.signer.getNonce.mockResolvedValue(0);
+    await f.capability.checkCurrentCheapCandidate();
+    const scope={owner:wallet,graph:history.graph,chainId:7082400n},rejection=Object.assign(new Error('User rejected the request.'),{code:4001});
+    const unlocked=f.signer.getUserOnboardInfo;
+    f.signer.sendUncheckedTransaction.mockImplementationOnce(async()=>{
+      f.signer.getUserOnboardInfo=()=>({aesKey:privacy==='locked'?'':'22'.repeat(16)});throw rejection;});
+    await expect(f.capability.submitCurrentCheapQuote(f.prepared)).rejects.toBe(rejection);
+    expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({phase:'quote',nonce:0,txHash:null,walletRejected:true});
+    await expect(f.capability.recoverPendingCurrentCheapAttempt()).rejects.toThrow(privacy==='locked'?'Unlock owner privacy':'authentication failed');
+    expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({txHash:null,walletRejected:true});
+    f.signer.getUserOnboardInfo=unlocked;
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({charges:[{phase:'quote',nonce:0,hash:null}]});
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget.released).toBeUndefined();
+    await expect(f.capability.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({status:'released-unsent',phase:'quote',nonce:0,readyToSign:false});
+    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+    expect(readCurrentDexNativeReload(window.sessionStorage,scope)?.budget).toMatchObject({activeSwap:null,charges:[],released:[{phase:'quote',nonce:0,hash:null}]});
+    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledOnce();
+  });
   it.each(['unbranded','session','privacy','authentication','candidate','pending','blocked','lookup','accept','consumed','context','canonical','pending-nonce','nonce-race','record-race','write-failed'] as const)('retains a Fast Quote and makes no send when local discard has %s uncertainty',async fault=>{
     ownerBeta.active=true;
     const wallet=`0x${'cd'.repeat(20)}`,f=await fixture('fast-pool','history',wallet,11n,ownerBeta.activation.activatedAt+900n);

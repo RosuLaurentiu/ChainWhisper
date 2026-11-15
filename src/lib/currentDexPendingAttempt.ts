@@ -10,6 +10,9 @@ export type CurrentDexPendingAttempt = Readonly<{
   verificationFailure?: CurrentPoolVerificationFailure;
   // Null marks funding; the snapshot retains that funding transaction's hash.
   poolTopUpHash?: string | null;
+  // decision-033: the wallet reported user rejection (code 4001) and returned no hash.
+  // A fact only. Release also needs the chain nonce check at the send boundary.
+  walletRejected?: true;
 }>;
 export const CURRENT_DEX_PENDING_ATTEMPT_KEY = 'chainwhisper:dex:current-pending-attempt:v1';
 export type CurrentDexOwnerRecoveryView = 'positions' | 'liquidity' | 'activity';
@@ -58,6 +61,11 @@ const valid = (value: unknown): value is CurrentDexPendingAttempt => {
     if (!blocked || !['pool-owner', 'pool-snapshot', 'pool-preview', 'pool-fund'].includes(a.phase ?? '') || !isCurrentPoolVerificationFailure(a.verificationFailure)) return false;
     keys.push('verificationFailure');
   }
+  if (a.walletRejected !== undefined) {
+    // Only a record with no hash and no verification hold can carry the rejection fact.
+    if (a.walletRejected !== true || a.txHash !== null || a.verificationBlocked !== undefined) return false;
+    keys.push('walletRejected');
+  }
   return Object.keys(value).sort().join(',') === keys.sort().join(',') &&
     (!targeted || address(a.target) && ['token-faucet', 'token-refill', 'token-approve'].includes(a.phase ?? '')) &&
     a.version === 1 && typeof a.chainId === 'string' && /^[1-9]\d*$/.test(a.chainId) &&
@@ -66,14 +74,132 @@ const valid = (value: unknown): value is CurrentDexPendingAttempt => {
     (!action || (typeof a.operationId === 'string' && /^[1-9]\d*$/.test(a.operationId))) && hex32(a.callHash) &&
     Number.isSafeInteger(a.nonce) && (a.nonce ?? -1) >= 0 && (a.txHash === null || hex32(a.txHash));
 };
-export const currentDexPendingStorage = (): PendingStorage | null => {
+// decision-033 part B (CW-086). The reconciliation records are durable and shared by all tabs of this site.
+// The pending slot, the private refresh slot and the operation lookups are separate for each chain, candidate and wallet.
+// The records hold public reconciliation data only. Privacy keys stay in the wallet session.
+export type CurrentDexRecordScope = Readonly<{ chainId: bigint | number | string; graph: string; owner: string }>;
+export class CurrentDexTabRecordConflict extends Error {
+  constructor() {
+    super('This tab has a saved DEX record that differs from the shared record of this browser. Both records are kept and no request is sent from this tab. Check the saved action in the tab that has the shared record. Do not resend.');
+    this.name = 'CurrentDexTabRecordConflict';
+  }
+}
+const SCOPED_RECORD_KEYS: readonly string[] = [CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_POOL_REFRESH_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY];
+const recordScopeSuffix = (chainId: string, graph: string, owner: string) => {
+  const plainGraph = graph.toLowerCase().replace(/^0x/, ''), plainOwner = owner.toLowerCase();
+  if (!/^[1-9]\d*$/.test(chainId) || !/^[0-9a-f]{64}$/.test(plainGraph) || !/^0x[0-9a-f]{40}$/.test(plainOwner)) throw new Error('Current DEX record scope is invalid.');
+  return `:${chainId}:${plainGraph}:${plainOwner}`;
+};
+export const currentDexScopedRecordKey = (key: string, scope: CurrentDexRecordScope) => {
+  if (!SCOPED_RECORD_KEYS.includes(key)) throw new Error('This DEX record has no wallet scope.');
+  return `${key}${recordScopeSuffix(String(scope.chainId), scope.graph, scope.owner)}`;
+};
+const invalidTabRecord = () => new Error('A saved DEX record of this tab is invalid; reconcile manually. Do not resend.');
+// The wallet scope of a tab record comes from the record itself, never from the connected wallet.
+const tabRecordSuffix = (value: unknown) => {
+  if (!valid(value)) throw invalidTabRecord();
+  return recordScopeSuffix(value.chainId, value.graph, value.owner);
+};
+const durableRecordStorage = (durable: PendingStorage, session: PendingStorage, scope?: CurrentDexRecordScope): PendingStorage => {
+  const suffix = scope ? recordScopeSuffix(String(scope.chainId), scope.graph, scope.owner) : null;
+  const moveExact = (target: string, raw: string) => {
+    const existing = durable.getItem(target);
+    if (existing === null) {
+      durable.setItem(target, raw);
+      if (durable.getItem(target) !== raw) throw new Error('A saved DEX record of this tab could not be moved to shared storage. Keep this tab open.');
+    } else if (existing !== raw) throw new CurrentDexTabRecordConflict();
+  };
+  const moveLookups = (raw: string) => {
+    let entries: unknown;
+    try { entries = JSON.parse(raw); } catch { throw invalidTabRecord(); }
+    if (!Array.isArray(entries) || !entries.every(validLookup)) throw invalidTabRecord();
+    const groups = new Map<string, CurrentDexOperationLookup[]>();
+    for (const entry of entries) {
+      const target = CURRENT_DEX_OPERATION_LOOKUPS_KEY + tabRecordSuffix(entry.attempt);
+      groups.set(target, [...groups.get(target) ?? [], entry]);
+    }
+    // Check every wallet scope before the first write. A conflict changes nothing.
+    const writes: [string, string][] = [];
+    for (const [target, moved] of groups) {
+      const existing = durable.getItem(target);
+      if (existing === null) { writes.push([target, groups.size === 1 ? raw : JSON.stringify(moved)]); continue; }
+      let shared: unknown;
+      try { shared = JSON.parse(existing); } catch { throw new CurrentDexTabRecordConflict(); }
+      if (!Array.isArray(shared) || !shared.every(validLookup)) throw new CurrentDexTabRecordConflict();
+      const added = moved.filter(entry => {
+        const prior = (shared as CurrentDexOperationLookup[]).find(row => row.attempt.txHash === entry.attempt.txHash);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(entry)) throw new CurrentDexTabRecordConflict();
+        return !prior;
+      });
+      if (shared.length + added.length > 32) throw new CurrentDexTabRecordConflict();
+      if (added.length) writes.push([target, JSON.stringify([...shared, ...added])]);
+    }
+    for (const [target, value] of writes) {
+      durable.setItem(target, value);
+      if (durable.getItem(target) !== value) throw new Error('A saved DEX record of this tab could not be moved to shared storage. Keep this tab open.');
+    }
+  };
+  // Moves the record that this tab saved under `key` before part B. The tab copy is removed only after the
+  // durable record has the same content. A different durable record is a conflict: both stay and the tab holds.
+  const adopt = (key: string) => {
+    const raw = session.getItem(key);
+    if (raw === null) return;
+    if (key === CURRENT_DEX_OPERATION_LOOKUPS_KEY) moveLookups(raw);
+    else if (!SCOPED_RECORD_KEYS.includes(key)) moveExact(key, raw);
+    else {
+      let record: unknown;
+      try { record = JSON.parse(raw); } catch { throw invalidTabRecord(); }
+      if (key === CURRENT_POOL_REFRESH_ATTEMPT_KEY) {
+        const refresh = record as { attempt?: unknown } | null;
+        if (!refresh || typeof refresh.attempt !== 'string') throw invalidTabRecord();
+        try { record = JSON.parse(refresh.attempt); } catch { throw invalidTabRecord(); }
+      }
+      moveExact(key + tabRecordSuffix(record), raw);
+    }
+    session.removeItem(key);
+  };
+  const physical = (key: string) => SCOPED_RECORD_KEYS.includes(key) ? suffix === null ? null : key + suffix : key;
+  // A scoped slot accepts only a record of its own chain, candidate and wallet.
+  const assertOwnScope = (key: string, value: string) => {
+    if (!SCOPED_RECORD_KEYS.includes(key)) return;
+    let record: unknown;
+    try {
+      record = JSON.parse(value);
+      if (key === CURRENT_POOL_REFRESH_ATTEMPT_KEY) record = JSON.parse((record as { attempt: string }).attempt);
+    } catch { throw new Error('Current DEX record is invalid.'); }
+    const rows = key === CURRENT_DEX_OPERATION_LOOKUPS_KEY && Array.isArray(record) ? record.map(entry => (entry as { attempt?: unknown })?.attempt) : [record];
+    if (rows.some(row => !valid(row) || recordScopeSuffix(row.chainId, row.graph, row.owner) !== suffix)) throw new Error('Current DEX record belongs to another wallet scope.');
+  };
+  return {
+    getItem: key => { adopt(key); const target = physical(key); return target === null ? null : durable.getItem(target); },
+    setItem: (key, value) => {
+      adopt(key); const target = physical(key);
+      if (target === null) throw new Error('A wallet scope is required to save this DEX record.');
+      assertOwnScope(key, value); durable.setItem(target, value);
+    },
+    removeItem: key => {
+      adopt(key); const target = physical(key);
+      if (target === null) throw new Error('A wallet scope is required to clear this DEX record.');
+      durable.removeItem(target);
+    }
+  };
+};
+export const currentDexPendingStorage = (scope?: CurrentDexRecordScope): PendingStorage | null => {
   if (typeof window === 'undefined') return null;
-  try { return window.sessionStorage; } catch { return null; }
+  try {
+    const session = window.sessionStorage;
+    // A platform with no durable storage API keeps the previous records of the tab. A browser always has the API;
+    // when the browser blocks it, the records are unavailable and nothing is sent.
+    if (!('localStorage' in window)) return session;
+    const durable = window.localStorage;
+    return durable && session ? durableRecordStorage(durable, session, scope) : null;
+  } catch { return null; }
 };
 export const readCurrentDexPendingAttempt = (storage: PendingStorage | null): CurrentDexPendingAttempt | null => {
   if (!storage) throw new Error('Current DEX pending-attempt storage is unavailable.');
   let raw: string | null;
-  try { raw = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY); } catch {
+  try { raw = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY); } catch (error) {
+    if (error instanceof CurrentDexTabRecordConflict) throw error;
     throw new Error('Current DEX pending-attempt storage is unavailable.');
   }
   if (raw === null) {
@@ -188,7 +314,8 @@ export const clearCurrentDexOperationLookup = (storage: PendingStorage | null, e
 const same = (left: CurrentDexPendingAttempt, right: CurrentDexPendingAttempt) =>
   left.chainId === right.chainId && left.owner === right.owner && left.core === right.core &&
   left.graph === right.graph && left.phase === right.phase && left.callHash === right.callHash &&
-  left.nonce === right.nonce && left.txHash === right.txHash && left.operationId === right.operationId && left.target === right.target && left.poolTopUpHash === right.poolTopUpHash && left.verificationBlocked === right.verificationBlocked && left.verificationFailure === right.verificationFailure;
+  left.nonce === right.nonce && left.txHash === right.txHash && left.operationId === right.operationId && left.target === right.target && left.poolTopUpHash === right.poolTopUpHash && left.verificationBlocked === right.verificationBlocked && left.verificationFailure === right.verificationFailure &&
+  left.walletRejected === right.walletRejected;
 const write = (storage: PendingStorage, attempt: CurrentDexPendingAttempt) => {
   try { storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify(attempt)); } catch {
     throw new Error('Current DEX pending attempt could not be saved.');
@@ -206,7 +333,19 @@ export const reserveCurrentDexPendingAttempt = (storage: PendingStorage | null, 
 export const recordCurrentDexPendingHash = (storage: PendingStorage | null, attempt: CurrentDexPendingAttempt, txHash: string) => {
   const current = readCurrentDexPendingAttempt(storage);
   if (!current || !same(current, attempt) || !hex32(txHash)) throw new Error('Current DEX pending attempt changed.');
-  write(storage!, { ...attempt, txHash });
+  // A hash from the wallet or the chain replaces an earlier rejection fact: the record is then reconciled by its hash.
+  write(storage!, { ...attempt, txHash, walletRejected: undefined });
+};
+// decision-033. Saves the wallet rejection fact before any release check, so that the
+// same check can run again after an RPC failure or a reload. It does not release the action.
+export const markCurrentDexPendingWalletRejected = (storage: PendingStorage | null, attempt: CurrentDexPendingAttempt): CurrentDexPendingAttempt => {
+  const current = readCurrentDexPendingAttempt(storage);
+  if (!current || current.txHash !== null || current.verificationBlocked ||
+      !same(current, attempt) && !same(current, { ...attempt, walletRejected: true })) throw new Error('Current DEX pending attempt changed.');
+  if (current.walletRejected) return current;
+  const marked: CurrentDexPendingAttempt = Object.freeze({ ...current, walletRejected: true as const });
+  write(storage!, marked);
+  return marked;
 };
 export const advanceCurrentPoolTopUpAttempt = (storage: PendingStorage | null, funding: CurrentDexPendingAttempt, snapshot: CurrentDexPendingAttempt) => {
   const current = readCurrentDexPendingAttempt(storage);

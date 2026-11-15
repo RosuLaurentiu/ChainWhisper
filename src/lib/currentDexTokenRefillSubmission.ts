@@ -37,7 +37,7 @@ export const createCurrentTokenRefillSubmissionAdapter = ({ signer, ownerAddress
   candidate?: CurrentCheapDexCandidateKey; now?: () => bigint;
 }) => {
   const c = resolveCurrentCheapDexCandidate(candidate), owner = getAddress(ownerAddress), core = getAddress(c.core);
-  const binding = Object.freeze({ ...suppliedBinding }), storage = currentDexPendingStorage(), session = {};
+  const binding = Object.freeze({ ...suppliedBinding }), storage = currentDexPendingStorage({ chainId, graph: c.graph, owner }), session = {};
   if (chainId !== 7082400n || chainId !== BigInt(c.chainId) || same(owner, zero)) throw new RefillVerificationError('Wrong refill owner or Testnet chain.');
   const b = createCurrentAttemptBoundary({ storage, c, core, owner, chainId, transport, attest, now, historical: false });
   const used = new WeakSet<object>();

@@ -2,7 +2,7 @@ import { getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { assertCurrentPoolPositionPrepared, assertVerifiedCurrentPoolSnapshot, assertVerifiedSupersededPoolSnapshot, type CurrentPoolPreparedPositionAction, type CurrentPoolPreparedSnapshot, type CurrentPoolPreparedExitPreview, type issueCurrentDexPoolPositionCapability } from '../features/wallet/currentDexPoolPositionCapability';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as currentCandidate } from './selectedCurrentDexCandidate';
 import { decodePoolExitPreviewEvent } from './currentDexPoolExitPreview';
-import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
+import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentTransport } from './currentDexSubmission';
 import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentPoolVerification, currentPoolRefreshStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, CURRENT_POOL_REFRESH_ATTEMPT_KEY, CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
 import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { assertCurrentAppPoolAuthority } from './currentDexC1SwapPolicy';
@@ -35,6 +35,9 @@ const snapshotReceipt = (receipt: NonNullable<Awaited<ReturnType<CurrentTranspor
   return Object.freeze({ ...receipt, logs });
 };
 const submitted=new WeakMap<object,Set<string>>();
+// decision-033: the exact in-memory key of the latest send attempt for each phase and call hash. A snapshot key has
+// suffixes that the pending record does not carry, so a later release in recovery needs this to free the right key.
+const attemptKeys=new WeakMap<object,Map<string,string>>();
 type NativeOwnerResult=Awaited<ReturnType<CurrentPoolPreparedPositionAction['readResult']>>|Awaited<ReturnType<CurrentPoolPreparedSnapshot['readResult']>>|Awaited<ReturnType<CurrentPoolPreparedExitPreview['readResult']>>;
 type SnapshotCapability = Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
 type SnapshotVerifier = (id: bigint, hash: string) => Promise<Awaited<ReturnType<SnapshotCapability['verifyPlainSnapshot'] | SnapshotCapability['verifySupersededPlainSnapshot']>>>;
@@ -57,11 +60,20 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
   nativePoolProfile?:typeof CURRENT_NATIVE_POOL_PROFILE;
   attest:(head:{number:bigint;hash:string})=>Promise<void>;now?:()=>bigint;candidate?:CurrentCheapDexCandidateKey})=>{
   const candidate=resolveCurrentCheapDexCandidate(candidateKey),nft=candidate.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1];
-  const owner=getAddress(ownerAddress),core=getAddress(candidate.core),storage=currentDexPendingStorage();
+  const owner=getAddress(ownerAddress),core=getAddress(candidate.core),storage=currentDexPendingStorage({chainId,graph:candidate.graph,owner});
   if (chainId!==BigInt(candidate.chainId)||BigInt(owner)===0n) throw new Error('Wrong position owner or chain.');
   const preparedCandidate=!!(candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidate):null);
   const exitCandidate=preparedCandidate&&(candidateKey==='cheap-exit'||candidateKey==='cheap-history');
-  const boundary=createCurrentAttemptBoundary({storage,c:candidate,core,owner,chainId,transport,attest,now,historical:false,canonicalIndexProof:preparedCandidate});
+  // decision-033: a position action reserves only its pending slot and an in-memory key. The release step frees that exact key.
+  // A native engineering budget keeps its Pool scope, so that profile is never released. A top-up snapshot and a
+  // held refresh are refused by the boundary itself.
+  const boundary=createCurrentAttemptBoundary({storage,c:candidate,core,owner,chainId,transport,attest,now,historical:false,canonicalIndexProof:preparedCandidate,
+    releaseReservation:async attempt=>{
+      if(attempt.phase!=='pool-owner'&&attempt.phase!=='pool-transfer'&&attempt.phase!=='pool-snapshot'||isCurrentNativeSwapCandidate(candidate))
+        throw new Error('This adapter releases current Pool position actions only.');
+      const id=`${attempt.phase}:${attempt.callHash}`,exact=attemptKeys.get(signer)?.get(id);
+      if(exact!==undefined){submitted.get(signer)?.delete(exact);attemptKeys.get(signer)!.delete(id);}
+    }});
   const recheck=async(request:Parameters<typeof boundary.recheckMinedCall>[0],hash:string,before:ReturnType<typeof snapshotReceipt>,failed=false)=>{
     if(isCurrentNativeSwapCandidate(candidate)||preparedCandidate)return boundary.recheckMinedCall(request,hash,before,failed);
     const after=snapshotReceipt(await boundary.verifyMinedCall(request,hash,failed));
@@ -134,6 +146,8 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       const resources=await transport.readNativeResources(head);if(resources.balance<budget.snapshot().poolRemainingTailWei+CURRENT_NATIVE_POOL_LIMITS.payerReserveWei)throw new Error('Native Pool reserved exit resources are insufficient.');};
     await checkBudget();
     if(keys!.has(key))throw new Error('Position action was already submitted. Recover it instead.');keys!.add(key);
+    if(!held){let attempts=attemptKeys.get(signer);if(!attempts){attempts=new Map();attemptKeys.set(signer,attempts);}
+      attempts.set(`${phase}:${keccak256(call.data).toLowerCase()}`,key);}
     let signing=false;
     try{
       const sent=await sendBoundary.sendCurrent(phase,call,undefined,async()=>{await validate();admission();if(!finalSnapshotBaseline)await prepared.assertBeforeSend();await checkHeld();await validate();admission();await checkBudget();},()=>{
@@ -170,7 +184,7 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       }});
       if(native||preparedCandidate){let recoveries=ownerRecoveries.get(signer);if(!recoveries){recoveries=new Map();ownerRecoveries.set(signer,recoveries);}recoveries.set(`${held?'refresh:':''}${phase}:${keccak256(call.data).toLowerCase()}`,result.recover);}
       return result;
-    }catch(error){if(!signing)keys!.delete(key);throw error;}
+    }catch(error){if(!signing||wasCurrentDexUnsentReleased(error))keys!.delete(key);throw error;}
   };
   const recoverCurrentPreparedPoolPositionResult=async()=>{
     await transport.assertCurrent();const held=boundary.pending(),refresh=!!held&&storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)!==null;
@@ -191,6 +205,8 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     if(pending.chainId!==chainId.toString()||!same(pending.owner,owner)||!same(pending.core,core)||pending.graph!==`0x${candidate.graph}`||
       !['pool-owner','pool-transfer','pool-snapshot'].includes(pending.phase))throw new Error('Pending action belongs to another owner or adapter.');
     if(pending.verificationBlocked&&pending.phase!=='pool-snapshot')return Object.freeze({status:'manual-reconciliation-required' as const,transactionHash:pending.txHash,verificationFailure:pending.verificationFailure,verificationBlocked:true as const,readyToSign:false as const});
+    // decision-033: a saved wallet rejection can be checked again. Every other record with no hash stays held.
+    if(!pending.txHash&&pending.walletRejected&&await boundary.releaseUnsent(signer))return Object.freeze({status:'released-unsent' as const,readyToSign:false as const});
     if(!pending.txHash)return Object.freeze({status:'manual-reconciliation-required' as const,readyToSign:false as const});
     const tx=await transport.readTransaction(pending.txHash),receipt=await transport.waitForReceipt(pending.txHash);await transport.assertCurrent();
     if(!tx||!receipt)return Object.freeze({status:'awaiting-chain-confirmation' as const,readyToSign:false as const});

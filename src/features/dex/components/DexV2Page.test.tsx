@@ -277,6 +277,22 @@ describe('DexV2Page', () => {
     expect(presentation.stage).toBe(publicOperation ? 'observed-accept' : attempt.status === 'observed-reverted' ? 'reverted' : 'reconciling');
     if ('transactionHash' in attempt) expect(presentation.message).not.toContain('has no transaction hash');
   });
+  // CW-086, decision-033: a released wallet rejection is not an error state and names no transaction.
+  it('shows a released unsent action as a plain message with no hold', () => {
+    const presentation = currentTrialAttemptPresentation({ status: 'released-unsent', phase: 'accept', nonce: 4, callHash: '0x00',
+      readyToSign: false, privateAccountingVerified: false } as never);
+    expect(presentation.stage).toBe('idle');
+    expect(presentation.message).toBe('The wallet rejected this request. The chain shows that nothing was sent, and the saved action is released. You can start again.');
+  });
+  // Testnet App check, 2026-11-15: after a released approval the screen kept "Check funding and continue".
+  // The swap workspace has no render harness, so this test binds the wiring in the source.
+  it('clears the funding check state when a funding rejection is released', () => {
+    const source = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
+    const released = source.slice(source.indexOf('if (wasCurrentDexUnsentReleased(cause)) {'));
+    const branch = released.slice(0, released.indexOf('return;'));
+    expect(branch).toContain('if (!fundingPending && !sharedFundingPending.current) setFundingRecovery(false);');
+    expect(branch).toContain('setMessage(DEX_PAGE_UNSENT_RELEASED_MESSAGE)');
+  });
   it('reconciles a rejected in-memory recovery before treating a reverted receipt as terminal', async () => {
     const pending = { recover: vi.fn().mockRejectedValue(new Error('Open did not confirm successfully.')) };
     const recoverPendingCurrentCheapAttempt = vi.fn()
