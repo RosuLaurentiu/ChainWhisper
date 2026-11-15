@@ -177,7 +177,8 @@ const accept = async (input: Input, r: CounterTradeV2Recovery) => {
   assertCounterTradeV2ModeAdmission(input, r.material.privatePair);
   const binding = await scope(input), m = r.material;
   const send = (step: LinkTradeV2CreationRecord['step'], to: string, data: string, complete: (receipt: unknown) => Promise<void>) =>
-    sendLinkTradeV2Transaction({ binding, step, to, data, complete, onPending: input.journal.onPending, admit: async () => {
+    sendLinkTradeV2Transaction({ binding, step, to, data, complete, onPending: input.journal.onPending,
+      finalityLagBlocks: step === 'accept' ? BigInt(input.deployment.finalityLagBlocks) : 0n, admit: async () => {
       await currentTokens(binding, m, true); await recheckCounterTradeV2Acceptance(input, r.proposalId!, m);
       if (await readCounterTradeV2RootRefund(input, m) !== r.rootRefund) throw new Error('Counter parent refund changed before signing.');
       const [offer, request] = await ownBalances(binding, r);
@@ -217,6 +218,7 @@ export const executeCounterTradeV2RecipientAction = async (input: Input & { prop
     if (input.kind === 'accept') return await accept(input, recovery);
     let result: CounterTradeV2Result | undefined;
     await sendLinkTradeV2Transaction({ binding, step: 'decline', to: input.deployment.contractAddress, data: ABI.encodeFunctionData('declineCounter', [selected.id]), onPending: input.journal.onPending,
+      finalityLagBlocks: BigInt(input.deployment.finalityLagBlocks),
       admit: async () => { await currentTokens(binding, material, false); const current = await readCounterTradeV2Proposal({ ...input, proposalId: selected.id });
         if (current.taker !== material.taker || current.status !== 1 || !current.offerLocked) throw new Error('Counter is no longer open for decline.'); },
       complete: async receipt => { result = await account(input, binding, recovery, receipt); } });
@@ -240,7 +242,9 @@ const fund = async (input: Input, r: CounterTradeV2Recovery) => {
   if (await readLinkTradeV2Balance(binding, token(m)) !== BigInt(r.beforeBalance)) throw new Error('Counter funding balance changed. Reconcile before continuing.');
   const saved = await input.journal.read();
   const send = (step: LinkTradeV2CreationRecord['step'], to: string, data: string, complete: (receipt: unknown) => Promise<void>) =>
-    sendLinkTradeV2Transaction({ binding, step, to, data, onPending: input.journal.onPending, complete, admit: async timestamp => {
+    sendLinkTradeV2Transaction({ binding, step, to, data, onPending: input.journal.onPending, complete,
+      finalityLagBlocks: step === 'authorize' ? BigInt(counterTradeV2ParentDeployment(input, m.root.escrow).finalityLagBlocks)
+        : step === 'create' ? BigInt(input.deployment.finalityLagBlocks) : 0n, admit: async timestamp => {
       if (m.expiresAt !== '0' && (BigInt(m.expiresAt) <= timestamp || BigInt(m.expiresAt) > timestamp + 2592000n)) throw new Error('Counter expiry is outside its 30-day window.');
       await currentTokens(binding, m, true);
       await recheckCounterTradeV2Proposal(input, m, step !== 'authorize');
@@ -289,6 +293,7 @@ export const cancelCounterTradeV2Proposal = async (input: Input & { proposalId: 
   try {
     let result: CounterTradeV2Result | undefined;
     await sendLinkTradeV2Transaction({ binding, step: 'cancel', to: input.deployment.contractAddress, data: ABI.encodeFunctionData('cancelCounter', [id]), onPending: input.journal.onPending,
+      finalityLagBlocks: BigInt(input.deployment.finalityLagBlocks),
       admit: async () => { await currentTokens(binding, material, false); const fresh = await readCounterTradeV2Proposal(input);
         if (fresh.maker !== material.maker || fresh.status !== 1 || !fresh.offerLocked || fresh.offer !== material.offer) throw new Error('Counter refund state changed.'); },
       complete: async receipt => { result = await account(input, binding, recovery, receipt); } });

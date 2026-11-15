@@ -7,6 +7,9 @@ const small = 'tuple(uint256 ciphertext,bytes signature)';
 const wide = 'tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
 const createTypes = [small, `${wide}[2]`, `${small}[10]`];
 const addTypes = [`${wide}[2]`, `${small}[2]`];
+const fundingTypes = (positionId: bigint, packed: boolean) => packed
+  ? positionId === 0n ? [small, `${wide}[2]`, `${wide}[5]`] : [`${wide}[2]`, wide]
+  : positionId === 0n ? createTypes : addTypes;
 export const CURRENT_POOL_FUNDING_ABI = [
   'function previewPoolFunding(uint256 id,bytes data)',
   'function createPoolPosition(bytes32 expectedPreview,bytes data) returns(uint256)',
@@ -27,6 +30,15 @@ export type PoolFundingInput = Readonly<{
   ciphertext: bigint | Readonly<{ ciphertextHigh: bigint; ciphertextLow: bigint }>;
   signature: string | Uint8Array;
 }>;
+// Encoding profile only; deployment admission and wallet authority remain separate.
+export const usesPackedPoolInputs = (candidate: Readonly<{ graph: string }>) =>
+  candidate.graph === '9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e';
+export const packPoolInputPair = (high: bigint, low: bigint) => {
+  for (const value of [high, low]) {
+    if (typeof value !== 'bigint' || value < 0n || value >= 1n << 128n) throw new Error('Invalid Pool input lane.');
+  }
+  return (high << 128n) | low;
+};
 const uint = (value: bigint) => {
   if (typeof value !== 'bigint' || value < 0n || value >= 1n << 256n) throw new Error('Invalid Pool funding integer.');
   return value;
@@ -35,11 +47,11 @@ const contextHash = (value: string) => {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value) || BigInt(value) === 0n) throw new Error('Invalid Pool preview context.');
   return value;
 };
-const normalize = (inputs: readonly PoolFundingInput[], positionId: bigint) => {
+const normalize = (inputs: readonly PoolFundingInput[], positionId: bigint, packed = false) => {
   uint(positionId);
-  if (inputs.length !== (positionId === 0n ? 13 : 4)) throw new Error('Invalid Pool funding input count.');
+  if (inputs.length !== (positionId === 0n ? packed ? 8 : 13 : packed ? 3 : 4)) throw new Error('Invalid Pool funding input count.');
   return inputs.map((input, i) => {
-    const isWide = positionId === 0n ? i === 1 || i === 2 : i < 2;
+    const isWide = packed ? positionId !== 0n || i !== 0 : positionId === 0n ? i === 1 || i === 2 : i < 2;
     if (!input || !/^0x[0-9a-fA-F]{130}$/.test(hexlify(input.signature))) throw new Error('Invalid Pool funding signature.');
     const ciphertext = input.ciphertext;
     if (isWide) {
@@ -50,25 +62,25 @@ const normalize = (inputs: readonly PoolFundingInput[], positionId: bigint) => {
     return { ciphertext: uint(ciphertext), signature: hexlify(input.signature) };
   });
 };
-const payload = (positionId: bigint, inputs: readonly PoolFundingInput[]) => {
-  const fields = normalize(inputs, positionId);
-  return positionId === 0n ? coder.encode(createTypes, [fields[0], fields.slice(1, 3), fields.slice(3)]) :
-    coder.encode(addTypes, [fields.slice(0, 2), fields.slice(2)]);
+const payload = (positionId: bigint, inputs: readonly PoolFundingInput[], packed = false) => {
+  const fields = normalize(inputs, positionId, packed), types = fundingTypes(positionId, packed);
+  return positionId === 0n ? coder.encode(types, [fields[0], fields.slice(1, 3), fields.slice(3)]) :
+    coder.encode(types, [fields.slice(0, 2), packed ? fields[2] : fields.slice(2)]);
 };
-const retainCiphertexts = (raw: string, positionId: bigint, resignedInputs: readonly PoolFundingInput[], validatePreview = false) => {
-  const types = positionId === 0n ? createTypes : addTypes;
+const retainCiphertexts = (raw: string, positionId: bigint, resignedInputs: readonly PoolFundingInput[], validatePreview = false, packed = false) => {
+  const types = fundingTypes(positionId, packed);
   const decoded = coder.decode(types, raw);
   if (coder.encode(types, decoded).toLowerCase() !== raw.toLowerCase()) throw new Error('Non-canonical Pool funding payload.');
-  const before = positionId === 0n ? [decoded[0], ...decoded[1], ...decoded[2]] : [...decoded[0], ...decoded[1]];
+  const before = positionId === 0n ? [decoded[0], ...decoded[1], ...decoded[2]] : [...decoded[0], ...(packed ? [decoded[1]] : decoded[1])];
   // Validate the original signatures and widths as well as the re-signed inputs.
-  if (validatePreview) normalize(before, positionId);
-  const after = normalize(resignedInputs, positionId);
+  if (validatePreview) normalize(before, positionId, packed);
+  const after = normalize(resignedInputs, positionId, packed);
   if (before.some((field, i) => typeof after[i].ciphertext === 'bigint' ? field.ciphertext !== after[i].ciphertext :
     field.ciphertext.ciphertextHigh !== (after[i].ciphertext as { ciphertextHigh: bigint }).ciphertextHigh ||
     field.ciphertext.ciphertextLow !== (after[i].ciphertext as { ciphertextLow: bigint }).ciphertextLow)) {
     throw new Error('Pool funding ciphertext differs from its preview.');
   }
-  return payload(positionId, after);
+  return payload(positionId, after, packed);
 };
 export const encodeCurrentPoolFundingPreview = (positionId: bigint, inputs: readonly PoolFundingInput[]) =>
   abi.encodeFunctionData('previewPoolFunding', [positionId, payload(positionId, inputs)]);
@@ -89,32 +101,32 @@ const selectedMarketHash = (value: string) => {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value) || BigInt(value) === 0n) throw new Error('Invalid Pool selected market.');
   return value;
 };
-export const encodePreparedPoolFundingPreview = (selectedMarket: string, positionId: bigint, inputs: readonly PoolFundingInput[]) =>
-  preparedAbi.encodeFunctionData('previewPoolFunding', [selectedMarketHash(selectedMarket), positionId, payload(positionId, inputs)]);
+export const encodePreparedPoolFundingPreview = (selectedMarket: string, positionId: bigint, inputs: readonly PoolFundingInput[], packed = false) =>
+  preparedAbi.encodeFunctionData('previewPoolFunding', [selectedMarketHash(selectedMarket), positionId, payload(positionId, inputs, packed)]);
 
-const preparedFunding = (selectedMarket: string, positionId: bigint, previewData: string, resignedInputs: readonly PoolFundingInput[]) => {
+const preparedFunding = (selectedMarket: string, positionId: bigint, previewData: string, resignedInputs: readonly PoolFundingInput[], packed: boolean) => {
   selectedMarketHash(selectedMarket); uint(positionId);
   const request = preparedAbi.decodeFunctionData('previewPoolFunding', previewData);
   if (request[0].toLowerCase() !== selectedMarket.toLowerCase() || request[1] !== positionId ||
     preparedAbi.encodeFunctionData('previewPoolFunding', request).toLowerCase() !== previewData.toLowerCase()) {
     throw new Error('Pool funding needs a canonical preview for the selected market and position.');
   }
-  return retainCiphertexts(request[2], positionId, resignedInputs, true);
+  return retainCiphertexts(request[2], positionId, resignedInputs, true, packed);
 };
 // Context provenance, canonical pair/candidate and owner/session authority must
 // be checked by the capability. This codec checks context format only.
 export const encodePreparedPoolCreation = (selectedMarket: string, previewData: string, previewContext: string,
-  resignedInputs: readonly PoolFundingInput[]) => {
+  resignedInputs: readonly PoolFundingInput[], packed = false) => {
   contextHash(previewContext);
   return preparedAbi.encodeFunctionData('createPoolPosition', [selectedMarket, previewContext,
-    preparedFunding(selectedMarket, 0n, previewData, resignedInputs)]);
+    preparedFunding(selectedMarket, 0n, previewData, resignedInputs, packed)]);
 };
 export const encodePreparedPoolTopUp = (selectedMarket: string, positionId: bigint, previewData: string,
-  previewContext: string, ownerContext: string, resignedInputs: readonly PoolFundingInput[]) => {
+  previewContext: string, ownerContext: string, resignedInputs: readonly PoolFundingInput[], packed = false) => {
   uint(positionId);
   if (positionId === 0n) throw new Error('Pool top-up needs an existing position.');
   contextHash(previewContext); contextHash(ownerContext);
-  const funding = preparedFunding(selectedMarket, positionId, previewData, resignedInputs);
+  const funding = preparedFunding(selectedMarket, positionId, previewData, resignedInputs, packed);
   // Build-6 ChainWhisperPoolOwner.Action.TOP_UP = 0. Core selects the market from id.
   return preparedAbi.encodeFunctionData('managePoolPosition', [positionId, ownerContext, 0,
     coder.encode(['bytes32', 'bytes'], [previewContext, funding])]);

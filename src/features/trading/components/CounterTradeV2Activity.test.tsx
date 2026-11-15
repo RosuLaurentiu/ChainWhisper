@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
-import { counterActivityOrderKey, resolveCounterActivityRuntime } from './CounterTradeV2Activity';
+import { counterActivityOrderKey, resolveCounterActivityRuntime, isCounterActivitySelectionCurrent } from './CounterTradeV2Activity';
 
 vi.mock('./CounterTradeV2Controls', () => ({ CounterTradeV2ParticipantControls: () => null }));
 type Runtime = NonNullable<OtcV2ActionRuntime['counter']>;
@@ -41,5 +41,37 @@ describe('Counter activity exact runtime selection', () => {
     let active = true;
     const root = { ...runtime(current), forReference: vi.fn(async () => { active = false; return runtime(old); }) };
     await expect(resolveCounterActivityRuntime(root, reference, () => active)).rejects.toThrow();
+  });
+});
+
+import { createElement, type ComponentProps } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import Activity from './CounterTradeV2Activity';
+
+it('associates the review trigger with the detail surface and blocks it during an action', () => {
+  const row = { ...reference, maker: owner, taker: owner, offerToken: current, requestToken: old, privatePair: false, status: 2, expiresAt: '0', key: 'event' };
+  const activity = { snapshot: { orders: [row], history: [row], complete: true }, busy: false, error: '', refresh: vi.fn(), loadOlder: vi.fn() } as unknown as ComponentProps<typeof Activity>['activity'];
+  const props: ComponentProps<typeof Activity> = { activity, runtime: runtime(old), lifecycle: 'history', activeFilter: 'all', tokenInfoByKey: {}, search: '', pairFilter: 'all', typeFilter: 'all', sortMode: '', actionInProgress: false, onSelect: vi.fn() };
+  const markup = renderToStaticMarkup(createElement(Activity, props));
+  expect(markup).toContain('aria-controls="counter-trade-review"');
+  expect(markup).toMatch(/<button[^>]*aria-controls="counter-trade-review"[^>]*>Review counter 1/);
+  const busy = renderToStaticMarkup(createElement(Activity, { ...props, actionInProgress: true }));
+  expect(busy).toMatch(/<button[^>]*disabled=""[^>]*aria-controls="counter-trade-review"/);
+});
+
+
+describe('Counter review selection scope', () => {
+  const root = runtime(old);
+  const selection = { reference, root, lifecycle: 'history' as const, group: 'history' as const };
+  const scope = { root, wallet: owner, group: 'history' as const, lifecycle: 'history' as const, rows: [reference] };
+  it('requires the same runtime, wallet, lifecycle, group, and full contract identity', () => {
+    expect(isCounterActivitySelectionCurrent(selection, scope)).toBe(true);
+    expect(isCounterActivitySelectionCurrent(selection, { ...scope, root: undefined })).toBe(false);
+    expect(isCounterActivitySelectionCurrent(selection, { ...scope, root: runtime(old) })).toBe(false);
+    expect(isCounterActivitySelectionCurrent(selection, { ...scope, wallet: current })).toBe(false);
+    expect(isCounterActivitySelectionCurrent(selection, { ...scope, group: 'active' })).toBe(false);
+    expect(isCounterActivitySelectionCurrent(selection, { ...scope, lifecycle: 'active' })).toBe(false);
+    expect(isCounterActivitySelectionCurrent(selection, { ...scope, rows: [{ ...reference, escrow: current }] })).toBe(false);
+    expect(isCounterActivitySelectionCurrent(null, scope)).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type
   type CurrentPoolPreparedTopUpPreview, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
 import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
 import { blockCurrentPoolVerification, clearCurrentDexPendingAttempt, currentDexPendingStorage } from './currentDexPendingAttempt';
-import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, encodePreparedPoolTopUp } from './currentDexPoolFunding';
+import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, encodePreparedPoolTopUp, usesPackedPoolInputs } from './currentDexPoolFunding';
 import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, currentCheapDexCandidateKey, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { assertCurrentNativePoolProfile, issueCurrentNativePoolSourceFit, CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_LIMITS,
   admitCurrentNativePoolPreview, admitCurrentNativePoolFunding, currentNativePoolSession } from './currentDexNativePoolPolicy';
@@ -30,6 +30,7 @@ type Prepared = CurrentPoolPreparedPreview | Funding | CurrentPoolPreparedTopUpP
 type Mode = 'creation' | 'top-up';
 // Native creation/funding: limit-fill-history-shared-receipt-2026-10-13/native-market-seed/RESULT.json.
 // Native same-position top-up: reports/shared-history-pool-topup-2026-10-14/RESULT.json.
+// Packed inputs: reports/pool-input-signatures-2026-11-12/{SEED,TOPUP}_NATIVE_RESULT.json.
 export const assertCurrentPoolFundingNativeAdmission = (candidate: CurrentCheapDexCandidate, mode: Mode = 'creation') => {
   if ((mode === 'creation' || mode === 'top-up') && candidate.graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph &&
       resolvePreparedDexScope(candidate).key === 'cheap-history') return;
@@ -41,6 +42,9 @@ const checkCall = (phase: Phase, data: string, candidate: CurrentCheapDexCandida
   expected?: { mode: Mode; positionId?: bigint; ownerContext?: string; previewData?: string }) => {
   try {
   const candidateKey = currentCheapDexCandidateKey(candidate);
+  const packed = usesPackedPoolInputs(candidate);
+  const wide = 'tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
+  const types = [`${wide}[2]`, packed ? wide : 'tuple(uint256 ciphertext,bytes signature)[2]'];
   const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidate) : null;
   const isPrepared = preparedScope !== null;
   const isManage = phase === 'pool-fund' && data.slice(0, 10).toLowerCase() === preparedAbi.getFunction('managePoolPosition')!.selector.toLowerCase();
@@ -50,8 +54,7 @@ const checkCall = (phase: Phase, data: string, candidate: CurrentCheapDexCandida
     const decoded = preparedAbi.decodeFunctionData('managePoolPosition', data);
     const [positionId, ownerContext, action, raw] = decoded;
     const coder = AbiCoder.defaultAbiCoder(), inner = coder.decode(['bytes32', 'bytes'], raw);
-    const types = ['tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)[2]', 'tuple(uint256 ciphertext,bytes signature)[2]'];
-    const funding = coder.decode(types, inner[1]), resigned = [...funding[0], ...funding[1]];
+    const funding = coder.decode(types, inner[1]), resigned = [...funding[0], ...(packed ? [funding[1]] : funding[1])];
     if (!same(preparedAbi.encodeFunctionData('managePoolPosition', decoded), data) || positionId <= 0n || action !== 0n ||
         !nonzeroHash(ownerContext) || !nonzeroHash(inner[0]) || !same(coder.encode(['bytes32', 'bytes'], inner), raw) ||
         !same(coder.encode(types, funding), inner[1]) || resigned.some(input => !/^0x[0-9a-fA-F]{130}$/.test(input.signature)) ||
@@ -60,7 +63,7 @@ const checkCall = (phase: Phase, data: string, candidate: CurrentCheapDexCandida
       throw new CurrentPoolProofMismatch('Pool top-up calldata differs from its prepared action.');
     }
     if (expected?.previewData !== undefined && (!marketId || !same(encodePreparedPoolTopUp(marketId, positionId,
-      expected.previewData, inner[0], ownerContext, resigned), data))) throw new CurrentPoolProofMismatch('Pool top-up differs from its exact preview inputs.');
+      expected.previewData, inner[0], ownerContext, resigned, packed), data))) throw new CurrentPoolProofMismatch('Pool top-up differs from its exact preview inputs.');
     return Object.freeze({ mode: 'top-up' as const, positionId, ownerContext: ownerContext as string, previewContext: inner[0] as string });
   }
   if (phase === 'pool-fund' && expected?.mode === 'top-up') throw new CurrentPoolProofMismatch('Pool top-up requires management calldata.');
@@ -76,10 +79,9 @@ const checkCall = (phase: Phase, data: string, candidate: CurrentCheapDexCandida
         (context !== undefined && !same(decoded[offset], context)))) throw new CurrentPoolProofMismatch('Pool call differs from its prepared action.');
   if (phase === 'pool-preview' && decoded[offset] > 0n) {
     const coder = AbiCoder.defaultAbiCoder();
-    const types = ['tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)[2]', 'tuple(uint256 ciphertext,bytes signature)[2]'];
     const funding = coder.decode(types, decoded[offset + 1]);
     if (!prepared || !same(coder.encode(types, funding), decoded[offset + 1]) ||
-        [...funding[0], ...funding[1]].some(input => !/^0x[0-9a-fA-F]{130}$/.test(input.signature))) {
+        [...funding[0], ...(packed ? [funding[1]] : funding[1])].some(input => !/^0x[0-9a-fA-F]{130}$/.test(input.signature))) {
       throw new CurrentPoolProofMismatch('Pool top-up preview has invalid canonical inputs.');
     }
   }
@@ -182,7 +184,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         await (prepared as Funding).assertBeforeFunding();
         await requireFunding(prepared as Funding,await boundary.currentHead(undefined,gasCap));}
         budget?.commit(phase, key, gasCap, scope); }, sourceFit, undefined, undefined, undefined, undefined,
-        candidateKey === 'cheap-history' ? { kind: 'funding', prepared, signer } : undefined);
+        candidateKey === 'cheap-history' ? { kind: 'funding', prepared, signer } : undefined, mode === 'top-up' && phase === 'pool-fund' ? null : undefined);
       // The journal is public metadata only; private read authority stays in this closure.
       const result = Object.freeze({ ...sent, status: phase === 'pool-preview' ? 'preview-pending' as const : 'funding-pending' as const,
         recover: async () => {
@@ -191,6 +193,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
             throw new Error('Pool pending attempt changed; reconcile manually.');
           }
           if (pending.verificationBlocked) throw new Error('Known Pool verification failure. Manual reconciliation is required.');
+          if (pending.poolTopUpHash !== (mode === 'top-up' && phase === 'pool-fund' ? null : undefined)) throw new Error('Pool funding journal binding changed.');
           boundary.requireOwnPending(pending, sent.transactionHash);
           const observed = financialProof ? await transport.waitForReceipt(sent.transactionHash) : null;
           const baseline = observed && snapshotReceipt(observed);
@@ -207,7 +210,10 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
           if (!result) throw new Error('Pool private result is not available.');
           try { await boundary.recheckMinedCall(sent.request, sent.transactionHash, canonical); }
           catch (error) { if (financialProof && isKnownCurrentPoolProofMismatch(error)) blockCurrentPoolVerification(storage, boundary.requireOwnPending(pending, sent.transactionHash)); throw error; }
-          clearCurrentDexPendingAttempt(storage, boundary.requireOwnPending(pending, sent.transactionHash));
+          const checkedPending = boundary.requireOwnPending(pending, sent.transactionHash);
+          if (mode === 'top-up' && phase === 'pool-fund') {
+            if (checkedPending.poolTopUpHash !== null) throw new Error('Top-up funding journal changed.');
+          } else clearCurrentDexPendingAttempt(storage, checkedPending);
           if(budget&&phase==='pool-preview')currentNativePoolSession(signer)!.previewResult=result as unknown as import('./currentDexNativePoolPolicy').CurrentNativePoolPreviewResult;
           if (budget && phase === 'pool-fund') recordCurrentNativePoolOutcome(signer, scope, 'funded');
           return result;
@@ -259,6 +265,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
       try {
         if (keccak256(transaction.data).toLowerCase() !== pending.callHash) throw new CurrentPoolProofMismatch('Pool pending calldata changed.');
         callIdentity = checkCall(pending.phase, transaction.data, candidate);
+        if (pending.poolTopUpHash === null && callIdentity.mode !== 'top-up') throw new CurrentPoolProofMismatch('Top-up funding journal binding changed.');
         canonical = snapshotReceipt(await boundary.verifyMinedCall(request, pending.txHash, true));
         if ((isCurrentNativeSwapCandidate(candidate) || preparedScope !== null) && JSON.stringify(baseline) !== JSON.stringify(canonical)) throw new CurrentPoolProofMismatch('Pool receipt changed during canonical verification.');
         await attest({ number: BigInt(canonical.blockNumber!), hash: canonical.blockHash! });
@@ -272,6 +279,12 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
       } catch (error) {
         if ((isCurrentNativeSwapCandidate(candidate) || preparedScope !== null) && isKnownCurrentPoolProofMismatch(error)) blockCurrentPoolVerification(storage, boundary.requireOwnPending(pending, pending.txHash));
         throw error;
+      }
+      if (pending.phase === 'pool-fund' && callIdentity.mode === 'top-up') {
+        boundary.requireOwnPending(pending, pending.txHash);
+        return Object.freeze({status:canonical.status===0?'observed-reverted-verification-held' as const:'observed-mined-verification-held' as const,
+          transactionHash:pending.txHash,phase:pending.phase,action:'top-up' as const,positionId:callIdentity.positionId,poolTopUpHash:pending.txHash,
+          verificationFailure:pending.verificationFailure,privateAccountingVerified:false as const,readyToSign:false as const});
       }
       clearCurrentDexPendingAttempt(storage, boundary.requireOwnPending(pending, pending.txHash));
       if (isCurrentNativeSwapCandidate(candidate) && canonical.status === 0) {

@@ -1,17 +1,38 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeftRight, Clock3, Coins, Layers3, ListOrdered } from 'lucide-react';
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
-import { formatDexCandidateTokenAmount, readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
+import { currentDexDisplayPair, formatDexCandidateTokenAmount, readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { readCurrentDexActivityPage, buildCurrentDexActivityEntries } from '../../../lib/currentDexActivity';
 import { CurrentDexActivitySourceError } from '../../../lib/currentDexActivityDiscovery';
 import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
 import { CURRENT_LIMIT_FILL_HISTORY_GRAPHS } from '../../../lib/currentDexLimitFillHistory';
+import { formatCurrentDexAveragePrice } from '../../../lib/currentDexPriceImpact';
 
-export default function CurrentDexActivity({ sharedWalletSession, candidateKey, visible, onInspect }: {
+function averageExecutionPrice(row: ReturnType<typeof buildCurrentDexActivityEntries>[number], candidate: ReturnType<typeof resolveCurrentCheapDexCandidate>, inverted: boolean): string | null {
+  if (!row.transactions || !['fast-delivery', 'async-delivery'].includes(row.kind) || !['Delivered', 'Partially filled'].includes(row.status) ||
+      row.amountsState !== 'verified' || row.core?.toLowerCase() !== candidate.core.toLowerCase() || !row.inputToken || !row.outputToken || row.movements.length !== 2 ||
+      row.transactions.some(tx => ['async-funding', 'async-delivery', 'fast-delivery'].includes(tx.kind) && tx.amountsState !== 'verified')) return null;
+  try {
+    const input = row.inputToken.toLowerCase(), output = row.outputToken.toLowerCase();
+    currentDexDisplayPair(candidate, input, output);
+    const [first, second] = readCurrentDexDisplay(candidate).tokens.filter(token => [input, output].includes(token.address.toLowerCase()));
+    const [base, quote] = inverted ? [second, first] : [first, second];
+    const debit = row.movements.find(m => m.token.toLowerCase() === input), credit = row.movements.find(m => m.token.toLowerCase() === output);
+    if (!debit || !credit || debit.paid <= 0n || credit.received <= 0n || credit.paid !== 0n ||
+        row.movements.some(m => [m.paid, m.received].some(value => typeof value !== 'bigint' || value < 0n || value >= 1n << 256n))) return null;
+    // Grouped paid already excludes the refund. Cross-scale raw atoms before integer division.
+    return formatCurrentDexAveragePrice({ baseAmount: (base.address.toLowerCase() === input ? debit.paid : credit.received) * 10n ** BigInt(quote.decimals),
+      quoteAmount: (quote.address.toLowerCase() === input ? debit.paid : credit.received) * 10n ** BigInt(base.decimals), baseToken: base.label, quoteToken: quote.label });
+  } catch { return null; }
+}
+
+export default function CurrentDexActivity({ sharedWalletSession, candidateKey, visible, priceDisplayInverted, onInspect, managementNavigation }: {
   sharedWalletSession?: SharedWalletSession; candidateKey: CurrentCheapDexCandidateKey; visible: boolean;
+  priceDisplayInverted: boolean;
   onInspect: (mode: 'swap' | 'activity' | 'positions' | 'liquidity') => void;
+  managementNavigation?: ReactNode;
 }) {
   const candidate = resolveCurrentCheapDexCandidate(candidateKey);
   const privacyReady = sharedWalletSession ? resolveBrowserWalletPrivacyState({ browserWalletAddress: sharedWalletSession.walletAddress,
@@ -140,13 +161,14 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
   const shown = entries.filter(row => filter === 'All' || group(row.action) === filter);
   return <section className="dex-v2-activity-card" aria-label="Trade history"
     data-dex-activity-state={currentView?.state} data-dex-activity-phase={currentView?.phase} data-dex-activity-phase-at={currentView?.phaseAt}>
-    <header className="dex-owner-heading"><div><h2>History</h2><p>Your DEX activity. Open a row for details.</p>{currentView?.checkedAt?<p>Last checked {new Date(currentView.checkedAt).toLocaleTimeString()} · Refresh for new activity.</p>:null}</div><button type="button" disabled={!connected || !privacyReady || currentView?.state === 'loading'} onClick={() => setRefresh(value => value + 1)}>{currentView?.state === 'loading' ? 'Checking…' : 'Refresh history'}</button></header>
+    <header className="dex-owner-heading"><div><h2>{managementNavigation ? 'My trades' : 'History'}</h2><p>Your DEX activity. Open a row for details.</p>{currentView?.checkedAt?<p>Last checked {new Date(currentView.checkedAt).toLocaleTimeString()} · Refresh for new activity.</p>:null}</div><button type="button" disabled={!connected || !privacyReady || currentView?.state === 'loading'} onClick={() => setRefresh(value => value + 1)}>{currentView?.state === 'loading' ? 'Checking…' : 'Refresh history'}</button></header>
+    {managementNavigation}
     {storageError ? <p role="alert">{storageError}</p> : null}
     {pending ? <aside className="dex-v2-pending-card"><h3>Action needs a status check</h3>
       <p>{pending.phase.replace(/-/g, ' ')} · {pending.verificationBlocked ? 'Verification blocked' : 'Pending or uncertain'}</p>
       {pending.txHash ? <a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${pending.txHash}`} target="_blank" rel="noreferrer">View transaction</a> : null}
       <button type="button" onClick={() => onInspect(inspectMode)}>Open status and recovery</button></aside> : null}
-    {!connected ? <p>Connect your wallet on COTI Testnet to view activity.</p> : !privacyReady ? <p>Unlock privacy to view your trade results.</p> :
+    {!connected ? <p>Connect your wallet on COTI Testnet to view activity.</p> : !privacyReady ? <p>Use “Unlock privacy with MetaMask” in the header to view your trade results.</p> :
       currentView?.state === 'loading' ? <p role="status">Checking activity{currentView.total ? `: ${currentView.checked} of ${currentView.total} transactions` : '…'}</p> :
       currentView?.state === 'error' ? <p role="alert">{currentView.message}</p> : currentView?.state === 'empty' ?
         <div className="dex-v2-empty-state"><Clock3 size={28} aria-hidden="true" /><h3>No recorded DEX activity</h3></div> : null}
@@ -157,6 +179,7 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
       <div className="dex-history-list">
       {shown.map(row => {
         const category = group(row.action);
+        const executionPrice = averageExecutionPrice(row, candidate, priceDisplayInverted);
         const Icon = category === 'Swaps' ? ArrowLeftRight : category === 'Liquidity' ? Layers3 : category === 'Orders' ? ListOrdered : Coins;
         return <details className="dex-history-row" key={row.key}>
           <summary>
@@ -171,6 +194,7 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
           </summary>
           <div className="dex-history-detail">
           {row.operationId !== undefined ? <p>Operation {row.operationId.toString()}</p> : row.positionId !== undefined ? <p>Position NFT {row.positionId.toString()}</p> : null}
+          {executionPrice ? <dl><div><dt>Average execution price</dt><dd>{executionPrice}</dd></div></dl> : null}
           {row.movements.map(m => row.kind === 'limit-fill' ? <dl key={m.token}><div><dt>{m.paid>0n?'Sold from order':'Added to proceeds'}</dt>
             <dd>{formatDexCandidateTokenAmount(candidate,m.token,m.paid>0n?m.paid:m.received)} {display.tokens.find(t=>t.address.toLowerCase()===m.token)?.label}</dd></div></dl> : <dl key={m.token}><div><dt>Paid</dt><dd>{formatDexCandidateTokenAmount(candidate,m.token,m.paid)} {display.tokens.find(t=>t.address.toLowerCase()===m.token)?.label}</dd></div>
             <div><dt>{row.transactions && m.token===row.inputToken?'Refunded':'Received'}</dt><dd>{formatDexCandidateTokenAmount(candidate,m.token,m.received)} {display.tokens.find(t=>t.address.toLowerCase()===m.token)?.label}</dd></div></dl>)}

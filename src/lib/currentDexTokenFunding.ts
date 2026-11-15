@@ -14,6 +14,7 @@ export const currentTokenFundingAbi = new Interface([
   `function balanceOf(address account) view returns(${ct})`,
   `function allowance(address owner,address spender) view returns((${ct} ciphertext,${ct} ownerCiphertext,${ct} spenderCiphertext))`,
   `function approve(address spender,(${ct} ciphertext,bytes signature) value)`,
+  `function increaseAllowance(address spender,(${ct} ciphertext,bytes signature) value)`,
   'function claimFaucet()', 'function faucetClaimed(address account) view returns(bool)',
   'function faucetAmount() view returns(uint256)', 'function decimals() view returns(uint8)',
   'function publicAmountsEnabled() view returns(bool)', 'function accountEncryptionAddress(address account) view returns(address)',

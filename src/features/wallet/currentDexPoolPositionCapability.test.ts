@@ -1,10 +1,15 @@
 import { POOL_EXIT_PREVIEW_ABI, computePoolExitPreviewContext } from '../../lib/currentDexPoolExitPreview';
+import * as poolInputs from '../../lib/currentDexPoolFunding';
 import type { PreparedPoolStoredState } from '../../lib/currentDexPreparedPoolSnapshot';
 import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
-import { describe, expect, it, vi } from 'vitest';
-import { issueCurrentDexPoolPositionCapability, assertCurrentPoolPositionPrepared } from './currentDexPoolPositionCapability';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createCurrentPoolPositionSubmissionAdapter } from '../../lib/currentDexPoolPositionSubmission';
+import { CURRENT_APP_POOL_ENGINEERING_OWNERS } from '../../lib/currentDexC1SwapPolicy';
+import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../lib/currentDexPendingAttempt';
+import { issueCurrentDexPoolPositionCapability, assertCurrentPoolPositionPrepared, assertVerifiedCurrentPoolSnapshot, assertVerifiedSupersededPoolSnapshot } from './currentDexPoolPositionCapability';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi } from '../../lib/currentDexPoolPosition';
+import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../lib/currentDexLimitInputCandidate';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE as c, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 const ARCHIVED_CHEAP_POOL_TOKENS=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1);
 const mocks=vi.hoisted(()=>({issue:vi.fn(),graph:vi.fn(),decrypt:vi.fn(),small:vi.fn(),wide:vi.fn(),reader:vi.fn()}));
@@ -16,10 +21,13 @@ const owner=`0x${'22'.repeat(20)}`,recipient=`0x${'33'.repeat(20)}`,hash=toBeHex
 const transfer=new Interface(['event Transfer(address indexed from,address indexed to,(uint256 ciphertextHigh,uint256 ciphertextLow) senderValue,(uint256 ciphertextHigh,uint256 ciphertextLow) receiverValue)']);
 const previewAbi = new Interface(POOL_EXIT_PREVIEW_ABI);
 const word = (n: bigint | number) => toBeHex(n, 32), empty = (n: number) => Array.from({ length: n }, () => word(0));
+const transactionScopedSnapshots = resolveCurrentCheapDexCandidate('cheap-history').graph === STAGED_LIMIT_INPUT_DEX_CANDIDATE.graph;
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends readonly (infer V)[] ? Mutable<V>[] : T[K] extends object ? Mutable<T[K]> : T[K] };
 // Exact six-market/four-token synthetic scope. The financial and codec checks are real.
-async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-exit'|'cheap-history'='cheap-exit') {
-  const candidate = resolvePreparedDexScope(candidateKey).candidate, pair = candidate.pairs[pairIndex], id = 43n;
+async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-exit'|'cheap-history'='cheap-exit',id=43n,selectedOwner=owner,
+  packed=poolInputs.usesPackedPoolInputs(resolvePreparedDexScope(candidateKey).candidate)) {
+  const owner=selectedOwner;
+  const candidate = resolvePreparedDexScope(candidateKey).candidate, pair = candidate.pairs[pairIndex];
   const before: Mutable<PreparedPoolStoredState> = { graph: candidate.graph, marketId: pair.marketId, positionId: id,
     block: { number: 10n, hash }, market: { marketId: pair.marketId, canonicalId: BigInt(pair.canonicalId), registryRevision: 7n,
       marketRevision: 1n, enabled: true, token0: pair.tokens[0], token1: pair.tokens[1], engine: pair.engine, poolTerms: pair.poolTerms,
@@ -53,12 +61,25 @@ async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-exit'|'chea
     [txHash, { block: before.block, data: abi.encodeFunctionData('poolSnapshot', [id]), logs: [] }],
     [snapshotHash, { block: snapshot.block, data: abi.encodeFunctionData('poolSnapshot', [id]), logs: [] }]
   ]);
-  const reader = { state: vi.fn(async () => structuredClone(current)), wallets: vi.fn(async () => structuredClone(current === before ? wallets : paidWallets)),
+  const reader = { selectedState: vi.fn(async (_id?: bigint, _block?: typeof before.block) => structuredClone(current)), wallets: vi.fn(async () => structuredClone(current === before ? wallets : paidWallets)),
     canonical: vi.fn(async (hash: string) => { const p = proofs.get(hash); return p ? structuredClone(p) : null; }),
     issue: vi.fn(async (_id: bigint, kind: string, hash: string) => ({ kind, positionId: id, marketId: pair.marketId,
       block: current.block, transactionHash: hash, status: BigInt(current.claim[0]), context: current.claim[13], revisions: current.claim.slice(4, 8).map(BigInt),
       amounts: { ...amounts, shares: current === before ? 200n : 100n, totalShares: current === before ? 400n : 300n } })), current: vi.fn(async p => p) };
-  mocks.reader.mockReturnValue(reader); const f = await fixture(candidateKey);
+  // Count the full reads hidden inside the real reader's producer/current checks.
+  const retained = new WeakMap<object, typeof before>();
+  const issue = reader.issue.getMockImplementation()!;
+  reader.issue.mockImplementation(async (...args) => {
+    const producer = await issue(...args);
+    retained.set(producer, await reader.selectedState(id, producer.block));
+    return producer;
+  });
+  reader.current.mockImplementation(async (producer, block?: typeof before.block, reuse = false,
+    onVerifiedState?: (state: typeof before) => void) => {
+    const state = reuse ? retained.get(producer)! : await reader.selectedState(id, block);
+    onVerifiedState?.(state); return producer;
+  });
+  mocks.reader.mockReturnValue(reader); const f = await fixture(candidateKey,owner);
   const original = f.provider.send.getMockImplementation()!;
   f.provider.send.mockImplementation(async (method, params) => {
     if (method === 'eth_getBlockByNumber') return { number: toBeHex(current.block.number), hash: current.block.hash };
@@ -77,7 +98,7 @@ async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-exit'|'chea
   const preparePreview = async () => {
     const p = (await f.cap.prepareExitPreview(request))!;
     const ctx = computePoolExitPreviewContext(p.data, { chainId: BigInt(candidate.chainId), core: candidate.core, releaseId: candidate.releaseId,
-      marketId: pair.marketId, owner, marketWords: before.markets[pair.marketId], anchors: before.anchors });
+      marketId: pair.marketId, owner, marketWords: before.markets[pair.marketId], anchors: before.anchors }, packed);
     proofs.set(previewHash, { block: before.block, data: p.data, logs: [{ address: candidate.core,
       ...previewAbi.encodeEventLog(previewAbi.getEvent('PoolExitPreviewed')!, [id, ctx, [100n, 50n, 100n, 100n, 1n, 2n].map(v => [1n, v])]) }] });
     return p;
@@ -93,7 +114,177 @@ async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-exit'|'chea
   return { ...f, request, candidate, pair, reader, before, managed, snapshot, wallets, paidWallets, proofs,
     previewHash, withdrawalHash, snapshotHash, preparePreview, prepareWithdrawal, setState: (s: typeof before) => { current = s; } };
 }
-async function fixture(candidate:CurrentCheapDexCandidateKey='cheap-archived'){
+describe.runIf(transactionScopedSnapshots)('superseded snapshot recovery capability', () => {
+  it('brands only a recovery result and retains no producer or private amounts', async () => {
+    const f = await preparedExitFixture(0, 'cheap-history');
+    const verify = vi.fn(async () => ({ claimStatus: 1n, revisions: [1n,1n,1n,1n], block: f.before.block,
+      originalBlock: f.before.block, latestSnapshotBlock: f.snapshot.block }));
+    Object.assign(f.reader, { verifySupersededSnapshot: verify });
+    const result = await f.cap.verifySupersededPlainSnapshot(43n, txHash, f.snapshotHash);
+    expect(verify).toHaveBeenCalledExactlyOnceWith(43n, txHash, f.snapshotHash);
+    expect(result).toMatchObject({ action: 'snapshot-recovery', status: 'superseded-snapshot-recovery-only', transactionHash: txHash,
+      latestSnapshotHash: f.snapshotHash, privateAccountingVerified: false, readyToSign: false });
+    assertVerifiedSupersededPoolSnapshot(result, f.signer);
+    expect(() => assertVerifiedSupersededPoolSnapshot(result, {})).toThrow();
+    expect(() => assertVerifiedCurrentPoolSnapshot(result, f.signer)).toThrow();
+    expect(() => assertCurrentPoolPositionPrepared(result, f.signer)).toThrow();
+    expect(result).not.toHaveProperty('snapshot'); expect(result).not.toHaveProperty('producer'); expect(result).not.toHaveProperty('amounts');
+    expect(f.reader.issue).not.toHaveBeenCalled(); expect(f.reader.current).not.toHaveBeenCalled();
+    await expect(f.cap.readPosition(43n)).resolves.toMatchObject({ amounts: null });
+  });
+  it.each(['candidate','missing-proof','session'] as const)('rejects %s without branding a result', async fault => {
+    const f = await preparedExitFixture(0, fault === 'candidate' ? 'cheap-exit' : 'cheap-history');
+    const verify = vi.fn(async () => { throw new Error('Missing newest snapshot proof'); });
+    Object.assign(f.reader, { verifySupersededSnapshot: verify });
+    if (fault === 'session') f.revoke();
+    await expect(f.cap.verifySupersededPlainSnapshot(43n, txHash, f.snapshotHash)).rejects.toThrow();
+    expect(verify).toHaveBeenCalledTimes(fault === 'missing-proof' ? 1 : 0);
+  });
+});
+it('reads one full state per canonical block during one completed-preview restore', async () => {
+  const f = await preparedExitFixture(); await f.preparePreview();
+  const proof = f.proofs.get(f.previewHash)!;
+  f.provider.getLogs.mockResolvedValue([{ ...proof.logs[0], transactionHash: f.previewHash,
+    blockNumber: 10, blockHash: hash, index: 0, removed: false }]);
+  f.reader.selectedState.mockClear(); mocks.small.mockClear(); mocks.wide.mockClear();
+  await expect(f.cap.restoreExitPreview(f.request)).resolves.toMatchObject({ status: 'exit-preview-verified' });
+  expect(f.reader.selectedState).toHaveBeenCalledTimes(1);
+  expect(mocks.small).not.toHaveBeenCalled(); expect(mocks.wide).not.toHaveBeenCalled();
+  f.reader.selectedState.mockClear();
+  const { producerHash: _producerHash, ...cachedRequest } = f.request;
+  await expect(f.cap.restoreExitPreview(cachedRequest)).resolves.toMatchObject({ status: 'exit-preview-verified' });
+  expect(f.reader.selectedState).toHaveBeenCalledTimes(1);
+});
+it('keeps a separate historical state read when a current-candidate preview block differs', async () => {
+  const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
+  try {
+    const f = await preparedExitFixture(0, 'cheap-history', 43n, owner, true); await f.preparePreview();
+    const proof = f.proofs.get(f.previewHash)!, latest = structuredClone(f.before);
+    latest.block = { number: 11n, hash: word(31) }; f.setState(latest);
+    const issue = f.reader.issue.getMockImplementation()!;
+    f.reader.issue.mockImplementation(async (...args) => {
+      const producer = await issue(...args);
+      producer.amounts.shares = 200n; producer.amounts.totalShares = 400n; return producer;
+    });
+    f.reader.selectedState.mockImplementation(async (_id, block) => structuredClone(block?.hash === hash ? f.before : latest));
+    f.provider.getLogs.mockResolvedValue([{ ...proof.logs[0], transactionHash: f.previewHash,
+      blockNumber: 10, blockHash: hash, index: 0, removed: false }]);
+    f.reader.selectedState.mockClear();
+    await expect(f.cap.restoreExitPreview(f.request)).resolves.toMatchObject({ status: 'exit-preview-verified' });
+    expect(f.reader.selectedState.mock.calls.map(([, block]) => block)).toEqual([latest.block, f.before.block]);
+  } finally { profile.mockRestore(); }
+});
+it.each([false, true])('restores a completed preview in a fresh signer session without another signature or transaction (packed %s)', async packed => {
+  const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(packed);
+  try {
+  const f = await preparedExitFixture(0, 'cheap-history', 43n, owner, packed), prepared = await f.preparePreview();
+  await prepared.readResult(f.previewHash);
+  const bind = mocks.issue.getMockImplementation()!;
+  mocks.issue.mockImplementation(args => bind({ ...args, bindCapability: (context: object) =>
+    args.bindCapability({ ...context, signer: { getUserOnboardInfo: () => ({ aesKey: 'fresh-session' }) } }) }));
+  const cap = await issueCurrentDexPoolPositionCapability({ candidate: 'cheap-history' } as never);
+  f.provider.getLogs.mockResolvedValue([{ ...f.proofs.get(f.previewHash)!.logs[0], transactionHash: f.previewHash,
+    blockNumber: 10, blockHash: hash, index: 0, removed: false }]);
+  mocks.small.mockClear(); mocks.wide.mockClear(); f.request.confirm.mockClear();
+  await expect(cap.restoreExitPreview(f.request)).resolves.toMatchObject({ status: 'exit-preview-verified',
+    transactionHash: f.previewHash, preview: { burnedShares: 100n, remainingShares: 100n }, readyToSign: false });
+  expect(mocks.small).not.toHaveBeenCalled(); expect(mocks.wide).not.toHaveBeenCalled();
+  expect(f.request.confirm).not.toHaveBeenCalled();
+  f.request.confirm.mockResolvedValue(false);
+  await expect(cap.prepareAction(f.request)).resolves.toBeNull();
+  expect(f.request.confirm).toHaveBeenCalledOnce();
+  } finally { profile.mockRestore(); }
+});
+
+it.each([false, true])('checks current preview commitment before unavailable historical state (stale %s)', async stale => {
+  const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
+  try {
+  const f = await preparedExitFixture(0, 'cheap-history', 43n, owner, true); await f.preparePreview();
+  const proof = f.proofs.get(f.previewHash)!;
+  const current = structuredClone(f.before); current.block = { number: 11n, hash: toBeHex(31n, 32) };
+  if (stale) current.anchors[0][8] = toBeHex(900n, 32);
+  f.setState(current);
+  f.provider.getLogs.mockResolvedValue([{ ...proof.logs[0], transactionHash: f.previewHash,
+    blockNumber: 10, blockHash: hash, index: 0, removed: false }]);
+  f.reader.selectedState.mockImplementation(async (...args: unknown[]) => {
+    const block = args[1] as typeof current.block;
+    if (block.hash === proof.block.hash) throw new Error('Historical state unavailable');
+    return structuredClone(current);
+  });
+  f.reader.selectedState.mockClear();
+  f.reader.wallets.mockClear(); mocks.small.mockClear(); mocks.wide.mockClear(); f.request.confirm.mockClear();
+  await expect(f.cap.restoreExitPreview(f.request)).rejects.toThrow(stale ?
+    'Completed exit preview is stale: Pool reserves changed.' : 'Historical state unavailable');
+  expect(f.reader.selectedState).toHaveBeenCalledTimes(stale ? 1 : 2);
+  expect(f.reader.selectedState).toHaveBeenNthCalledWith(1, f.request.positionId, current.block);
+  expect(f.reader.wallets).not.toHaveBeenCalled();
+  expect(mocks.small).not.toHaveBeenCalled(); expect(mocks.wide).not.toHaveBeenCalled();
+  expect(f.request.confirm).not.toHaveBeenCalled();
+  await expect(f.cap.prepareAction(f.request)).rejects.toThrow(/preview/i);
+  } finally { profile.mockRestore(); }
+});
+
+it.each(['none', 'removed', 'bound', 'receipt', 'claim', 'fraction', 'state', 'wallet', 'reorg', 'lease'] as const)(
+  'does not retain unsafe restored preview: %s', async fault => {
+    const f = await preparedExitFixture(0), prepared = await f.preparePreview();
+    await prepared.readResult(f.previewHash);
+    const log = { ...f.proofs.get(f.previewHash)!.logs[0], transactionHash: f.previewHash,
+      blockNumber: 10, blockHash: hash, index: 0, removed: fault === 'removed' };
+    f.provider.getLogs.mockResolvedValue(fault === 'none' ? [] : fault === 'bound' ? Array(257).fill(log) : [log]);
+    const proof = f.proofs.get(f.previewHash)!;
+    if (fault === 'receipt') f.proofs.delete(f.previewHash);
+    if (fault === 'claim') {
+      const args = [...abi.decodeFunctionData('managePoolPosition', proof.data)]; args[0] = 44n;
+      proof.data = abi.encodeFunctionData('managePoolPosition', args);
+    }
+    if (fault === 'state') {
+      const changed = structuredClone(f.before); changed.operation++;
+      changed.block = { number: 11n, hash: word(31) }; f.setState(changed);
+      f.reader.selectedState.mockResolvedValueOnce(changed).mockResolvedValueOnce(f.before);
+    }
+    if (fault === 'wallet') {
+      const changed = structuredClone(f.wallets); changed[0].balance++;
+      f.reader.wallets.mockResolvedValueOnce(f.wallets).mockResolvedValueOnce(changed);
+    }
+    if (fault === 'reorg') f.reader.canonical.mockImplementation(async hash => {
+      if (hash !== f.previewHash || !f.proofs.has(hash)) return structuredClone(f.proofs.get(hash) ?? null);
+      f.proofs.delete(hash); return structuredClone(proof);
+    });
+    if (fault === 'lease') f.provider.getLogs.mockImplementation(async () => { f.revoke(); return [log]; });
+    mocks.small.mockClear(); mocks.wide.mockClear();
+    const result = f.cap.restoreExitPreview({ ...f.request, ...(fault === 'fraction' ? { fraction: [1n, 3n] as const } : {}) });
+    if (fault === 'none') await expect(result).resolves.toBeNull(); else await expect(result).rejects.toThrow();
+    expect(mocks.small).not.toHaveBeenCalled(); expect(mocks.wide).not.toHaveBeenCalled();
+    if (fault !== 'lease') await expect(f.cap.prepareAction(f.request)).rejects.toThrow(/preview/i);
+  });
+
+it('restores only the latest completed preview, even when discovery is unordered', async () => {
+  const f = await preparedExitFixture(), prepared = await f.preparePreview();
+  const proof = f.proofs.get(f.previewHash)!;
+  const log = { ...proof.logs[0], transactionHash: f.previewHash, blockNumber: 10, blockHash: hash, index: 1, removed: false };
+  f.provider.getLogs.mockResolvedValue([{ ...log, transactionHash: word(999), index: 0 }, log]);
+  await expect(f.cap.restoreExitPreview(f.request)).resolves.toMatchObject({ transactionHash: f.previewHash });
+  expect(prepared.readyToSign).toBe(false);
+});
+
+it('uses one packed fraction and two full-width protected minima with isolated candidate selection', async () => {
+  const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
+  try {
+    const f = await preparedExitFixture(0, 'cheap-history', 43n, owner, true), { p, preview } = await f.prepareWithdrawal();
+    expect(mocks.small).not.toHaveBeenCalled();
+    expect(mocks.wide.mock.calls.map(c => c[1])).toEqual([poolInputs.packPoolInputPair(1n, 2n), 100n, 50n]);
+    expect(abi.decodeFunctionData('managePoolPosition', preview.data)[2]).toBe(11n);
+    expect(abi.decodeFunctionData('managePoolPosition', p.data)[2]).toBe(12n);
+    f.setState(f.managed);
+    await expect(p.readResult(f.withdrawalHash)).resolves.toMatchObject({ status: 'remaining-proof-required', payouts: [100n, 50n], privateAccountingVerified: false });
+    const paid = (await f.cap.prepareSnapshot({ positionId: 43n, confirm: async () => true }))!;
+    expect(paid.replacementFrom).toBe(f.withdrawalHash);
+    f.setState(f.snapshot);
+    await expect(paid.readResult(f.snapshotHash)).resolves.toMatchObject({ privateAccountingVerified: true, snapshot: { amounts: { shares: 100n, totalShares: 300n } } });
+  } finally { profile.mockRestore(); }
+});
+async function fixture(candidate:CurrentCheapDexCandidateKey='cheap-archived',selectedOwner=owner){
+  const owner=selectedOwner;
   const c=resolveCurrentCheapDexCandidate(candidate);
   vi.clearAllMocks();let active=true,aes='test-key',nftOwner=owner,recipientCode='0x';
   const signer={getUserOnboardInfo:()=>({aesKey:aes})};
@@ -123,6 +314,143 @@ async function fixture(candidate:CurrentCheapDexCandidateKey='cheap-archived'){
   };
   return{cap,request,provider,state,values,signer,mine,revoke:()=>{active=false;},lock:()=>{aes='';},owner:(v:string)=>{nftOwner=v;},code:(v:string)=>{recipientCode=v;}};
 }
+
+describe('active snapshot final signing baseline',()=>{
+  afterEach(()=>vi.unstubAllGlobals());
+  it('defers the full post-review snapshot baseline to the final signing check',async()=>{
+    const f=await preparedExitFixture(4,'cheap-history',56n);
+    let stateReads=0,walletReads=0;
+    const prepared=(await f.cap.prepareSnapshot({positionId:56n,confirm:async()=>{
+      stateReads=f.reader.selectedState.mock.calls.length;walletReads=f.reader.wallets.mock.calls.length;return true;
+    }}))!;
+    expect(f.reader.selectedState).toHaveBeenCalledTimes(stateReads);
+    expect(f.reader.wallets).toHaveBeenCalledTimes(walletReads);
+    await prepared.assertBeforeSend();
+    expect(f.reader.selectedState).toHaveBeenCalledTimes(stateReads+1);
+    expect(f.reader.wallets).toHaveBeenCalledTimes(walletReads+1);
+  });
+  it('retains the completed snapshot source when the App issues a new capability for the next refresh',async()=>{
+    const f=await preparedExitFixture(4,'cheap-history',56n);
+    const first=(await f.cap.prepareSnapshot({positionId:56n,confirm:async()=>true}))!;
+    if(!('sealBeforeSend'in first))throw new Error('Expected prepared snapshot');
+    first.sealBeforeSend();
+    await first.readResult(txHash);
+    const nextCapability=await issueCurrentDexPoolPositionCapability({candidate:'cheap-history'}as never);
+    const next=await nextCapability.prepareSnapshot({positionId:56n,confirm:async()=>true});
+    expect(next).toMatchObject({positionId:56n,replacementFrom:txHash});
+  });
+  it.each(['signer','owner','candidate','position'] as const)('does not reuse a completed snapshot source across %s scope',async scope=>{
+    const first=await preparedExitFixture(4,'cheap-history',56n);
+    const paid=(await first.cap.prepareSnapshot({positionId:56n,confirm:async()=>true}))!;
+    if(!('sealBeforeSend'in paid))throw new Error('Expected prepared snapshot');
+    paid.sealBeforeSend();await paid.readResult(txHash);
+    const candidate=scope==='candidate'?'cheap-exit':'cheap-history',id=scope==='position'?57n:56n;
+    await preparedExitFixture(4,candidate,id,scope==='owner'?recipient:owner);
+    if(scope!=='signer'){
+      const issue=mocks.issue.getMockImplementation()!;
+      mocks.issue.mockImplementation(args=>issue({...args,bindCapability:(context:{signer:typeof first.signer})=>args.bindCapability({...context,signer:first.signer})}));
+    }
+    const nextCapability=await issueCurrentDexPoolPositionCapability({candidate}as never);
+    expect((await nextCapability.prepareSnapshot({positionId:id,confirm:async()=>true}))!.replacementFrom).toBeUndefined();
+  });
+  it('does not retain a snapshot source after failed private accounting',async()=>{
+    const f=await preparedExitFixture(4,'cheap-history',56n);
+    const paid=(await f.cap.prepareSnapshot({positionId:56n,confirm:async()=>true}))!;
+    if(!('sealBeforeSend'in paid))throw new Error('Expected prepared snapshot');
+    paid.sealBeforeSend();f.reader.issue.mockRejectedValueOnce(new Error('Invalid snapshot owner envelope'));
+    await expect(paid.readResult(txHash)).rejects.toThrow('owner envelope');
+    const nextCapability=await issueCurrentDexPoolPositionCapability({candidate:'cheap-history'}as never);
+    expect((await nextCapability.prepareSnapshot({positionId:56n,confirm:async()=>true}))!.replacementFrom).toBeUndefined();
+  });
+  it('prepares position54 after shared state changes during review without treating the review as a financial quote',async()=>{
+    const f=await preparedExitFixture(4,'cheap-history',54n);
+    const prepared=await f.cap.prepareSnapshot({positionId:54n,confirm:async()=>{
+      f.before.core[58]=word(9); f.before.core[98]=word(10);
+      f.before.operation++;f.before.core[12]=word(f.before.operation);
+      f.wallets[0].balance++;f.wallets[1].allowance++;
+      return true;
+    }});
+    expect(prepared).toMatchObject({positionId:54n,action:'snapshot',readyToSign:false});
+    expect(f.reader.issue).not.toHaveBeenCalled();
+  });
+  it.each(['owner','ownership-revision','lifecycle-revision','status','market','wallet-scope','lease'] as const)('rejects %s changes before the fresh baseline',async fault=>{
+    const f=await preparedExitFixture(4,'cheap-history',54n);
+    await expect((async()=>{const prepared=await f.cap.prepareSnapshot({positionId:54n,confirm:async()=>{
+      if(fault==='owner'){
+        const original=f.provider.send.getMockImplementation()!;
+        f.provider.send.mockImplementation(async(method,params)=>method==='eth_call'&&params[0].data===nftAbi.encodeFunctionData('ownerOf',[54n])?
+          nftAbi.encodeFunctionResult('ownerOf',[recipient]):original(method,params));
+      }
+      if(fault==='ownership-revision')f.before.claim[5]=word(2);
+      if(fault==='lifecycle-revision')f.before.claim[6]=word(2);
+      if(fault==='status')f.before.claim[0]=word(4);
+      if(fault==='market'){
+        const original=f.provider.send.getMockImplementation()!;
+        f.provider.send.mockImplementation(async(method,params)=>method==='eth_getStorageAt'?word(0):original(method,params));
+      }
+      if(fault==='wallet-scope')f.wallets.pop();
+      if(fault==='lease')f.revoke();
+      return true;
+    }});await prepared!.assertBeforeSend();})()).rejects.toThrow();
+    expect(f.reader.issue).not.toHaveBeenCalled();
+  });
+  it('does not verify a snapshot before the sender seals its baseline',async()=>{
+    const f=await preparedExitFixture(4,'cheap-history',54n);
+    const prepared=(await f.cap.prepareSnapshot({positionId:54n,confirm:async()=>true}))!;
+    await expect(prepared.readResult(f.snapshotHash)).rejects.toThrow('signing baseline was not sealed');
+    expect(f.reader.issue).not.toHaveBeenCalled();
+  });
+  it.each(['success','post-c1','post-wallet','unknown-send','reload'] as const)('runs real position54 preparation, submission and recovery under49 hold: %s',async fault=>{
+    const owner=CURRENT_APP_POOL_ENGINEERING_OWNERS[0],f=await preparedExitFixture(4,'cheap-history',54n,owner);
+    const oldHash=word(801),newHash=f.snapshotHash,oldBlock={number:9n,hash:word(809)};
+    const snapshotAbi=new Interface(['event PoolSnapshotRefreshed(uint256 indexed positionId,bytes32 context,(uint256 ciphertextHigh,uint256 ciphertextLow)[10] userValues)']);
+    const log=(id:bigint)=>({address:f.candidate.core,...snapshotAbi.encodeEventLog(snapshotAbi.getEvent('PoolSnapshotRefreshed')!,[id,context,Array.from({length:10},()=>[1n,2n])])});
+    const oldData=abi.encodeFunctionData('poolSnapshot',[49n]);
+    const original=JSON.stringify({version:1,chainId:f.candidate.chainId,owner,core:f.candidate.core,graph:`0x${f.candidate.graph}`,phase:'pool-snapshot',nonce:7,txHash:oldHash,callHash:keccak256(oldData),verificationBlocked:true});
+    const values=new Map([[CURRENT_DEX_PENDING_ATTEMPT_KEY,original]]);
+    vi.stubGlobal('window',{sessionStorage:{getItem:(k:string)=>values.get(k)??null,setItem:(k:string,v:string)=>values.set(k,v),removeItem:(k:string)=>values.delete(k)}});
+    const prepared=(await f.cap.prepareSnapshot({positionId:54n,confirm:async()=>{f.before.core[58]=word(1);return true;}}))!;
+    assertCurrentPoolPositionPrepared(prepared,f.signer);
+    const oldTx={chainId:BigInt(f.candidate.chainId),from:owner,to:f.candidate.core,data:oldData,value:0n,nonce:7,gasLimit:30_000_000n,gasPrice:50_000_000n,hash:oldHash,blockNumber:9,blockHash:oldBlock.hash};
+    let freshTx:Record<string,unknown>|null=null;
+    const transport={assertCurrent:async()=>prepared.assertCurrent(),verifyCanonicalInclusion:vi.fn(async()=>{}),
+      readHead:async()=>({...f.before.block,timestamp:100n,gasLimit:120_000_000n}),readNonce:async()=>8,
+      readBlockHash:async(n:number)=>n===9?oldBlock.hash:f.before.block.hash,
+      readNativeResources:async(head:unknown)=>({head,owner,chainId:BigInt(f.candidate.chainId),latestNonce:8,pendingNonce:8,baseFeePerGas:1n,gasPrice:50_000_000n,balance:10n**18n,code:'0x'}),
+      estimateGas:vi.fn(async()=>{f.before.core[98]=word(2);return 1_000_000n;}),
+      readTransaction:async(hash:string)=>hash===oldHash?oldTx:freshTx,
+      waitForReceipt:async(hash:string)=>({hash,status:1,from:owner,to:f.candidate.core,blockNumber:hash===oldHash?9:11,blockHash:hash===oldHash?oldBlock.hash:f.before.block.hash,logs:[log(hash===oldHash?49n:54n)]}),
+      send:vi.fn(async(request:Record<string,unknown>)=>{
+        expect(values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(original);
+        expect(request).toMatchObject({nonce:8,data:abi.encodeFunctionData('poolSnapshot',[54n]),gasLimit:30_000_000n});
+        if(fault==='unknown-send')throw new Error('Synthetic unknown send');
+        f.before.block={number:11n,hash:word(811)};f.before.claim[16]=word(919);
+        if(fault==='post-c1')f.before.core[58]=word(999);
+        if(fault==='post-wallet')f.wallets[0].balance++;
+        f.proofs.set(newHash,{data:prepared.data,block:f.before.block,logs:[log(54n)]});
+        freshTx={...request,hash:newHash,blockNumber:11,blockHash:f.before.block.hash};return {...request,hash:newHash};
+      })};
+    const make=(signer:object=f.signer)=>createCurrentPoolPositionSubmissionAdapter({signer,ownerAddress:owner,chainId:BigInt(f.candidate.chainId),candidate:'cheap-history',transport:transport as never,attest:async()=>{},now:()=>100n});
+    const adapter=make();
+    if(fault==='unknown-send')await expect(adapter.submitPoolPositionAction(prepared,undefined,{refreshHeldSnapshot:true})).rejects.toThrow('Synthetic unknown send');
+    else {
+      const sent=await adapter.submitPoolPositionAction(prepared,undefined,{refreshHeldSnapshot:true});
+      if(fault==='success')expect(await sent.recover()).toMatchObject({positionId:54n,status:'active-snapshot-verified'});
+      else if(fault==='reload'){
+        const reloaded=make({});expect(await reloaded.recoverCurrentPreparedPoolPositionResult()).toBeNull();
+        expect(await reloaded.recoverPendingPoolPositionAttempt()).toMatchObject({positionId:54n,independentRefresh:true,privateAccountingVerified:false});
+      }else {
+        await expect(prepared.assertBeforeSend()).rejects.toThrow();
+        if(transactionScopedSnapshots)expect(await sent.recover()).toMatchObject({positionId:54n,status:'active-snapshot-verified',privateAccountingVerified:false});
+        else await expect(sent.recover()).rejects.toThrow(fault==='post-c1'?'financial state':'wallet balances');
+      }
+    }
+    expect(values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(original);
+    expect(values.has(CURRENT_POOL_REFRESH_ATTEMPT_KEY)).toBe(fault!=='success'&&!(transactionScopedSnapshots&&['post-c1','post-wallet'].includes(fault)));
+    await expect(adapter.submitPoolPositionAction(prepared,undefined,{refreshHeldSnapshot:true})).rejects.toThrow();
+    expect(transport.send).toHaveBeenCalledOnce();
+  });
+});
 
 describe('current owner Pool inventory capability',()=>{
   const mapping=(key:bigint|string,root:bigint,type='uint256')=>keccak256(AbiCoder.defaultAbiCoder().encode([type,'uint256'],[key,root]));
@@ -267,9 +595,11 @@ describe.each(['cheap-exit','cheap-history']as const)('%s exit preview and exact
     const first = abi.decodeFunctionData('managePoolPosition', preview.data), second = abi.decodeFunctionData('managePoolPosition', p.data);
     expect(first[2]).toBe(11n); expect(second[2]).toBe(12n);
     const small = 'tuple(uint256 ciphertext,bytes signature)', wide = 'tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
-    const a = AbiCoder.defaultAbiCoder().decode([`${small}[2]`], first[3]), b = AbiCoder.defaultAbiCoder().decode(['bytes32', `${small}[2]`, `${wide}[2]`], second[3]);
-    expect([...b[1]]).toEqual([...a[0]]); expect(mocks.small).toHaveBeenCalledTimes(2);
-    expect(mocks.small.mock.calls.map(v => v.slice(1, 4))).toEqual([1n, 2n].map(value => [value, f.candidate.core, abi.getFunction('managePoolPosition')!.selector]));
+    const packed=poolInputs.usesPackedPoolInputs(f.candidate),fractionType=packed?wide:`${small}[2]`;
+    const a = AbiCoder.defaultAbiCoder().decode([fractionType], first[3]), b = AbiCoder.defaultAbiCoder().decode(['bytes32', fractionType, `${wide}[2]`], second[3]);
+    expect(b[1]).toEqual(a[0]); expect(mocks.small).toHaveBeenCalledTimes(packed?0:2);
+    const inputs=packed?mocks.wide.mock.calls.slice(0,1):mocks.small.mock.calls;
+    expect(inputs.map(v => v.slice(1, 4))).toEqual((packed?[poolInputs.packPoolInputPair(1n,2n)]:[1n,2n]).map(value => [value, f.candidate.core, abi.getFunction('managePoolPosition')!.selector]));
     await p.assertBeforeSend(); f.setState(f.managed);
     expect(await p.readResult(f.withdrawalHash)).toMatchObject({ status: 'remaining-proof-required', payouts: [100n, 50n], privateAccountingVerified: false });
     const paid = (await f.cap.prepareSnapshot({ positionId: 43n, confirm: async () => true }))!;
@@ -423,7 +753,7 @@ describe.each(['cheap-prepared', 'cheap-exit','cheap-history'] as const)('%s pos
     const producer = { kind: 'snapshot', transactionHash:txHash, positionId: 8n, marketId: pair.marketId, block: { number: 10n, hash }, status: 1n,
       context, revisions: [1n, 1n, 1n, 1n], amounts: { amount0: 200n, amount1: 100n, shares: 200n, classId: 1n } };
     let data = abi.encodeFunctionData('poolSnapshot', [8n]);
-    const reader = { state: vi.fn(async () => structuredClone(stored)), wallets: vi.fn(async () => structuredClone(wallets)),
+    const reader = { selectedState: vi.fn(async () => structuredClone(stored)), wallets: vi.fn(async () => structuredClone(wallets)),
       issue: vi.fn(async (_id, kind) => ({ ...producer, kind })), readSnapshot:vi.fn(async()=>producer), current: vi.fn(async value => value),
       canonical: vi.fn(async () => ({ data, block: producer.block, logs: [] })) };
     mocks.reader.mockReturnValue(reader);
@@ -482,33 +812,39 @@ describe.each(['cheap-prepared', 'cheap-exit','cheap-history'] as const)('%s pos
     assertCurrentPoolPositionPrepared(prepared, f.signer);
     expect(prepared).toMatchObject({ marketId: f.pair.marketId, poolTokens: f.pair.tokens, data: abi.encodeFunctionData('poolSnapshot', [8n]), readyToSign: false });
     await expect(prepared.assertBeforeSend()).resolves.toBeUndefined();
+    if('sealBeforeSend' in prepared)prepared.sealBeforeSend();
     f.stored.claim[16] = toBeHex(9n, 32);
     await expect(prepared.readResult(txHash)).resolves.toMatchObject({ action: 'snapshot', status: 'active-snapshot-verified', snapshot: { marketId: f.pair.marketId } });
     expect(f.reader.issue).toHaveBeenCalledWith(8n, 'snapshot', txHash, prepared.data);
-    expect(f.reader.canonical.mock.calls.length).toBe(3);
+    expect(f.reader.canonical.mock.calls.length).toBe(candidateKey==='cheap-history'&&transactionScopedSnapshots?2:3);
     expect(mocks.decrypt).not.toHaveBeenCalled();
   });
   it.each(['state', 'wallet', 'missing-wallet', 'market', 'lease'] as const)('rejects %s drift during snapshot review', async fault => {
     const f = await preparedFixture();
-    await expect(f.cap.prepareSnapshot({ positionId: 8n, confirm: async () => {
+    const preparation=f.cap.prepareSnapshot({ positionId: 8n, confirm: async () => {
       if (fault === 'state') f.stored.protected[0] = 'changed';
       if (fault === 'wallet') f.wallets[3].allowance++;
       if (fault === 'missing-wallet') f.wallets.pop();
       if (fault === 'market') f.provider.send.mockImplementation(async method => method === 'eth_getBlockByNumber' ? { number: '0xa', hash } : toBeHex(0n, 32));
       if (fault === 'lease') f.revoke();
       return true;
-    } })).rejects.toThrow();
+    } });
+    if(candidateKey==='cheap-history'&&(fault==='state'||fault==='wallet'))await expect(preparation).resolves.toMatchObject({action:'snapshot'});
+    else await expect(preparation.then(async prepared=>{await prepared!.assertBeforeSend();})).rejects.toThrow();
     expect(f.reader.issue).not.toHaveBeenCalled();
   });
   it.each(['state', 'wallet', 'missing-wallet', 'receipt', 'old-block', 'producer'] as const)('rejects %s snapshot result corruption', async fault => {
     const f = await preparedFixture(), prepared = (await f.cap.prepareSnapshot({ positionId: 8n, confirm: async () => true }))!;
+    if('sealBeforeSend' in prepared)prepared.sealBeforeSend();
     if (fault === 'state') f.stored.protected[0] = 'changed';
     if (fault === 'wallet') f.wallets[2].balance--;
     if (fault === 'missing-wallet') f.wallets.pop();
     if (fault === 'receipt') f.reader.canonical.mockResolvedValueOnce({ data: prepared.data, block: f.producer.block, logs: [] }).mockResolvedValue({ data: prepared.data, block: f.producer.block, logs: ['changed'] } as never);
     if (fault === 'old-block') f.producer.block.number = 9n;
     if (fault === 'producer') f.reader.issue.mockRejectedValueOnce(new Error('Invalid producer'));
-    await expect(prepared.readResult(txHash)).rejects.toThrow();
+    if(candidateKey==='cheap-history'&&transactionScopedSnapshots&&['state','wallet','missing-wallet'].includes(fault))
+      await expect(prepared.readResult(txHash)).resolves.toMatchObject({status:'active-snapshot-verified',privateAccountingVerified:false});
+    else await expect(prepared.readResult(txHash)).rejects.toThrow();
   });
   it('cancelled snapshot creates no producer and unknown wallet scope is held', async () => {
     const f = await preparedFixture();
@@ -535,8 +871,11 @@ describe.each(['cheap-prepared', 'cheap-exit','cheap-history'] as const)('%s pos
   });
   it('rechecks the canonical receipt after final public position reads', async () => {
     const f = await preparedFixture(), prepared = (await f.cap.prepareSnapshot({ positionId: 8n, confirm: async () => true }))!;
+    if('sealBeforeSend' in prepared)prepared.sealBeforeSend();
     const proof = { data: prepared.data, block: f.producer.block, logs: [] };
-    f.reader.canonical.mockResolvedValueOnce(proof).mockResolvedValueOnce(proof).mockResolvedValue(null as never);
+    f.reader.canonical.mockResolvedValueOnce(proof);
+    if(!(candidateKey==='cheap-history'&&transactionScopedSnapshots))f.reader.canonical.mockResolvedValueOnce(proof);
+    f.reader.canonical.mockResolvedValue(null as never);
     await expect(prepared.readResult(txHash)).rejects.toThrow('after position reads');
   });
   it('does not replace an authenticated producer when its current-state check fails', async () => {

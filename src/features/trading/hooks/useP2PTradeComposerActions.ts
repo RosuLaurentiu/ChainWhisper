@@ -470,7 +470,7 @@ export default function useP2PTradeComposerActions({
           offerToken: offerToken.tokenAddress.toLowerCase(), requestToken: requestToken.tokenAddress.toLowerCase(),
           privatePair: offerToken.kind === 'private-erc20', priceOffer: price.offerAmount.toString(),
           priceRequest: price.requestAmount.toString(), expiresAt: capturedExpiresAt.toString() } });
-        const details = buildOtcV2ConfirmationDetails({ cotiPrivateInputCount: intent.action.terms.privatePair ? 4 : 1,
+        const details = buildOtcV2ConfirmationDetails({ cotiPrivateInputCount: intent.action.terms.privatePair ? 3 : 1,
           approvals: [{ kind: offerToken.kind, symbol: offerToken.symbol }], summaryRows: [
             { label: 'Access', value: 'Shared link' },
             { label: 'Offer budget', value: `${formatUnits(offerAmount, offerToken.decimals)} ${offerToken.symbol}` },

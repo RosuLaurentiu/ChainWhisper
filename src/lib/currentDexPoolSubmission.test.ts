@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertCurrentPoolFundingNativeAdmission, createCurrentPoolSubmissionAdapter } from './currentDexPoolSubmission';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE as candidate, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, encodeCurrentPoolCreation, encodeCurrentPoolFundingPreview, encodePreparedPoolCreation, encodePreparedPoolFundingPreview, encodePreparedPoolTopUp } from './currentDexPoolFunding';
+import * as poolInputs from './currentDexPoolFunding';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
@@ -367,18 +368,29 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
     }
     return { ...f, funding, c, pair, adapter: f.make(undefined, candidateKey) };
   }
-  function topUpFixture(index = 0, allow = false) {
+  function topUpFixture(index = 0, allow = false, packed = false) {
     const f = preparedFixture(index, allow), id = 43n, ownerContext = toBeHex(77n, 32);
     const topInputs = [{ ciphertext: { ciphertextHigh: 1n, ciphertextLow: 10n }, signature },
-      { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 20n }, signature }, { ciphertext: 1n, signature }, { ciphertext: 200n, signature }];
-    const data = encodePreparedPoolFundingPreview(f.pair.marketId, id, topInputs);
+      { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 20n }, signature }, ...(packed ?
+        [{ ciphertext: { ciphertextHigh: 1n, ciphertextLow: 200n }, signature }] : [{ ciphertext: 1n, signature }, { ciphertext: 200n, signature }])];
+    const data = encodePreparedPoolFundingPreview(f.pair.marketId, id, topInputs, packed);
     const prepared = Object.assign(f.prepared, { positionId: id, ownerContext, data });
     const funding = Object.assign(f.funding, { positionId: id, ownerContext, previewData: data,
-      data: encodePreparedPoolTopUp(f.pair.marketId, id, data, context, ownerContext, topInputs) });
+      data: encodePreparedPoolTopUp(f.pair.marketId, id, data, context, ownerContext, topInputs, packed) });
     f.receipt.logs = [{ address: f.c.core, ...abi.encodeEventLog(abi.getEvent('PoolFundingPreviewed')!, [id, context,
       Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]) }];
     return { ...f, prepared, funding, id, ownerContext, topInputs };
   }
+  it('retains packed top-up pending recovery without a resend with isolated candidate selection', async () => {
+    const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
+    try {
+      const f = topUpFixture(0, true, true);
+      await f.adapter.submitPoolTopUpFunding(f.funding as never);
+      await expect(f.adapter.recoverPendingPoolAttempt()).resolves.toMatchObject({ action: 'top-up',
+        status: 'observed-mined-verification-held', privateAccountingVerified: false, readyToSign: false });
+      expect(f.transport.send).toHaveBeenCalledTimes(1);
+    } finally { profile.mockRestore(); }
+  });
   it.each(['creation', 'top-up'] as const)('rejects cross-candidate %s submission and recovery', async mode => {
     const f = mode === 'creation' ? preparedFixture(4, true) : topUpFixture(4, true);
     const otherKey = candidateKey === 'cheap-exit' ? 'cheap-prepared' : 'cheap-exit';
@@ -440,7 +452,8 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
     expect(f.transport.estimateGas).toHaveBeenCalledWith(expect.objectContaining({ data: f.funding.data, nonce: 4, gasLimit: 100_000_000n }));
     expect(f.funding.assertBeforeFunding).toHaveBeenCalledTimes(3); expect(f.requireFunding).toHaveBeenCalledTimes(3);
     await expect(sent.recover()).resolves.toBe(f.funded);
-    expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2); expect(f.values.size).toBe(0);
+    expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({phase:'pool-fund',poolTopUpHash:null,txHash});
   });
   it.each(['preview', 'fund'] as const)('retains same-session top-up %s recovery without resending', async phase => {
     const f = topUpFixture(3, true);
@@ -453,9 +466,18 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
     const f = topUpFixture(2, true);
     if (phase === 'preview') await f.adapter.submitPoolTopUpPreview(f.prepared as never);
     else { await f.adapter.submitPoolTopUpFunding(f.funding as never); f.receipt.logs = []; }
-    await expect(f.make({}, candidateKey).recoverPendingPoolAttempt()).resolves.toMatchObject({ status: 'observed-mined',
+    const saved=f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY);
+    await expect(f.make({}, candidateKey).recoverPendingPoolAttempt()).resolves.toMatchObject({ status: phase==='fund'?'observed-mined-verification-held':'observed-mined',
       action: 'top-up', positionId: 43n, privateAccountingVerified: false, readyToSign: false });
+    if(phase==='fund')expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);
     expect(f.prepared.readPreview).not.toHaveBeenCalled(); expect(f.funding.readFunding).not.toHaveBeenCalled(); expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+  it('preserves a legacy top-up funding journal with no new marker during public recovery',async()=>{
+    const f=topUpFixture(2,true);await f.adapter.submitPoolTopUpFunding(f.funding as never);f.receipt.logs=[];
+    const old=JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!);delete old.poolTopUpHash;
+    const saved=JSON.stringify(old);f.values.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);
+    expect(await f.make({},candidateKey).recoverPendingPoolAttempt()).toMatchObject({status:'observed-mined-verification-held',poolTopUpHash:txHash,privateAccountingVerified:false,readyToSign:false});
+    expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(f.funding.readFunding).not.toHaveBeenCalled();expect(f.transport.send).toHaveBeenCalledOnce();
   });
   it.each(['id', 'zero-id', 'owner-context', 'preview-context', 'action', 'inner-suffix', 'outer-suffix', 'ciphertext', 'preview-id', 'creation-method'] as const)('rejects top-up %s mutation before any send', async fault => {
       const f = topUpFixture(0, true), host = new Interface(PREPARED_POOL_FUNDING_ABI), coder = AbiCoder.defaultAbiCoder();

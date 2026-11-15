@@ -264,8 +264,10 @@ keys to configure an operator or run two copies of the same sender.
 | Separate same-pair C1 | `npm run check:c1` | `npm run dev:c1` | `npm run reconcile:c1` |
 
 The network commands above preload `scripts/current-dex-rpc-pacing.cjs`.
-They allow one RPC request in flight per process, with at least 500 ms between
-requests (334 ms for C1). JSON-RPC batches are paced one call at a time. HTTP
+They allow one RPC request in flight per process. The standalone keeper starts
+the next queued request after the previous response, with no fixed delay.
+Standalone prices and matching retain 500 ms spacing; C1 retains 334 ms.
+Keeper read batches of up to 16 calls occupy one HTTP slot. HTTP
 403/429 and other transport failures close that process's queue; there is no
 automatic retry or endpoint change. Preserve any pending hash and reconcile it
 before a later restart. These are local test caps, not published COTI limits.
@@ -274,8 +276,8 @@ Use the npm commands. A direct Node command also needs
 
 Standalone commands retain per-process limits. The combined supervisor now uses
 its existing IPC to permit one occupied RPC slot across its four children, with
-FIFO admission. Each child keeps the spacing above; the parent adds no fixed
-delay. Queue expiry is separate from the full finite physical response timeout.
+FIFO admission. Authenticated managed children add no fixed spacing; the parent
+adds no fixed delay. Queue expiry is separate from the full finite physical response timeout.
 Refusal or uncertain child loss stops the group. An unresolved request retains
 its slot; no child restart or automatic resend clears it. Aggregate and per-child
 counters distinguish reserved grants, actual starts, responses and unknown work.
@@ -372,6 +374,10 @@ an RPC refusal, accounting failure, unresolved send, dirty exit or operator stop
 Every run has its own retained log and result. Use the existing
 `--stop <report-directory>` command and await the original group handle; its
 acknowledgement is not completion.
+The command writes an idempotent stop marker without reading growing diagnostic
+history. A repeated request, including one for a terminal group, does not start
+work or erase evidence. The parent must still finish reconciliation before any
+restart. See the [current Testnet stop repair](reports/service-stop-metadata-2026-11-13/RESULT.md).
 
 This new mode is **not live-approved**. The two earlier operating grants are
 consumed. The [prepared exact scope](reports/normal-service-renewal-2026-11-02/OPERATING_SCOPE.md)

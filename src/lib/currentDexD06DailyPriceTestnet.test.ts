@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { STAGED_D06_DEX_CANDIDATE as candidate, type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { CURRENT_D06_DEX_DAILY_PRICE_ARTIFACT as artifact } from './currentDexD06DailyPriceArtifact';
-import { D06_TESTNET_DEX_DAILY_PRICE_MANIFEST as manifest } from './currentDexD06DailyPriceTestnet';
+import { D06_TESTNET_DEX_DAILY_PRICE_MANIFEST as manifest } from '../../tests/fixtures/currentDexD06DailyPriceTestnet';
 import { currentNativeDexDailyPriceConfig } from './currentDexNativeDailyPriceTestnet';
 import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 
@@ -16,10 +16,9 @@ describe('d06 native public history binding', () => {
     expect(artifact.abi).toEqual(compiled.abi);expect(artifact.deployedBytecode).toBe(compiled.deployedBytecode);
     expect(Object.isFrozen(manifest.symbols)).toBe(true);
   });
-  it('activates only public reads and keeps the connected App-wallet hold', () => {
+  it('keeps the historical candidate outside normal App reads and retains its wallet hold', () => {
     const config=currentNativeDexDailyPriceConfig(candidate);
-    expect(config.status).toBe('active');if(config.status!=='active')throw Error('Missing history binding');
-    expect(config.manifest).toBe(manifest);expect(config).not.toHaveProperty('readyToSign');
+    expect(config).toEqual({status:'inactive'});expect(config).not.toHaveProperty('readyToSign');
     expect(()=>assertCurrentD06AppAuthority(candidate.graph)).toThrow('connected App-wallet hold');
   });
   it.each(['graph','package','core','market','release','chain','genesis','token','token-runtime','companion','runtime','attestation'] as const)('refuses changed %s candidate identity', fault => {

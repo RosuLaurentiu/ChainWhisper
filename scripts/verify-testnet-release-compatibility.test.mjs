@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { computeActionRuntimeCatalogV2Hash } from '../../MCP/dist/shared/index.js';
 import {
@@ -20,6 +21,19 @@ test('builds one exact cross-layer matrix from the current reviewed artifacts', 
   assert.match(report, /Daily-price chart .* exactly manifest-bound/u);
   assert.match(report, /Record the first finalized UTC close/u);
   assert.match(report, /Remote values are deliberately reported as unverified/u);
+  assert.match(report, /not the current APP graph/u);
+});
+
+test('rejects a Store bound to a different APP Private Liquidity Book', () => {
+  const binding = JSON.parse(inputs.appPrivateLiquidityBindingText);
+  binding.manifest.book.address = '0x1111111111111111111111111111111111111111';
+  assert.throws(
+    () => buildTestnetReleaseCompatibilityMatrix({
+      ...inputs,
+      appPrivateLiquidityBindingText: JSON.stringify(binding)
+    }),
+    /does not belong to the current APP Private Liquidity Book/u
+  );
 });
 
 test('rejects a freshly sealed MCP catalog that drifts from one candidate runtime', () => {
@@ -95,10 +109,13 @@ test('rejects a Worker source that embeds a current component address', () => {
 });
 
 test('does not rewrite an unchanged compatibility matrix', async () => {
-  const output = await verifyAndWriteTestnetReleaseCompatibility();
-  assert.equal(output, RELEASE_COMPATIBILITY_PATHS.output);
+  const paths = { ...RELEASE_COMPATIBILITY_PATHS, output: fileURLToPath(new URL(
+    '../reports/current-private-liquidity-binding-2026-10-29/app-public-work-adoption/compatibility-test-matrix.md', import.meta.url
+  )) };
+  const output = await verifyAndWriteTestnetReleaseCompatibility(paths);
+  assert.equal(output, paths.output);
   const before = await stat(output);
-  await verifyAndWriteTestnetReleaseCompatibility();
+  await verifyAndWriteTestnetReleaseCompatibility(paths);
   const after = await stat(output);
   assert.equal(after.mtimeMs, before.mtimeMs);
   assert.equal(

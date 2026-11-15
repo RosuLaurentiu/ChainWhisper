@@ -43,6 +43,8 @@ const resolveTradePricingSourceFields = ({
 >): [TradePricingField, TradePricingField] | null => {
   const inputValues = { baseAmountInput, quoteAmountInput, priceInput };
   const recentEditedFields = editedFields.slice(-2);
+  const latestEditedField = recentEditedFields[recentEditedFields.length - 1];
+  if (latestEditedField && !hasPricingFieldValue(latestEditedField, inputValues)) return null;
   if (
     recentEditedFields.length === 2 &&
     recentEditedFields.every((field) => hasPricingFieldValue(field, inputValues))

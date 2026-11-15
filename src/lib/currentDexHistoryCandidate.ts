@@ -1,19 +1,19 @@
 // Generated from the exact prepared public capture. No signing admission.
 const publicData = {
-  "graph": "9591af0d1ea77bdb952adf0a859ef895398f0bbf5600d8a1addd941cce4ff3eb",
-  "packageSha256": "037703f0e97837ac253369eccb3b066c629a4c961793e9a9f6ca930194abe449",
+  "graph": "958eea2faf9aec536df3318d5b770acec1da36efa1665cfc11a0c788d97f8fdf",
+  "packageSha256": "0abc9673d4b81d1a300da3f28bf2fe0f27b489b532e9de08c1a2736a40f62a31",
   "chainId": "7082400",
   "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
-  "core": "0xa3da6c8d5f9b1566bf965e94966ecba9f1deb758",
+  "core": "0x74ace210762c91cea53e59edc232898f612f47a9",
   "releaseId": "0x9c94cf3cde6ae7a5cc913484e46d654f86db4d1ef942b9c4b42736cf9d59494b",
-  "marketId": "0x332b4261eab10c2e1a4b71d4d0315bb31e6e87a1eebc84797df7fa971c778c82",
+  "marketId": "0x2285b83ab7c6d7496422c9153607ed168b2d46eb9f772789d233a84ec90e54e9",
   "reviewedTokenSet": "0x19412f88fffe0be491394b88ecb3e5c577402b187fc04c2c2cd2ee121fbde602",
   "feePpm": 500,
   "maxWorkLifetime": 900,
   "readyToSign": false,
   "attestationBlock": {
-    "number": "10424198",
-    "hash": "0x684c2dffb053f0910c93cbaa524427ed1bf8030eddc43a161b23c925373f3cbc"
+    "number": "10432807",
+    "hash": "0x799b2d1a54a783428b70c26fd1a2bcd656b8f8688b755d37cadb3ba8645d7fa8"
   },
   "tokens": [
     [
@@ -36,280 +36,280 @@ const publicData = {
   "runtimes": [
     [
       "ChainWhisperRangeWork",
-      "0x333e38c83b2d976231cf4fc3b2c226fdd5e4ef72",
-      "0x2fed0443f4c8ec38c69b6caef8c682d406a13d594b9073d8301f1f88b74f29dc"
+      "0xd4c7a3588d07e8681f5ba145a6a13f834991eea4",
+      "0x8a3d8f9478022c94fad0ef3e8b7384d8955ce7ea8e5c77159fe4b9a9e9f1c59e"
     ],
     [
       "ChainWhisperOrderWork",
-      "0x386f06ebb436369c910239ba14994abb803f5639",
-      "0xc02e3a1341221ef0b97fd0356d75f6bfa166af8fba1f19b016b9512d74f4bc5b"
+      "0x32fcc035d8fcc24c375b9efd61f34b099c62970c",
+      "0x89de5958cc263c4736ae1d3768d3e93ca3cdcd356eec1c3d93e8644000da2e8c"
     ],
     [
       "ChainWhisperRecurringOwnerControls",
-      "0xf40901fe2ad504f1b6d3f2011e39f25f9641d0c1",
-      "0x1209ddc4481dc5286fe73630c02943df014194efad53bca0c19a56d68ce57868"
+      "0x4c680cbb6ca0cae2569146602b1a7a00e4dd006b",
+      "0xcfc863a678cade5a88d0fe2b49b53d5d3935711e34f28b22f215fc86fdc06416"
     ],
     [
       "ChainWhisperFixedOwner",
-      "0x33744b1214b70f09f8e82e60b5ab1329fee7ed6b",
-      "0xcefbd7f4efe140c0359c35f5a4ff1f414ed4e2d0fa975e1cf60ecc8082d3df54"
+      "0x6e477fd324d19e848028886585a815d214129964",
+      "0x7a51635153e1e9ec321e34f224d7564a47a6d4b3c55de0426c5f9e095f8c1b5d"
     ],
     [
       "ChainWhisperOrderOwnerLifecycle",
-      "0x88f14335b2971e4627cc1636508a85de5f800bbf",
-      "0x260d0e41a48a4365977100519bc15f393367334c31ef4783e4a89e83afe82cb0"
+      "0xe03b87c20fb57c9ee209f64bbe8674a94ee219d8",
+      "0x9fc8924fcc69a44ea194727f54a82d53410baa667fc3d56feb2641be27dacd6a"
     ],
     [
       "ChainWhisperRangeOwner",
-      "0x8e3059b2c9186cba99d019f2eb22c22f28ccafd0",
-      "0xdd2c7bd8650fc18cb779de457c2123a2176b421d1ab11d1031c652e926bb8857"
+      "0x1b36ce7f536192c32c9787213931dd8a4cea3974",
+      "0x500c0e30dcbf42bc477eda8de9ac72000c7265520362e4b8c61ce70a6e4840de"
     ],
     [
       "ChainWhisperFixedWorkLifecycle",
-      "0xb1b9f1aef2d1f59fb264ab879641440ac066c19f",
-      "0x5d0df92b43c090b836d9c76bd55096286a389d52251092ddbdb5bd977ff7f180"
+      "0x2a4e4f9b5645ba0e21385ea6e6a8928fd4558d27",
+      "0xde7f9a2028d9bb7a01456a6da6473d4083c9fc47ea10a8e21709069484af6fdc"
     ],
     [
       "ChainWhisperFixedProtectedRatio",
-      "0x34c2401c0b148070473019ec3304c9aa62ee42ba",
+      "0x68a7810b2e01e46adf7d234201f9bc95aacba721",
       "0xc9c92f2de2787403ad4d3a7d5316cad82e625c6fc954c002189db807b20e481f"
     ],
     [
       "ChainWhisperFixedSelectorMath",
-      "0xcc16cf649279529594edbc8535d3345b86147abd",
-      "0x436384226a81cc0c8639266143108c26ab78630be41497a36148c459e1cb4aec"
+      "0x621094f1c127f8ba816d7c2315407232ff8e0da5",
+      "0x8d9522a92e0aa768ed32d4c360b0a62aff290eb642b1f5d4aff7ba89125673d2"
     ],
     [
       "ChainWhisperFixedBoundedSelector",
-      "0xf281cd51ff5c91fda2acddb21db37fd98794f0b0",
-      "0xe8038c6102ae89a255b82a80706cefebd9b786b9e2258513e4acdc346418aa08"
+      "0xad8437aa1aa00fcc9a7c67f98ec6f962148b913d",
+      "0xd5fe83c33c89b17409671f19ac279c932aad100cee2dbd58cbe7978a1d990e7b"
     ],
     [
       "ChainWhisperConcentratedQ96Module",
-      "0xc050820f6a27602e28d7fbeb22fe0e804c429f33",
-      "0x5069a6dfff6817aeed3540c1af8c9b70ba7160e1ad83ebd47b8d715079031fd8"
+      "0x3989640ccd056cbfe789ec3e5de4ec9959f16f92",
+      "0x1cf985c426200dcce446ff8843d35fe34fabf81685118760d9e04e09f0e170e9"
     ],
     [
       "ChainWhisperSinglePassAllocationGT",
-      "0xb197900d9cac8e3208fd4e137ee7a5a2bec561aa",
-      "0xf6ddb8cd926ae37d921104a328bfc144ba79c6894ed5bc7820f4326fdd277380"
+      "0xd6b5732d27f74529a0111b980bcee4c56f2c1ba2",
+      "0xe9c12a7b46d9dc07515f4e7cf129eacc7046a7d166e3471570214df7aa381917"
     ],
     [
       "ChainWhisperConcentratedPoolQuoteModule",
-      "0x0aee06a56697abba29ed9149cc7d82cb5ecbc099",
-      "0x040e2e23278ea4cd794386236556bc7f99ee9c2190181b3175f12f9e359ca30f"
+      "0x9d0d7679f64145555c514ebc63609a3d52b3c473",
+      "0x9558f36549013d7aea6b4fb400735856a1e521cd35a588f6c303db5bc9970224"
     ],
     [
       "ChainWhisperC1Math",
-      "0x98da663d40466544212c1fd28d042db7e1596c20",
-      "0xacf8a37f5e64eb7819c19989b520ecc4c6b4190eba2746a2de66a20d51ac27a7"
+      "0xa02698e461a0aadc1aed620efa4b5004c96182a7",
+      "0x0d27bd8a4df4bddcd07d2feda2ea2999ade12cf52c623f3736f5f95ad3a75643"
     ],
     [
       "ChainWhisperDexReceiptAccess",
-      "0xfce0c022d7fc5a63be82678652fa8dd50502d3bc",
-      "0xf361c30b53793ecb6aacef61c69de5b3e87fec407920efc0d6920b1826bd5804"
+      "0x8683c20619a3a80051b4be0bf0ee769ca00a10ac",
+      "0x51a4a970e22e405b5789c5108420454b955962283bd973c4b2f44cd5f38ec1d2"
     ],
     [
       "ChainWhisperPoolOwner",
-      "0x07e440534006333cf71dd32da528e3dbe3ba6b42",
-      "0x6796b202b17cd9d1eeb7a51a7f088d8c8d67fb4299a1e81e85054b1ca28ece34"
+      "0xb15018b140417825af10ac7876a71cdee4c6eba4",
+      "0x8cf5909ec4c713404d4f350075696b57fd25f5ef12729aa00dc4c0f1acce8137"
     ],
     [
       "ChainWhisperC1Commands",
-      "0xc38814d7c35496223a69d6905e35ccf7affd4b35",
-      "0x8fdd5f26fd1eb28ac740d64d11d97e48708cb29b678b50e9fd8445f48b37e1eb"
+      "0x7b8fbeeb337056bf8351ee3aea8f658855f634b3",
+      "0xf9acce9668e008bc9a52a18bfad387d54a74b667465e29f9f7fecf62b5dc969a"
     ],
     [
       "ChainWhisperDexCheapAsyncQuote",
-      "0x503aa001cae2a35e8a03bcbb0fd3d92bebc23ffb",
-      "0xfd068bfd6919764cb4351c04429434f7ea64b4caf57b565ee67577451a8aee65"
+      "0xbff3f10d9ce4be270813cc2ec7e8efaadeb572e3",
+      "0xfcf66a3ea6c79bd6387cc987554a6df02802dc0d8a95bc66cc32b2a54bbf92b1"
     ],
     [
       "ChainWhisperDexCheapAsyncTerminal",
-      "0xfd4b9c5f6034dee5916ce3e9fc3a39488d368696",
-      "0x26af6bf8b2ad69ee6255fd35112a884b7befe395743504e31f8f15d52f81fd09"
+      "0xf094494fc8e822ae49c0061371d6c5da8dd1e695",
+      "0x8a39ff4ec0cea0d8bba87fbc91ccb1c285766ab85910ea10b6a8c8c5eca742e5"
     ],
     [
       "ChainWhisperDexCheapAsyncRouter",
-      "0x257d68c075b4b38e229326bd0722496a310c80ec",
-      "0x572ffb1f0d280d65d4114e1789812dab946db18187d53aeaab7e59ac20e1ee39"
+      "0x0f02c8f2aa5e5ef2c506236e40a0bc5e4957a8e8",
+      "0x07129178ca4de529ebe7a8057c1e4f78e9cf9ed38099d5e8337a9400fe692fb9"
     ],
     [
       "ChainWhisperDexFastPoolLifecycle",
-      "0x7a920dea819a715098e1788e6f91d2d30f9caa46",
-      "0x2d1e044ddfbaeae997d0ff3b2626b15408bf08ca3c970a0808493bc02aed2062"
+      "0x554c63ad85eab376ce45a475031ad3a6de82dda3",
+      "0x67a6d83add22fae4ddbfa0a92d0ca3e14ba01ce3288516cfb4b7d87c5b275c85"
     ],
     [
       "ChainWhisperDexFastPoolSettlement",
-      "0x7ba4a2511107049350ad59f67027c093957d787d",
-      "0x99cf2a802b680cc5a96d77cc39e1eb6df7c55f152564823849f3e3d8f52e31ac"
+      "0x0478e493a72cf63e9db26f079900f2a177898615",
+      "0xd6e5d037a3e005bfeef2c6298a67b7376380c6eb0858e9e3ba08c8247817ec11"
     ],
     [
       "ChainWhisperDexPoolWorkLibrary",
-      "0xe2b0ecb231e67b0ed30de35a5e665904337d1ae0",
-      "0x21bd4a03b93e8e0680a5e128046cdfce02d198d677cd83e34214680c6a888173"
+      "0x5878c2117c0e965c3792eb1dfcd9161468270f71",
+      "0x6f90c77cb63869668b45269e1f72926a1bb172f681bd17018c88bb7db96dcc8b"
     ],
     [
       "ChainWhisperDexJointWorkLibrary",
-      "0x18ce6373babfe2d8327d20e365ad32f89a547a54",
-      "0xcaccf0862d22ec584011f2cf9aa51cff790058c4218a0024f91814987fcaa86a"
+      "0xc61d7b92bed3abba1bd780b452adc2705123442a",
+      "0x22599e4a1c3d86a5265adb08c18ae8a15571de163740c4ee78bab4148643b2a9"
     ],
     [
       "ChainWhisperDexJointSettlement",
-      "0x2494096cd6e443c183620c856648620c676062ca",
-      "0x8dca29e1a6eb816c73fbba40e34513b6f237128bde75dda8903ff837699cb65b"
+      "0x493ace0a356a17ecebce238a17f9b61f559ded63",
+      "0xa40c6054d2083eaac546f8e961ac4b3955a4bbb3563db6e9c0e496dd144f79d4"
     ],
     [
       "ChainWhisperDexLimitMatchSettlement",
-      "0xec6fc23e78fcf8f970c85effcfe9acf9fe71f802",
-      "0x9afc644c66a618246f292f6585021737b11e8d46ded36a657a29ef7f3a745c5e"
+      "0x15e44317a91aa096c4025dc2f04d44e88e5b3c2a",
+      "0x97a79e23f1128bc28de71f825e22e4b7b86fc3073313d60d267daf3a3aafa1ac"
     ],
     [
       "ChainWhisperDexWorkLibrary",
-      "0xd0dcfbb69d005ffc3521abd188fea616ed971365",
-      "0xc57280ab9b018913bc9252f5397652738da61b46b4b87cea3891f6d57f70b8b2"
+      "0xa5628cf9bc2b3c8c596b8cd1c884acb52add58ce",
+      "0x623c7e9995b4bf4ae4fd111e34daefe874b4415ce0688fb0d6c4e63047b5bddd"
     ],
     [
       "ChainWhisperFixedPositionAdmission",
-      "0x48214e90f6ca53a4f18199d330e4e392e68da637",
-      "0x5dcba5327fd09c6a6adcaa6736c08448f721e0160ae4dd3eea3a401cd1fc945a"
+      "0x801e0e12f461a197e4975fbce44b8693820277b8",
+      "0xd310e091636eb951d12134579761279e33100acd8e29c83fbd54859cd66a7887"
     ],
     [
       "ChainWhisperSharedPoolClaims",
-      "0x4dbb1eff43eb175123f2bac27539f28e696cd752",
-      "0x25a761124ae892d55cba132d89e876610dd85fcbbaf5384e1b564434cc49b9fa"
+      "0x14c77ca6e2b2da4280afda04bb56feb036002acc",
+      "0x0ae67b3c96bb80b75ff027033e0249e47904f55b8badf0657081fbce9374f5b9"
     ],
     [
       "ChainWhisperDexPositionCommands",
-      "0xddb2f34af9d76b565c6e8a76e9e22d01895937a9",
-      "0xa511264e92b901215e24d7d593856fa24f972985b35744e9a941ee05dd77376f"
+      "0x6a4d1c5e493455590641cf62a4a555c41d64c500",
+      "0x3c72dc049a4ff5fb3fdbf9c3d9538e436cbf4acad36f19e32c40bbd272134254"
     ],
     [
       "ChainWhisperDexSwapAdmission",
-      "0xfafb915c2930d24fe5b796ad15328282117450df",
-      "0xcb7fbe405d81c20b05ccd2c5527dfdd5ebe5a20cf1fd8a35c4480eeb0518c40d"
+      "0xd7991975f43ac79600d906ee75b90752e2e39c20",
+      "0x1210ef04a28052c13fef1494412ded242dca13ad33428e33d974618cecaf7e83"
     ],
     [
       "ChainWhisperSharedPoolMathDeployer",
-      "0xa7fdd1281a5ce4b04b1241e502f076e3b98a50e6",
-      "0x0a38789664680f184ed638bb56d5c22f4f26627e466c4e88d9b2520a015b409d"
+      "0x2f22c557ac8e7eba7ffa3877820b8d742bfd89a0",
+      "0x76e331580d0fb62ee1d26bd5f42b2ffb67eb889cc7644146dde7ef02176703ff"
     ],
     [
       "ChainWhisperPoolTermsDeployer",
-      "0xde5c36414fdf6e941f9c0a5452ebb936254c7544",
-      "0xc218c14a7c3f994eaa1dfa3be43499101c2b9f996ebc413dd76850b23213a51d"
+      "0xf941397bdde55b641445517eb4496c0edf391ddd",
+      "0xb34f54e34dc6acba849eff46da4250f944605cddb26d72e64a577bdda0a8dde8"
     ],
     [
       "ChainWhisperDexMarketCommands",
-      "0x432dc9048456fe1deb6254e0d8735229380a53dd",
-      "0x090407c64c9f818e8bc591abf4aa20ad782573b7c844ef56bc09f81c8974ab4c"
+      "0x91ffbf4642b4afe9337afd63237288feb8c173dd",
+      "0x7eb88d8eb82d2745aa0e8eed83d1373ae31982f96577664aaca524d637e39d3e"
     ],
     [
       "ChainWhisperDexOperationRelease",
-      "0x10c697436572932c352e4f435eb293078061e432",
-      "0xeb13441a796b56174d0d0e44d6c82bec7489c914835884241f2da5940b231986"
+      "0x5b0bd5411eb755a28117967d017df47c56a2870f",
+      "0x38ad652c093516fe22bc22a09028efdd10b9dd4eb05d364f8a8f063c95a0d6fc"
     ],
     [
       "ChainWhisperDexOperationSettlement",
-      "0x7841d07acfcd085cf64fe2f6dcb7812df0ac1d54",
-      "0x5b0dc906eee24ba1bcd7ee461064f6e1bd6b75a73d4efc47f4b6d391f1091f47"
+      "0x4d43da3ee1602f1f3840b28cfa7ad840986baa30",
+      "0xc4c1079955a87400ab25953c7201ac6e8a45475185fcc30f55c7de8b2cb8a750"
     ],
     [
       "ChainWhisperDexOperationLifecycle",
-      "0xea00c53e5b22a223935aedfe91f465a9de8ef9f0",
-      "0x068c3397e302659cd7f8113859f44688a1ce434a3e60b4ff51ec17dfcb09d8a0"
+      "0xbbe0c43bfd615660234f3d2b86186bc806626942",
+      "0x0da0e10d79db392b59f857c7a2cad672a4e358f102dcb18ae9ddc86f504b6a93"
     ],
     [
       "ChainWhisperDexPoolReference",
-      "0x740203b94feab5fd8471747be6ec2ae75288ef60",
-      "0xc65d3874a145b9ad02d47886c77e999566689a85c604e40c2552e7680207cc27"
+      "0x6cb7c367855a3daf2abda53589a89712dd3f43d0",
+      "0x8634f9fb9da41e26a9923416ecae2cec978d557b19a29ddacef177d16a3b6729"
     ],
     [
       "ChainWhisperFixedMatchWork",
-      "0xfb5ffc75da1c73202cdf4d272cb5d648b28ae6af",
-      "0xc5d0c9eb89f5c3650d98c29822ec9e4d731f08461fc7458826b395cf40f4f200"
+      "0x57e6b5169ead7e410b323d75a7fcc6821d59762c",
+      "0xf8c2dd05ed41d6fe6854690c03e8c429c1abd656962c27a9a0a9fdd3e8f4a2f5"
     ],
     [
       "ChainWhisperRangeAllocationWork",
-      "0x7c4a7296f1983c8f5816705dee0132560fa9ed89",
-      "0xd7abd2dcaadc911881681f74ba2eed17ca4d4ff3960441f59a4737e5ddf629c9"
+      "0x6a137cb8129788e646baebc0f15bb998fefe961d",
+      "0xfebdcb23b8e6022321de461c0644bfbe55b9b93f5a5f5f9c1b4ccae50ce53a4e"
     ],
     [
       "ChainWhisperCreationChunk",
-      "0xd6d778c71ee0159190527231dc505ba3bf3aaa6c",
-      "0x36dbe2ceef18f6b5ea7fca81b46f7f90c4749d5b8ff28a0e2ce0c7a5e55d1c73"
+      "0x678796f6649a4e84a0bbb203d5bd9797a6fecbfe",
+      "0x24ee7d8d9d516fb5357c15fa3490458e2de5d0ae82b688b6c01e39f487b50842"
     ],
     [
       "ChainWhisperCreationChunk",
-      "0xf0871fa566cb455934ddcab8a23219e481193999",
-      "0xf17b093a318c6fb3eafeba4fcd9650d724e5626af627634df8d9855e6a556cdf"
+      "0xb9646782a4d3714f680d800ea1d5b88760a3b452",
+      "0xb0a2c880fa73978eaa94cc05dedaee4a3b6e39c3acc2787659933ba761a020c7"
     ],
     [
       "ChainWhisperFixedEngineFactory",
-      "0xfd528691650f65a6a359b29c465efbb411c08a9c",
-      "0x72e2c92e299fd89934feb82e191c7a00416198254686af1a5e6f6d401451d6ea"
+      "0x97460c5e78ec98797133b2d6a3e1eafcf7286ea2",
+      "0x4512c0e651cb0b5fd635780b9f390fdf5b4d4a3a1d74ee63fe5ab203aa59579f"
     ],
     [
       "ChainWhisperDexCore",
-      "0xa3da6c8d5f9b1566bf965e94966ecba9f1deb758",
-      "0xa5a60403d5c4ab01cd2baddb94cefdcd108bc99d249f21c6e217be2187cb3d34"
+      "0x74ace210762c91cea53e59edc232898f612f47a9",
+      "0xad91c10d48e7da8df45c9dd52a4da0fe9d5adcb821f474dd5c83b1d2558454aa"
     ],
     [
       "ChainWhisperPoolTerms",
-      "0x669a60c5d4892bc4dab9a5cf390ccb1887708bb6",
-      "0x9df91c0e2522aa4e86848921bd11d3a3dfe37cf78013ccf5c4be17b96abaec48"
+      "0x9b618f5dd39e6a2a8d0987a029fb2dc29a16493b",
+      "0x3f2aa986ba87e10f52ea40369f4a65ef4153289366944b39d82d76fecb6610c2"
     ],
     [
       "ChainWhisperSharedPoolMath",
-      "0x7635d610bfd46c88655df3841d0754ba278d5b57",
-      "0x2df7a10b05f526ff9aa0704b6e31539efc93ce7a237f27a36ef1180a96902819"
+      "0x4ae6bd443c0c0d608bdf83ed5e28bda441377837",
+      "0x19b408c21a20e2b2dae233c59eb4e12a12706f307ffa2aefd8860ff8dff23cc8"
     ],
     [
       "ChainWhisperDirectLimitMatch",
-      "0x53d49db951f22eba2ad91dcf238f11146d7a02f5",
-      "0xfffe6fa5b07f845821bbd011bd5cf1375274b8d5cb3133e4cb829ca11f95662a"
+      "0x641a0397e16715b29fe5288f77f026bf019e439d",
+      "0x9d5292a41db258f4e7101671781a6691941afa7d0f427abaa32449c8a75d9626"
     ]
   ],
   "companions": [
     [
       "ChainWhisperFixedEngine",
-      "0x85d47f96deeab01e6d108a74a9db06bab8590176",
-      "0xdb0edd09fbf1d33a65d7a30daffd06a789a01334bf6af0baa472c69d2051162a"
+      "0x86ca1a94d6235dc5eec727763075deaab2f8493c",
+      "0xe4fd50f98a6ad05d56846af73db05f9420867f27dd9d1a776dcd8c369de997d4"
     ],
     [
       "ChainWhisperDexWideTerminalGT",
-      "0x2bc8149e18f7df16cf9360e14fad800ef8c890d0",
-      "0xed3f01731984dacc2f027ec4c5fce5b1995c9df29b8a71e436d1ebfe967b7835"
+      "0xed78d4ad9d8af60f69cbe0d5775a934245fbbe12",
+      "0x52ccffc0a211cd80857c20867d4fdfe991582f5050f3005a2e4ec621f814d464"
     ],
     [
       "ChainWhisperDexFastPoolQuote",
-      "0x3ba9fb7a6fdeb694dc8ae95e15dee25bf1f61e28",
-      "0x0b0365745929654662806d1e24d567e75e1998b0c7558bfc2a6cd280b47ba416"
+      "0x27dbd97da8a49042583279189ffb9cda14eaee66",
+      "0x247370216836684cfffc411564bf49f4694709edc3d4c559fbaf054cf3a51fee"
     ],
     [
       "ChainWhisperDexPositionNFT",
-      "0x8868314f2e8ccae03a743e2ab1c35c101ee05c30",
-      "0xbb8b538a6939e583c687154937e93f19c1221e9cca5eb15e8cf7f31c4d9a40ff"
+      "0xa22df081be5d7f5b864f3842de9f1d00febc14f5",
+      "0xc2dfb6d8bb64939dccda23b23dd0988c348a98fcf2501bb3793d2ef4cb77a5e6"
     ]
   ],
-  "evaluatorBinding": "0x8f01d4a4142e3aebc94ed4d3f079c62cff3e38319aa8ccf97cd32e6083d64340",
-  "poolTerms": "0x669a60c5d4892bc4dab9a5cf390ccb1887708bb6",
+  "evaluatorBinding": "0x9bc8863f9e716c734e93a2493782407968cdd079a2f25d680ddbae019b4af7ae",
+  "poolTerms": "0x9b618f5dd39e6a2a8d0987a029fb2dc29a16493b",
   "factoryStorage": [
     [
       "5",
-      "0x000000000000000000000000d6d778c71ee0159190527231dc505ba3bf3aaa6c"
+      "0x000000000000000000000000678796f6649a4e84a0bbb203d5bd9797a6fecbfe"
     ],
     [
       "6",
-      "0x000000000000000000000000f0871fa566cb455934ddcab8a23219e481193999"
+      "0x000000000000000000000000b9646782a4d3714f680d800ea1d5b88760a3b452"
     ],
     [
       "7",
-      "0x0000000000000000000000000000000000000000000000000000000000008638"
+      "0x000000000000000000000000000000000000000000000000000000000000867d"
     ],
     [
       "10",
-      "0x000000000000000000000000a3da6c8d5f9b1566bf965e94966ecba9f1deb758"
+      "0x00000000000000000000000074ace210762c91cea53e59edc232898f612f47a9"
     ]
   ],
   "primaryReviewedTokenSet": "0xeb92f26b276725fd6a1c56c3efc36a7cf0e114fc8df849d377624fae6feddf24",
@@ -343,194 +343,194 @@ const publicData = {
   ],
   "pairs": [
     {
-      "marketId": "0x332b4261eab10c2e1a4b71d4d0315bb31e6e87a1eebc84797df7fa971c778c82",
+      "marketId": "0x2285b83ab7c6d7496422c9153607ed168b2d46eb9f772789d233a84ec90e54e9",
       "canonicalId": "1",
       "tokens": [
         "0x5181b25e7ad744e635fe048d388fd820f943e582",
         "0xe595f63789d1d31b4b7c0bee69062daf5be81ac8"
       ],
-      "engine": "0x85d47f96deeab01e6d108a74a9db06bab8590176",
-      "poolTerms": "0x669a60c5d4892bc4dab9a5cf390ccb1887708bb6",
+      "engine": "0x86ca1a94d6235dc5eec727763075deaab2f8493c",
+      "poolTerms": "0x9b618f5dd39e6a2a8d0987a029fb2dc29a16493b",
       "companions": [
         [
           "ChainWhisperFixedEngine",
-          "0x85d47f96deeab01e6d108a74a9db06bab8590176",
-          "0xdb0edd09fbf1d33a65d7a30daffd06a789a01334bf6af0baa472c69d2051162a"
+          "0x86ca1a94d6235dc5eec727763075deaab2f8493c",
+          "0xe4fd50f98a6ad05d56846af73db05f9420867f27dd9d1a776dcd8c369de997d4"
         ],
         [
           "ChainWhisperPoolTerms",
-          "0x669a60c5d4892bc4dab9a5cf390ccb1887708bb6",
-          "0x9df91c0e2522aa4e86848921bd11d3a3dfe37cf78013ccf5c4be17b96abaec48"
+          "0x9b618f5dd39e6a2a8d0987a029fb2dc29a16493b",
+          "0x3f2aa986ba87e10f52ea40369f4a65ef4153289366944b39d82d76fecb6610c2"
         ],
         [
           "ChainWhisperSharedPoolMath",
-          "0x7635d610bfd46c88655df3841d0754ba278d5b57",
-          "0x2df7a10b05f526ff9aa0704b6e31539efc93ce7a237f27a36ef1180a96902819"
+          "0x4ae6bd443c0c0d608bdf83ed5e28bda441377837",
+          "0x19b408c21a20e2b2dae233c59eb4e12a12706f307ffa2aefd8860ff8dff23cc8"
         ],
         [
           "ChainWhisperDirectLimitMatch",
-          "0x53d49db951f22eba2ad91dcf238f11146d7a02f5",
-          "0xfffe6fa5b07f845821bbd011bd5cf1375274b8d5cb3133e4cb829ca11f95662a"
+          "0x641a0397e16715b29fe5288f77f026bf019e439d",
+          "0x9d5292a41db258f4e7101671781a6691941afa7d0f427abaa32449c8a75d9626"
         ]
       ]
     },
     {
-      "marketId": "0x6752c14d88241318850f38fd0a96f6ea18792343d66f2c8f4e5a74f1f643d488",
+      "marketId": "0xa5ba0db16501aea1ccb6d12adf3575f1df0f06c3f43d1bd5d7b7ba85cd0e9ee3",
       "canonicalId": "2",
       "tokens": [
         "0x99b7d4cef854ca380be0c49863f761670a57f0b3",
         "0xe595f63789d1d31b4b7c0bee69062daf5be81ac8"
       ],
-      "engine": "0x0d6ac777370dda9caf8a8f75a9dd3a7f9f7f1153",
-      "poolTerms": "0x62084211d2991e07788a3f9e3e2b493658279022",
+      "engine": "0xaf3ee5d86ac5df6b7fea7a6591558b9ab483bfea",
+      "poolTerms": "0x654b99cf8d5d7a9fdfa040dd751a3fe28a8f6281",
       "companions": [
         [
           "ChainWhisperFixedEngine",
-          "0x0d6ac777370dda9caf8a8f75a9dd3a7f9f7f1153",
-          "0x8047215e9443700760d234688c10e5fdd407dd8d9ebb801f8441bd9715c52af3"
+          "0xaf3ee5d86ac5df6b7fea7a6591558b9ab483bfea",
+          "0x09d6ab7b948f89b07d6f6a2c25543b6658f704ac97ac0b61d39503ed96563250"
         ],
         [
           "ChainWhisperPoolTerms",
-          "0x62084211d2991e07788a3f9e3e2b493658279022",
-          "0x95a855f9820e91363723ae13aee8a2f4598d32d0591be2488f90518d706c659c"
+          "0x654b99cf8d5d7a9fdfa040dd751a3fe28a8f6281",
+          "0xd1426a49c57995a7ea1fadb3916dbdf4f932ce4bec9318cdb8a01fa05f407bf4"
         ],
         [
           "ChainWhisperSharedPoolMath",
-          "0xf006f81e51cdb97ef70777d5b4b8284469854b97",
-          "0x2df7a10b05f526ff9aa0704b6e31539efc93ce7a237f27a36ef1180a96902819"
+          "0x26c84d20942a53fdff78dae3938b092745443db3",
+          "0x19b408c21a20e2b2dae233c59eb4e12a12706f307ffa2aefd8860ff8dff23cc8"
         ],
         [
           "ChainWhisperDirectLimitMatch",
-          "0x3fc23da33f9ec71e659a5dd8d445f95176b6c17e",
-          "0xfffe6fa5b07f845821bbd011bd5cf1375274b8d5cb3133e4cb829ca11f95662a"
+          "0x67f485721e1fa6af457c9e4e43dd63f82c8a5362",
+          "0x9d5292a41db258f4e7101671781a6691941afa7d0f427abaa32449c8a75d9626"
         ]
       ]
     },
     {
-      "marketId": "0xb75e820ce92432e6cfa444714c11b169a49d59f8bb2c736d7ee4643ff0814050",
+      "marketId": "0x6371a1e91a889e47c61d69db4cdfbf21e18ad8876f3421f8b4a75dfa4eb5c7da",
       "canonicalId": "3",
       "tokens": [
         "0x8e8f1142efe829fbdf2fecba7a2fa0e472b5b703",
         "0xe595f63789d1d31b4b7c0bee69062daf5be81ac8"
       ],
-      "engine": "0xd04a24eeeeed62d469de10765ef6bba7df6e5771",
-      "poolTerms": "0x73edd45cdc2d1ba4ab956f5e0f831f3e5f0e08f0",
+      "engine": "0x237e257187f3339f4b7bbf249cc77104d9a279ea",
+      "poolTerms": "0xab5d5dbbf3267b7d301e1dc53560882785f0048f",
       "companions": [
         [
           "ChainWhisperFixedEngine",
-          "0xd04a24eeeeed62d469de10765ef6bba7df6e5771",
-          "0x32ae2f632cffd4a40dee8536dd5f4797369b3acc12a34dfad21060618b7859ea"
+          "0x237e257187f3339f4b7bbf249cc77104d9a279ea",
+          "0x0f0756726201350331f8c017319c60817abd1d81cfa3efc1ae764e756a552367"
         ],
         [
           "ChainWhisperPoolTerms",
-          "0x73edd45cdc2d1ba4ab956f5e0f831f3e5f0e08f0",
-          "0x978700ab7e887d725644b831233d0e4faf00864149fb07397d0fbc2c353bb920"
+          "0xab5d5dbbf3267b7d301e1dc53560882785f0048f",
+          "0x246b3ef588d02479eefaec5184166b278045ac79fc176d3348502e814e51a8be"
         ],
         [
           "ChainWhisperSharedPoolMath",
-          "0x104fec8ab9f537c0c6aeb90c71d0dd24dd5606ab",
-          "0x2df7a10b05f526ff9aa0704b6e31539efc93ce7a237f27a36ef1180a96902819"
+          "0x02675b199a740bbece5812e15eb24f1858a302ef",
+          "0x19b408c21a20e2b2dae233c59eb4e12a12706f307ffa2aefd8860ff8dff23cc8"
         ],
         [
           "ChainWhisperDirectLimitMatch",
-          "0xdb56a5a91d5afc3fbf9f0755d4098318c8a789cf",
-          "0xfffe6fa5b07f845821bbd011bd5cf1375274b8d5cb3133e4cb829ca11f95662a"
+          "0xa3161b91cc9cc4e826452e0015b83d1a8e86cd6d",
+          "0x9d5292a41db258f4e7101671781a6691941afa7d0f427abaa32449c8a75d9626"
         ]
       ]
     },
     {
-      "marketId": "0xa813003013f03213c0ceeef7c3b379422c5e9e56dfd003f614e0c1325e4c9b6f",
+      "marketId": "0x4f4da7dd376cf9dc0ebd121e32219f6787458d398ea2a93f3e768f2e70302a1c",
       "canonicalId": "4",
       "tokens": [
         "0x5181b25e7ad744e635fe048d388fd820f943e582",
         "0x99b7d4cef854ca380be0c49863f761670a57f0b3"
       ],
-      "engine": "0x672f58d967def2d86a614d8e8ba8ea6af228f220",
-      "poolTerms": "0xc0b8a24a10a3cebca4434d290c928cb2b97325be",
+      "engine": "0x370e380c554eebd2cc0ec3dbed285974b15bc090",
+      "poolTerms": "0x3b122ea8f557570e0863b8ab9940a43bd3aa1e17",
       "companions": [
         [
           "ChainWhisperFixedEngine",
-          "0x672f58d967def2d86a614d8e8ba8ea6af228f220",
-          "0x42254cbfc42addf3d7553a16eaf20f8d6f1dd5ab0b93cfff22ce890ea1f5b5a9"
+          "0x370e380c554eebd2cc0ec3dbed285974b15bc090",
+          "0x1bb7c21b221bdf64b427b33648d75b508bdfe6cb63cbdbab0a1a9f88b050de50"
         ],
         [
           "ChainWhisperPoolTerms",
-          "0xc0b8a24a10a3cebca4434d290c928cb2b97325be",
-          "0x2ad9dfe76f289aae89f68e9539b08f381633f5cf7f37305d3796c9c8956d91b1"
+          "0x3b122ea8f557570e0863b8ab9940a43bd3aa1e17",
+          "0xcebc5daa039f0dd73a1ce7a08ef64c1815180a3c631455e5f221956d75e4ba0a"
         ],
         [
           "ChainWhisperSharedPoolMath",
-          "0x07a3b6942db091d084d781249ca32630b5e4f1cd",
-          "0x2df7a10b05f526ff9aa0704b6e31539efc93ce7a237f27a36ef1180a96902819"
+          "0x1c15d75cd06a60a6b2dba4d4bfe1aa383e62348d",
+          "0x19b408c21a20e2b2dae233c59eb4e12a12706f307ffa2aefd8860ff8dff23cc8"
         ],
         [
           "ChainWhisperDirectLimitMatch",
-          "0xbca21c9fb5ec8d53cc5e76c75e46f9f9c34fe8d1",
-          "0xfffe6fa5b07f845821bbd011bd5cf1375274b8d5cb3133e4cb829ca11f95662a"
+          "0x4aa1591be9a96725a7abe54252e722dc7fcadd34",
+          "0x9d5292a41db258f4e7101671781a6691941afa7d0f427abaa32449c8a75d9626"
         ]
       ]
     },
     {
-      "marketId": "0xdce7a2d32805455d34a3179fa176ec25bd60ca9b280eb31e4623af81dc8630b4",
+      "marketId": "0x429c19dd8f6debe38d623f8950f359df13174fc239d0d376a7758851259aa730",
       "canonicalId": "5",
       "tokens": [
         "0x5181b25e7ad744e635fe048d388fd820f943e582",
         "0x8e8f1142efe829fbdf2fecba7a2fa0e472b5b703"
       ],
-      "engine": "0x6dbcaa38c18033b148996433b5b99958fff32e66",
-      "poolTerms": "0x5f7278cad11903d45b7442b9c69a286c2d92a2dc",
+      "engine": "0x0cc3f5d6b455d73b0baac890933ecf43f2e07d38",
+      "poolTerms": "0xdaed0dbcdde177569b77d80a194b998a51273d78",
       "companions": [
         [
           "ChainWhisperFixedEngine",
-          "0x6dbcaa38c18033b148996433b5b99958fff32e66",
-          "0x1be3877c0c6cc4fbbbe0eb0ee9475a7bc8c143142b7d62476ec24e4ec4e07527"
+          "0x0cc3f5d6b455d73b0baac890933ecf43f2e07d38",
+          "0x1806635a6ac08138e7688522c01b22bf14efc93ed0d40988588c270a243da0a1"
         ],
         [
           "ChainWhisperPoolTerms",
-          "0x5f7278cad11903d45b7442b9c69a286c2d92a2dc",
-          "0x64373bd44cafd90bb4799f74530e9c839f737062785682361286fa844722b1b8"
+          "0xdaed0dbcdde177569b77d80a194b998a51273d78",
+          "0xc0f7b3e673b99a583b8a9ae975bd70b26cd8429f0dab9a13c02c6df3aac8559b"
         ],
         [
           "ChainWhisperSharedPoolMath",
-          "0xd6a6b7e8312af8d7f38444c0e24fc5cfb5029249",
-          "0x2df7a10b05f526ff9aa0704b6e31539efc93ce7a237f27a36ef1180a96902819"
+          "0x8f9b8998f092ff1c65e5bc3ce7532e4ff3561ace",
+          "0x19b408c21a20e2b2dae233c59eb4e12a12706f307ffa2aefd8860ff8dff23cc8"
         ],
         [
           "ChainWhisperDirectLimitMatch",
-          "0x673e4e42b20bbb7efba2ab5b6b589a6a8cfce143",
-          "0xfffe6fa5b07f845821bbd011bd5cf1375274b8d5cb3133e4cb829ca11f95662a"
+          "0x7a00e59720d98088ff388b17062139d2f7d551c4",
+          "0x9d5292a41db258f4e7101671781a6691941afa7d0f427abaa32449c8a75d9626"
         ]
       ]
     },
     {
-      "marketId": "0xb136fe13a904e03e7fea00dda10c163fbfca488ad57c0e31bc2855809ae37efa",
+      "marketId": "0xff1bbf62913b39a89c6ef8ec981510ca254243d42f07a79cf924c0f219d5e3e1",
       "canonicalId": "6",
       "tokens": [
         "0x8e8f1142efe829fbdf2fecba7a2fa0e472b5b703",
         "0x99b7d4cef854ca380be0c49863f761670a57f0b3"
       ],
-      "engine": "0xa4827cade92949b8663906848bea6194156dbfaa",
-      "poolTerms": "0xf649f8670cf1f9dd6440aa4f528c9def3fe8378f",
+      "engine": "0xf90026aa3a54d18ed9cba2ae6478115692acfd54",
+      "poolTerms": "0x1dc3878f29222662b0b2f9ce80b13f7c486d15eb",
       "companions": [
         [
           "ChainWhisperFixedEngine",
-          "0xa4827cade92949b8663906848bea6194156dbfaa",
-          "0x0b013722a05c0e2ac1c03d716bd2835f45ee229b3a868617f57cc7ea2bfe8d1a"
+          "0xf90026aa3a54d18ed9cba2ae6478115692acfd54",
+          "0xd2140058f371f2e641ed1d396eacc62f5cd7e1c6af04c83a144e40474749e9e9"
         ],
         [
           "ChainWhisperPoolTerms",
-          "0xf649f8670cf1f9dd6440aa4f528c9def3fe8378f",
-          "0x7b9cf06197016cc7fd567763d62d20396eb6027a7ec65c21619d1208058ec2de"
+          "0x1dc3878f29222662b0b2f9ce80b13f7c486d15eb",
+          "0x6c1efb292297ed55ccafbc5367ff9c636b2480cc359c6808e5318354a4ebbd2c"
         ],
         [
           "ChainWhisperSharedPoolMath",
-          "0x2762669f5c1fb7be5a253d6916998fb1a68d2ed8",
-          "0x2df7a10b05f526ff9aa0704b6e31539efc93ce7a237f27a36ef1180a96902819"
+          "0xd91bd84bbb920fcc5e0c6b8a046ad0c3c28a29bb",
+          "0x19b408c21a20e2b2dae233c59eb4e12a12706f307ffa2aefd8860ff8dff23cc8"
         ],
         [
           "ChainWhisperDirectLimitMatch",
-          "0x7c774db7eba42b484f3cfc6436b28602450e757e",
-          "0xfffe6fa5b07f845821bbd011bd5cf1375274b8d5cb3133e4cb829ca11f95662a"
+          "0x323ffe20ee6591deb3ff36de823f51434f79a7cb",
+          "0x9d5292a41db258f4e7101671781a6691941afa7d0f427abaa32449c8a75d9626"
         ]
       ]
     }
@@ -548,7 +548,7 @@ const publicData = {
     "quoteSignature": "quoteCheapAsync((address,address,address,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint16))",
     "stagesSourceSha256": "becef06d163c129459a74447284ad69dfea3da8424a891247539831700213329"
   },
-  "attestationSha256": "fa8605fb0f91979a253c6a4ffc7efe46465bb2bb5d780fe971e75fd38a82c382",
+  "attestationSha256": "e23a8ba2dbb9221ffac3a0c32f24077b0ab0808cb5e22f1eb53cde7292c96eae",
   "nativeScope": {
     "sixMarketPublicBinding": true,
     "fullFixtureAdmission": false,

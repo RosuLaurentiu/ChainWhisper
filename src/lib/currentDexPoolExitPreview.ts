@@ -20,8 +20,8 @@ const context = (value: string) => {
   requireProof(/^0x[0-9a-fA-F]{64}$/.test(value) && BigInt(value) !== 0n, 'Invalid Pool exit context.'); return value;
 };
 const position = (id: bigint) => { uint(id); requireProof(id >= 8n, 'Pool exit needs an owned claim NFT.'); return id; };
-const inputs = (values: readonly PoolFundingInput[], isWide: boolean) => {
-  requireProof(values.length === 2, 'Pool exit needs exactly two private inputs.');
+const inputs = (values: readonly PoolFundingInput[], isWide: boolean, count = 2) => {
+  requireProof(values.length === count, count === 2 ? 'Pool exit needs exactly two private inputs.' : 'Pool exit needs one packed fraction.');
   return values.map(value => {
     requireProof(!!value && /^0x[0-9a-fA-F]{130}$/.test(hexlify(value.signature)), 'Invalid Pool exit input signature.');
     if (isWide) {
@@ -34,27 +34,27 @@ const inputs = (values: readonly PoolFundingInput[], isWide: boolean) => {
   });
 };
 
-export const encodePoolExitPreview = (id: bigint, ownerContext: string, fraction: readonly PoolFundingInput[]) =>
+export const encodePoolExitPreview = (id: bigint, ownerContext: string, fraction: readonly PoolFundingInput[], packed = false) =>
   abi.encodeFunctionData('managePoolPosition', [position(id), context(ownerContext), POOL_EXIT_PREVIEW_ACTION,
-    coder.encode([`${small}[2]`], [inputs(fraction, false)])]);
+    packed ? coder.encode([wide], [inputs(fraction, true, 1)[0]]) : coder.encode([`${small}[2]`], [inputs(fraction, false)])]);
 
-const previewRequest = (previewData: string) => {
+const previewRequest = (previewData: string, packed = false) => {
   const request = abi.decodeFunctionData('managePoolPosition', previewData);
   requireProof(abi.encodeFunctionData('managePoolPosition', request).toLowerCase() === previewData.toLowerCase() &&
     request[2] === POOL_EXIT_PREVIEW_ACTION, 'Pool withdrawal needs a canonical exit preview.');
   position(request[0]); context(request[1]);
-  const decoded = coder.decode([`${small}[2]`], request[3]);
-  requireProof(coder.encode([`${small}[2]`], decoded).toLowerCase() === request[3].toLowerCase(), 'Non-canonical Pool exit fraction payload.');
-  const fraction = inputs([...decoded[0]], false);
+  const types = [packed ? wide : `${small}[2]`], decoded = coder.decode(types, request[3]);
+  requireProof(coder.encode(types, decoded).toLowerCase() === request[3].toLowerCase(), 'Non-canonical Pool exit fraction payload.');
+  const fraction = inputs(packed ? [decoded[0]] : [...decoded[0]], packed, packed ? 1 : 2);
   return { request, fraction };
 };
 
-export const encodePreviewedPoolWithdrawal = (previewData: string, previewContext: string, minimums: readonly PoolFundingInput[]) => {
-  const { request, fraction } = previewRequest(previewData); context(previewContext);
-  // Both calls use the same Core selector. Retain both exact fraction ciphertexts
+export const encodePreviewedPoolWithdrawal = (previewData: string, previewContext: string, minimums: readonly PoolFundingInput[], packed = false) => {
+  const { request, fraction } = previewRequest(previewData, packed); context(previewContext);
+  // Both calls use the same Core selector. Retain the exact fraction ciphertexts
   // and signatures; callers cannot replace the reviewed fraction here.
   return abi.encodeFunctionData('managePoolPosition', [request[0], request[1], POOL_PREVIEWED_WITHDRAW_ACTION,
-    coder.encode(['bytes32', `${small}[2]`, `${wide}[2]`], [previewContext, fraction, inputs(minimums, true)])]);
+    coder.encode(['bytes32', packed ? wide : `${small}[2]`, `${wide}[2]`], [previewContext, packed ? fraction[0] : fraction, inputs(minimums, true)])]);
 };
 
 // Exact exitContext ABI. The issuer must supply authenticated, block-pinned
@@ -63,8 +63,8 @@ export const encodePreviewedPoolWithdrawal = (previewData: string, previewContex
 export const computePoolExitPreviewContext = (previewData: string, baseline: Readonly<{
   chainId: bigint; core: string; releaseId: string; marketId: string; owner: string;
   marketWords: readonly string[]; anchors: readonly (readonly string[])[];
-}>) => {
-  const { request, fraction } = previewRequest(previewData);
+}>, packed = false) => {
+  const { request, fraction } = previewRequest(previewData, packed);
   uint(baseline.chainId); requireProof(baseline.chainId > 0n, 'Invalid Pool exit chain.');
   const core = getAddress(baseline.core), owner = getAddress(baseline.owner);
   requireProof(BigInt(core) !== 0n && BigInt(owner) !== 0n, 'Invalid Pool exit actor.');
@@ -75,7 +75,7 @@ export const computePoolExitPreviewContext = (previewData: string, baseline: Rea
     words[1].toLowerCase() === baseline.marketId.toLowerCase() && baseline.anchors.length === 7 &&
     baseline.anchors.every((a, i) => a.length === 64 && canonicalWords(a) && BigInt(a[0]) === 1n &&
       BigInt(a[59]) === 0n && BigInt(a[62]) === BigInt(i)), 'Pool exit reserve scope changed.');
-  const commitment = keccak256(coder.encode(['uint256', 'uint256'], fraction.map(f => f.ciphertext)));
+  const commitment = keccak256(coder.encode(packed ? ['tuple(uint256 ciphertextHigh,uint256 ciphertextLow)'] : ['uint256', 'uint256'], fraction.map(f => f.ciphertext)));
   let result = keccak256(coder.encode(['string', 'uint256', 'address', 'bytes32', 'bytes32', 'address', 'uint256', 'bytes32'],
     ['chainwhisper.shared-exit-preview.v1', baseline.chainId, core, baseline.releaseId, baseline.marketId, owner, request[0], commitment]));
   result = keccak256(coder.encode(['bytes32', 'bytes32'], [result, request[1]]));

@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const ownerBeta = vi.hoisted(() => ({ active: false, activation: { activatedAt: 2_000_000_000n, startingNonce: 220, legacyReservationHash:'' } }));
 vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
   const actual = await importOriginal<typeof import('./currentDexOwnerBetaPolicy')>();
-  const selected = (graph:string,owner:string) => ownerBeta.active && graph===actual.CURRENT_OWNER_BETA.graph && owner.toLowerCase()===actual.CURRENT_OWNER_BETA.owner;
-  return { ...actual, CURRENT_OWNER_BETA: {...actual.CURRENT_OWNER_BETA, activation:ownerBeta.activation}, isCurrentOwnerBeta:selected,
+  const { STAGED_SHARED_HISTORY_DEX_CANDIDATE: history } = await import('./currentDexHistoryCandidate');
+  const selected = (graph:string,owner:string) => ownerBeta.active && graph===history.graph && owner.toLowerCase()===actual.CURRENT_OWNER_BETA.owner;
+  return { ...actual, CURRENT_OWNER_BETA: {...actual.CURRENT_OWNER_BETA, graph:history.graph, core:history.core, activation:ownerBeta.activation}, isCurrentOwnerBeta:selected,
     assertCurrentOwnerBetaWindow:(graph:string,owner:string,core:string,chainId:bigint,now:bigint,nonce:number,recovery:boolean,cap:bigint,price:bigint) => {
-      if(!selected(graph,owner)||core.toLowerCase()!==actual.CURRENT_OWNER_BETA.core||chainId!==7082400n)throw new Error('Owner beta identity changed.');
+      if(!selected(graph,owner)||core.toLowerCase()!==history.core||chainId!==7082400n)throw new Error('Owner beta identity changed.');
       actual.checkCurrentOwnerBetaWindow(ownerBeta.activation,now,nonce,recovery,cap,price);
     } };
 });

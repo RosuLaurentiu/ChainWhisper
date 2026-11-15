@@ -59,7 +59,7 @@ export default function useCurrentTrialBalances(session: SharedWalletSession | u
       if (selected.prepared) {
         const reader = await getFunds!(selected.chain, { candidate: selected.key });
         if (scope.current !== captured || sequence.current !== request) return;
-        const funds = await reader.read(assertReadCurrent);
+        const funds = await reader.readSwap([tokenIn, tokenOut], assertReadCurrent);
         if (scope.current !== captured || sequence.current !== request) return;
         if (funds.owner.toLowerCase() !== owner || funds.core.toLowerCase() !== captured.core ||
           funds.graph !== captured.graph || funds.packageSha256 !== captured.packageSha256 ||

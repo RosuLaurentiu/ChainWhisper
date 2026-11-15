@@ -85,8 +85,8 @@ describe('Counter participant discovery/history over the reused canonical bounda
     const props: ComponentProps<typeof CounterTradeV2Activity> = {
       activity: { snapshot: result, busy: false, error: '', refresh: async () => {}, loadOlder: async () => {} },
       runtime: { ownerAddress: owner } as never, lifecycle: 'history', activeFilter: 'all', tokenInfoByKey,
-      ensureTokenInfo: async () => {}, search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest',
-      confirmFunding: async () => {}, runWalletFlow: async operation => operation(), onBusyChange: () => {}, actionInProgress: false,
+      search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest',
+      onSelect: () => {}, actionInProgress: false,
     };
     const html = renderToStaticMarkup(createElement(CounterTradeV2Activity, props));
     expect(html).toContain('Received 0.004 TOKEN_B · Paid 0.05 TOKEN_A · Returned 0.07 TOKEN_A');

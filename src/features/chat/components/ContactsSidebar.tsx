@@ -117,6 +117,7 @@ function ContactsSidebar({
   onActivateGroup,
   error
 }: ContactsSidebarProps) {
+  sortedGroups = sortedGroups.filter(group => group.membershipEnded !== true);
   if (!hasAesReady) {
     visibleSortedContacts = [];
     sortedGroups = [];

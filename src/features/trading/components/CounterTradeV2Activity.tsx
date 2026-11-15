@@ -3,14 +3,17 @@ import { formatUnits, getAddress } from '@coti-io/coti-ethers';
 import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
 import type { CounterTradeV2ActivitySnapshot, CounterTradeV2ActivityOrder, CounterTradeV2ActivityRow } from '../../../lib/counterTradeV2Activity';
 import { buildTradeCustomTokenInfoKey, type TradeCustomTokenInfo } from '../../../lib/appHelpers';
-import { CounterTradeV2ParticipantControls } from './CounterTradeV2Controls';
-import type { TradeFundingPreflightInput } from '../../../lib/tradeActionConfirm';
 
 type Runtime = NonNullable<OtcV2ActionRuntime['counter']>;
-type Reference = Pick<CounterTradeV2ActivityOrder, 'chainId' | 'escrow' | 'id'>;
+export type CounterActivityReference = Pick<CounterTradeV2ActivityOrder, 'chainId' | 'escrow' | 'id'>;
 
-export const counterActivityOrderKey = (row: Reference): string => `${row.chainId}:${row.escrow.toLowerCase()}:${row.id}`;
-export const resolveCounterActivityRuntime = async (root: Runtime, input: Reference, isCurrent = () => true): Promise<Runtime> => {
+export const counterActivityOrderKey = (row: CounterActivityReference): string => `${row.chainId}:${row.escrow.toLowerCase()}:${row.id}`;
+export type CounterActivitySelection = { reference: CounterActivityReference; root: Runtime; lifecycle: 'active' | 'history'; group: 'received' | 'active' | 'history' };
+export const isCounterActivitySelectionCurrent = (selection: CounterActivitySelection | null, scope: {
+  root?: Runtime; wallet: string; lifecycle: 'active' | 'history'; group: 'received' | 'active' | 'history'; rows?: readonly CounterActivityReference[];
+}): boolean => Boolean(selection && scope.root && selection.root === scope.root && selection.root.ownerAddress.toLowerCase() === scope.wallet.toLowerCase() &&
+  selection.lifecycle === scope.lifecycle && selection.group === scope.group && scope.rows?.some(row => counterActivityOrderKey(row) === counterActivityOrderKey(selection.reference)));
+export const resolveCounterActivityRuntime = async (root: Runtime, input: CounterActivityReference, isCurrent = () => true): Promise<Runtime> => {
   if (!/^[1-9][0-9]*$/.test(input.id) || BigInt(input.id) >= (1n << 256n) || !/^[1-9][0-9]*$/.test(input.chainId)) {
     throw new Error('Counter activity reference is invalid.');
   }
@@ -63,12 +66,12 @@ export const useCounterTradeV2Activity = ({ runtime, ownerAddress, enabled, ensu
   return { snapshot: current?.snapshot, busy: current?.busy ?? false, error: current?.error ?? '', refresh, loadOlder };
 };
 
-export default function CounterTradeV2Activity({ activity, runtime, lifecycle, activeFilter, tokenInfoByKey, ensureTokenInfo,
-  search, pairFilter, typeFilter, sortMode, confirmFunding, runWalletFlow, onBusyChange, actionInProgress }: {
+export default function CounterTradeV2Activity({ activity, runtime, lifecycle, activeFilter, tokenInfoByKey,
+  search, pairFilter, typeFilter, sortMode, actionInProgress, onSelect }: {
   activity: ReturnType<typeof useCounterTradeV2Activity>; runtime: Runtime; lifecycle: 'active' | 'history'; activeFilter: 'all' | 'received' | 'active';
-  tokenInfoByKey: Readonly<Record<string, TradeCustomTokenInfo>>; ensureTokenInfo: EnsureToken;
+  tokenInfoByKey: Readonly<Record<string, TradeCustomTokenInfo>>;
   search: string; pairFilter: string; typeFilter: string; sortMode: string; actionInProgress: boolean;
-  confirmFunding: (input: TradeFundingPreflightInput) => Promise<void>; runWalletFlow: <T>(operation: () => Promise<T>) => Promise<T>; onBusyChange: (busy: boolean) => void;
+  onSelect: (reference: CounterActivityReference, runtime: Runtime, lifecycle: 'active' | 'history') => void;
 }) {
   const olderSentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -79,21 +82,6 @@ export default function CounterTradeV2Activity({ activity, runtime, lifecycle, a
     window.addEventListener('scroll', onScroll, true);
     return () => window.removeEventListener('scroll', onScroll, true);
   }, [activity.snapshot, activity.busy, activity.error, activity.loadOlder]);
-  const view = useRef({ runtime, lifecycle });
-  view.current = { runtime, lifecycle };
-  const [selection, setSelection] = useState<{ root: Runtime; target: Runtime; reference: Reference; lifecycle: typeof lifecycle } | null>(null);
-  const [selectionError, setSelectionError] = useState('');
-  const [resolvingKey, setResolvingKey] = useState('');
-  useEffect(() => { setSelection(null); setSelectionError(''); setResolvingKey(''); }, [runtime, lifecycle]);
-  const select = (row: Reference) => {
-    const reference = Object.freeze({ chainId: row.chainId, escrow: row.escrow, id: row.id });
-    const current = () => view.current.runtime === runtime && view.current.lifecycle === lifecycle;
-    setSelection(null); setSelectionError(''); setResolvingKey(counterActivityOrderKey(reference));
-    void resolveCounterActivityRuntime(runtime, reference, current).then(target => {
-      if (current()) setSelection({ root: runtime, target, reference, lifecycle });
-    }).catch(() => { if (current()) setSelectionError('Counter details could not be loaded for this contract.'); })
-      .finally(() => { if (current()) setResolvingKey(''); });
-  };
   const meta = (r: CounterTradeV2ActivityOrder) => {
     const kind = r.privatePair ? 'private-erc20' : 'erc20';
     const offer = tokenInfoByKey[buildTradeCustomTokenInfoKey(kind, r.offerToken)], request = tokenInfoByKey[buildTradeCustomTokenInfoKey(kind, r.requestToken)];
@@ -115,14 +103,11 @@ export default function CounterTradeV2Activity({ activity, runtime, lifecycle, a
     for (const row of activity.snapshot?.history ?? []) { const key = counterActivityOrderKey(row); counts.set(key, (counts.get(key) ?? 0) + 1); }
     rows.sort((a, b) => (counts.get(counterActivityOrderKey(b)) ?? 0) - (counts.get(counterActivityOrderKey(a)) ?? 0));
   }
-  const selected = selection?.root === runtime && selection.lifecycle === lifecycle &&
-    rows.some(row => counterActivityOrderKey(row) === counterActivityOrderKey(selection.reference)) ? selection : null;
   const labels = ['', 'Created', 'Accepted', 'Cancelled', 'Declined', 'Expired', 'Returned after parent change'];
   return <section className="p2p-management-group-block" aria-label="Counter-offers" aria-busy={activity.busy}>
     <header className="p2p-management-group-head"><strong>Counter-offers</strong>
       <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.refresh(); }}>Refresh latest</button></header>
     {activity.error ? <p role="alert">{activity.error}</p> : null}
-    {selectionError ? <p role="alert">{selectionError}</p> : null}
     {!activity.error && activity.snapshot && !activity.snapshot.complete ? <p role="status">History is incomplete. Older trades and events may not be loaded.</p> : null}
     {!activity.busy && !activity.error && activity.snapshot?.complete && rows.length === 0 ? <p>No counter-offers in this view.</p> : null}
     {rows.map(row => <article key={`${counterActivityOrderKey(row)}:${row.key ?? 'order'}`} className="p2p-management-group-block">
@@ -131,12 +116,9 @@ export default function CounterTradeV2Activity({ activity, runtime, lifecycle, a
         {row.role === 'taker' ? `Received ${amount(row.received, meta(row).offer)} · Paid ${amount(row.payment, meta(row).request)} · Returned ${amount(row.refund, meta(row).request)}`
           : `Payment received ${amount(row.payment, meta(row).request)}`}</p>
         : row.role === 'maker' && row.status !== 1 ? <p>Returned {amount(row.refund, meta(row).offer)}</p> : null}
-      <button type="button" className="standalone-trade-secondary-btn" style={{ overflowWrap: 'anywhere' }} disabled={activity.busy || actionInProgress || Boolean(resolvingKey)} onClick={() => select(row)}>{resolvingKey === counterActivityOrderKey(row) ? 'Loading counter…' : `Review counter ${row.id}`}</button>
+      <button type="button" className="standalone-trade-secondary-btn" style={{ overflowWrap: 'anywhere' }} disabled={activity.busy || actionInProgress} aria-controls="counter-trade-review" onClick={() => onSelect(row, runtime, lifecycle)}>{`Review counter ${row.id}`}</button>
       {row.transactionHash ? <details><summary>Transaction</summary><p style={{ overflowWrap: 'anywhere' }}>{row.transactionHash}</p></details> : null}
     </article>)}
-    {selected ? <CounterTradeV2ParticipantControls runtime={selected.target} ownerAddress={selected.target.ownerAddress} proposalId={selected.reference.id} tokenInfoByKey={tokenInfoByKey}
-      ensureTokenInfo={ensureTokenInfo} confirmFunding={confirmFunding} runWalletFlow={runWalletFlow}
-      onBusyChange={busy => { onBusyChange(busy); if (!busy) void activity.refresh(); }} actionInProgress={actionInProgress} /> : null}
     <div ref={olderSentinel} aria-hidden="true" />
     {!activity.snapshot?.complete ? <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { void activity.loadOlder(); }}>{activity.busy ? 'Loading…' : 'Load older'}</button> : null}
     {activity.snapshot ? <details><summary>History coverage</summary><p>Blocks {activity.snapshot.fromBlock ?? 'not yet loaded'} to {activity.snapshot.throughBlock ?? 'not yet loaded'} of {activity.snapshot.safeHead}</p></details> : null}

@@ -95,6 +95,7 @@
   border-radius: 0;
 }
 :root body .app-shell :is(.app-header-nav, .p2p-product-view-tabs) :is(button.active, button[aria-current="page"]) { background: transparent; }
+:root body .app-shell .app-header-nav button::after { content: none; }
 :root body .app-shell :is(.app-header-nav, .p2p-trade-tabs, .p2p-agent-mode-toggle) button { border: 0; border-radius: 0; }
 :root body .app-shell :is(.dex-v2-section-tabs, .dex-v2-swap-mode-toggle) button { border-radius: 0; }
 :root body .app-shell .trading-market-change strong { color: var(--text-secondary); }
@@ -160,6 +161,22 @@
   .dex-owner-action, .dex-owner-footer) > summary { color: var(--text-secondary); }
 :root body .app-shell .dex-v2-current-unlock-note { margin: 4px 0 0; color: var(--text-secondary); font-size: .82rem; line-height: 1.5; }
 :root body .app-shell .dex-v2-current-swap .dex-v2-current-swap-heading { margin: 0; }
+
+/* Trading forms share compact fields; wallet details stay in one disclosure. */
+:root body .app-shell-dex-v2 .dex-v2-current-swap { gap: 10px; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap :is(.dex-v2-current-amounts > label, .dex-v2-quote-output) { gap: 6px; min-height: 0; padding: 12px; border-radius: 4px; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts :is(input, output) { min-height: 44px; font-size: 1.75rem; line-height: 1.25; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-execution-choice { gap: 10px; margin: 0; flex-wrap: wrap; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-progress.is-idle { padding: 0; margin: 0; border: 0; background: transparent; box-shadow: none; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] > .dex-v2-panel-fields { gap: 12px; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-current-side-toggle button { height: 44px; padding: 0 12px; border-color: transparent; font-size: .78rem; font-weight: 700; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-current-side-toggle button[aria-pressed="true"] { border-color: var(--brand-strong); }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border-default); border-radius: 4px; background: var(--surface-base); }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) > span { display: flex; align-items: center; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) strong { font-size: .85rem; color: var(--text-secondary); }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) input { padding: 0; border: 0; background: transparent; font-size: 1.6rem; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-panel-fields > button.dex-v2-review-button { margin-top: 0; background: var(--brand); border-color: var(--brand); color: #fff; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-fill-note { color: var(--text-secondary); font-size: .8rem; }
 
 /* Primary actions are flat violet. Secondary and disabled controls stay clear. */
 :root body .app-shell :is(.dex-v2-review-button, .landing-action-btn-primary,
@@ -403,10 +420,16 @@
 :root body .app-shell .dex-market-chart-legend > .candle-up { font-size: 1.2rem; }
 
 @media (min-width: 921px) {
-  /* Both rows share the same tracks and gutters. The chart spans the tab row. */
+  /* Keep both utility targets at 44px without pushing the address outside its border. */
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected { width: 238px; min-width: 238px; }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected .p2p-wallet-status { width: 192px; flex-basis: 192px; }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected :is(.p2p-wallet-identity, .p2p-wallet-primary-wrap, .wallet-primary-action) { width: 148px; flex-basis: 148px; }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected :is(.p2p-wallet-privacy-direct, .p2p-wallet-menu-wrap, .p2p-wallet-menu-trigger) { width: 44px; min-width: 44px; max-width: 44px; flex: 0 0 44px; }
+  /* Navigation and content use the same desktop tracks on DEX and P2P. */
+  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) { --trading-content-gutter: 24px; --trading-workspace-columns: minmax(0, 1fr) clamp(340px, 36vw, 560px); --trading-workspace-gap: 16px; }
   :root body .app-shell-dex-v2 {
-    --dex-workspace-columns: minmax(0, 1.7fr) minmax(360px, 1fr);
-    --dex-workspace-column-gap: 24px;
+    --dex-workspace-columns: var(--trading-workspace-columns);
+    --dex-workspace-column-gap: var(--trading-workspace-gap);
     --dex-navigation-height: 58px;
     --dex-workspace-top-gap: 12px;
   }
@@ -414,7 +437,12 @@
     padding: 0 24px 24px;
   }
   :root body .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav {
-    padding: var(--dex-workspace-top-gap) 24px 4px;
+    display: grid;
+    grid-template-columns: var(--dex-workspace-columns);
+    column-gap: var(--dex-workspace-column-gap);
+    align-items: center;
+    min-height: 64px;
+    padding: 8px 24px;
   }
   :root body .app-shell-dex-v2 .dex-v2-content-grid:not(.dex-v2-management-grid) {
     grid-template-columns: var(--dex-workspace-columns);
@@ -422,11 +450,33 @@
     padding: 0;
   }
   :root body .app-shell-dex-v2 .dex-v2-form-column {
-    padding: 12px 0 0 20px;
+    padding: 12px 0 0;
   }
-  :root body .app-shell-dex-v2 .dex-v2-mode-nav .dex-view-navigation {
-    padding: 0 0 0 20px;
+  :root body .app-shell-trades .p2p-trading-shell:is(.p2p-trading-shell-offers-terminal, .p2p-trading-shell-create, .p2p-trading-shell-mine) { display: grid; grid-template-columns: var(--trading-workspace-columns); column-gap: var(--trading-workspace-gap); padding-inline: var(--trading-content-gutter); }
+  :root body .app-shell-trades .p2p-trading-shell > :is(.p2p-market-overview, .p2p-create-overview) { grid-column: 1 / -1; width: 100%; height: auto; min-height: 64px; padding: 8px 0; }
+  :root body .app-shell-trades .p2p-trading-shell > :is(.p2p-market-overview, .p2p-create-overview) > :is(.p2p-market-overview-head, .p2p-create-overview-head) { display: grid; grid-template-columns: var(--trading-workspace-columns); grid-template-areas: none; column-gap: var(--trading-workspace-gap); min-height: 48px; }
+  :root body .app-shell-trades .p2p-trading-shell > :is(.standalone-trade-detail-section, .standalone-trade-create-panel) { grid-column: 2; width: 100%; max-width: none; margin: 0; }
+  :root body .app-shell-trades .p2p-trading-shell > :is(.p2p-offers-workspace, .p2p-my-trades-section) { grid-column: 1; width: 100%; margin: 0; padding-inline: 0; }
+  :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation,
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%; min-height: 48px; margin: 0; padding: 0; gap: 0;
+    border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; background: transparent; box-shadow: none;
   }
+  :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation > nav.p2p-product-view-tabs { grid-column: span 3; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; min-width: 0; max-width: none; margin: 0; gap: 0; background: transparent; }
+  :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation { grid-column: 2; }
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) { grid-column: 2; grid-row: 1; width: 100%; min-width: 0; margin: 0; }
+  :root body .app-shell-trades :is(.p2p-market-overview-head, .p2p-create-overview-head) > .p2p-market-identity { grid-column: 1; grid-row: 1; }
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-product-navigation { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation button,
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button {
+    width: 100%; min-width: 0; height: 48px; min-height: 48px; margin: 0; padding: 8px 12px; border: 0; border-radius: 0;
+    background: transparent; color: var(--text-secondary); font-size: .85rem; font-weight: 600; box-shadow: none;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation button[aria-current="page"],
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button[aria-current="page"] { background: transparent; color: var(--text-primary); box-shadow: inset 0 -2px var(--brand-strong); }
+  :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation button::after,
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button::after { content: none; }
   :root body .app-shell .dex-market-chart:not(.is-expanded) {
     height: calc(100dvh - 190px);
     min-height: 560px;
@@ -588,4 +638,103 @@
   :root body .app-shell .dex-v2-current-swap { gap: 10px; }
   :root body .app-shell .dex-market-chart-legend > .candle-up { font-size: .9rem; }
   :root body .app-shell .dex-market-chart-legend > small { font-size: .72rem; line-height: 1.5; }
+}
+/* Keep standalone beta controls usable without changing their typography. */
+:root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades, .app-shell-chat)
+  :is(button, input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, summary) {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Keep the sound track small inside its accessible hit area. */
+:root body .app-shell .wallet-utility-sound > button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px; padding: 6px; border: 0; background: transparent;
+}
+:root body .app-shell .wallet-utility-sound-track {
+  position: relative; display: block; width: 32px; height: 18px;
+  border: 1px solid var(--approved-border); border-radius: 999px;
+  background: rgba(93, 87, 108, 0.52);
+}
+:root body .app-shell .wallet-utility-sound > button[aria-checked='true'] .wallet-utility-sound-track {
+  border-color: #8f52e8; background: #7540c9;
+}
+.privacy-readiness-bridge.is-error em { color: #f28b9a; }
+.privacy-readiness-bridge.is-loading em { color: #e4bd70; }
+
+/* Keep field instructions visible while users type. */
+:root body .quick-actions-form .quick-actions-field,
+:root body .group-header-invite-row > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: .8125rem;
+}
+:root body .quick-actions-form .quick-actions-field > input,
+:root body .group-header-invite-row > label > input { width: 100%; min-width: 0; }
+:root body .group-header-invite.group-header-invite-compact .group-header-invite-row {
+  grid-template-columns: minmax(0, 1fr) minmax(130px, auto) auto;
+  align-items: end;
+}
+:root body .group-header-invite > small { display: block; margin-top: 8px; color: var(--text-secondary); line-height: 1.5; }
+
+/* Management gives the task space first; the same chart stays available. */
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-content-grid { grid-template-columns: minmax(0, 1fr); }
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-form-column { grid-row: 1; }
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-market-chart-host { grid-row: 2; margin-top: 16px; }
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-market-chart-host > summary {
+  min-height: 44px;
+  padding: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+/* High desktop zoom must leave a scrollable workspace below the context. */
+@media (max-height: 520px) {
+  :root body .app-shell { height: auto; min-height: 100dvh; overflow: visible; grid-template-rows: auto minmax(320px, 1fr); }
+  :root body .app-shell:is(.app-shell-trades, .app-shell-dex-v2) { grid-template-rows: auto auto minmax(320px, 1fr); }
+  :root body .app-shell .mobile-bottom-nav { padding: 2px 8px max(2px, env(safe-area-inset-bottom, 0px)); gap: 4px; }
+  :root body .app-shell .mobile-bottom-nav button { min-height: 44px; padding-block: 4px; }
+}
+@media (max-height: 520px) and (max-width: 920px) {
+  :root body .app-shell.app-shell-dex-v2 { --ux-mobile-trading-nav: 44px; --ux-mobile-pair-context: 44px; }
+  :root body .app-shell .trading-product-switch,
+  :root body .app-shell .dex-v2-mode-nav { min-height: 44px; height: auto; }
+}
+@media (max-width: 520px) {
+  :root body .group-header-invite.group-header-invite-compact .group-header-invite-row { grid-template-columns: minmax(0, 1fr) auto; }
+  :root body .group-header-invite-address-field { grid-column: 1 / -1; }
+}
+
+/* Keep the price readable in the compact desktop context. */
+@media (min-width: 921px) and (max-width: 1180px) {
+  :root body .app-shell.app-shell-trades {
+    grid-template-rows: auto minmax(76px, auto) minmax(0, 1fr);
+  }
+  :root body .app-shell-trades :is(.trading-product-bar, .trading-market-context) {
+    height: auto;
+    min-height: 76px;
+  }
+  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) .trading-market-context {
+    grid-template-columns: minmax(180px, 0.9fr) minmax(160px, 0.8fr) minmax(240px, 1.2fr) minmax(180px, 0.7fr);
+  }
+}
+
+/* Create uses the same compact book columns as the Offers workspace. */
+@media (min-width: 921px) {
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .p2p-offers-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: 14px;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers .p2p-offers-panel {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers :is(.p2p-offers-list-head, .p2p-offer-rate-row) {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) 90px;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers .p2p-offers-filter-controls {
+    grid-template-columns: auto minmax(0, 220px) auto auto;
+  }
 }

@@ -68,6 +68,31 @@ const expectUnavailableCounts = (markup: string) => {
 };
 
 describe('My trades readiness', () => {
+  it('shows wallet readiness instead of a stale read error while disconnected', () => {
+    const markup = render({ walletAddress: '', walletKey: '', myTradesError: 'Saved read failure' });
+    expect(markup).toContain('Connect your trading wallet');
+    expect(markup).not.toContain('could not load');
+    expect(markup).not.toContain('Refresh to try again.');
+    expect(markup).not.toContain('Saved read failure');
+  });
+  it('keeps connected errors and verified partial rows visible', () => {
+    const empty = render({ myTradesError: 'Read failed', renderAdditionalTrades: undefined });
+    expect(empty).toContain('My trades could not load');
+    expect(empty).toContain('Read failed');
+    const partial = render({ myTradesError: 'Another source failed' }, false, true);
+    expect(partial).toContain('Some trades could not load');
+    expect(partial).toContain('Known public offer #7');
+    expect(partial).toContain('Another source failed');
+  });
+  it('labels unverified coverage without claiming a read failure or complete history', () => {
+    const markup = render({ onLoadOlderHistory: vi.fn() }, true);
+    expect(markup).toContain('History coverage has not been verified.');
+    expect(markup).not.toContain('Book and Direct history is unavailable.');
+    expect(markup).not.toContain('Book and Direct history is complete.');
+    expect(markup).not.toContain('No trade history');
+    expectUnavailableCounts(markup);
+  });
+
   it('marks recent history incomplete and keeps an accessible older control without an empty-history claim', () => {
     const markup = render({ historyHasMore: true, onLoadOlderHistory: vi.fn() }, true);
     expect(markup).toContain('Recent history loaded. Older trades are not loaded.');

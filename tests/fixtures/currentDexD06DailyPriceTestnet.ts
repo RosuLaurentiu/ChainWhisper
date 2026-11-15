@@ -1,4 +1,5 @@
-import type { CurrentDexDailyPriceManifest } from "./currentDexDailyPrice";
+// Historical configuration fixture only; the replacement App does not import this file.
+import type { CurrentDexDailyPriceManifest } from "../../src/lib/currentDexDailyPrice";
 // Current d06 native recorder and sample are verified. Public reads grant no signing authority.
 export const D06_TESTNET_DEX_DAILY_PRICE_MANIFEST: CurrentDexDailyPriceManifest = Object.freeze({
   "sourceGraph": "d06b6640dad22e5018a5e50d46602fd6d9b534d0b8eb4497cb5b42aee55e5962",

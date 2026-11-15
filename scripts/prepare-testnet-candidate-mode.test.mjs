@@ -7,14 +7,14 @@ import { keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
 import {
   buildDexV2Env,
   buildSuccessorDexEnv,
-  buildTestnetCandidateModeEnv,
-  prepareTestnetCandidateMode
+  buildTestnetCandidateModeEnv
 } from './prepare-testnet-candidate-mode.mjs';
 import {
   buildNpmInvocation,
   waitForCandidateFinality
 } from './run-testnet-readonly-suite.mjs';
 
+const currentLiquidity = JSON.parse(await readFile(new URL('../src/lib/currentPrivateLiquidityBinding.json', import.meta.url), 'utf8'));
 const bytes32 = (byte) => `0x${byte.repeat(64)}`;
 const successorL8SemanticId =
   '0xebba94e30af59ae06a74e9ac84f84e9836a1a78f101f32d8b38b438fe3df50da';
@@ -36,7 +36,7 @@ const manifest = () => ({
   status: 'attested-testnet-candidate-not-app-active',
   network: 'cotiTestnet',
   chainId: '7082400',
-  owner: '0x0000000000000000000000000000000000000001',
+  owner: currentLiquidity.owner,
   attestationBlock: { number: '200', hash: bytes32('a') },
   components: Array.from({ length: 15 }, (_, index) => ({
     key: `component-${index}`,
@@ -144,6 +144,8 @@ test('builds one deterministic Vite mode file without activating any other netwo
   assert.match(output, /VITE_CHAINWHISPER_TESTNET_FINALITY_LAG_BLOCKS=5/);
   assert.match(output, /VITE_CHAINWHISPER_TESTNET_RPC_URL=https:\/\/testnet\.coti\.io\/rpc/);
   assert.equal(output.includes('PRIVATE_KEY'), false);
+  assert.equal(output.includes('VITE_CHAINWHISPER_SUCCESSOR_DEX_ENABLED=true'), false);
+  assert.match(output, /^VITE_CHAINWHISPER_DEX_V2_ENABLED=false$/m);
 });
 
 test('activates DEX V2 only from the exact pass manifest and admitted private-token pair', () => {
@@ -187,6 +189,8 @@ test('activates the read-only successor DEX from the exact deployed manifest', a
   assert.deepEqual(buildSuccessorDexEnv(source), []);
   const ready = readySuccessorManifest(source);
   const lines = buildSuccessorDexEnv(JSON.stringify(ready));
+  assert.match(buildTestnetCandidateModeEnv(JSON.stringify(manifest()), undefined, JSON.stringify(ready)),
+    /^VITE_CHAINWHISPER_SUCCESSOR_DEX_ENABLED=true$/m);
   assert.deepEqual(lines, [
     'VITE_CHAINWHISPER_SUCCESSOR_DEX_ENABLED=true',
     'VITE_CHAINWHISPER_SUCCESSOR_DEX_MANIFEST_URL=/deployments/coti-testnet-successor-app-manifest.json',
@@ -206,66 +210,10 @@ test('activates the read-only successor DEX from the exact deployed manifest', a
   assert.throws(() => buildSuccessorDexEnv(JSON.stringify(tampered)), /manifest identity is invalid/);
 });
 
-test('binds Private Liquidity V2 to exact deployment blocks and creation transactions', () => {
-  const unified = manifest();
-  const book = {
-    key: 'privateLiquidityBookV2',
-    contract: 'ChainWhisperPrivateLiquidityBookV2',
-    address: '0x00000000000000000000000000000000000000a1',
-    runtimeBytecodeHash: bytes32('1'),
-    deploymentBlock: '125'
-  };
-  const module = {
-    key: 'privateLiquidityHiddenIntentV2',
-    contract: 'ChainWhisperPrivateLiquidityHiddenIntentModuleV2',
-    address: '0x00000000000000000000000000000000000000a2',
-    runtimeBytecodeHash: bytes32('2'),
-    deploymentBlock: '123'
-  };
-  const position = {
-    key: 'privateLiquidityPositionNftV2',
-    contract: 'ChainWhisperPrivateLiquidityPositionNFTV2',
-    address: '0x00000000000000000000000000000000000000a3',
-    runtimeBytecodeHash: bytes32('3'),
-    deploymentBlock: '125'
-  };
-  unified.components.splice(0, 3, book, module, position);
-  const trading = {
-    schemaVersion: 1,
-    status: 'attested-candidates-not-app-active',
-    network: 'cotiTestnet',
-    chainId: unified.chainId,
-    owner: unified.owner,
-    contracts: {
-      privateLiquidityBookV2: {
-        ...book,
-        deploymentBlockHash: bytes32('4'),
-        transactionHash: bytes32('5')
-      },
-      privateLiquidityHiddenIntentModuleV2: {
-        ...module,
-        deploymentBlockHash: bytes32('6'),
-        transactionHash: bytes32('7')
-      },
-      privateLiquidityPositionNftV2: {
-        ...position,
-        deploymentBlockHash: bytes32('4')
-      }
-    }
-  };
-  const output = buildTestnetCandidateModeEnv(
-    JSON.stringify(unified),
-    undefined,
-    JSON.stringify(trading)
-  );
-  assert.match(output, new RegExp(`BOOK_DEPLOYMENT_BLOCK_HASH=${bytes32('4')}`));
-  assert.match(output, new RegExp(`BOOK_CREATION_TRANSACTION_HASH=${bytes32('5')}`));
-  assert.match(output, new RegExp(`POSITION_TOKEN_CREATION_TRANSACTION_HASH=${bytes32('5')}`));
-  trading.contracts.privateLiquidityPositionNftV2.deploymentBlockHash = bytes32('8');
-  assert.throws(
-    () => buildTestnetCandidateModeEnv(JSON.stringify(unified), undefined, JSON.stringify(trading)),
-    /private-liquidity provenance/
-  );
+test('does not restore old Private Liquidity environment provenance', () => {
+  const output = buildTestnetCandidateModeEnv(JSON.stringify(manifest()));
+  assert.doesNotMatch(output, /VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_V2_(?:BOOK|MODULE|POSITION_TOKEN)_/);
+  assert.match(output, /^VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_DAILY_PRICE_ENABLED=false$/m);
 });
 
 test('adds the separate analytics store only when its exact Book-bound manifest is supplied', () => {
@@ -286,11 +234,11 @@ test('adds the separate analytics store only when its exact Book-bound manifest 
     chainId: '7082400',
     address: '0x00000000000000000000000000000000000000bb',
     runtimeBytecodeHash: bytes32('b'),
-    deploymentBlock: '120',
+    deploymentBlock: String(BigInt(currentLiquidity.manifest.book.deploymentBlock) + 10n),
     deploymentBlockHash: bytes32('c'),
     deploymentTransactionHash: bytes32('d'),
-    sourceBook: unified.components[0].address,
-    sourceBookRuntimeHash: unified.components[0].runtimeBytecodeHash,
+    sourceBook: currentLiquidity.manifest.book.address,
+    sourceBookRuntimeHash: currentLiquidity.manifest.book.runtimeBytecodeHash,
     owner: unified.owner,
     recorder: '0x00000000000000000000000000000000000000cc',
     attestationBlock: { number: '130', hash: bytes32('e') },
@@ -301,6 +249,9 @@ test('adds the separate analytics store only when its exact Book-bound manifest 
   assert.match(output, new RegExp(`^VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_DAILY_PRICE_ADDRESS=${analytics.address}$`, 'm'));
   assert.match(output, new RegExp(`^VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_DAILY_PRICE_OWNER=${analytics.owner}$`, 'm'));
   assert.match(output, new RegExp(`^VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_DAILY_PRICE_RECORDER=${analytics.recorder}$`, 'm'));
+  const oldBook = sealManifest({ ...analytics, manifestHash: undefined,
+    sourceBook: unified.components[0].address, sourceBookRuntimeHash: unified.components[0].runtimeBytecodeHash });
+  assert.throws(() => buildTestnetCandidateModeEnv(JSON.stringify(unified), JSON.stringify(oldBook)), /analytics candidate manifest identity/);
   analytics.sourceBookRuntimeHash = bytes32('9');
   assert.throws(
     () => buildTestnetCandidateModeEnv(JSON.stringify(unified), JSON.stringify(analytics)),
@@ -326,11 +277,11 @@ test('rejects an analytics store with an unreviewed owner or aliased recorder', 
     chainId: '7082400',
     address: '0x00000000000000000000000000000000000000bb',
     runtimeBytecodeHash: bytes32('b'),
-    deploymentBlock: '120',
+    deploymentBlock: String(BigInt(currentLiquidity.manifest.book.deploymentBlock) + 10n),
     deploymentBlockHash: bytes32('c'),
     deploymentTransactionHash: bytes32('d'),
-    sourceBook: unified.components[0].address,
-    sourceBookRuntimeHash: unified.components[0].runtimeBytecodeHash,
+    sourceBook: currentLiquidity.manifest.book.address,
+    sourceBookRuntimeHash: currentLiquidity.manifest.book.runtimeBytecodeHash,
     owner: '0x00000000000000000000000000000000000000dd',
     recorder: '0x00000000000000000000000000000000000000cc',
     attestationBlock: { number: '130', hash: bytes32('e') },
@@ -371,11 +322,11 @@ test('rejects an analytics artifact whose body no longer matches its generated h
     chainId: '7082400',
     address: '0x00000000000000000000000000000000000000bb',
     runtimeBytecodeHash: bytes32('b'),
-    deploymentBlock: '120',
+    deploymentBlock: String(BigInt(currentLiquidity.manifest.book.deploymentBlock) + 10n),
     deploymentBlockHash: bytes32('c'),
     deploymentTransactionHash: bytes32('d'),
-    sourceBook: unified.components[0].address,
-    sourceBookRuntimeHash: unified.components[0].runtimeBytecodeHash,
+    sourceBook: currentLiquidity.manifest.book.address,
+    sourceBookRuntimeHash: currentLiquidity.manifest.book.runtimeBytecodeHash,
     owner: unified.owner,
     recorder: '0x00000000000000000000000000000000000000cc',
     attestationBlock: { number: '130', hash: bytes32('e') },
@@ -398,13 +349,6 @@ test('rejects incomplete, wrong-chain, and already-activated artifacts', () => {
   const alreadyActive = manifest();
   alreadyActive.relationships.appActivated = true;
   assert.throws(() => buildTestnetCandidateModeEnv(JSON.stringify(alreadyActive)), /identity/);
-});
-
-test('disables the obsolete successor deployment while its replacement is pending', async () => {
-  const outputPath = await prepareTestnetCandidateMode();
-  const output = await readFile(outputPath, 'utf8');
-  assert.equal(output.includes('VITE_CHAINWHISPER_SUCCESSOR_DEX_ENABLED=true'), false);
-  assert.match(output, /^VITE_CHAINWHISPER_DEX_V2_ENABLED=false$/m);
 });
 
 test('refreshes Contracts and MCP before replacing the APP candidate mode', async () => {

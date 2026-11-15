@@ -1,4 +1,5 @@
 import * as deployment from './dexV2Deployment';
+import * as limitCodec from './currentDexLimit';
 import { getAddress,toBeHex } from '@coti-io/coti-ethers';
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import { createCurrentLimitSubmissionAdapter } from './currentDexLimitSubmission';
@@ -333,5 +334,29 @@ describe('current Limit edit sender boundaries',()=>{
     if(fault==='inclusion')f.transport.verifyCanonicalInclusion.mockRejectedValueOnce(new Error('Changed block'));
     if(fault==='pending-change')f.proof.assertCurrent=vi.fn(async()=>{const p=JSON.parse(f.storage.get(key)!);p.nonce++;f.storage.set(key,JSON.stringify(p));});
     await expect(f.sender.reconcileMinedTopUp(f.proof as never)).rejects.toThrow();expect(f.storage.has(key)).toBe(true);expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+});
+describe('packed Limit pending boundary (local ABI selection only)',()=>{
+  const packedFixture=(reprice=false)=>{
+    const f=fixture(true,'cheap-history'),candidate=resolvePreparedDexScope('cheap-history').candidate,wide={ciphertext:{ciphertextHigh:1n,ciphertextLow:1n},signature};
+    vi.spyOn(limitCodec,'currentLimitAbiForCandidate').mockReturnValue(limitCodec.packedLimitAbi);
+    Object.assign(f.prepared,{phase:reprice?'limit-owner':'limit-create',...(reprice?{action:'reprice',expectedTermsRevision:3n,expectedLifecycleRevision:7n}:{}),data:limitCodec.packedLimitAbi.encodeFunctionData(reprice?'repricePrivateOrder':'createPrivateOrder',reprice?[9n,3n,Array(3).fill(wide)]:[candidate.pairs[2].marketId,wide,Array(3).fill(wide)])});
+    if(reprice)f.receipt.logs=[{address:candidate.core,...limitCodec.packedLimitAbi.encodeEventLog(limitCodec.packedLimitAbi.getEvent('FixedPositionRepriced')!,[9n,4n])}];
+    allowLocalTechnicalSubmission();return f;
+  };
+  it.each([false,true])('restores canonical packed pending metadata without resend (reprice=%s)',async reprice=>{
+    const f=packedFixture(reprice);await f.make().submitLimit(f.prepared as never);
+    expect(await f.make().recoverPendingLimitAttempt()).toMatchObject({status:'observed-mined',privateAccountingVerified:false});
+    expect(f.transport.send).toHaveBeenCalledOnce();expect(f.storage.has(key)).toBe(false);expect(f.prepared.readResult).not.toHaveBeenCalled();
+  });
+  it.each(['suffix','revision','market','identity']as const)('rejects packed %s changes before send',async fault=>{
+    const f=packedFixture(fault==='revision');
+    if(fault==='suffix')f.prepared.data+='00';if(fault==='revision')Object.assign(f.prepared,{expectedTermsRevision:4n});if(fault==='market')f.prepared.marketId=`0x${'99'.repeat(32)}`;if(fault==='identity')f.prepared.graph='changed';
+    await expect(f.make().submitLimit(f.prepared as never)).rejects.toThrow();expect(f.transport.send).not.toHaveBeenCalled();expect(f.storage.has(key)).toBe(false);
+  });
+  it('holds uncertain packed sends across reload without resend',async()=>{
+    const f=packedFixture();f.transport.send.mockImplementationOnce(async()=>{throw new Error('Unknown send');});
+    await expect(f.make().submitLimit(f.prepared as never)).rejects.toThrow();expect(f.storage.has(key)).toBe(true);
+    const restored=await f.make().recoverPendingLimitAttempt();expect(restored).toMatchObject({status:'manual-reconciliation-required'});expect(f.transport.send).toHaveBeenCalledOnce();expect(f.storage.has(key)).toBe(true);
   });
 });

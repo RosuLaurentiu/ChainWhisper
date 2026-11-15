@@ -108,7 +108,7 @@ export default function HomePage({
                 <span className="landing-module-kicker">Trading</span>
               </div>
               <h3>DEX & P2P</h3>
-              <p>Trade through private DEX strategies or peer-to-peer offers.</p>
+              <p>Swap through shared DEX Pools and plain Limit orders, or trade through peer-to-peer escrow offers.</p>
               <button
                 type="button"
                 className="landing-module-cta"

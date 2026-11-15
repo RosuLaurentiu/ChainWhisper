@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { TESTNET_DEX_DAILY_PRICE_CONFIG, TESTNET_DEX_DAILY_PRICE_MANIFEST as m } from './currentDexDailyPriceTestnet';
+import { TESTNET_DEX_DAILY_PRICE_CONFIG, TESTNET_DEX_DAILY_PRICE_MANIFEST as m } from '../../tests/fixtures/currentDexDailyPriceTestnet';
 import { CURRENT_DEX_DAILY_PRICE_CONFIG } from './currentDexDailyPrice';
 import { CURRENT_DEX_DISPLAY_TOKENS } from './currentDexDisplay';
 

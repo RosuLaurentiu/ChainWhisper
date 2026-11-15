@@ -3,7 +3,7 @@ import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI } from './currentDexOperation';
 import { PREPARED_POOL_FUNDING_ABI } from './currentDexPoolFunding';
 import { CURRENT_POOL_POSITION_ABI } from './currentDexPoolPosition';
-import { preparedLimitAbi } from './currentDexLimit';
+import { currentLimitAbiForCandidate } from './currentDexLimit';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { currentSharedTokenFundingAbi } from './currentSharedDexTokenFunding';
 import { CURRENT_SHARED_TOKEN_DISTRIBUTION } from './currentSharedDexTokenDistribution';
@@ -22,14 +22,11 @@ export type CurrentDexActivityRow = Readonly<{
   movements: readonly CurrentDexActivityMovement[]; amountsState: 'verified' | 'none';
   readyToSign: false; nativeAdmission: false;
 }>;
-const ct = '((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)', small = '(uint256 ciphertext,bytes signature)';
-const coreAbi = new Interface([...new Set([
+const coreAbiForCandidate = (candidate: CurrentDexActivityCandidate) => new Interface([...new Set([
   ...CURRENT_SLIPPAGE_DEX_QUOTE_ABI, ...PREPARED_POOL_FUNDING_ABI, ...CURRENT_POOL_POSITION_ABI,
-  ...preparedLimitAbi.fragments.map(f => f.format('full')),
+  ...currentLimitAbiForCandidate(candidate).fragments.map(f => f.format('full')),
   'function acceptFastPool(uint256 quoteId,bytes32 expectedContext)', 'function acceptPrivateSwapV1(uint256 operationId,bytes32 expectedContext)',
   'function advanceFixedWork(uint256 operationId)', 'function cancelSwap(uint256 operationId)', 'function recoverSwap(uint256 operationId)',
-  `function topUpPrivateOrder(uint256 positionId,uint256 expectedTermsRevision,uint256 expectedLifecycleRevision,${ct} encryptedAmount)`,
-  `function repricePrivateOrder(uint256 positionId,uint256 expectedTermsRevision,${small}[5] encryptedFixedTerms,${ct}[3] encryptedRangeTerms)`,
   'function c1(uint8 action,bytes data)', 'function c1ForMarket(bytes32 selectedMarket,uint8 action,bytes data)',
   'function matchLimitPage(bytes32 selectedMarket,bytes32 expectedContext)',
   'event SharedClaimCreated(uint256 indexed positionId)'
@@ -49,6 +46,7 @@ export const readCurrentDexActivityReceipt = async ({ candidate, owner, transact
 }): Promise<CurrentDexActivityRow | null> => {
   if (!['cheap-exit', 'cheap-history'].includes(candidate)) throw new Error('DEX activity candidate is unavailable.');
   const c = resolvePreparedDexScope(candidate).candidate, account = getAddress(owner), core = c.core;
+  const coreAbi = coreAbiForCandidate(candidate);
   const nft = c.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
   if (!same(tx.hash, receipt.hash) || tx.chainId !== BigInt(c.chainId) || tx.value !== 0n ||
       tx.blockNumber !== receipt.blockNumber || !same(tx.blockHash, receipt.blockHash ?? '') ||
@@ -80,7 +78,7 @@ export const readCurrentDexActivityReceipt = async ({ candidate, owner, transact
     if (!same(tx.from, account) && !ownedTerminal) throw new Error('DEX history owner changed.');
     if (token) {
       if (name === 'claimFaucet') action = 'Token claim';
-      else if (name === 'approve' && same(args[0], core)) action = 'Token allowance';
+      else if (['approve', 'increaseAllowance'].includes(name) && same(args[0], core)) action = 'Token allowance';
       else return null;
     } else if (!same(tx.to, core)) { if (name !== 'claim' || !c.tokens.some(([a]) => same(args[0], a))) return null; action = 'Token refill'; }
     else if (name === 'quoteCheapAsync' || name === 'quoteFastPool') {

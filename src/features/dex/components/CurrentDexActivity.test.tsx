@@ -7,6 +7,8 @@ import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingA
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
 import type { CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { readCurrentDexActivityDiscoveryPage } from '../../../lib/currentDexActivityDiscovery';
+import type { CurrentDexActivityRow } from '../../../lib/currentDexActivityReceipt';
+import { SUCCESSOR_TESTNET_PAIRS } from '../../../app/components/TradingProductSwitch';
 
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as MutableRefObject<unknown>[],
   effect: null as EffectCallback | null, effects: [] as EffectCallback[], read: vi.fn() }));
@@ -24,10 +26,10 @@ function fixture() {
     sessionStorage: { getItem: (key: string) => values.get(key) ?? null, setItem: vi.fn(), removeItem: vi.fn() } });
   const session = { walletAddress: owner, chainId: Number(candidate.chainId), browserProvider: {}, browserWalletId: 'metamask', activeSignerSource: 'browser',
     sessionOnboardInfo: { [owner]: { aesKey: 'local-fixture-only' } }, walletAesHealthByAddress: {}, actions: {} } as unknown as SharedWalletSession;
-  const props = { sharedWalletSession: session, candidateKey: 'cheap-history' as CurrentCheapDexCandidateKey, visible: true, onInspect: vi.fn() };
+  const props = { sharedWalletSession: session, candidateKey: 'cheap-history' as CurrentCheapDexCandidateKey, visible: true, priceDisplayInverted: false, onInspect: vi.fn() };
   const result = {head:{number:100n,hash},nextCursor:{transactions:null as number|null,nfts:null as number|null},complete:true,unavailable:[] as string[],
-    rows:[{operationId:53n,hash,blockNumber:100,blockHash:hash,timestamp:1000n,action:'Swap delivery',kind:'async-delivery',status:'Delivered',amountsState:'verified',
-      movements:[{token:candidate.tokens[1][0],paid:1_000_000n,received:0n},{token:candidate.tokens[0][0],paid:0n,received:1_355_299n}]}]};
+    rows:[{core:candidate.core,operationId:53n,hash,blockNumber:100,blockHash:hash,timestamp:1000n,action:'Swap delivery',kind:'async-delivery',status:'Delivered',amountsState:'verified',readyToSign:false,nativeAdmission:false,
+      movements:[{token:candidate.tokens[1][0],paid:1_000_000n,received:0n},{token:candidate.tokens[0][0],paid:0n,received:1_355_299n}]}] as CurrentDexActivityRow[]};
   hooks.read.mockResolvedValue(result);
   const tree = () => { hooks.index = 0; hooks.refIndex = 0; hooks.effects = []; return CurrentDexActivity(props); };
   const render = () => renderToStaticMarkup(tree());
@@ -36,7 +38,77 @@ function fixture() {
 }
 afterEach(() => { hooks.states = []; hooks.refs = []; hooks.effect = null; vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
+function completedSwapRows(pair: readonly [string, string], inputIndex: 0 | 1, refund = 0n, fast = false): CurrentDexActivityRow[] {
+  const inputToken = candidate.tokenMetadata.find(token => token.symbol === pair[inputIndex])!.address;
+  const outputToken = candidate.tokenMetadata.find(token => token.symbol === pair[1 - inputIndex])!.address;
+  const base = { core: candidate.core, operationId: 53n, blockNumber: 100, blockHash: hash, timestamp: 1000n,
+    status: 'Confirmed', amountsState: 'verified', readyToSign: false, nativeAdmission: false } as const;
+  const quote: CurrentDexActivityRow = { ...base, hash, kind: fast ? 'fast-quote' : 'async-quote', action: 'Quote',
+    inputToken, outputToken, movements: [], amountsState: 'none' };
+  const funding: CurrentDexActivityRow = { ...base, hash: `0x${'44'.repeat(32)}`, kind: 'async-funding', action: 'Funding',
+    movements: [{ token: inputToken, paid: 1_000_000n, received: 0n }] };
+  const delivery: CurrentDexActivityRow = { ...base, hash: `0x${'55'.repeat(32)}`, kind: fast ? 'fast-delivery' : 'async-delivery', action: 'Delivery',
+    movements: [{ token: inputToken, paid: fast ? 1_000_000n : 0n, received: refund }, { token: outputToken, paid: 0n, received: 2_000_000n }] };
+  return fast ? [quote, delivery] : [quote, funding, delivery];
+}
+
 describe('read-only private Activity view', () => {
+  it('places the existing Manage navigation inside My trades', () => {
+    const f=fixture();
+    const html=renderToStaticMarkup(<CurrentDexActivity {...f.props} managementNavigation={<nav aria-label="Manage views">Orders Positions History</nav>}/>);
+    expect(html).toContain('My trades');
+    expect(html.indexOf('My trades')).toBeLessThan(html.indexOf('aria-label="Manage views"'));
+    expect(hooks.read).not.toHaveBeenCalled();
+  });
+  it('shows the average execution price from authenticated terminal amounts', async () => {
+    const f = fixture(); f.result.rows = completedSwapRows(['BCN', 'HBR'], 0); await f.load();
+    expect(candidate.pairs.find(pair => pair.tokens.some(token => token === candidate.tokens[0][0]) && pair.tokens.some(token => token === candidate.tokens[1][0]))!.tokens)
+      .toEqual([candidate.tokens[1][0], candidate.tokens[0][0]]);
+    expect(f.render()).toContain('<dt>Average execution price</dt><dd>2.0 HBR/BCN (rounded down)</dd>');
+    expect(hooks.read).toHaveBeenCalledOnce();
+  });
+  it.each(SUCCESSOR_TESTNET_PAIRS.flatMap(pair => ([0, 1] as const).flatMap(inputIndex => [false, true].map(inverted => ({ pair, inputIndex, inverted })))))(
+    'keeps History units for $pair with input $inputIndex and inverted $inverted', async ({ pair, inputIndex, inverted }) => {
+      const f = fixture(); f.result.rows = completedSwapRows(pair, inputIndex); f.props.priceDisplayInverted = inverted; await f.load();
+      const baseIndex = inverted ? 1 : 0, rate = inputIndex === baseIndex ? '2.0' : '0.5';
+      const html = f.render();
+      expect(html).toContain(`<dt>Average execution price</dt><dd>${rate} ${pair[1 - baseIndex]}/${pair[baseIndex]} (rounded down)</dd>`);
+      expect(html.match(/<dt>Average execution price<\/dt>/g)).toHaveLength(1);
+      f.props.priceDisplayInverted = !inverted;
+      expect(f.render()).toContain(`${rate === '2.0' ? '0.5' : '2.0'} ${pair[baseIndex]}/${pair[1 - baseIndex]} (rounded down)`);
+      expect(hooks.read).toHaveBeenCalledOnce();
+    });
+  it.each([false, true])('excludes the exact input refund for a Fast=%s completed swap', async fast => {
+    const f = fixture(); f.result.rows = completedSwapRows(['BCN', 'HBR'], 0, 250_000n, fast); await f.load();
+    const html = f.render();
+    expect(html).toContain('Partially filled'); expect(html).toContain('0.75 BCN'); expect(html).toContain('0.25 BCN');
+    expect(html).toContain('<dt>Average execution price</dt><dd>2.66666666 HBR/BCN (rounded down)</dd>');
+    f.props.priceDisplayInverted = true;
+    expect(f.render()).toContain('0.375 BCN/HBR (rounded down)'); expect(hooks.read).toHaveBeenCalledOnce();
+  });
+  it.each(['quote-only', 'pending', 'failed', 'unavailable', 'no-fill', 'recovered', 'duplicate-output', 'unverified', 'wrong-core', 'ungrouped'] as const)(
+    'does not invent an execution price for %s history', async fault => {
+      const f = fixture(), rows = completedSwapRows(['BCN', 'HBR'], 0);
+      if (fault === 'quote-only') rows.splice(1);
+      if (fault === 'pending') rows.splice(2);
+      if (fault === 'failed') rows[2] = { ...rows[2], status: 'Failed' };
+      if (fault === 'unavailable') rows[2] = { ...rows[2], movements: rows[2].movements.slice(1) };
+      if (fault === 'no-fill') rows[2] = { ...rows[2], movements: [{ ...rows[2].movements[0], received: 1_000_000n }, { ...rows[2].movements[1], received: 0n }] };
+      if (fault === 'recovered') rows[2] = { ...rows[2], kind: 'recover', movements: [{ ...rows[2].movements[0], received: 1_000_000n }] };
+      if (fault === 'duplicate-output') rows[2] = { ...rows[2], movements: [...rows[2].movements, rows[2].movements[1]] };
+      if (fault === 'unverified') rows[2] = { ...rows[2], amountsState: 'none' };
+      if (fault === 'wrong-core') for (let i = 0; i < rows.length; i++) rows[i] = { ...rows[i], core: `0x${'ab'.repeat(20)}` };
+      if (fault === 'ungrouped') rows.splice(0, 2);
+      f.result.rows = rows; await f.load(); expect(f.render()).not.toContain('Average execution price'); expect(hooks.read).toHaveBeenCalledOnce();
+    });
+  it.each(['lock', 'onboard', 'health'] as const)('hides the executed price immediately after privacy %s', async change => {
+    const f = fixture(); f.result.rows = completedSwapRows(['BCN', 'HBR'], 0); await f.load();
+    expect(f.render()).toContain('2.0 HBR/BCN (rounded down)');
+    if (change === 'lock') f.session.sessionOnboardInfo = {};
+    if (change === 'onboard') f.session.sessionOnboardInfo = { ...f.session.sessionOnboardInfo };
+    if (change === 'health') f.session.walletAesHealthByAddress = { ...f.session.walletAesHealthByAddress };
+    expect(f.render()).not.toContain('Average execution price'); expect(hooks.read).toHaveBeenCalledOnce();
+  });
   it('keeps checked rows stale after an older source failure and explicitly retries the same cursor once', async () => {
     const f = fixture(); f.result.complete = false; f.result.nextCursor.transactions = 2; await f.load();
     const click = (label: string) => {

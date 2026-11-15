@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
 
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const CURRENT_PRIVATE_LIQUIDITY = JSON.parse(await readFile(resolve(APP_ROOT, 'src/lib/currentPrivateLiquidityBinding.json'), 'utf8'));
 const MANIFEST_PATH = resolve(
   APP_ROOT,
   '..',
@@ -11,25 +12,7 @@ const MANIFEST_PATH = resolve(
   'deployments',
   'coti-testnet-unified-candidate.json'
 );
-const DAILY_PRICE_MANIFEST_PATH = resolve(
-  APP_ROOT,
-  '..',
-  'ChainWhisper Contracts',
-  'deployments',
-  'coti-testnet-private-liquidity-daily-price-store.json'
-);
-const TRADING_V2_MANIFEST_PATH = resolve(
-  APP_ROOT,
-  '..',
-  'ChainWhisper Contracts',
-  'deployments',
-  'coti-testnet-trading-v2-candidates.json'
-);
-const DEX_V2_MANIFEST_PATH = resolve(
-  APP_ROOT,
-  'deployments',
-  'coti-testnet-dex-v2-app-manifest.json'
-);
+const DAILY_PRICE_MANIFEST_PATH = resolve(APP_ROOT, 'deployments', 'coti-testnet-private-liquidity-daily-price-store.json');
 const SUCCESSOR_DEX_MANIFEST_PATH = resolve(
   APP_ROOT,
   '..',
@@ -238,14 +221,14 @@ export const buildSuccessorDexEnv = (manifestText) => {
 };
 
 const buildDailyPriceEnv = (manifestText, unifiedManifest) => {
-  if (manifestText === undefined) return [];
+  if (manifestText === undefined) return ['VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_DAILY_PRICE_ENABLED=false'];
   let manifest;
   try {
     manifest = JSON.parse(manifestText);
   } catch {
     throw new Error('Daily-price analytics candidate manifest must be valid JSON.');
   }
-  const sourceBook = unifiedManifest.components.find(({ key }) => key === 'privateLiquidityBookV2');
+  const sourceBook = CURRENT_PRIVATE_LIQUIDITY.manifest.book;
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) ||
       manifest.schemaVersion !== 1 ||
       manifest.status !== 'attested-analytics-candidate-not-app-active' ||
@@ -288,55 +271,9 @@ const buildDailyPriceEnv = (manifestText, unifiedManifest) => {
   ];
 };
 
-const buildPrivateLiquidityProvenanceEnv = (manifestText, unifiedManifest) => {
-  if (manifestText === undefined) return [];
-  let manifest;
-  try {
-    manifest = JSON.parse(manifestText);
-  } catch {
-    throw new Error('Trading V2 candidate manifest must be valid JSON.');
-  }
-  const components = [
-    ['privateLiquidityBookV2', 'privateLiquidityBookV2'],
-    ['privateLiquidityHiddenIntentV2', 'privateLiquidityHiddenIntentModuleV2'],
-    ['privateLiquidityPositionNftV2', 'privateLiquidityPositionNftV2']
-  ].map(([unifiedKey, detailedKey]) => ({
-    unified: unifiedManifest.components.find(({ key }) => key === unifiedKey),
-    detailed: manifest?.contracts?.[detailedKey]
-  }));
-  const [book, module, position] = components;
-  const exactComponent = ({ unified, detailed }) => unified && detailed &&
-    typeof detailed.address === 'string' && ADDRESS.test(detailed.address) &&
-    detailed.address.toLowerCase() === unified.address.toLowerCase() &&
-    detailed.deploymentBlock === unified.deploymentBlock &&
-    typeof detailed.runtimeBytecodeHash === 'string' && BYTES32.test(detailed.runtimeBytecodeHash) &&
-    detailed.runtimeBytecodeHash.toLowerCase() === unified.runtimeBytecodeHash.toLowerCase() &&
-    typeof detailed.deploymentBlockHash === 'string' && BYTES32.test(detailed.deploymentBlockHash);
-  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) ||
-      manifest.schemaVersion !== 1 || manifest.status !== 'attested-candidates-not-app-active' ||
-      manifest.network !== 'cotiTestnet' || manifest.chainId !== unifiedManifest.chainId ||
-      typeof manifest.owner !== 'string' || manifest.owner.toLowerCase() !== unifiedManifest.owner.toLowerCase() ||
-      !components.every(exactComponent) || !BYTES32.test(book.detailed.transactionHash) ||
-      !BYTES32.test(module.detailed.transactionHash) ||
-      position.detailed.deploymentBlockHash.toLowerCase() !== book.detailed.deploymentBlockHash.toLowerCase() ||
-      position.detailed.deploymentBlock !== book.detailed.deploymentBlock) {
-    throw new Error('Trading V2 private-liquidity provenance is invalid.');
-  }
-  return [
-    `VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_V2_BOOK_DEPLOYMENT_BLOCK_HASH=${book.detailed.deploymentBlockHash}`,
-    `VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_V2_BOOK_CREATION_TRANSACTION_HASH=${book.detailed.transactionHash}`,
-    `VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_V2_MODULE_DEPLOYMENT_BLOCK_HASH=${module.detailed.deploymentBlockHash}`,
-    `VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_V2_MODULE_CREATION_TRANSACTION_HASH=${module.detailed.transactionHash}`,
-    `VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_V2_POSITION_TOKEN_DEPLOYMENT_BLOCK_HASH=${position.detailed.deploymentBlockHash}`,
-    `VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_V2_POSITION_TOKEN_CREATION_TRANSACTION_HASH=${book.detailed.transactionHash}`
-  ];
-};
-
 export const buildTestnetCandidateModeEnv = (
   manifestText,
   dailyPriceManifestText,
-  tradingV2ManifestText,
-  dexV2ManifestText,
   successorDexManifestText
 ) => {
   let manifest;
@@ -369,7 +306,6 @@ export const buildTestnetCandidateModeEnv = (
     `VITE_CHAINWHISPER_TESTNET_CANDIDATE_MANIFEST='${compactManifest}'`,
     'VITE_CHAINWHISPER_TESTNET_FINALITY_LAG_BLOCKS=5',
     'VITE_CHAINWHISPER_TESTNET_RPC_URL=https://testnet.coti.io/rpc',
-    ...buildPrivateLiquidityProvenanceEnv(tradingV2ManifestText, manifest),
     ...buildDailyPriceEnv(dailyPriceManifestText, manifest),
     ...successorDexEnv,
     'VITE_CHAINWHISPER_DEX_V2_ENABLED=false',
@@ -379,15 +315,9 @@ export const buildTestnetCandidateModeEnv = (
 
 export const prepareTestnetCandidateMode = async () => {
   let dailyPriceManifestText;
-  let dexV2ManifestText;
   let successorDexManifestText;
   try {
     dailyPriceManifestText = await readFile(DAILY_PRICE_MANIFEST_PATH, 'utf8');
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-  try {
-    dexV2ManifestText = await readFile(DEX_V2_MANIFEST_PATH, 'utf8');
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
@@ -399,8 +329,6 @@ export const prepareTestnetCandidateMode = async () => {
   const modeEnv = buildTestnetCandidateModeEnv(
     await readFile(MANIFEST_PATH, 'utf8'),
     dailyPriceManifestText,
-    await readFile(TRADING_V2_MANIFEST_PATH, 'utf8'),
-    dexV2ManifestText,
     successorDexManifestText
   );
   if (successorDexManifestText !== undefined) {

@@ -20,3 +20,9 @@ test('service failures expose a bounded code and source location without request
  const error=Object.assign(new Error('private request must stay local'),{code:'NETWORK_ERROR',cause:{code:'EPERM'},stack:'Error: private request\n at Object.main (C:/workspace/runtime.cjs:117:2)'});
  const report=app.failure(error);assert.equal(report.guard,'CURRENT_DEX_MATCHING_REJECTED');assert.equal(report.code,'NETWORK_ERROR');assert.equal(report.causeCode,'EPERM');assert.deepEqual(report.locations,['runtime.cjs:117:2']);assert(!JSON.stringify(report).includes('private request'));
 });
+test('matching credentials use the systemd credential namespace when it exists',()=>{
+ const directory=path.resolve('/run/credentials/chainwhisper-matching-case.service');
+ assert.equal(runtime.payerCredentialPath({}),path.resolve(__dirname,'../../Testing/wallets/.env.coti-testnet.local'));
+ assert.equal(runtime.payerCredentialPath({CREDENTIALS_DIRECTORY:directory}),path.join(directory,'chainwhisper-beta.env'));
+ for(const directory of ['', 'relative/path', null])assert.throws(()=>runtime.payerCredentialPath({CREDENTIALS_DIRECTORY:directory}),/MATCH_WINDOW_CREDENTIAL_NAMESPACE/);
+});

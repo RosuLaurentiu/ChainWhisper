@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { Interface, keccak256 } from '@coti-io/coti-ethers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import artifact from '../../tests/fixtures/full-candidate-ChainWhisperLinkOTCEscrowV2.json';
+const artifact = JSON.parse(readFileSync(new URL('../../reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperLinkOTCEscrowV2.json', import.meta.url), 'utf8'));
 import { executeLinkTradeV2Fill, reconcileLinkTradeV2Fill, continueLinkTradeV2Fill } from './linkTradeV2FillFlow';
 import { readLinkTradeV2Review } from './linkTradeV2';
 import { createLinkTradeV2CreationJournal } from './linkTradeV2CreationJournal';
@@ -126,7 +127,7 @@ describe('Link fill; real client crypto, full ABI, sender and journal, mocked na
     const saved = (await f.journal.read())!; expect(saved).toMatchObject({ active: true, records: [{ step: 'approval', state: 'confirmed' }] });
     const oldSignatures = m.encrypt.mock.calls.length; f.provider.estimateGas.mockResolvedValue(100n);
     expect(await continueLinkTradeV2Fill({ ...f.input, fillId: saved.id })).toMatchObject({ offerReceived: '4' });
-    expect(f.rows.size).toBe(1); expect(m.encrypt.mock.calls.length).toBe(oldSignatures + 4);
+    expect(f.rows.size).toBe(1); expect(m.encrypt.mock.calls.length).toBe(oldSignatures + 3);
   });
   it('clears a stale fill preparation approval without funding, and retains its original fee', async () => {
     const f = await fixture(true);

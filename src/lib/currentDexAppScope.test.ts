@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { STAGED_REFERENCE_DEX_CANDIDATE } from './currentDexReferenceCandidate';
 import { currentDexAppPair, resolveCurrentDexAppCandidate } from './currentDexAppScope';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
 import { currentLimitOwnerNativeAdmission } from './currentDexLimit';
 import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 
 describe('main App DEX scope', () => {
+  it('pins the public Testnet build to the accepted reference graph', () => {
+    const env = readFileSync(new URL('../../.env.coti-testnet-candidate', import.meta.url), 'utf8');
+    expect(env.split(/\r?\n/)).toContain(`VITE_LOW_RPC_TRIAL=${STAGED_REFERENCE_DEX_CANDIDATE.graph}`);
+  });
   it('allows the exact shared-history Testnet scope while App swap signing remains held', () => {
     const scope=resolveCurrentDexAppCandidate('coti-testnet-candidate','cheap-history');
     expect(scope.key).toBe('cheap-history');expect(scope.candidate).toBe(STAGED_SHARED_HISTORY_DEX_CANDIDATE);

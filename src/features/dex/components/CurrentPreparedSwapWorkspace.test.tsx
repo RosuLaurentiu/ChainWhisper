@@ -1,11 +1,14 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CurrentSwapWorkspace, reconcileCurrentTrialPending, verifyCurrentTrialCandidate } from './DexV2Page';
-import { CURRENT_CHEAP_DEX_CANDIDATE, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
+import { CURRENT_CHEAP_DEX_CANDIDATE, currentCheapDexStages, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { readCurrentDexDisplay, parseDexCandidateTokenAmount, formatDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
 import { assertCurrentSwapCandidate } from '../../../lib/currentDexNativeSwapPolicy';
 import CurrentSharedTestTokenControls from './CurrentSharedTestTokenControls';
 import CurrentSwapProgress from './CurrentSwapProgress';
+import CurrentSwapSteps from './CurrentSwapSteps';
+import { currentDexQuoteInputPlan } from '../../../lib/currentDexQuoteInputPlan';
+import type { CurrentDexQuoteInputProgress } from '../../wallet/currentDexQuoteCapability';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import type { TradingPair } from '../../../app/components/TradingProductSwitch';
 import { CURRENT_SHARED_DEX_TOKENS } from '../../../lib/currentSharedDexTokenDistribution';
@@ -30,11 +33,11 @@ vi.mock('react', async original => ({ ...await original<typeof import('react')>(
 vi.mock('../hooks/useCurrentTrialBalances', () => ({ default: hooks.balances }));
 vi.mock('../../trading/hooks/useTradeActionConfirmationState', () => ({ default: () => ({ confirmation: null, requestConfirmation: hooks.confirm, resolveConfirmation: vi.fn() }) }));
 
-type Props = { children?: ReactNode; onClick?: () => void; onChange?: (event: { target: { value: string } }) => void; disabled?: boolean; role?: string; href?: string; 'aria-label'?: string; 'aria-pressed'?: boolean };
+type Props = { children?: ReactNode; onClick?: () => void; onChange?: (event: { target: { value: string } }) => void; disabled?: boolean; role?: string; href?: string; 'aria-label'?: string; 'aria-pressed'?: boolean; 'aria-current'?:string };
 // The shallow fixture must render the stateless progress view to observe its status and result.
 const presentation = (node: ReactNode): ReactNode =>
   isValidElement<Parameters<typeof CurrentSwapProgress>[0]>(node) && node.type === CurrentSwapProgress
-    ? CurrentSwapProgress(node.props) : node;
+    ? CurrentSwapProgress(node.props) : isValidElement<Parameters<typeof CurrentSwapSteps>[0]>(node)&&node.type===CurrentSwapSteps?CurrentSwapSteps(node.props):node;
 const elements = (input: ReactNode): ReactElement<Props>[] => {
   const node = presentation(input);
   return Array.isArray(node) ? node.flatMap(elements) : isValidElement<Props>(node) ? [node, ...elements(node.props.children)] : [];
@@ -57,11 +60,16 @@ function fixture(candidateKey: CurrentCheapDexCandidateKey | undefined = key, se
   const sharedFunds = { owner: selectedOwner, core: prepared.core, graph: prepared.graph, packageSha256: prepared.packageSha256, privateFundsVerified: true, readyToSign: false,
     head: { number: 99n, hash: `0x${'66'.repeat(32)}`, timestamp: 990n }, tokens: sharedTokens };
   const sender = { checkCurrentCheapCandidate: vi.fn(async (): Promise<{ chainId: bigint; owner: string; core: string; graph: string; readyToSign: boolean }> => ({ chainId: BigInt(prepared.chainId), owner: selectedOwner, core: prepared.core, graph: prepared.graph, readyToSign: false })),
-    recoverPendingCurrentCheapAttempt: vi.fn(async () => null), readCurrentTokenFunding: vi.fn(), prepareCurrentTokenFunding: vi.fn(), submitCurrentTokenFunding: vi.fn(),
+    recoverPendingCurrentCheapAttempt: vi.fn(async () => null), assertCurrentCheapSwapAllowanceCleanupIdle: vi.fn(async () => {}), readCurrentTokenFunding: vi.fn(), prepareCurrentTokenFunding: vi.fn(), submitCurrentTokenFunding: vi.fn(),
     readSharedTokenFunding: vi.fn(async () => sharedFunds),
-    prepareSharedSwapApproval: vi.fn(async (request: { token: string; amount: bigint; assertReviewCurrent: () => void; confirm: (review: { token: string; amount: bigint; spender: string }) => Promise<boolean> }) => {
-      request.assertReviewCurrent(); if (!await request.confirm({ token: request.token, amount: request.amount, spender: prepared.core })) return null;
+    readSharedSwapInputFunding: vi.fn(async () => sharedFunds),
+    prepareSharedSwapApproval: vi.fn(async (request: { token: string; amount: bigint; assertReviewCurrent: () => void; confirm: (review: { token: string; amount: bigint; targetAllowance: bigint; spender: string }) => Promise<boolean> }) => {
+      request.assertReviewCurrent(); if (!await request.confirm({ token: request.token, amount: request.amount, targetAllowance: request.amount, spender: prepared.core })) return null;
       request.assertReviewCurrent(); return { token: request.token, amount: request.amount };
+    }),
+    prepareSharedSwapAllowanceCleanup: vi.fn(async (request: { token: string; assertReviewCurrent: () => void; confirm: (review: { spender: string }) => Promise<boolean> }) => {
+      request.assertReviewCurrent(); if (!await request.confirm({ spender: prepared.core })) return null;
+      request.assertReviewCurrent(); return { token: request.token, amount: 0n };
     }),
     submitSharedSwapApproval: vi.fn(async (review: { token: string; amount: bigint }) => ({ transactionHash: `0x${'77'.repeat(32)}`, recover: async () => {
       sharedTokens.find(token => token.address.toLowerCase() === review.token.toLowerCase())!.allowance = review.amount;
@@ -74,46 +82,172 @@ function fixture(candidateKey: CurrentCheapDexCandidateKey | undefined = key, se
       getCurrentDexSubmissionCapability: getCapability, getCurrentDexQuoteCapability: getQuote, getCurrentDexReceiptCapability: getReceipt
     } } as unknown as SharedWalletSession;
   const props: { selectedPair: TradingPair; candidateKey?: CurrentCheapDexCandidateKey;
-    priceDisplayInverted: boolean; referenceDisplayInverted?: boolean; onReferenceDisplayInvertedChange?: (inverted: boolean | undefined) => void;
+    priceDisplayInverted: boolean; referenceDisplayInverted?: boolean; onPriceDisplayInvertedChange?: (inverted: boolean) => void;
     sharedWalletSession: SharedWalletSession; marketReference?:CurrentDexMarketReference; visible?: boolean } = {
     selectedPair, candidateKey, priceDisplayInverted: false, sharedWalletSession: session };
   const render = () => { hooks.index = 0; hooks.refIndex = 0; hooks.effects = []; return CurrentSwapWorkspace(props); };
+  const mountedEffects: { deps?: readonly unknown[]; cleanup?: void | (() => void) }[] = [];
+  const commit = () => {
+    const tree = render();
+    hooks.effects.forEach((effect, index) => {
+      const previous = mountedEffects[index];
+      if (previous && effect.deps && effect.deps.length === previous.deps?.length && effect.deps.every((value, i) => Object.is(value, previous.deps![i]))) return;
+      previous?.cleanup?.();
+      mountedEffects[index] = { deps: effect.deps, cleanup: effect.callback() };
+    });
+    return tree;
+  };
+  const unmount = () => mountedEffects.forEach(effect => effect.cleanup?.());
   const button = (label: string) => elements(render()).find(e => e.type === 'button' && (e.props['aria-label'] === label || text(e.props.children) === label));
   const click = (label: string) => { const control = button(label)!; expect(control.props.disabled).toBe(false); control.props.onClick!(); };
   const status = () => text(elements(render()).find(e => e.props.role === 'status')?.props.children);
   render();
-  return { props, render, button, click, status, sender, getCapability, getQuote, getReceipt, providerRequest, sharedTokens, sharedFunds };
+  return { props, render, commit, unmount, button, click, status, sender, getCapability, getQuote, getReceipt, providerRequest, sharedTokens, sharedFunds };
 }
-afterEach(() => { hooks.states = []; hooks.refs = []; hooks.effects = []; hooks.allowSwap = false; vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+
+it('routes a saved Pool snapshot to position recovery without calling the swap reader',async()=>{
+  const f=fixture(),onInspect=vi.fn();Object.assign(f.props,{onInspect});
+  const saved=JSON.stringify({version:1,chainId:String(prepared.chainId),owner,core:prepared.core.toLowerCase(),graph:`0x${prepared.graph}`,
+    phase:'pool-snapshot',nonce:7,txHash:`0x${'77'.repeat(32)}`,callHash:`0x${'88'.repeat(32)}`,verificationBlocked:true,verificationFailure:'snapshot-financial-state'});
+  const storage={getItem:(name:string)=>name===CURRENT_DEX_PENDING_ATTEMPT_KEY?saved:null,setItem:vi.fn(),removeItem:vi.fn()};
+  vi.stubGlobal('window',{sessionStorage:storage});
+  f.click('Check current state');
+  await vi.waitFor(()=>expect(text(f.render())).toContain('A Pool action needs verification.'));
+  f.click('Open position recovery');expect(onInspect).toHaveBeenCalledWith('positions');
+  expect(f.sender.recoverPendingCurrentCheapAttempt).not.toHaveBeenCalled();expect(f.getCapability).not.toHaveBeenCalled();
+  expect(f.button('Get Quote')!.props.disabled).toBe(true);expect(storage.setItem).not.toHaveBeenCalled();expect(storage.removeItem).not.toHaveBeenCalled();
+});
+afterEach(() => { hooks.states = []; hooks.refs = []; hooks.effects = []; hooks.allowSwap = false; vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('prepared candidate swap view', () => {
-  it.skipIf(key !== 'cheap-history')('reports Buy and Sell input orientation, ignores global inversion, and clears it when hidden', () => {
-    const f = fixture(), onOrientation = vi.fn();
-    f.props.onReferenceDisplayInvertedChange = onOrientation;
+  it('announces the selected private-input plan and conditional approval before starting',()=>{
+    const f=fixture(),content=text(f.render());
+    expect(content).toContain(`${currentDexQuoteInputPlan(key).length} signatures · 2 transactions`);
+    expect(content).toContain('Approval if needed: +1 signature, +1 transaction');
+    expect(f.getQuote).not.toHaveBeenCalled();expect(f.providerRequest).not.toHaveBeenCalled();
+    expect(content).not.toContain('steps complete');
+    expect(elements(f.render()).filter(e=>e.props['aria-current']==='step')).toHaveLength(1);
+  });
+  it.skipIf(key==='cheap-prepared')('shows verified Multi-source stage counts and only its keeper step as active',async()=>{
+    const f=fixture(),quoteHash=`0x${'55'.repeat(32)}`,stages=currentCheapDexStages(prepared);
+    const issued={transactionHash:quoteHash,operationId:3n,intent:{profile:'cheap-async',candidate:prepared,destination:owner,inputToken:addresses[1],outputToken:addresses[0],maximumInput:1_234_567n,minimumInput:1n,minimumOutput:1n,toleranceBps:50,rateNumerator:0n,rateDenominator:1n},operation:{ready:false,phase:'preparing-quote',stage:3},readCurrent:vi.fn()};issued.readCurrent.mockResolvedValue(issued);
+    Object.assign(f.sender,{readCurrentCheapRestoreHint:vi.fn(()=>({quoteHash})),restoreCurrentCheapOperation:vi.fn(async()=>issued)});f.getQuote.mockResolvedValue({restoreCurrentQuote:vi.fn(async()=>issued)});
+    f.click('Check current state');await vi.waitFor(()=>expect(f.status()).toContain('2 of'));
+    expect(text(f.render())).toContain(`2/${stages.workCalls} steps complete`);
+    const active=elements(f.render()).filter(e=>e.props['aria-current']==='step');expect(active).toHaveLength(1);expect(text(active[0])).toContain('Preparing quote');
+    issued.operation={ready:true,phase:'quote-prepared',stage:stages.ready};f.click('Check current state');await vi.waitFor(()=>expect(f.status()).toBe('Private Quote is READY for review.'));
+    expect(text(f.render())).toContain('QuoteConfirmed');expect(f.providerRequest).not.toHaveBeenCalled();
+  });
+  async function progressFixture() {
+    const f = fixture(), quoteHash = `0x${'55'.repeat(32)}`;
+    const issued = { transactionHash: quoteHash, operationId: 2n,
+      intent: { profile: 'cheap-async', candidate: prepared, destination: owner, inputToken: addresses[1], outputToken: addresses[0],
+        maximumInput: 1_234_567n, minimumInput: 1n, minimumOutput: 1n, toleranceBps: 50, rateNumerator: 0n, rateDenominator: 1n },
+      operation: { ready: false, phase: 'settling', stage: 6 }, readCurrent: vi.fn() };
+    issued.readCurrent.mockResolvedValue(issued);
+    const readCurrentCheapDelivery = vi.fn(async () => ({ amounts: { actualInput: 1_234_567n, netOutput: 900_000n, refund: 0n, filled: true } }));
+    Object.assign(f.sender, { readCurrentCheapRestoreHint: vi.fn(() => ({ quoteHash })), restoreCurrentCheapOperation: vi.fn(async () => issued), readCurrentCheapDelivery });
+    f.getQuote.mockResolvedValue({ restoreCurrentQuote: vi.fn(async () => issued) });
+    f.click('Check current state');
+    await vi.waitFor(() => expect(f.status()).toBe('Accept is mined; settlement remains pending.'));
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { ...window, setTimeout, clearTimeout });
+    vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    f.commit();
+    return { ...f, issued, readCurrentCheapDelivery };
+  }
+  it.skipIf(key !== 'cheap-history').each(['unchanged', 'onboard', 'health', 'actions'] as const)(
+    'automatically displays completed settlement after %s session metadata', async change => {
+      const f = await progressFixture();
+      try {
+        const session = f.props.sharedWalletSession;
+        if (change === 'onboard') f.props.sharedWalletSession = { ...session, sessionOnboardInfo: { ...session.sessionOnboardInfo } };
+        if (change === 'health') f.props.sharedWalletSession = { ...session, walletAesHealthByAddress: { ...session.walletAesHealthByAddress } };
+        if (change === 'actions') {
+          const getSender = session.actions!.getCurrentDexSubmissionCapability!;
+          f.props.sharedWalletSession = { ...session, actions: { ...session.actions!, getCurrentDexSubmissionCapability: (...args) => getSender(...args) } };
+        }
+        f.commit();
+        f.issued.readCurrent.mockResolvedValue({ ...f.issued, operation: { ready: false, phase: 'settled', stage: 7 } });
+        await vi.advanceTimersByTimeAsync(5000); f.commit();
+        expect(f.issued.readCurrent).toHaveBeenCalledTimes(2);
+        expect(f.status()).toBe('Settlement confirmed by the private receipt.');
+        expect(text(f.render())).toContain('Paid 1.234567 ORBT; received 0.9 EMBR; refunded 0.0 ORBT.');
+        expect(f.readCurrentCheapDelivery).toHaveBeenCalledOnce();
+        expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled(); expect(f.providerRequest).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
+      } finally { f.unmount(); }
+    });
+  it.skipIf(key !== 'cheap-history').each(['lock', 'key', 'key-mismatch', 'wallet', 'provider', 'chain', 'candidate', 'terms', 'source', 'wallet-id'] as const)(
+    'stops automatic settlement reads after a %s boundary change', async change => {
+      const f = await progressFixture();
+      try {
+        const session = f.props.sharedWalletSession;
+        if (change === 'lock') f.props.sharedWalletSession = { ...session, sessionOnboardInfo: {} };
+        if (change === 'key') f.props.sharedWalletSession = { ...session, sessionOnboardInfo: { [owner]: { ...session.sessionOnboardInfo[owner], aesKey: 'different-local-fixture' } } };
+        if (change === 'key-mismatch') f.props.sharedWalletSession = { ...session, walletAesHealthByAddress: { [owner]: { status: 'key-mismatch' } } } as SharedWalletSession;
+        if (change === 'wallet') f.props.sharedWalletSession = { ...session, walletAddress: `0x${'33'.repeat(20)}` };
+        if (change === 'provider') f.props.sharedWalletSession = { ...session, browserProvider: { request: vi.fn() } } as unknown as SharedWalletSession;
+        if (change === 'chain') f.props.sharedWalletSession = { ...session, chainId: 1 };
+        if (change === 'candidate') f.props.candidateKey = 'cheap-exit';
+        if (change === 'terms') f.props.priceDisplayInverted = true;
+        if (change === 'source') f.props.sharedWalletSession = { ...session, activeSignerSource: 'different-source' } as unknown as SharedWalletSession;
+        if (change === 'wallet-id') f.props.sharedWalletSession = { ...session, browserWalletId: 'different-wallet' };
+        f.commit(); await vi.advanceTimersByTimeAsync(30_000); f.commit();
+        expect(f.issued.readCurrent).toHaveBeenCalledOnce(); expect(f.readCurrentCheapDelivery).not.toHaveBeenCalled();
+        expect(f.providerRequest).not.toHaveBeenCalled();
+      } finally { f.unmount(); }
+    });
+  it.skipIf(key !== 'cheap-history')('keeps one progress read in flight and resumes only after it returns', async () => {
+    const f = await progressFixture(); let finish!: () => void;
+    try {
+      f.issued.readCurrent.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve(f.issued); }));
+      await vi.advanceTimersByTimeAsync(5000); f.commit();
+      expect(f.issued.readCurrent).toHaveBeenCalledTimes(2);
+      expect(f.button('Check current state')!.props.disabled).toBe(true);
+      await vi.advanceTimersByTimeAsync(30_000); f.commit();
+      expect(f.issued.readCurrent).toHaveBeenCalledTimes(2);
+      finish(); await vi.advanceTimersByTimeAsync(0); f.commit();
+      await vi.advanceTimersByTimeAsync(4999); expect(f.issued.readCurrent).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1); f.commit(); expect(f.issued.readCurrent).toHaveBeenCalledTimes(3);
+      expect(f.readCurrentCheapDelivery).not.toHaveBeenCalled(); expect(f.providerRequest).not.toHaveBeenCalled();
+    } finally { f.unmount(); }
+  });
+  it.skipIf(key !== 'cheap-history')('stops automatic progress after a read failure and leaves manual inspection available', async () => {
+    const f = await progressFixture();
+    try {
+      f.issued.readCurrent.mockRejectedValueOnce(new Error('Private progress verification failed.'));
+      await vi.advanceTimersByTimeAsync(5000); f.commit();
+      expect(f.status()).toBe('Private progress verification failed.');
+      expect(f.button('Check current state')!.props.disabled).toBe(false);
+      await vi.advanceTimersByTimeAsync(30_000); f.commit();
+      expect(f.issued.readCurrent).toHaveBeenCalledTimes(2); expect(f.readCurrentCheapDelivery).not.toHaveBeenCalled();
+      expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled(); expect(f.providerRequest).not.toHaveBeenCalled();
+    } finally { f.unmount(); }
+  });
+  it.skipIf(key !== 'cheap-history').each(['lock', 'source'] as const)('rejects a late automatic result after a privacy %s change', async change => {
+    const f = await progressFixture(); let finish!: () => void;
+    try {
+      f.issued.readCurrent.mockImplementationOnce(() => new Promise(resolve => {
+        finish = () => resolve({ ...f.issued, operation: { ready: false, phase: 'settled', stage: 7 } });
+      }));
+      await vi.advanceTimersByTimeAsync(5000); f.commit();
+      f.props.sharedWalletSession = change === 'lock' ? { ...f.props.sharedWalletSession, sessionOnboardInfo: {} }
+        : { ...f.props.sharedWalletSession, activeSignerSource: 'different-source' } as unknown as SharedWalletSession;
+      f.commit(); finish(); await vi.advanceTimersByTimeAsync(0); f.commit();
+      expect(f.status()).toContain('Privacy session changed');
+      expect(f.readCurrentCheapDelivery).not.toHaveBeenCalled(); expect(text(f.render())).not.toContain('Paid 1.234567');
+      await vi.advanceTimersByTimeAsync(30_000); f.commit(); expect(f.issued.readCurrent).toHaveBeenCalledTimes(2);
+    } finally { f.unmount(); }
+  });
+  it.skipIf(key !== 'cheap-history').each([false, true])('keeps selected units when Buy/Sell changes (inverted=%s)', inverted => {
+    const f = fixture(), flip = vi.fn();
+    f.props.priceDisplayInverted = inverted;
+    f.props.onPriceDisplayInvertedChange = flip;
     f.render();
-    const orientationEffect = () => hooks.effects.find(effect => effect.deps?.includes(onOrientation))!;
-    orientationEffect().callback();
-    expect(onOrientation).toHaveBeenLastCalledWith(true);
-    const buyDeps = orientationEffect().deps;
-    f.props.priceDisplayInverted = true;
-    f.render();
-    expect(orientationEffect().deps).toEqual(buyDeps);
-    f.click('Sell');
-    expect(onOrientation).toHaveBeenLastCalledWith(true);
-    f.click('Buy');
-    expect(onOrientation).toHaveBeenLastCalledWith(false);
-    f.props.priceDisplayInverted = false;
-    f.click('Sell');
-    expect(onOrientation).toHaveBeenLastCalledWith(false);
-    f.render();
-    orientationEffect().callback();
-    expect(onOrientation).toHaveBeenLastCalledWith(false);
-    f.props.visible = false;
-    f.render();
-    const cleanup = orientationEffect().callback();
-    expect(onOrientation).toHaveBeenLastCalledWith(undefined);
-    cleanup?.();
-    expect(onOrientation).toHaveBeenLastCalledWith(undefined);
+    f.click('Sell'); f.render();
+    f.click('Buy'); f.render();
+    expect(f.props.priceDisplayInverted).toBe(inverted);
+    expect(flip).not.toHaveBeenCalled();
   });
   it('forwards hidden and visible Swap state to balance reads while keeping its form mounted', () => {
     const f=fixture(); f.props.visible=false; f.render();
@@ -259,13 +393,59 @@ describe('prepared candidate swap view', () => {
     hooks.allowSwap = true; hooks.confirm.mockResolvedValue(true); const f = fixture(undefined, selectedOwner);
     const input = elements(f.render()).find(e => e.props['aria-label'] === 'Maximum input')!;
     input.props.onChange!({ target: { value: '1.234567' } });
-    const quote={intent:{maximumInput:1_234_567n}};
+    const quote={intent:{maximumInput:1_234_567n,deadline:2_000n}};
     const prepareQuote = vi.fn(async (_request: { confirmPrivateInputs: (review: { maximumInput: bigint; minimumInput: bigint; minimumOutput: bigint }) => Promise<boolean> }) => quote);
-    Object.assign(f.sender,{submitCurrentCheapQuote:vi.fn(async()=>{throw new Error('Funding reached Quote submission');}),
+    const submitQuote=vi.fn(async()=>{throw new Error('Funding reached Quote submission');});
+    Object.assign(f.sender,{submitCurrentCheapQuote:submitQuote,
       prepareSharedTokenFunding:vi.fn(async()=>{throw new Error('Claim test tokens separately');})});
-    f.getQuote.mockResolvedValue({ prepareCurrentQuote: prepareQuote }); return { ...f, prepareQuote };
+    f.getQuote.mockResolvedValue({ prepareCurrentQuote: prepareQuote }); return { ...f, prepareQuote,submitQuote };
   };
-  it.skipIf(key !== 'cheap-history').each([false, true])('keeps Quote average in explicit reference units independent of global inversion (inverted=%s)', async inverted => {
+  it.skipIf(key==='cheap-prepared')('updates signature counts only from callbacks and stops on rejection',async()=>{
+    const f=admittedFundingFixture(),total=currentDexQuoteInputPlan(key).length;
+    f.prepareQuote.mockImplementation(async request=>{
+      const observed=request as typeof request&{progress:(event:CurrentDexQuoteInputProgress)=>void};
+      observed.progress({phase:'planned',completed:0,total});observed.progress({phase:'requesting',completed:0,total});
+      throw new Error('Wallet signature rejected');
+    });
+    f.click('Get Quote');await vi.waitFor(()=>expect(f.status()).toContain('Wallet signature rejected'));
+    expect(text(f.render())).toContain(`0/${total} signatures`);expect(text(f.render())).toContain('Swap stopped');
+    expect(elements(f.render()).filter(e=>e.props['aria-current']==='step')).toHaveLength(0);
+    expect(f.submitQuote).not.toHaveBeenCalled();
+  });
+  it.skipIf(key==='cheap-prepared')('shows a cancelled private-input review without claiming a Quote or signature',async()=>{
+    const f=admittedFundingFixture();f.prepareQuote.mockResolvedValue(null as never);f.click('Get Quote');
+    await vi.waitFor(()=>expect(f.status()).toBe('Private input review cancelled. No Quote was sent.'));
+    expect(text(f.render())).toContain('No quote was submitted.');expect(text(f.render())).toContain(`0/${currentDexQuoteInputPlan(key).length} signatures`);expect(f.submitQuote).not.toHaveBeenCalled();
+  });
+  it.skipIf(key==='cheap-prepared')('clears old signature progress when inputs are replaced and ignores late callbacks',async()=>{
+    const f=admittedFundingFixture(),total=currentDexQuoteInputPlan(key).length;let finish!:()=>void,observe!:(event:CurrentDexQuoteInputProgress)=>void;
+    const waiting=new Promise<void>(resolve=>{finish=resolve;});
+    f.prepareQuote.mockImplementation(async request=>{observe=(request as typeof request&{progress:typeof observe}).progress;observe({phase:'completed',completed:2,total});await waiting;return{intent:{maximumInput:1_234_567n,deadline:2_000n}};});
+    f.click('Get Quote');await vi.waitFor(()=>expect(text(f.render())).toContain(`2/${total} signatures`));
+    elements(f.render()).find(e=>e.props['aria-label']==='Maximum input')!.props.onChange!({target:{value:'2'}});f.render();
+    observe({phase:'completed',completed:total,total});expect(text(f.render())).toContain('Wallet or inputs changed');expect(text(f.render())).not.toContain(`${total}/${total} signatures`);
+    finish();await vi.waitFor(()=>expect(f.status()).toContain('changed'));expect(f.submitQuote).not.toHaveBeenCalled();
+  });
+  it.skipIf(key === 'cheap-prepared')('displays the verified Fast Accept delivery without another operation or private result read', async () => {
+    const f = admittedFundingFixture(), hash = `0x${'44'.repeat(32)}`, now = BigInt(Math.floor(Date.now() / 1000));
+    const readCurrent = vi.fn(async () => { throw new Error('Duplicate operation read'); });
+    const issued = { operationId: 9n, transactionHash: hash, readCurrent,
+      intent: { profile: 'fast-pool', candidate: prepared, inputToken: addresses[1], outputToken: addresses[0],
+        maximumInput: 1_234_567n, deadline: now + 600n }, operation: { ready: true, phase: 'quote-prepared', stage: 0 } };
+    const delivery = { amounts: { filled: true, actualInput: 1_000_000n, netOutput: 400_000n, refund: 234_567n },
+      releaseAction: null, operation: { phase: 'consumed-unverified' } };
+    const readCurrentCheapDelivery = vi.fn(async () => { throw new Error('Duplicate delivery read'); });
+    Object.assign(f.sender, { readCurrentCheapDelivery,
+      submitCurrentCheapQuote: vi.fn(async () => ({ transactionHash: hash, recover: async () => issued })),
+      submitCurrentCheapAcceptance: vi.fn(async () => ({ transactionHash: hash, recover: async () => ({ status: 'settled', delivery }) })) });
+    f.click('Get Quote');
+    await vi.waitFor(() => expect(f.status()).toBe('Settlement confirmed by the private receipt.'));
+    expect(text(f.render())).toContain(`received 0.4 ${pair[0]}`);
+    expect(text(f.render())).toContain('Swap complete');expect(text(f.render())).not.toContain('keeper work steps');
+    expect(readCurrent).not.toHaveBeenCalled(); expect(readCurrentCheapDelivery).not.toHaveBeenCalled();
+    expect(f.sender.readSharedTokenFunding).not.toHaveBeenCalled();
+  });
+  it.skipIf(key !== 'cheap-history').each([false, true])('keeps Quote average in selected units despite an obsolete input-side override (inverted=%s)', async inverted => {
     const price = makeHistoryFixture('empty'), now = HISTORY_FIXTURE_DAY * 86400n + 100n;
     const snapshot = await readCurrentDexDailyPrice({ provider: price.provider, manifest: { ...price.manifest, symbols: pair }, finalityLagBlocks: 0, count: 1 });
     const reference = currentDexMarketReference({ status: 'empty', snapshot }, pair, now);
@@ -276,7 +456,7 @@ describe('prepared candidate swap view', () => {
     const reviewReady = new Promise<void>(resolve => { openReview = resolve; });
     const hash = `0x${'44'.repeat(32)}`;
     const issued = { operationId: 9n, transactionHash: hash, intent: { profile: 'fast-pool', candidate: prepared,
-      maximumInput: 1_234_567n, deadline: now + 600n }, operation: { ready: true, phase: 'quote-prepared', stage: 0 } };
+      maximumInput: 1_234_567n, toleranceBps: 50, deadline: now + 600n }, operation: { ready: true, phase: 'quote-prepared', stage: 0 } };
     const sender = Object.assign(f.sender, {
       submitCurrentCheapQuote: vi.fn(async () => ({ transactionHash: hash, recover: async () => issued })),
       submitCurrentCheapAcceptance: vi.fn(async ({ confirm }: { confirm: (model: object) => Promise<boolean> }) => {
@@ -292,7 +472,9 @@ describe('prepared candidate swap view', () => {
     f.props.marketReference = reference; f.render(); openReview();
     await vi.waitFor(() => expect(f.status()).toBe('Quote ready. Review and Accept when you are ready.'));
     const review = hooks.confirm.mock.calls.find(call => call[0].title === 'Review private quote')![0];
-    expect(review.summaryRows).toContainEqual({ label: 'Average price', value: inverted ? `2.5 ${pair[1]} per ${pair[0]} (rounded down)` : `0.4 ${pair[0]} per ${pair[1]} (rounded down)` });
+    expect(review.summaryRows).toContainEqual({ label: 'Slippage protection', value: '0.5% of the Quote net rate' });
+    expect(review.summaryRows).toContainEqual({ label: 'Quote expires', value: new Date(Number(now + 600n) * 1000).toLocaleString() });
+    expect(review.summaryRows).toContainEqual({ label: 'Average price', value: inverted ? `0.4 ${pair[0]}/${pair[1]} (rounded down)` : `2.5 ${pair[1]}/${pair[0]} (rounded down)` });
     expect(review.summaryRows).toContainEqual({ label: 'Price impact (net)', value: '≈ 20.00% worse' });
     f.props.marketReference = { status: 'stale' };
     expect(text(f.render())).toContain('Price impact (net): ≈ 20.00% worse');
@@ -350,7 +532,7 @@ describe('prepared candidate swap view', () => {
     f.prepareQuote.mockImplementation(async request => {
       await request.confirmPrivateInputs({ maximumInput: 1_234_567n, minimumInput: 617_284n, minimumOutput: 900_000n });
       await waiting;
-      return { intent: { maximumInput: 1_234_567n } };
+      return { intent: { maximumInput: 1_234_567n, deadline: 2_000n } };
     });
     f.click('Get Quote');
     await vi.waitFor(() => expect(hooks.confirm).toHaveBeenCalled());
@@ -487,21 +669,34 @@ describe('prepared candidate swap view', () => {
     expect(f.sender.submitSharedSwapApproval).toHaveBeenCalledOnce();
     expect(f.prepareQuote).toHaveBeenCalledWith(expect.objectContaining({ graph: expect.objectContaining({ blockNumber: 99n, blockHash: f.sharedFunds.head.hash }) }));
     expect(f.sender.readCurrentTokenFunding).not.toHaveBeenCalled(); expect(f.sender.prepareCurrentTokenFunding).not.toHaveBeenCalled(); expect(f.sender.submitCurrentTokenFunding).not.toHaveBeenCalled();
-    expect(hooks.confirm.mock.calls[0][0].summaryRows).toContainEqual({ label: 'Amount (tokens)', value: '1.234567' });
+    expect(hooks.confirm.mock.calls[0][0].summaryRows).toContainEqual({ label: 'Swap amount', value: '1.234567' });
   });
-  it.skipIf(key === 'cheap-prepared').each(['insufficient', 'unmatched', 'exact'] as const)('handles %s private funding without automatic claims or allowance replacement', async state => {
+  it.skipIf(key === 'cheap-prepared').each(['insufficient', 'excess', 'exact'] as const)('handles %s private funding without automatic claims or allowance replacement', async state => {
     const f = admittedFundingFixture(), input = f.sharedTokens.find(token => token.address.toLowerCase() === addresses[1].toLowerCase())!;
     if (state === 'insufficient') input.balance = 1n;
-    else input.allowance = state === 'exact' ? 1_234_567n : 1n;
+    else input.allowance = state === 'exact' ? 1_234_567n : 1_234_568n;
     f.click('Get Quote');
-    await vi.waitFor(() => expect(f.status()).toContain(state === 'insufficient' ? 'Claim test tokens separately' : state === 'unmatched' ? 'differs from this exact swap amount' : 'Funding reached Quote submission'));
+    await vi.waitFor(() => expect(f.status()).toContain(state === 'insufficient' ? 'Claim test tokens separately' : 'Funding reached Quote submission'));
     expect(f.sender.prepareSharedSwapApproval).not.toHaveBeenCalled(); expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled();
     expect(f.sender.prepareCurrentTokenFunding).not.toHaveBeenCalled();
     expect(f.prepareQuote).toHaveBeenCalledOnce();
   });
+  it.skipIf(key === 'cheap-prepared')('increases a partial allowance without clearing or repeating Quote signatures', async () => {
+    const f=admittedFundingFixture(),input=f.sharedTokens.find(token=>token.address.toLowerCase()===addresses[1].toLowerCase())!;
+    input.allowance=1n;f.click('Get Quote');
+    await vi.waitFor(()=>expect(f.status()).toBe('Funding reached Quote submission'));
+    expect(f.sender.prepareSharedSwapAllowanceCleanup).not.toHaveBeenCalled();
+    expect(f.sender.submitSharedSwapApproval).toHaveBeenCalledOnce();expect(f.prepareQuote).toHaveBeenCalledOnce();
+  });
+  it.skipIf(key === 'cheap-prepared')('retains uncertain shortfall approval and does not send it twice',async()=>{
+    const f=admittedFundingFixture();f.sharedTokens.find(token=>token.address.toLowerCase()===addresses[1].toLowerCase())!.allowance=1n;
+    f.sender.submitSharedSwapApproval.mockRejectedValue(new Error('Unknown wallet result. Do not resend.'));f.click('Get Quote');
+    await vi.waitFor(()=>expect(f.status()).toContain('Unknown wallet result'));
+    expect(f.sender.submitSharedSwapApproval).toHaveBeenCalledOnce();expect(f.submitQuote).not.toHaveBeenCalled();
+  });
   it.skipIf(key === 'cheap-prepared')('does not submit approval or Quote after review cancel', async () => {
     const f = admittedFundingFixture(); hooks.confirm.mockResolvedValue(false); f.click('Get Quote');
-    await vi.waitFor(() => expect(f.status()).toContain('Exact approval cancelled'));
+    await vi.waitFor(() => expect(f.status()).toContain('Token approval cancelled'));
     expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled(); expect(f.prepareQuote).toHaveBeenCalledOnce();
   });
   it.skipIf(key === 'cheap-prepared')('rejects changed selected pair during approval review', async () => {
@@ -657,6 +852,8 @@ describe('prepared candidate swap view', () => {
     expect(tree.find(e => e.props['aria-label'] === 'Minimum net output')?.props).toMatchObject({ value: '0.9', disabled: true });
     expect(tree.find(e => e.type === 'button' && text(e.props.children) === (profile==='cheap-async'?'Multi-source':'Fast'))?.props['aria-pressed']).toBe(true);
     expect(text(f.render())).toContain('0.25%');
+    expect(text(f.render())).toContain('No new signatures');
+    expect(text(f.render())).not.toContain('Quote and Accept each need');
     expect(f.providerRequest).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
     expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled();
   });

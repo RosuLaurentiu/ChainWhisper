@@ -66,7 +66,8 @@ export const resolveOtcV2DeploymentCatalog = (
   try {
     if (candidate.chainId !== binding.chainId || !['prepared', 'book-admitted', 'admitted'].includes(binding.status)) throw new Error('P2P candidate chain or admission differs.');
     if (!isCurrentP2PFinancialScopeQualified(binding)) throw new Error('P2P financial repair qualification differs.');
-    const fingerprint = `${candidate.fingerprint}:otc-v2-catalog:repair:${binding.repairQualification?.proofSha256 ?? ''}:${binding.repairQualification?.candidateSha256 ?? ''}`;
+    const qualification = binding.repairQualification;
+    const fingerprint = `${candidate.fingerprint}:otc-v2-catalog:repair:${qualification?.status ?? ''}:${qualification?.proofSha256 ?? ''}:${qualification?.candidateSha256 ?? ''}:${qualification?.status === 'packed-input-actions-qualified' ? qualification.deploymentProofSha256 : ''}`;
     const directAdmission = resolveCurrentP2PDirectAdmission(binding);
     const bookBudgetAdmission = resolveCurrentP2PBookBudgetAdmission(binding);
     const tradeBalanceAdmissions = Object.freeze(Object.fromEntries((['private-v2', 'direct-v2', 'link-v2', 'counter-v2'] as const)

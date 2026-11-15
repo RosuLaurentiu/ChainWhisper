@@ -1,43 +1,19 @@
 import { AbiCoder, Interface, getAddress, keccak256, toUtf8Bytes, type Eip1193Provider } from '@coti-io/coti-ethers';
-import { CURRENT_DEX_DAILY_PRICE_ARTIFACT } from './currentDexDailyPriceArtifact';
-import { CURRENT_NATIVE_DEX_DAILY_PRICE_ARTIFACT } from './currentDexNativeDailyPriceArtifact';
-import { CURRENT_D06_DEX_DAILY_PRICE_ARTIFACT } from './currentDexD06DailyPriceArtifact';
-import { CURRENT_EXIT_DEX_DAILY_PRICE_ARTIFACT } from './currentDexExitDailyPriceArtifact';
-import { CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT } from './currentDexHistoryDailyPriceArtifact';
+import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT } from './packedInputDexDailyPriceArtifact';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { readCurrentDexDisplay } from './currentDexDisplay';
 import type { CurrentCheapDexCandidate } from './dexV2Deployment';
 import { createPrivateLiquidityHttpProvider } from './privateLiquidityRpc';
+import { readCurrentReferenceSource } from './currentDexReferenceSource';
 
-export const CURRENT_DEX_DAILY_PRICE_SOURCE = Object.freeze({
-  graph: '6d636a45f6c24a08b78a15070241b4ccfa0b63822fdac2ca3a40dd4a5533788e',
-  coreArtifact: 'fc71f47b0e5dd9a16dfde32fc33b34507df8d71a52f99098ade1b5a03fd0bff0',
-  buildInfo: '16c5c1f80b76182b322d1045c987b6151a45c83607d855ef25dbad625f8ad6a2',
-  recorderArtifact: CURRENT_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
+export const PACKED_INPUT_DEX_DAILY_PRICE_SOURCE = Object.freeze({
+  graph: '9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e',
+  recorderArtifact: PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
   schema: keccak256(toUtf8Bytes('chainwhisper.dex.pool-reference.observation.v1')),
-  policy: '0xed71147c6fb189173e6cb2eddf7efe41524dfc84d7412b1e3d1b11145f8a63ea'
+  policy: '0x74c9b7057b20b742b3f0aa5b9ffe142c6a9b78e5ac94963c005a1cad23ac16b1'
 });
-// Local current-candidate artifact only. Deployment/sample and active configuration remain required.
-export const CURRENT_NATIVE_DEX_DAILY_PRICE_SOURCE = Object.freeze({
-  graph: 'fa71b96c6c590a40feed6b234d8bf5a2fe548af0edb0a2a49dbd639f4c15938b',
-  recorderArtifact: CURRENT_NATIVE_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
-  schema: CURRENT_DEX_DAILY_PRICE_SOURCE.schema, policy: CURRENT_DEX_DAILY_PRICE_SOURCE.policy
-});
-export const CURRENT_D06_DEX_DAILY_PRICE_SOURCE = Object.freeze({
-  graph: 'd06b6640dad22e5018a5e50d46602fd6d9b534d0b8eb4497cb5b42aee55e5962',
-  recorderArtifact: CURRENT_D06_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
-  schema: CURRENT_DEX_DAILY_PRICE_SOURCE.schema, policy: CURRENT_DEX_DAILY_PRICE_SOURCE.policy
-});
-export const CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE = Object.freeze({
-  graph: 'b2aa0895d7661a43e3a7db85c9ae24daaa641db238a06bec5c64d031dcf382cd',
-  recorderArtifact: CURRENT_EXIT_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
-  schema: CURRENT_DEX_DAILY_PRICE_SOURCE.schema, policy: CURRENT_DEX_DAILY_PRICE_SOURCE.policy
-});
-export const CURRENT_HISTORY_DEX_DAILY_PRICE_SOURCE = Object.freeze({
-  graph: '9591af0d1ea77bdb952adf0a859ef895398f0bbf5600d8a1addd941cce4ff3eb',
-  recorderArtifact: CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
-  schema: CURRENT_DEX_DAILY_PRICE_SOURCE.schema, policy: CURRENT_DEX_DAILY_PRICE_SOURCE.policy
-});
+const referencePolicy = (graph: string) => graph === PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.graph
+  ? PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.policy : fail('History candidate does not match.');
 export type CurrentDexDailyPriceManifest = Readonly<{
   sourceGraph: string; recorderArtifact: string; chainId: string; genesisHash: string;
   address: string; runtimeHash: string; deployer: string; deploymentBlock: string;
@@ -66,7 +42,9 @@ export type CurrentDexDailyPriceSnapshot = Readonly<{
   readonly [VERIFIED_DAILY_PRICE]: true; manifest: CurrentDexDailyPriceManifest;
   slots: readonly CurrentDexDailyPriceSlot[]; atBlock: Readonly<{ number: string; hash: string; timestamp: string }>;
   currentReference: 'available' | 'unobserved' | 'stale' | 'suppressed-or-changed';
-  currentObservation?: Readonly<{ priceE18: string; sampledAt: string; sampledBlock: string; revision: string }>;
+  currentObservation?: Readonly<{ priceE18: string; sampledAt: string; sampledBlock: string; revision: string;
+    checkedAt?: string; checkedBlock?: string; checkedBlockHash?: string; coreAvailable?: boolean }>;
+  lastObservation?: CurrentDexDailyPriceSnapshot['currentObservation'];
 }>;
 const VERIFIED = new WeakSet<object>();
 export const isVerifiedCurrentDexDailyPrice = (value: unknown): value is CurrentDexDailyPriceSnapshot =>
@@ -75,6 +53,7 @@ export type CurrentDexPublicReferenceSnapshot = Readonly<{
   symbols: readonly [string,string]; atBlock: CurrentDexDailyPriceSnapshot['atBlock'];
   currentReference: CurrentDexDailyPriceSnapshot['currentReference'];
   currentObservation?: CurrentDexDailyPriceSnapshot['currentObservation'];
+  lastObservation?: CurrentDexDailyPriceSnapshot['currentObservation'];
 }>;
 const PUBLIC_REFERENCES = new WeakSet<object>();
 export const isVerifiedCurrentDexPublicReference = (value: unknown): value is CurrentDexPublicReferenceSnapshot =>
@@ -108,12 +87,8 @@ const block = (raw: unknown): Block => {
   const r = raw as Record<string, unknown>; return { number: quantity(r.number), hash: hash(r.hash), timestamp: quantity(r.timestamp) };
 };
 const validateManifest = (m: CurrentDexDailyPriceManifest) => {
-  const artifact = m.sourceGraph === CURRENT_DEX_DAILY_PRICE_SOURCE.graph ? CURRENT_DEX_DAILY_PRICE_ARTIFACT :
-    m.sourceGraph === CURRENT_NATIVE_DEX_DAILY_PRICE_SOURCE.graph ? CURRENT_NATIVE_DEX_DAILY_PRICE_ARTIFACT :
-      m.sourceGraph === CURRENT_D06_DEX_DAILY_PRICE_SOURCE.graph ? CURRENT_D06_DEX_DAILY_PRICE_ARTIFACT :
-        m.sourceGraph === CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE.graph ? CURRENT_EXIT_DEX_DAILY_PRICE_ARTIFACT :
-          m.sourceGraph === CURRENT_HISTORY_DEX_DAILY_PRICE_SOURCE.graph ? CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT : fail('History candidate does not match.');
-  if (m.recorderArtifact !== artifact.artifactSha256) fail('History candidate does not match.');
+  const artifact = PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT;
+  if (m.sourceGraph !== PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.graph || m.recorderArtifact !== artifact.artifactSha256) fail('History candidate does not match.');
   for (const k of ['genesisHash','runtimeHash','deploymentBlockHash','deploymentTransactionHash','sourceRuntimeHash','releaseId','market','pair','token0RuntimeHash','token1RuntimeHash'] as const) hash(m[k]);
   for (const k of ['address','deployer','source','token0','token1'] as const) address(m[k]);
   if (uint(m.chainId) === 0n || uint(m.canonicalId) === 0n) fail('History identity is missing.'); uint(m.deploymentBlock);
@@ -121,7 +96,7 @@ const validateManifest = (m: CurrentDexDailyPriceManifest) => {
   if (!same(m.pair, keccak256(coder.encode(['uint256','address','address'], [m.chainId,m.token0,m.token1]))) || m.symbols.length !== 2 || m.symbols.some(v => !v.trim())) fail('History pair does not match.');
   return artifact;
 };
-type ReferenceIdentity = Pick<CurrentDexDailyPriceManifest,'chainId'|'source'|'sourceRuntimeHash'|'releaseId'|'market'|'pair'|'canonicalId'|'token0'|'token1'|'decimals0'|'decimals1'>;
+type ReferenceIdentity = Pick<CurrentDexDailyPriceManifest,'sourceGraph'|'chainId'|'source'|'sourceRuntimeHash'|'releaseId'|'market'|'pair'|'canonicalId'|'token0'|'token1'|'decimals0'|'decimals1'>;
 type PriceReadProvider = Pick<Eip1193Provider, 'request'>;
 const observeDexPriceRead = (attribute: 'data-dex-reference-read' | 'data-dex-history-read') => {
   let attemptStartedAt = 0;
@@ -169,7 +144,7 @@ const readPriceRpc = (provider: PriceReadProvider, scope: string, method: string
   return read;
 };
 const validateObservation = (o: Observation, m: ReferenceIdentity) => {
-  const expected = [CURRENT_DEX_DAILY_PRICE_SOURCE.schema,CURRENT_DEX_DAILY_PRICE_SOURCE.policy,m.chainId,m.source,m.sourceRuntimeHash,m.releaseId,m.market,m.pair,m.canonicalId];
+  const expected = [PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.schema,referencePolicy(m.sourceGraph),m.chainId,m.source,m.sourceRuntimeHash,m.releaseId,m.market,m.pair,m.canonicalId];
   expected.forEach((v,i) => { if (!same(o[i],v)) fail('History source identity does not match.'); });
   if (o[9] === 0n || o[10] === 0n || !same(o[11],m.token0) || !same(o[12],m.token1) || o[13] !== BigInt(m.decimals0) || o[14] !== BigInt(m.decimals1)) fail('History source pair or units do not match.');
 };
@@ -179,6 +154,20 @@ const decodeReference = (raw: unknown, m: ReferenceIdentity): Observation => {
   if (!same(coder.encode(observationTypes,current),raw)) fail('History current reference encoding does not match.');
   validateObservation(current,m);return current;
 };
+const checkedReference = async(current:Observation,identity:ReferenceIdentity,head:Block,pin:{blockHash:string;requireCanonical:true},rpc:(method:string,params:unknown[])=>Promise<unknown>) => {
+  const source=await readCurrentReferenceSource({identity,current,pin,rpc}),o=source.observation;
+  const now=BigInt(Math.floor(Date.now()/1000));
+  if(head.timestamp>now||now-head.timestamp>120n)fail('Current reference checked head is stale.');
+  if(BigInt(o.sampledAt)>head.timestamp||BigInt(o.sampledBlock)>head.number)fail('Current reference sample is after its checked head.');
+  if(BigInt(o.priceE18)===0n)return{currentReference:BigInt(o.sampledAt)===0n?'unobserved' as const:'suppressed-or-changed' as const};
+  if(BigInt(o.sampledAt)===0n||BigInt(o.sampledBlock)===0n||BigInt(o.revision)===0n||/^0x0{64}$/i.test(o.sourceState))fail('Current reference sample identity is missing.');
+  const sample=block(await rpc('eth_getBlockByNumber',[`0x${BigInt(o.sampledBlock).toString(16)}`,false]));
+  if(sample.number!==BigInt(o.sampledBlock)||sample.timestamp!==BigInt(o.sampledAt))fail('Current reference source time does not match.');
+  const lastObservation=Object.freeze({priceE18:o.priceE18,sampledAt:o.sampledAt,sampledBlock:o.sampledBlock,revision:o.revision});
+  if(!source.sourceCurrent)return{currentReference:'suppressed-or-changed' as const,sample,lastObservation};
+  return{currentReference:'available' as const,sample,currentObservation:Object.freeze({priceE18:o.priceE18,sampledAt:o.sampledAt,sampledBlock:o.sampledBlock,revision:o.revision,
+    checkedAt:String(head.timestamp),checkedBlock:String(head.number),checkedBlockHash:head.hash,coreAvailable:current[20] as boolean})};
+};
 
 // The live Core signal has its own provenance; recording chart samples is separate.
 export async function readCurrentDexPublicReference({provider,candidate,pair,finalityLagBlocks=2,assertCurrent=()=>{}}:{
@@ -187,13 +176,15 @@ export async function readCurrentDexPublicReference({provider,candidate,pair,fin
 }):Promise<CurrentDexPublicReferenceSnapshot>{
   const observe = observeDexPriceRead('data-dex-reference-read');
   try {
-  const {candidate:c}=resolvePreparedDexScope(candidate),display=readCurrentDexDisplay(c);
+  const {candidate:c,key}=resolvePreparedDexScope(candidate);
+  if(key!=='cheap-history'||c.graph!==PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.graph)fail('Current reference candidate does not match.');
+  const display=readCurrentDexDisplay(c);
   const selected=display.pairs.find(row=>currentDexDailyPricePairOrientation(row.tokens.map(token=>token.label) as [string,string],pair)!==0);
   if(!selected)fail('Current reference pair is outside the selected candidate.');
   if(!Number.isInteger(finalityLagBlocks)||finalityLagBlocks<0||finalityLagBlocks>128)fail('Current reference finality exceeds its bound.');
   const market=c.pairs.find(row=>row.marketId===selected!.marketId)!,core=c.runtimes.find(([role])=>role==='ChainWhisperDexCore')!;
   const [token0,token1]=selected!.tokens;
-  const identity:ReferenceIdentity={chainId:c.chainId,source:c.core,sourceRuntimeHash:core[2],releaseId:c.releaseId,
+  const identity:ReferenceIdentity={sourceGraph:c.graph,chainId:c.chainId,source:c.core,sourceRuntimeHash:core[2],releaseId:c.releaseId,
     market:market.marketId,pair:keccak256(coder.encode(['uint256','address','address'],[c.chainId,token0.address,token1.address])),
     canonicalId:market.canonicalId,token0:token0.address,token1:token1.address,decimals0:token0.decimals,decimals1:token1.decimals};
   const scope=priceReadScope(c.graph,c.genesisHash,identity);
@@ -207,7 +198,7 @@ export async function readCurrentDexPublicReference({provider,candidate,pair,fin
   const latest=block(await rpc('eth_getBlockByNumber',['latest',false]));if(latest.number<BigInt(finalityLagBlocks))fail('Current reference head is unavailable.','rpc');
   const head=block(await rpc('eth_getBlockByNumber',[`0x${(latest.number-BigInt(finalityLagBlocks)).toString(16)}`,false]));
   if(head.number!==latest.number-BigInt(finalityLagBlocks)||head.timestamp>8640000000000n)fail('Current reference head does not match.');
-  const pin={blockHash:head.hash,requireCanonical:true};
+  const pin={blockHash:head.hash,requireCanonical:true as const};
   for(const [target,expected]of [[c.core,core[2]],...[token0,token1].map(token=>[token.address,c.tokens.find(([address])=>same(address,token.address))![1]])]){
     const code=await rpc('eth_getCode',[target,pin]);if(typeof code!=='string'||!/^0x(?:[0-9a-f]{2})+$/i.test(code)||!same(keccak256(code),expected))fail('Current reference runtime does not match.');
   }
@@ -215,19 +206,13 @@ export async function readCurrentDexPublicReference({provider,candidate,pair,fin
   const response=await rpc('eth_call',[{to:c.core,data:api.encodeFunctionData('poolReference',[market.marketId])},pin]);
   if(typeof response!=='string')fail('Current reference RPC result does not match.','rpc');
   const decoded=api.decodeFunctionResult('poolReference',response as string);if(!same(api.encodeFunctionResult('poolReference',decoded),response))fail('Current reference RPC encoding does not match.');
-  const current=decodeReference(decoded[0],identity),currentReference=current[16]===0n?'unobserved':
-    current[16]>head.timestamp||head.timestamp-current[16]>120n||current[17]>head.number?'stale':
-      current[20]&&current[15]>0n?'available':'suppressed-or-changed';
-  const checked=[head];
-  if(currentReference==='available'){
-    if(current[18]===0n||current[17]===0n)fail('Current reference source revision does not match.');
-    const sample=block(await rpc('eth_getBlockByNumber',[`0x${BigInt(current[17]).toString(16)}`,false]));
-    if(sample.number!==current[17]||sample.timestamp!==current[16])fail('Current reference source time does not match.');checked.push(sample);
-  }
+  const current=decodeReference(decoded[0],identity),verified=await checkedReference(current,identity,head,pin,rpc);
+  const {currentReference,currentObservation,lastObservation}=verified;
+  const checked=verified.sample?[head,verified.sample]:[head];
   for(const expected of checked){const fresh=block(await rpc('eth_getBlockByNumber',[`0x${expected.number.toString(16)}`,false]));if(fresh.number!==expected.number||fresh.timestamp!==expected.timestamp||!same(fresh.hash,expected.hash))fail('Current reference reorganized.','reorg');}
   await assertCurrent();const snapshot:CurrentDexPublicReferenceSnapshot=Object.freeze({symbols:Object.freeze([token0.label,token1.label]) as readonly[string,string],
     atBlock:Object.freeze({number:String(head.number),hash:head.hash,timestamp:String(head.timestamp)}),currentReference,
-    ...(currentReference==='available'?{currentObservation:Object.freeze({priceE18:String(current[15]),sampledAt:String(current[16]),sampledBlock:String(current[17]),revision:String(current[18])})}:{})});
+    ...(currentObservation?{currentObservation}:{}),...(lastObservation?{lastObservation}:{})});
   PUBLIC_REFERENCES.add(snapshot); observe('validation', 'completed'); return snapshot;
   } catch(error) { RECORDER_BINDINGS.delete(provider); throw error; }
   } catch(error) { observe('validation', 'failed'); throw error; }
@@ -259,7 +244,7 @@ export async function readCurrentDexDailyPrice({ provider, manifest: suppliedMan
   if (head.number !== latest.number-BigInt(finalityLagBlocks)) fail('History head number does not match.');
   if (head.timestamp > 8640000000000n) fail('History timestamp cannot be displayed.');
   if (head.number < uint(m.deploymentBlock)) fail('History deployment is not finalized.');
-  const pin = { blockHash: head.hash, requireCanonical: true };
+  const pin = { blockHash: head.hash, requireCanonical: true as const };
   const deployment = block(await rpc('eth_getBlockByNumber',[`0x${uint(m.deploymentBlock).toString(16)}`,false]));
   if (deployment.number !== uint(m.deploymentBlock)) fail('History deployment number does not match.');
   if (!same(deployment.hash,m.deploymentBlockHash)) fail('History deployment reorganized.', 'reorg');
@@ -276,7 +261,7 @@ export async function readCurrentDexDailyPrice({ provider, manifest: suppliedMan
   if (!same(`0x${normalized}`,artifact.deployedBytecode)) fail('History recorder code differs from the candidate.');
   const call = async (name: string, args: unknown[] = []) => api.decodeFunctionResult(name, await rpc('eth_call',[{to:m.address,data:api.encodeFunctionData(name,args)},pin]) as string);
   // Exact runtime hash/artifact and canonical deployment above still bind these immutable getters.
-  if (!bindings.has(bindingKey)) for (const [name,value] of [['SOURCE_GRAPH',`0x${m.sourceGraph}`],['SCHEMA',CURRENT_DEX_DAILY_PRICE_SOURCE.schema],['POLICY',CURRENT_DEX_DAILY_PRICE_SOURCE.policy],['source',m.source],['sourceRuntime',m.sourceRuntimeHash],['sourceChain',m.chainId],['releaseId',m.releaseId],['market',m.market],['pair',m.pair],['canonicalId',m.canonicalId],['token0',m.token0],['token1',m.token1],['decimals0',m.decimals0],['decimals1',m.decimals1],['MAX_PAGE',32]] as const) if (!same((await call(name))[0],value)) fail('History constructor binding does not match.');
+  if (!bindings.has(bindingKey)) for (const [name,value] of [['SOURCE_GRAPH',`0x${m.sourceGraph}`],['SCHEMA',PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.schema],['POLICY',referencePolicy(m.sourceGraph)],['source',m.source],['sourceRuntime',m.sourceRuntimeHash],['sourceChain',m.chainId],['releaseId',m.releaseId],['market',m.market],['pair',m.pair],['canonicalId',m.canonicalId],['token0',m.token0],['token1',m.token1],['decimals0',m.decimals0],['decimals1',m.decimals1],['MAX_PAGE',32]] as const) if (!same((await call(name))[0],value)) fail('History constructor binding does not match.');
   const token = new Interface(['function decimals() view returns(uint8)']);
   for (const [a,d] of [[m.token0,m.decimals0],[m.token1,m.decimals1]] as const) if (token.decodeFunctionResult('decimals',await rpc('eth_call',[{to:a,data:token.encodeFunctionData('decimals')},pin]) as string)[0] !== BigInt(d)) fail('History token decimals changed.');
   const currentDay = head.timestamp/86400n, slotsCount = BigInt(count) > currentDay+1n ? currentDay+1n : BigInt(count), start = currentDay-slotsCount+1n;
@@ -297,13 +282,11 @@ export async function readCurrentDexDailyPrice({ provider, manifest: suppliedMan
   }
   const sourceApi = new Interface(['function poolReference(bytes32) view returns(bytes)']);
   const raw = sourceApi.decodeFunctionResult('poolReference',await rpc('eth_call',[{to:m.source,data:sourceApi.encodeFunctionData('poolReference',[m.market])},pin]) as string)[0];
-  const current = decodeReference(raw,m);
-  const currentReference = current[16] === 0n ? 'unobserved' : current[16] > head.timestamp || head.timestamp-current[16] > 120n || current[17] > head.number ? 'stale' : current[20] && current[15] > 0n ? 'available' : 'suppressed-or-changed';
-  if (currentReference === 'available' && (current[18] === 0n || (await getBlock(current[17])).timestamp !== current[16]))
-    fail('Current reference source time or revision does not match.');
+  const current = decodeReference(raw,m), verified = await checkedReference(current,m,head,pin,rpc);
+  const {currentReference,currentObservation,lastObservation} = verified;
+  if(verified.sample)blocks.set(String(verified.sample.number),verified.sample);
   for (const [n,v] of blocks) if (!same(block(await rpc('eth_getBlockByNumber',[`0x${BigInt(n).toString(16)}`,false])).hash,v.hash)) fail('History read reorganized. No sample was accepted.', 'reorg');
-  const currentObservation = currentReference === 'available' ? Object.freeze({priceE18:String(current[15]),sampledAt:String(current[16]),sampledBlock:String(current[17]),revision:String(current[18])}) : undefined;
-  const snapshot = Object.freeze({manifest:m,slots:Object.freeze(slots.map(s=>Object.freeze(s))),atBlock:Object.freeze({number:String(head.number),hash:head.hash,timestamp:String(head.timestamp)}),currentReference,currentObservation}) as CurrentDexDailyPriceSnapshot;
+  const snapshot = Object.freeze({manifest:m,slots:Object.freeze(slots.map(s=>Object.freeze(s))),atBlock:Object.freeze({number:String(head.number),hash:head.hash,timestamp:String(head.timestamp)}),currentReference,currentObservation,...(lastObservation?{lastObservation}:{})}) as CurrentDexDailyPriceSnapshot;
   VERIFIED.add(snapshot); bindings.add(bindingKey); observe('validation', 'completed'); return snapshot;
   } catch(error) { bindings.delete(bindingKey); throw error; }
   } catch(error) { observe('validation', 'failed'); throw error; }

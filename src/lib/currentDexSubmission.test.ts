@@ -105,6 +105,18 @@ const transportFixture = () => {
 };
 
 describe('current DEX asynchronous submission adapter', () => {
+  it.each(['missing','failed','identity','unknown'] as const)('distinguishes %s receipt feedback without resending', async state => {
+    const f = transportFixture();
+    const submitted = await createCurrentDexSubmissionAdapter({ quoteAdmission: admission('quote', quoteData), transport: f.transport, now: () => 100n }).submitQuote(prepared());
+    const receipt = { hash: quoteHash, status: state === 'failed' ? 0 : state === 'unknown' ? null : 1,
+      from: state === 'identity' ? core : principal, to: core };
+    vi.mocked(f.transport.waitForReceipt).mockResolvedValueOnce(state === 'missing' ? null : receipt);
+    await expect(submitted.recover()).rejects.toThrow(state === 'missing' ? 'Confirmation is not available yet' :
+      state === 'failed' ? 'failed on chain' : state === 'identity' ? 'receipt identity changed' : 'receipt status is unavailable');
+    expect(f.transport.send).toHaveBeenCalledOnce();
+    await expect(submitted.recover()).resolves.toMatchObject({ transactionHash: quoteHash, operationId: 7n, readyToSign: false });
+    expect(f.transport.send).toHaveBeenCalledOnce();
+  });
   it('rejects a copied or fabricated issued quote before review or signing', async () => {
     const fixture = transportFixture(), forged = { ...issued() } as CurrentDexIssuedQuote;
     const prepare = vi.fn(async () => ({ prepared: acceptance(), admission: admission('accept', acceptData) }));
@@ -345,7 +357,7 @@ describe('current DEX asynchronous submission adapter', () => {
     (receipt.transport.waitForReceipt as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
     const quote = await createCurrentDexSubmissionAdapter({ quoteAdmission: admission('quote', quoteData), transport: receipt.transport, now: () => 100n })
       .submitQuote(prepared());
-    await expect(quote.recover()).rejects.toThrow('did not confirm');
+    await expect(quote.recover()).rejects.toThrow('Confirmation is not available yet');
 
     expect(expired.transport.send).not.toHaveBeenCalled();
     expect(gas.transport.send).not.toHaveBeenCalled();
@@ -478,7 +490,7 @@ describe('current shared-Pool owner release sender', () => {
     expect(result?.request.data).toBe(actionInterface.encodeFunctionData('recoverSwap', [7n]));
     f.transport.waitForReceipt.mockResolvedValue({ hash: txHash, status: 0, from: owner,
       to: candidate.core, blockNumber: 30, blockHash: hash, logs: [] });
-    await expect(result?.recover()).rejects.toThrow('did not confirm');
+    await expect(result?.recover()).rejects.toThrow('failed on chain');
     await expect(adapter.recoverPendingCurrentAttempt()).resolves.toMatchObject({
       status: 'observed-reverted', phase: 'recover' });
     expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBeUndefined();

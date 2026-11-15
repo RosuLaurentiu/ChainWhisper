@@ -19,12 +19,8 @@ export const RELEASE_COMPATIBILITY_PATHS = Object.freeze({
     'coti-testnet-unified-candidate.json'
   ),
   catalog: resolve(WORKSPACE_ROOT, 'MCP', 'runtime', 'coti-testnet-action-runtime-v2.json'),
-  analyticsManifest: resolve(
-    WORKSPACE_ROOT,
-    'ChainWhisper Contracts',
-    'deployments',
-    'coti-testnet-private-liquidity-daily-price-store.json'
-  ),
+  analyticsManifest: resolve(APP_ROOT, 'deployments', 'coti-testnet-private-liquidity-daily-price-store.json'),
+  appPrivateLiquidityBinding: resolve(APP_ROOT, 'src', 'lib', 'currentPrivateLiquidityBinding.json'),
   appEnv: resolve(APP_ROOT, '.env.coti-testnet-candidate.local'),
   directArtifact: resolve(
     WORKSPACE_ROOT,
@@ -65,6 +61,7 @@ export const RELEASE_COMPATIBILITY_PATHS = Object.freeze({
 const OFFICIAL_TESTNET_RPC = 'https://testnet.coti.io/rpc';
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/u;
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
 
 const canonicalize = (value) => {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -124,7 +121,7 @@ const sourceConstant = (source, name) => {
 const componentConsumers = (key) => {
   if (key === 'directChatV2' || key === 'groupChatV2') return 'APP, MCP, Supabase images';
   if (key === 'chatReactionsV1') return 'APP, MCP';
-  if (key.startsWith('privateLiquidity')) return 'APP, Worker/API, MCP';
+  if (key.startsWith('privateLiquidity')) return 'Worker/API, MCP (retained graph)';
   return 'APP, MCP';
 };
 
@@ -134,6 +131,7 @@ export const buildTestnetReleaseCompatibilityMatrix = ({
   candidateText,
   catalogText,
   analyticsManifestText,
+  appPrivateLiquidityBindingText,
   appEnvText,
   directArtifactText,
   groupArtifactText,
@@ -203,7 +201,30 @@ export const buildTestnetReleaseCompatibilityMatrix = ({
     'APP candidate mode embeds a different Contracts candidate.'
   );
 
-  const sourceBook = candidate.components.privateLiquidityBookV2;
+  let appPrivateLiquidity;
+  try {
+    appPrivateLiquidity = JSON.parse(appPrivateLiquidityBindingText);
+  } catch {
+    throw new Error('APP Private Liquidity binding must be valid JSON.');
+  }
+  const sourceBook = appPrivateLiquidity.manifest?.book;
+  const appComponents = ['book', 'hiddenIntentModule', 'positionToken']
+    .map((key) => appPrivateLiquidity.manifest?.[key]);
+  requireCondition(
+    appPrivateLiquidity.schemaVersion === 1 && appPrivateLiquidity.chainId === candidate.chainId &&
+      appPrivateLiquidity.manifest?.chainId === candidate.chainId &&
+      appPrivateLiquidity.owner?.toLowerCase() === candidate.owner.toLowerCase() &&
+      appComponents.every((item) => item && typeof item.address === 'string' && ADDRESS.test(item.address) &&
+        !/^0x0{40}$/iu.test(item.address) && typeof item.deploymentBlock === 'string' &&
+        POSITIVE_DECIMAL.test(item.deploymentBlock) &&
+        ['deploymentBlockHash', 'creationTransactionHash', 'runtimeBytecodeHash'].every((key) =>
+          typeof item[key] === 'string' && BYTES32.test(item[key]) && !/^0x0{64}$/iu.test(item[key]))) &&
+      new Set(appComponents.map((item) => item.address.toLowerCase())).size === 3 &&
+      BigInt(appComponents[1].deploymentBlock) <= BigInt(sourceBook.deploymentBlock) &&
+      ['deploymentBlock', 'deploymentBlockHash', 'creationTransactionHash'].every((key) =>
+        appComponents[2][key].toLowerCase() === sourceBook[key].toLowerCase()),
+    'APP Private Liquidity binding has an invalid chain, owner or graph identity.'
+  );
   requireCondition(
     analyticsManifest.status === 'attested-analytics-candidate-not-app-active' &&
       analyticsManifest.network === 'cotiTestnet' &&
@@ -215,7 +236,7 @@ export const buildTestnetReleaseCompatibilityMatrix = ({
       analyticsManifest.sourceBookRuntimeHash?.toLowerCase() ===
         sourceBook.runtimeBytecodeHash.toLowerCase() &&
       analyticsManifest.owner?.toLowerCase() === candidate.owner.toLowerCase(),
-    'Daily-price analytics manifest does not belong to the exact Contracts candidate.'
+    'Daily-price analytics manifest does not belong to the current APP Private Liquidity Book.'
   );
   const analyticsEnvBindings = new Map([
     ['VITE_CHAINWHISPER_PRIVATE_LIQUIDITY_DAILY_PRICE_ADDRESS', analyticsManifest.address],
@@ -303,6 +324,8 @@ export const buildTestnetReleaseCompatibilityMatrix = ({
     `- MCP runtime catalog: \`${catalog.manifestHash}\``,
     `- Chain: \`${candidate.chainId}\` (COTI testnet)`,
     `- Candidate activation: \`${candidate.relationships.appActivated}\``,
+    `- APP Private Liquidity Book: \`${sourceBook.address}\` / \`${sourceBook.runtimeBytecodeHash}\``,
+    '- The unified candidate Private Liquidity graph remains the Worker/API and MCP graph; it is not the current APP graph.',
     '',
     '## Consumer status',
     '',
@@ -344,6 +367,7 @@ export const loadTestnetReleaseCompatibilityInputs = async (paths = RELEASE_COMP
     candidateText,
     catalogText,
     analyticsManifestText,
+    appPrivateLiquidityBindingText,
     appEnvText,
     directArtifactText,
     groupArtifactText,
@@ -355,6 +379,7 @@ export const loadTestnetReleaseCompatibilityInputs = async (paths = RELEASE_COMP
     readFile(paths.candidate, 'utf8'),
     readFile(paths.catalog, 'utf8'),
     readFile(paths.analyticsManifest, 'utf8'),
+    readFile(paths.appPrivateLiquidityBinding, 'utf8'),
     readFile(paths.appEnv, 'utf8'),
     readFile(paths.directArtifact, 'utf8'),
     readFile(paths.groupArtifact, 'utf8'),
@@ -367,6 +392,7 @@ export const loadTestnetReleaseCompatibilityInputs = async (paths = RELEASE_COMP
     candidateText,
     catalogText,
     analyticsManifestText,
+    appPrivateLiquidityBindingText,
     appEnvText,
     directArtifactText,
     groupArtifactText,

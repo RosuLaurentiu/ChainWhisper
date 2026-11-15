@@ -1,7 +1,7 @@
 import { isCurrentDexBrowserSigner } from './currentDexBrowserPolicy';
 import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './currentDexHistoryCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 
 // Candidate-specific ceilings, not permission or a claim of general native fit.
 // Fast: source-bound 73ab service fixture (75M/75M). Async: d06 coexistence.

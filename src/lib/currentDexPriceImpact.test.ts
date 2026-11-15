@@ -3,7 +3,7 @@ import { formatUnits } from '@coti-io/coti-ethers';
 import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../tests/fixtures/history.fixture';
 import { readCurrentDexDailyPrice } from './currentDexDailyPrice';
 import { currentDexMarketReference, isVerifiedCurrentDexMarketReference } from './currentDexMarketReference';
-import { currentDexPriceImpact, currentDexQuoteAveragePrice } from './currentDexPriceImpact';
+import { currentDexPriceImpact, currentDexQuoteAveragePrice, formatCurrentDexAveragePrice } from './currentDexPriceImpact';
 import type { TradeActionConfirmModel } from './tradeActionConfirm';
 const now = HISTORY_FIXTURE_DAY * 86400n + 100n;
 async function fixture(mode: Parameters<typeof makeHistoryFixture>[0] = 'empty', reverse = false) {
@@ -60,11 +60,11 @@ describe('current net Quote price impact display', () => {
   });
   it('expires at the 120 second bound and rejects future observations', async () => {
     const f = await fixture(), m = model(f.pair, 0, '10', '18');
-    expect(currentDexPriceImpact({ ...f, inputIndex: 0, model: m, now: now + 110n })).toBe('≈ 10.00% worse');
-    expect(currentDexPriceImpact({ ...f, inputIndex: 0, model: m, now: now + 111n })).toBe('Unavailable');
+    expect(currentDexPriceImpact({ ...f, inputIndex: 0, model: m, now: now + 120n })).toBe('≈ 10.00% worse');
+    expect(currentDexPriceImpact({ ...f, inputIndex: 0, model: m, now: now + 121n })).toBe('Unavailable');
     expect(currentDexPriceImpact({ ...f, inputIndex: 0, model: m, now: now - 11n })).toBe('Unavailable');
   });
-  it.each(['stale', 'suppressed', 'unobserved'] as const)('keeps %s references unavailable even with saved history', async mode => {
+  it.each(['suppressed', 'unobserved'] as const)('keeps %s references unavailable even with saved history', async mode => {
     const f = await fixture(mode); expect(currentDexPriceImpact({ ...f, inputIndex: 0, model: model(f.pair, 0, '10', '18'), now })).toBe('Unavailable');
   });
   it('has no pre-Quote impact or inactive reference fallback', async () => {
@@ -74,11 +74,23 @@ describe('current net Quote price impact display', () => {
 });
 
 describe('current Quote average price display', () => {
+  it('shares exact rate formatting with normalized terminal amounts beyond raw uint256 scale', () => {
+    const baseAmount = 1n << 300n;
+    expect(formatCurrentDexAveragePrice({ baseAmount, quoteAmount: baseAmount * 3n / 2n, baseToken: 'BCN', quoteToken: 'HBR' }))
+      .toBe('1.5 HBR/BCN (rounded down)');
+  });
+  it('does not display a positive execution rate below display precision as zero', () => {
+    expect(formatCurrentDexAveragePrice({ baseAmount: 10n ** 20n, quoteAmount: 1n, baseToken: 'BCN', quoteToken: 'HBR' }))
+      .toBe('<0.00000001 HBR/BCN (rounded down)');
+  });
+  it.each([[0n, 1n], [1n, 0n], [-1n, 1n], [1n, -1n]])('does not format no-fill or malformed amounts %s/%s', (baseAmount, quoteAmount) => {
+    expect(formatCurrentDexAveragePrice({ baseAmount, quoteAmount, baseToken: 'BCN', quoteToken: 'HBR' })).toBe('Unavailable');
+  });
   it.each([
-    [0, false, '10', '18', '1.8 B per A (rounded down)'],
-    [1, false, '10', '18', '0.55555555 B per A (rounded down)'],
-    [0, true, '10', '18', '0.55555555 A per B (rounded down)'],
-    [1, true, '10', '18', '1.8 A per B (rounded down)'],
+    [0, false, '10', '18', '1.8 B/A (rounded down)'],
+    [1, false, '10', '18', '0.55555555 B/A (rounded down)'],
+    [0, true, '10', '18', '0.55555555 A/B (rounded down)'],
+    [1, true, '10', '18', '1.8 A/B (rounded down)'],
   ] as const)('formats input side %i, inverted %s', (inputIndex, priceDisplayInverted, input, output, expected) => {
     const pair = ['A', 'B'] as const;
     expect(currentDexQuoteAveragePrice({ model: model(pair, inputIndex, input, output), pair, inputIndex, priceDisplayInverted })).toBe(expected);
@@ -87,12 +99,12 @@ describe('current Quote average price display', () => {
     const pair = ['A', 'B'] as const;
     const input = 1n << 250n;
     expect(currentDexQuoteAveragePrice({ model: model(pair, 0, formatUnits(input, 18), formatUnits(input * 3n, 18)), pair, inputIndex: 0, priceDisplayInverted: false }))
-      .toBe('3.0 B per A (rounded down)');
+      .toBe('3.0 B/A (rounded down)');
   });
   it('normalizes decimal text with different fractional lengths', () => {
     const pair = ['A', 'B'] as const;
     expect(currentDexQuoteAveragePrice({ model: model(pair, 0, '1.25', '2.5'), pair, inputIndex: 0, priceDisplayInverted: false }))
-      .toBe('2.0 B per A (rounded down)');
+      .toBe('2.0 B/A (rounded down)');
   });
   it.each(['0', '-1', '1e2', '01.0', '1.0000000000000000001', formatUnits(1n << 256n, 18)])('rejects invalid or no-fill amount %s', input => {
     const pair = ['A', 'B'] as const;

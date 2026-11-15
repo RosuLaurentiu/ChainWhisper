@@ -6,7 +6,7 @@ import { CURRENT_SHARED_DEX_TOKENS, resolveCurrentSharedTokenDistribution } from
 import { OFFICIAL_COTI_TESTNET_FAUCET_URL } from '../../../lib/officialTestnetFaucet';
 import type { CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { assertCurrentSharedTokenFundingAppAuthority, type CurrentSharedTokenFundingReview } from '../../../lib/currentSharedDexTokenFunding';
-import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
+import { currentDexPendingStorage, readCurrentDexPendingAttempt, currentDexOwnerRecovery, type CurrentDexOwnerRecoveryView } from '../../../lib/currentDexPendingAttempt';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
@@ -41,8 +41,9 @@ const formatPolicyAmount = (amount: bigint) => {
   return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction ? `.${fraction}` : ''}`;
 };
 
-export default function CurrentSharedTestTokenControls({ sharedWalletSession, disabled = false, candidateKey = 'cheap-prepared' }: {
+export default function CurrentSharedTestTokenControls({ sharedWalletSession, disabled = false, candidateKey = 'cheap-prepared', onInspect }: {
   sharedWalletSession?: SharedWalletSession; disabled?: boolean; candidateKey?: CurrentCheapDexCandidateKey;
+  onInspect?: (view: CurrentDexOwnerRecoveryView) => void;
 }) {
   const policy = resolveCurrentSharedTokenDistribution(candidateKey);
   const provider = sharedWalletSession?.browserProvider, owner = sharedWalletSession?.walletAddress ?? '';
@@ -62,7 +63,15 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
   const [pending, setPending] = useState<{ scope: object; recover: Recover } | null>(null);
   const { confirmation, requestConfirmation, resolveConfirmation } = useTradeActionConfirmationState(scope.current);
   let hasPending = true;
-  try { hasPending = Boolean(readCurrentDexPendingAttempt(currentDexPendingStorage())); } catch { /* Missing storage blocks writes. */ }
+  let otherAction = '', ownerRecovery: ReturnType<typeof currentDexOwnerRecovery> = null;
+  const readOwnerRecovery = (saved: ReturnType<typeof readCurrentDexPendingAttempt>) => currentDexOwnerRecovery(saved,
+    { chainId: String(chainId), owner, core: policy.core, graph: `0x${policy.graph}` });
+  try {
+    const saved = readCurrentDexPendingAttempt(currentDexPendingStorage()); hasPending = Boolean(saved);
+    ownerRecovery = readOwnerRecovery(saved);
+    if (saved && saved.phase !== 'token-faucet' && saved.phase !== 'token-refill')
+      otherAction = ownerRecovery?.message ?? 'Another DEX action needs verification. Use its Status and recovery controls. Do not resend.';
+  } catch (cause) { otherAction = cause instanceof Error ? cause.message : 'The saved action is unavailable. Do not resend.'; }
   const connected = Boolean(provider && owner && chainId === 7082400), current = result?.scope === scope.current ? result : null;
   const admitted = CURRENT_SHARED_DEX_TOKENS.some(token => fundingAdmitted({ candidate: candidateKey, owner, token: token.address,
     action: current?.value?.tokens.find(asset => asset.address.toLowerCase() === token.address.toLowerCase())?.initialClaimAvailability === 'claimed' ? 'refill' : 'initial' }));
@@ -97,7 +106,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       if (funds.owner.toLowerCase() !== owner.toLowerCase() || funds.privateFundsVerified !== true || funds.readyToSign !== false) {
         throw new Error('Private beta funds owner changed.');
       }
-      setResult({ scope: captured, value: funds, funds, message: `Private beta funds checked at block ${funds.head.number}. This is a current balance, not confirmation of a previous claim.` });
+      setResult({ scope: captured, value: funds, funds, message: `Private beta funds checked at block ${funds.head.number}. This balance snapshot is not confirmation of a previous claim.` });
     } catch (error) {
       if (scope.current === captured) setResult({ scope: captured, message: error instanceof Error ? error.message : 'Private beta funds are unavailable.' });
     } finally { running.current = false; setBusy(false); }
@@ -135,8 +144,12 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
     const captured = scope.current, assertCurrent = () => { if (scope.current !== captured) throw new Error('Owner funding session changed. Check again.'); };
     running.current = true; setBusy(true); setResult(null);
     try {
-      const sender = await getSender(7082400n, { candidate: candidateKey }); assertCurrent();
       const savedAttempt = readCurrentDexPendingAttempt(currentDexPendingStorage());
+      if (savedAttempt && savedAttempt.phase !== 'token-faucet' && savedAttempt.phase !== 'token-refill') {
+        const target = readOwnerRecovery(savedAttempt);
+        setResult({ scope: captured, message: target?.message ?? 'Another DEX action needs verification. Use its Status and recovery controls. Do not resend.' }); return;
+      }
+      const sender = await getSender(7082400n, { candidate: candidateKey }); assertCurrent();
       const exact = pending?.scope === captured ? await pending.recover() : null; assertCurrent();
       const observed = exact ? null : await sender.recoverPendingSharedTokenFunding(recoveryHash.trim() || savedAttempt?.txHash || undefined); assertCurrent();
       if (observed && !['observed-mined', 'observed-reverted'].includes(observed.status)) throw new Error(observed.status === 'manual-reconciliation-required'
@@ -163,12 +176,12 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
   };
   const setupMessage = !provider || !owner ? 'Connect your wallet to check availability.'
     : chainId !== 7082400 ? 'Switch your wallet to COTI Testnet.'
-      : blocked || pending || hasPending ? 'A previous transaction needs confirmation. Check it below; do not resend.'
+      : otherAction || (blocked || pending || hasPending ? 'A previous transaction needs confirmation. Check it below; do not resend.'
         : !admitted ? 'Token signing is held until beta setup is complete.'
           : !privacyReady ? 'Unlock wallet privacy, then reveal your balances.'
           : busy || disabled ? 'Wait for the current action to finish.'
             : !getSender ? 'Token funding is unavailable for this wallet session.'
-              : !current?.funds ? 'Reveal your balances before claiming tokens.' : '';
+              : !current?.funds ? 'Reveal your balances before claiming tokens.' : '');
   return <section className="dex-v2-beta-tokens" aria-label="Beta private test tokens">
     <div className="dex-v2-beta-token-tools">
       <button type="button" disabled={!connected || busy || disabled} onClick={() => { void check(); }}>Check availability</button>
@@ -194,8 +207,8 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
           : funds && !allowed ? 'Reveal balances again to check availability.'
             : action === 'initial' ? 'Initial claim available' : 'Refill available';
       return <article className="dex-v2-beta-token-card" key={token.address}>
-        <header><strong>{token.symbol}</strong>{funds ? <span>Balance: {formatUnits(funds.balance, funds.decimals)}</span> : null}</header>
-        <div className="dex-v2-beta-token-action"><span>Receive <strong>{amount}</strong> {token.symbol}</span>
+        <header><strong>{token.symbol}</strong>{funds ? <span>Last checked balance: {formatUnits(funds.balance, funds.decimals)} (block {current?.funds?.head.number.toString()})</span> : null}</header>
+        <div className="dex-v2-beta-token-action"><span>{publicToken ? <>{action === 'initial' ? 'One-time claim' : 'Refill'} <strong>{amount}</strong> {token.symbol}</> : 'Check claim/refill availability'}</span>
           <button type="button" aria-describedby={`beta-token-setup ${actionId}`} disabled={held || availability !== 'ready'} onClick={() => { void claim(action, token.address); }}>{action === 'initial' ? 'Claim' : 'Refill'} {token.symbol}</button>
         </div>
         <p className="dex-v2-beta-token-status" id={actionId} role="status">{publicToken ? actionStatus : ''}</p>
@@ -211,10 +224,17 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
         </dl></details>
       </article>;
     })}</div>
-    <div className="dex-v2-beta-token-tools dex-v2-beta-token-footer"><button type="button" disabled={!connected || !privacyReady || !getSender || busy || disabled} onClick={() => { void reconcile(); }}>Check confirmation</button>
+    <div className="dex-v2-beta-token-tools dex-v2-beta-token-footer">{ownerRecovery && onInspect ? <button type="button" disabled={!connected || busy || disabled} onClick={() => {
+      try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage())); if (target) onInspect(target.view); }
+      catch (cause) { setResult({ scope: scope.current, message: cause instanceof Error ? cause.message : 'Saved action unavailable. Do not resend.' }); }
+    }}>{ownerRecovery.label}</button> : <button type="button" disabled={!connected || !privacyReady || !getSender || busy || disabled || Boolean(otherAction)} onClick={() => { void reconcile(); }}>Check confirmation</button>}
+      {ownerRecovery?.alternateView && onInspect ? <button type="button" disabled={!connected || busy || disabled} onClick={() => {
+        try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage())); if (target?.alternateView) onInspect(target.alternateView); }
+        catch (cause) { setResult({ scope: scope.current, message: cause instanceof Error ? cause.message : 'Saved action unavailable. Do not resend.' }); }
+      }}>Open top-up recovery</button> : null}
       <a href={OFFICIAL_COTI_TESTNET_FAUCET_URL} target="_blank" rel="noopener noreferrer">Get Test COTI for gas</a>
     </div>
-    {blocked || pending || hasPending ? <details><summary>Beta funding recovery</summary>
+    {!otherAction && (blocked || pending || hasPending) ? <details><summary>Beta funding recovery</summary>
       <label>Existing beta funding transaction hash<input aria-label="Existing beta funding transaction hash" value={recoveryHash}
         disabled={!connected || busy || disabled} onChange={event => setRecoveryHash(event.target.value)} placeholder="0x…" /></label>
       <p>Enter the existing claim hash. Do not resend.</p>

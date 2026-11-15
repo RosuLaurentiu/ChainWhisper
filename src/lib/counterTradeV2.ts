@@ -9,6 +9,7 @@ import { assertAttestedTradeHistoryV2Deployment, readAttestedTradeHistoryV2View,
 import { getOwnerTradeV2CapabilityBinding, assertOwnerTradeV2CapabilityCurrent, assertOwnerTradeV2CapabilitySnapshotCurrent,
   type OwnerTradeV2MetaMaskCapability } from './ownerTradeV2Capability';
 import { encryptPrivateUint256Input, decryptPrivateUint256Output } from './privateUint256';
+import { packPrivateTradeV2Pair } from './privateTradeV2Packing';
 
 const ABI = new Interface(COUNTER_TRADE_V2_ABI), LINK = new Interface(LINK_TRADE_V2_ABI), STANDARD = new Interface(STANDARD_TRADE_V2_ACTION_ABI);
 const REFERENCE = 'tuple(uint256 chainId,address escrow,uint256 id,uint64 revision,uint64 credentialEpoch)';
@@ -205,7 +206,7 @@ export const prepareCounterTradeV2Acceptance = async (input: CounterTradeV2Conte
     await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);
     return encryptPrivateUint256Input(binding.signer, BigInt(value), input.deployment.contractAddress, ABI.getFunction(name)!.selector);
   };
-  const args = material.privatePair ? [proposalId, await encrypt(material.offer), await encrypt(material.request)] : [proposalId, [material.offer, material.request]];
+  const args = material.privatePair ? [proposalId, await encrypt(packPrivateTradeV2Pair(material.offer, material.request).toString())] : [proposalId, [material.offer, material.request]];
   await recheckCounterTradeV2Acceptance(input, proposalId, material);
   await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);
   return Object.freeze({ to: input.deployment.contractAddress, data: ABI.encodeFunctionData(name, args) });
@@ -221,7 +222,7 @@ export const prepareCounterTradeV2Proposal = async (input: CounterTradeV2Context
     await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);
     return encryptPrivateUint256Input(binding.signer, BigInt(value), input.deployment.contractAddress, ABI.getFunction(name)!.selector);
   };
-  const amounts = m.privatePair ? [await encrypt(m.offer), await encrypt(m.request)] : [[m.offer, m.request]];
+  const amounts = m.privatePair ? [await encrypt(packPrivateTradeV2Pair(m.offer, m.request).toString())] : [[m.offer, m.request]];
   await recheckCounterTradeV2Proposal(input, m);
   await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);
   return Object.freeze({ to: input.deployment.contractAddress, data: ABI.encodeFunctionData(name, [child ? m.parentProposal : m.root, ...amounts, m.expiresAt]) });

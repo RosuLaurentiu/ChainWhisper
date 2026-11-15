@@ -114,13 +114,13 @@ export const readLinkTradeV2Balance = (binding: Binding, terms: Pick<LinkTradeV2
 export const readLinkTradeV2Allowance = (binding: Binding, terms: Pick<LinkTradeV2Terms, 'offerToken' | 'privatePair'>, escrow: string) => terms.privatePair
   ? readPrivateTokenAllowanceWei(terms.offerToken, binding.ownerAddress, escrow, binding.signer, false)
   : publicRead(binding, terms.offerToken, 'allowance', [binding.ownerAddress, escrow]);
-/** Creation and fill use the same exact allowance sequence. The caller admits and journals each send. */
+/** Creation and fill reuse sufficient allowance; zero remains an explicit cleanup. The caller admits and journals each send. */
 export const ensureLinkTradeV2Allowance = async (binding: Binding, terms: Pick<LinkTradeV2Terms, 'offerToken' | 'privatePair'>,
   escrow: string, budget: bigint, send: (step: LinkTradeV2CreationRecord['step'], to: string, data: string, complete: () => Promise<void>) => Promise<unknown>) => {
   const allowance = () => readLinkTradeV2Allowance(binding, terms, escrow);
   const currentAllowance = await allowance();
   if (currentAllowance === null) throw new Error('Link allowance is unavailable.');
-  if (currentAllowance === budget) return;
+  if (currentAllowance === budget || budget > 0n && currentAllowance > budget) return;
   if (terms.privatePair) {
     const plan = resolvePrivateTokenAllowanceWritePlan(currentAllowance, budget, 'exact');
     const selector = PRIVATE_TOKEN.getFunction(plan.selectorSignature)!.selector;
@@ -161,8 +161,9 @@ type CreationInput = {
   readCapability: TradeHistoryV2ReadCapability; deployment: LinkTradeV2Deployment;
   capability: OwnerTradeV2MetaMaskCapability; ownerAddress: string; action: LinkTradeV2CreationAction;
 } & LinkTradeV2CreationJournal;
-export const sendLinkTradeV2Transaction = async ({ binding, step, to, data, value = 0n, onPending, admit, complete }: {
+export const sendLinkTradeV2Transaction = async ({ binding, step, to, data, value = 0n, finalityLagBlocks = 0n, onPending, admit, complete }: {
   binding: Binding; step: LinkTradeV2CreationRecord['step']; to: string; data: string; value?: bigint;
+  finalityLagBlocks?: bigint;
   onPending: LinkTradeV2CreationJournal['onPending']; admit: (timestamp: bigint) => void | Promise<void>;
   complete: (receipt: unknown) => Promise<void>;
 }) => {
@@ -200,7 +201,7 @@ export const sendLinkTradeV2Transaction = async ({ binding, step, to, data, valu
   try { await onPending(submitted); }
   catch { throw Object.assign(new Error('Link transaction was sent, but its hash could not be saved. Do not resend.'), { transactionHash }); }
   assertTransaction(binding, submitted, transaction);
-  const receipt = await waitForOwnerTradeV2Receipt(binding, transactionHash);
+  const receipt = await waitForOwnerTradeV2Receipt(binding, transactionHash, { finalityLagBlocks });
   await confirmLinkTradeV2Transaction(binding, submitted, receipt, onPending, complete);
   return receipt;
 };
@@ -233,7 +234,10 @@ const runCreation = async (input: CreationInput, recovery?: LinkTradeV2CreationR
     if ((!claimed && !recovery) || !material) throw new Error('Unsigned Link recovery was not saved.');
 
     const send = (step: LinkTradeV2CreationRecord['step'], to: string, data: string, complete: (receipt: unknown) => Promise<void>) =>
-      sendLinkTradeV2Transaction({ binding, step, to, data, complete, onPending: input.onPending, admit: async timestamp => {
+      sendLinkTradeV2Transaction({ binding, step, to, data, complete, onPending: input.onPending,
+        // The order review reads head minus this lag; it must include the creation receipt.
+        finalityLagBlocks: step === 'create' ? BigInt(input.deployment.finalityLagBlocks) : 0n,
+        admit: async timestamp => {
         const expiry = BigInt(terms.expiresAt);
         if (expiry !== 0n && (expiry <= timestamp || expiry > timestamp + 2592000n)) throw new Error('Link expiry is outside its current 30-day window.');
         if (!material || keccak256(await provider.getCode(terms.offerToken)) !== material.offerCodeHash) throw new Error('Link offer-token code changed before signing.');

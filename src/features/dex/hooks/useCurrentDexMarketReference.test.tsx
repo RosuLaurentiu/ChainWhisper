@@ -1,10 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { AbiCoder,Interface,keccak256 } from '@coti-io/coti-ethers';
-import { CURRENT_CHEAP_DEX_CANDIDATE as current,STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit,STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from '../../../lib/dexV2Deployment';
+import { CURRENT_CHEAP_DEX_CANDIDATE as current,STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from '../../../lib/dexV2Deployment';
+import { STAGED_LIMIT_INPUT_DEX_CANDIDATE as history } from '../../../lib/currentDexLimitInputCandidate';
+import { makeCurrentReferenceStorage } from '../../../../tests/fixtures/currentReferenceSource.fixture';
+vi.mock('../../../lib/selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('../../../lib/selectedCurrentDexCandidate')>();const current=await import('../../../lib/currentDexLimitInputCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_LIMIT_INPUT_DEX_CANDIDATE};});
 import { CURRENT_DEX_DISPLAY_PAIR,readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
-import { EXIT_TESTNET_DEX_DAILY_PRICE_MANIFESTS } from '../../../lib/currentDexExitDailyPriceTestnet';
 import { HISTORY_FIXTURE_DAY,makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { loadCurrentDexDailyPrice } from './useCurrentDexDailyPrice';
 import * as priceReads from '../../../lib/currentDexDailyPrice';
@@ -13,7 +15,7 @@ import useCurrentDexMarketReference,{loadCurrentDexMarketReference} from './useC
 // Same synthetic runtime identities as currentDexMarketReference.test.ts.
 vi.mock('@coti-io/coti-ethers',async original=>{
   const actual=await original<typeof import('@coti-io/coti-ethers')>();
-  return{...actual,keccak256:(value:string)=>value==='0x6001'?'0xa5a60403d5c4ab01cd2baddb94cefdcd108bc99d249f21c6e217be2187cb3d34':
+  return{...actual,keccak256:(value:string)=>value==='0x6001'?'0x4fd3079f945285b696694ea995c7c7eca423042589a7b2e15eef4cd62a3fca3b':
     value==='0x6002'?'0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0':actual.keccak256(value)};
 });
 
@@ -23,10 +25,13 @@ async function verifiedPublicSnapshot(mode:'available'|'stale'|'suppressed'='ava
   const [token0,token1]=display.tokens,core=history.runtimes.find(([role])=>role==='ChainWhisperDexCore')!;
   const at=1_800_000_000n,sampledAt=mode==='stale'?at-121n:at-1n;
   const types=['bytes32','bytes32','uint256','address','bytes32','bytes32','bytes32','bytes32','uint256','uint256','uint256','address','address','uint8','uint8','uint256','uint256','uint256','uint256','bytes32','bool'];
-  const values=[priceReads.CURRENT_DEX_DAILY_PRICE_SOURCE.schema,priceReads.CURRENT_DEX_DAILY_PRICE_SOURCE.policy,history.chainId,
+  const values=[priceReads.PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.schema,priceReads.PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.policy,history.chainId,
     history.core,core[2],history.releaseId,market.marketId,
     keccak256(coder.encode(['uint256','address','address'],[history.chainId,token0.address,token1.address])),
     market.canonicalId,1n,1n,token0.address,token1.address,token0.decimals,token1.decimals,2n*10n**18n,sampledAt,199n,3n,`0x${'77'.repeat(32)}`,mode!=='suppressed'];
+  vi.spyOn(Date,'now').mockReturnValue(Number(at)*1000);
+  const storage=makeCurrentReferenceStorage({sourceGraph:history.graph,chainId:history.chainId,source:history.core,sourceRuntimeHash:core[2],releaseId:history.releaseId,market:market.marketId,canonicalId:market.canonicalId,token0:token0.address,token1:token1.address,decimals0:token0.decimals,decimals1:token1.decimals},values);values[19]=storage.commitment;
+  if(mode==='suppressed')values[15]=0n;
   const provider={request:async({method,params=[]}:{method:string;params?:unknown[]}):Promise<unknown>=>{
     if(method==='eth_chainId')return `0x${BigInt(history.chainId).toString(16)}`;
     if(method==='eth_getBlockByNumber'){
@@ -35,6 +40,7 @@ async function verifiedPublicSnapshot(mode:'available'|'stale'|'suppressed'='ava
     }
     if(method==='eth_getCode')return String(params[0]).toLowerCase()===history.core.toLowerCase()?'0x6001':'0x6002';
     if(method==='eth_call')return api.encodeFunctionResult('poolReference',[coder.encode(types,values)]);
+    if(method==='eth_getProof')return storage.rpc(method,params);
     throw Error('Unexpected local reference method.');
   }};
   return priceReads.readCurrentDexPublicReference({provider,candidate:history,pair:['HBR','BCN'],finalityLagBlocks:0});
@@ -94,9 +100,9 @@ describe('selected candidate market-reference hook',()=>{
       if(second===30)expect(view).toMatchObject({status:'available',price:2});
       if(second>=30)expect(read).toHaveBeenCalledTimes(2);
     }
-    expect(Render().status).toBe('stale');
+    expect(Render()).toMatchObject({status:'last-known',price:2});
     release();await vi.advanceTimersByTimeAsync(0);
-    expect(Render().status).toBe(mode==='stale'?'stale':'unavailable');
+    expect(Render()).toMatchObject({status:'last-known',price:2});
     expect(hooks.slots.some(slot=>{
       const settled=slot.value as {view?:{snapshot?:unknown;message?:string}}|null;
       return next?settled?.view?.snapshot===next:settled?.view?.message==='New reference read failed.';
@@ -172,19 +178,17 @@ describe('selected candidate market-reference hook',()=>{
     expect(Render(false).status).toBe('unavailable');expect(()=>assertions[2]()).toThrow('superseded');
     await vi.advanceTimersByTimeAsync(61000);expect(read).toHaveBeenCalledTimes(3);
   });
-  it('retains the historical default and active read configuration',()=>{
+  it('keeps the unsupported historical default inactive',()=>{
     function View(){return <output>{useCurrentDexMarketReference(true).status}</output>;}
     expect(renderToStaticMarkup(<View/>)).toContain('unavailable');
-    expect(state.read).toHaveBeenLastCalledWith(expect.objectContaining({pair:CURRENT_DEX_DISPLAY_PAIR,count:1,config:expect.objectContaining({status:'active',manifest:expect.objectContaining({source:expect.any(String)})})}));
+    expect(state.read).toHaveBeenLastCalledWith(expect.objectContaining({pair:CURRENT_DEX_DISPLAY_PAIR,count:1,config:{status:'inactive'}}));
   });
-  it('binds each current market and orientation to its accepted recorder',()=>{
-    for(const pair of readCurrentDexDisplay(exit).pairs){const selected=pair.tokens.map(token=>token.label)as[string,string];
-      const manifest=EXIT_TESTNET_DEX_DAILY_PRICE_MANIFESTS.find(m=>m.market===pair.marketId);
-      expect(manifest).toBeDefined();
+  it('uses the current Core for each market and orientation without a recorder fallback',()=>{
+    for(const pair of readCurrentDexDisplay(history).pairs){const selected=pair.tokens.map(token=>token.label)as[string,string];
       for(const direction of [selected,[selected[1],selected[0]]as[string,string]]){
-      function View(){return <output>{useCurrentDexMarketReference(true,exit,direction).status}</output>;}
-      expect(renderToStaticMarkup(<View/>)).toContain('unavailable');
-      expect(state.read).toHaveBeenLastCalledWith({pair:direction,count:1,config:expect.objectContaining({status:'active',manifest})});
+      function View(){return <output>{useCurrentDexMarketReference(true,history,direction).status}</output>;}
+      expect(renderToStaticMarkup(<View/>)).toContain('loading');
+      expect(state.read).toHaveBeenLastCalledWith({pair:direction,count:1,config:{status:'inactive'}});
       }
     }
   });

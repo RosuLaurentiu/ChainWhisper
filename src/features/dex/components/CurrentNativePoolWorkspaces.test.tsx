@@ -128,7 +128,7 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
     hooks.index=0;hooks.refIndex=0;CurrentPoolWorkspace({});
     hooks.states[10]={value:{},scope:{}};
     hooks.index=0;hooks.refIndex=0;const node=CurrentPoolWorkspace({});
-    expect(elements(node).find(x=>x.type==='button'&&text(x.props.children)==='Review deposit')?.props.disabled).toBe(true);
+    expect(elements(node).find(x=>x.type==='button'&&text(x.props.children)==='Preview deposit')?.props.disabled).toBe(true);
   });
   it('resumes original same-lease funding and exact approvals without requesting a new preview',async()=>{
     const amounts={operation:'add',used0:2n*10n**18n,used1:3n*10n**18n,unused0:98n*10n**18n,

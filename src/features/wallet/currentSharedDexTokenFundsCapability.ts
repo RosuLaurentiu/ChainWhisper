@@ -1,4 +1,4 @@
-import { readCurrentSharedDexTokenFunds } from '../../lib/currentSharedDexTokenFunds';
+import { readCurrentSharedDexTokenFunds, readCurrentSharedDexSwapFunds } from '../../lib/currentSharedDexTokenFunds';
 import { decryptPrivateUint256Output } from '../../lib/privateUint256';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
@@ -20,7 +20,7 @@ export const issueCurrentSharedDexTokenFundsCapability = (args: IssueArgs) => {
     bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, ownerAddress }) => {
       const guard = async () => { await assertCurrent(); assertSnapshotCurrent();
         if (signer.getUserOnboardInfo()?.aesKey?.trim() !== aesKey) throw new Error('Owner privacy is unavailable.'); };
-      return Object.freeze({ read: async (assertCallerCurrent: () => void = () => {}) => {
+      const read = async <T>(readFunds: (args: Parameters<typeof readCurrentSharedDexTokenFunds>[0]) => Promise<T>, assertCallerCurrent: () => void = () => {}) => {
         const readScope = createBrowserWalletRuntimeReadGuard(() => { assertCallerCurrent(); assertSnapshotCurrent(); });
         const check = async () => { readScope.assertCurrent(); await guard(); readScope.assertCurrent(); };
         const rpc = async (method: string, params: unknown[]) => {
@@ -32,11 +32,16 @@ export const issueCurrentSharedDexTokenFundsCapability = (args: IssueArgs) => {
           !['number', 'timestamp'].every(key => typeof raw[key] === 'string' && /^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(raw[key] as string))) {
           throw new Error('Beta funds canonical block is unavailable.');
         }
-        return await readCurrentSharedDexTokenFunds({ owner: ownerAddress, candidate,
+        return await readFunds({ owner: ownerAddress, candidate,
           head: { number: BigInt(raw.number as string), hash: raw.hash, timestamp: BigInt(raw.timestamp as string) },
           rpc, assertCurrent: check, decrypt: cipher => decryptPrivateUint256Output(signer, cipher) });
         } finally { readScope.close(); }
-      } });
+      };
+      return Object.freeze({
+        read: (assertCallerCurrent?: () => void) => read(readCurrentSharedDexTokenFunds, assertCallerCurrent),
+        readSwap: (tokens: readonly [string, string], assertCallerCurrent?: () => void) =>
+          read(args => readCurrentSharedDexSwapFunds({ ...args, tokens }), assertCallerCurrent)
+      });
     }
   });
 };

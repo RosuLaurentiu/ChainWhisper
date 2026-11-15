@@ -4,13 +4,13 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const service = require(path.resolve(__dirname,
   '../../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/service.cjs'));
-const WINDOW = Object.freeze({ epochs: 12, newWorkMs: 30 * 60 * 1000 });
+const WINDOW = Object.freeze({ epochs: 12, newWorkMs: 10 * 60 * 1000 });
 
 async function runWindow(once) {
   const epochs = once ? 1 : WINDOW.epochs, caps = service.controller.LIMITS;
   const limits = { epochs, newWorkMs: WINDOW.newWorkMs,
     maximumCommittedWei: String(BigInt(caps.commitWei) * BigInt(epochs)), reserveWei: caps.reserveWei };
-  const source = service.pins(), admission = await service.main('--check', 'service-session-7b67-4');
+  const source = service.pins(), admission = await service.main('--check', service.NAME);
   assert.equal(admission.sourceDigest, service.controller.hash(source), 'CURRENT_DEX_PRICES_SOURCE');
   assert.deepEqual(admission.limits, caps, 'CURRENT_DEX_PRICES_LIMITS');
   const deadline = Date.now() + limits.newWorkMs, sessions = [], transactions = new Set();
@@ -47,12 +47,12 @@ async function runWindow(once) {
       if (Date.now() >= deadline) reason ??= 'TIME_BOUND';
       if (reason) { await service.main('--stop', sessionName); break; }
 
-      const result = await service.main('--run', sessionName);
+      const result = await service.main('--run', sessionName, { newWorkDeadline: deadline });
       assert(['SERVICE_COMPLETE', 'SERVICE_STOPPED'].includes(result?.status), 'CURRENT_DEX_PRICES_RUN_RESULT');
       let { state } = await service.main('--inspect', sessionName);
       assert(!state.pending, 'CURRENT_DEX_PRICES_PENDING');
       assert.equal(state.attempts, state.verified.length, 'CURRENT_DEX_PRICES_PROOF');
-      if (result.status === 'SERVICE_STOPPED' || state.stopped) reason ??= 'OPERATOR_STOP';
+      if (result.status === 'SERVICE_STOPPED' || state.stopped) reason ??= result.reason === 'TIME_BOUND' ? 'TIME_BOUND' : 'OPERATOR_STOP';
       if (!state.stopped) {
         await service.main('--stop', sessionName);
         ({ state } = await service.main('--inspect', sessionName));
@@ -90,7 +90,7 @@ async function main(args) {
     throw new Error('CURRENT_DEX_PRICES_USAGE');
   }
 
-  if (args[0] === '--check') return { ...await service.main('--check', 'service-session-7b67-4'),
+  if (args[0] === '--check') return { ...await service.main('--check', service.NAME),
     window: { ...WINDOW, maximumCommittedWei: String(BigInt(service.controller.LIMITS.commitWei) * BigInt(WINDOW.epochs)),
       reserveWei: service.controller.LIMITS.reserveWei } };
 

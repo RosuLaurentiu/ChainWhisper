@@ -260,17 +260,17 @@ export default function PrivateTvlPage({ isCompactLayout = false }: { isCompactL
             <PrivateTvlMetaCard label="Network" value="COTI Mainnet" />
             <PrivateTvlMetaCard
               label="Safe-head block"
-              value={snapshot?.blockNumber ?? 'Verifying'}
+              value={snapshot?.blockNumber ?? (status === 'error' ? 'Unavailable' : 'Verifying')}
               href={snapshot ? `${COTI_MAINNET_EXPLORER_URL}/block/${snapshot.blockNumber}` : undefined}
             />
             <PrivateTvlMetaCard
               label="Band proxy"
-              value={snapshot ? shortAddress(snapshot.bandProxyAddress) : 'Verifying'}
+              value={snapshot ? shortAddress(snapshot.bandProxyAddress) : status === 'error' ? 'Not verified' : 'Verifying'}
               href={snapshot ? `${COTI_MAINNET_EXPLORER_URL}/address/${snapshot.bandProxyAddress}` : undefined}
             />
             <PrivateTvlMetaCard
               label="Observed"
-              value={snapshot ? formatTimestamp(snapshot.blockTimestamp) : 'Waiting for chain data'}
+              value={snapshot ? formatTimestamp(snapshot.blockTimestamp) : status === 'error' ? 'Unavailable' : 'Waiting for chain data'}
             />
           </div>
         </div>

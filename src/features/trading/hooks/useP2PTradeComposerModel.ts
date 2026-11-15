@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   isWalletAddress,
   sanitizeTokenAmountInput,
@@ -68,6 +68,7 @@ type UseP2PTradeComposerModelArgs = {
   tradeOfferAmountInput: string;
   tradeOfferCustomTokenAddress: string;
   tradeOfferTokenSelection: TradeTokenPresetKey;
+  tradePriceInput: string;
   tradeRequestAmountInput: string;
   tradeRequestCustomTokenAddress: string;
   tradeRequestTokenSelection: TradeTokenPresetKey;
@@ -107,12 +108,16 @@ export default function useP2PTradeComposerModel({
   tradeOfferAmountInput,
   tradeOfferCustomTokenAddress,
   tradeOfferTokenSelection,
+  tradePriceInput,
   tradeRequestAmountInput,
   tradeRequestCustomTokenAddress,
   tradeRequestTokenSelection,
   tradeRequiredFeeWei,
   walletAddress
 }: UseP2PTradeComposerModelArgs) {
+  const [reversePriceDraft, setReversePriceDraft] = useState<{ value: string; canonical: string } | null>(null);
+  const tradeReversePriceInput = reversePriceDraft?.canonical === tradePriceInput
+    ? reversePriceDraft.value : invertPriceInput(tradePriceInput);
   const tradeComposerModel = useMemo(
     () =>
       deriveTradeComposerModel({
@@ -276,16 +281,16 @@ export default function useP2PTradeComposerModel({
   const updateTradePriceInput = useCallback((value: string) => {
     const sanitized = sanitizeTokenAmountInput(value);
     setTradePriceInput(sanitized);
+    setReversePriceDraft(null);
     setTradePricingEditedFields((previous) => nextTradePricingEditedFields(previous, 'price'));
   }, [setTradePriceInput, setTradePricingEditedFields]);
 
   const updateTradeReversePriceInput = useCallback((value: string) => {
     const sanitized = sanitizeTokenAmountInput(value);
-    if (!sanitized.trim()) {
-      updateTradePriceInput('');
-      return;
-    }
-    updateTradePriceInput(invertPriceInput(sanitized) || '');
+    const canonical = invertPriceInput(sanitized);
+    updateTradePriceInput(canonical);
+    // Keep authored text; a rounded reciprocal is not an editable draft.
+    setReversePriceDraft({ value: sanitized, canonical });
   }, [updateTradePriceInput]);
 
   return {
@@ -297,6 +302,7 @@ export default function useP2PTradeComposerModel({
     swapSellTokenKey,
     swapTokenOptions,
     tradeComposerModel,
+    tradeReversePriceInput,
     updateSwapBuyAmountInput,
     updateSwapSellAmountInput,
     updateTradeOfferAmountInput,

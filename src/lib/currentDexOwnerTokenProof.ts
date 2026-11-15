@@ -1,6 +1,6 @@
 import { Interface, getAddress } from '@coti-io/coti-ethers';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as candidate } from './currentDexExitCandidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './currentDexHistoryCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 import type { PrivateUint256Output } from './privateUint256';
 
 // Owner-local proof under the approved Decision-029 runtime responsibility split.

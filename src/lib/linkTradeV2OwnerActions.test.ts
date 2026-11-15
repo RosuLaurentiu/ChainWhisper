@@ -57,13 +57,27 @@ const fixture = (privatePair = false, refund = 100n) => {
   }) };
   m.binding.mockReturnValue({ ownerAddress: owner, chainId: 7082400n, signer, readProvider: provider });
   m.wait.mockImplementation(async (_binding, h) => receipts.get(h));
-  const deployment = { protocol: 'link-v2', chainId: '7082400', contractAddress: escrow, runtimeBytecodeHash: codeHash } as never, capability = {} as never;
+  const deployment = { protocol: 'link-v2', chainId: '7082400', contractAddress: escrow, runtimeBytecodeHash: codeHash, finalityLagBlocks: '5' } as never, capability = {} as never;
   const journal = createLinkTradeV2CreationJournal({ capability, deployment, store });
   const input = { capability, deployment, readCapability: {} as never, journal, orderId, kind: 'cancel' as const };
   return { input, journal, rows, provider, signer, receipts, transactions, setBalance: (v: bigint) => { balance = v; }, setAllowance: (v: bigint) => { allowance = v; }, setNonce: (v: number) => { nonce = v; } };
 };
 beforeEach(() => vi.resetAllMocks());
 describe('Link owner exit; real ABI/journal/sender, mocked wallet/RPC/private token state', () => {
+  it('waits for canonical history before verifying the cancelled order', async () => {
+    const f = fixture(true), read = m.read.getMockImplementation()!;
+    let mature = false;
+    m.wait.mockImplementation(async (_binding, h, options) => {
+      mature = options?.finalityLagBlocks === 5n; return f.receipts.get(h);
+    });
+    m.read.mockImplementation(async (...args) => {
+      if (f.transactions.size && !mature) throw new Error('Canonical history still shows the open order');
+      return read(...args);
+    });
+    expect(await executeLinkTradeV2OwnerOrderAction(f.input)).toMatchObject({ action: 'cancel', refund: '100' });
+    expect(await f.journal.read()).toMatchObject({ active: false, records: [{ state: 'confirmed' }] });
+    expect(f.signer.sendTransaction).toHaveBeenCalledOnce();
+  });
   it.each([[false, 100n], [true, 100n], [false, 0n], [true, 0n]] as const)('cancels a revoked/expired Link and accounts the exact refund, private=%s amount=%s', async (privatePair, refund) => {
     const f = fixture(privatePair, refund), before = await readLinkTradeV2OwnerOrder(f.input);
     expect(before).toMatchObject({ id: orderId, status: 1, effectiveStatus: 3 });

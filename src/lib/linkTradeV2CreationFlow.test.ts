@@ -79,7 +79,7 @@ const fixture = (privatePair = false, initialAllowance = 0n) => {
   const onPending = vi.fn(async (record: LinkTradeV2CreationRecord) => {
     records.push(record); order.push(record.state);
   });
-  const input = { ownerAddress: owner, readCapability: {} as never, deployment: { chainId: '7082400', contractAddress: escrow, runtimeBytecodeHash: hash(55) } as never,
+  const input = { ownerAddress: owner, readCapability: {} as never, deployment: { chainId: '7082400', contractAddress: escrow, runtimeBytecodeHash: hash(55), finalityLagBlocks: '5' } as never,
     capability: {} as never, action: { terms, offerBudget: '100' }, onPending,
     onRecovery: vi.fn(async (_material: unknown) => undefined), releaseUnsent: vi.fn(async () => undefined),
     assertNoPending: vi.fn(async () => undefined) };
@@ -118,6 +118,38 @@ describe('shared sender native Book value', () => {
   });
 });
 describe('Link creation sender; RPC, wallet and preparation mocked', () => {
+  it('waits until canonical history can see the new order before creation accounting', async () => {
+    const f = fixture(true, 100n);
+    const { waitForOwnerTradeV2Receipt } = await vi.importActual<typeof import('./ownerTradeV2Capability')>('./ownerTradeV2Capability');
+    let head = 11n, observedHead = 11n;
+    const send = vi.fn(async (method: string) => {
+      if (method === 'eth_blockNumber') { observedHead = head; head += 5n; return `0x${observedHead.toString(16)}`; }
+      if (method === 'eth_getBlockByNumber') return { number: '0xb', hash: hash(999) };
+      throw new Error(`Unexpected RPC ${method}`);
+    });
+    Object.assign(f.provider, { send });
+    m.wait.mockImplementation((binding, id, options) => waitForOwnerTradeV2Receipt(binding, id,
+      { ...options, pollIntervalMs: 0, timeoutMs: 1000 }));
+    m.review.mockImplementation(async () => {
+      if (observedHead - 5n < 11n) throw new Error('InvalidOrder: canonical history still predates creation');
+      return { terms: f.input.action.terms };
+    });
+    const result = await executeLinkTradeV2Creation(f.input);
+    expect(result.reference.id).toBe('9007199254740993');
+    expect(f.records[f.records.length - 1]).toMatchObject({ step: 'create', state: 'confirmed', feeWei: '160' });
+    expect(f.signer.sendTransaction).toHaveBeenCalledOnce();
+  });
+  it('retains the submitted creation without another send when finality does not advance', async () => {
+    const f = fixture(true, 100n);
+    const { waitForOwnerTradeV2Receipt } = await vi.importActual<typeof import('./ownerTradeV2Capability')>('./ownerTradeV2Capability');
+    Object.assign(f.provider, { send: vi.fn(async () => '0xb') });
+    m.wait.mockImplementation((binding, id, options) => waitForOwnerTradeV2Receipt(binding, id,
+      { ...options, pollIntervalMs: 0, timeoutMs: 15 }));
+    await expect(executeLinkTradeV2Creation(f.input)).rejects.toThrow(/confirmation timed out/);
+    expect(f.records[f.records.length - 1]).toMatchObject({ step: 'create', state: 'submitted', transactionHash: hash(1) });
+    expect(f.signer.sendTransaction).toHaveBeenCalledOnce();
+    expect(m.review).not.toHaveBeenCalled();
+  });
   it.each([false, true])('approves exactly, retains hashes before polling and verifies the debit, private=%s', async privatePair => {
     const f = fixture(privatePair); const result = await executeLinkTradeV2Creation(f.input);
     expect(result.reference.id).toBe('9007199254740993'); expect(f.signer.sendTransaction).toHaveBeenCalledTimes(2);
@@ -128,15 +160,15 @@ describe('Link creation sender; RPC, wallet and preparation mocked', () => {
     expect(m.recheck).toHaveBeenCalled(); expect(m.review).toHaveBeenCalled();
   });
   it('resets a different public allowance to zero before the exact approval', async () => {
-    const f = fixture(false, 500n); await executeLinkTradeV2Creation(f.input);
+    const f = fixture(false, 25n); await executeLinkTradeV2Creation(f.input);
     expect(f.signer.sendTransaction.mock.calls.slice(0, 2).map(([r]) => token.parseTransaction({ data: r.data as string })!.args[1]))
       .toEqual([0n, 100n]);
   });
-  it('reuses an exact allowance without another approval', async () => {
-    const f = fixture(false, 100n); await executeLinkTradeV2Creation(f.input);
+  it.each([false,true])('reuses sufficient private=%s allowance without another approval', async privatePair => {
+    const f = fixture(privatePair, 500n); await executeLinkTradeV2Creation(f.input);
     expect(f.signer.sendTransaction).toHaveBeenCalledOnce();
   });
-  it.each([25n, 500n])('uses the existing private exact-allowance plan for current allowance %s', async amount => {
+  it.each([25n])('uses the existing private exact-allowance plan for current allowance %s', async amount => {
     const f = fixture(true, amount); await executeLinkTradeV2Creation(f.input);
     const request = f.signer.sendTransaction.mock.calls[0][0];
     const call = privateToken.parseTransaction({ data: request.data as string })!;

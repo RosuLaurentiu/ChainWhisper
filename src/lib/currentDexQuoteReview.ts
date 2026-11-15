@@ -100,7 +100,7 @@ export const buildCurrentDexQuoteReview = ({ receipt, intent, now, input, output
     summaryRows: [
       { label: 'You pay', value: inAmount(a.actualInput) },
       { label: 'You receive', value: outAmount(a.netOutput) },
-      { label: 'Average price', value: a.actualInput === 0n ? 'Unavailable (no fill)' : `${formatUnits(a.netOutput * 10n ** BigInt(input.decimals + 8) / (a.actualInput * 10n ** BigInt(output.decimals)), 8)} ${output.symbol} per ${input.symbol} (rounded down)` }
+      { label: 'Average price', value: a.actualInput === 0n ? 'Unavailable (no fill)' : `${formatUnits(a.netOutput * 10n ** BigInt(input.decimals + 8) / (a.actualInput * 10n ** BigInt(output.decimals)), 8)} ${output.symbol}/${input.symbol} (rounded down)` }
     ],
     stats: []
   };

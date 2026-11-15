@@ -39,9 +39,13 @@ describe('current shared-Pool form inputs', () => {
     expect(markup).toContain('Current private Pool creation');
     expect(markup).toContain('Deposit amounts');
     expect(markup).toContain('Your shares belong to a position NFT');
-    expect(markup).toContain('Maximum spend');
+    expect(markup).toContain('Network gas applies · No tokens move');
+    expect(markup).toMatch(/<input[^>]*aria-label="Pool starting price"[^>]*required=""/);
+    expect(markup).not.toContain('Private by design');
+    expect(markup).toContain('How liquidity works');
+    expect(markup).toMatch(/<details class="dex-v2-setup dex-v2-pool-settings"><summary>/);
     expect(markup).not.toContain('Aggregate');
     expect(markup).not.toContain('Custom total spread');
-    expect(markup).toMatch(/disabled=""[^>]*>Review deposit/);
+    expect(markup).toMatch(/disabled=""[^>]*>Preview deposit/);
   });
 });

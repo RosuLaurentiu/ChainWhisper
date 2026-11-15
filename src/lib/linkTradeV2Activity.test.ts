@@ -89,7 +89,7 @@ describe('Link activity projection over the shared canonical boundary; chain and
       activity: { snapshot: result, busy: false, error: '', refresh: async () => {}, loadOlder: async () => {} },
       runtime: { ownerAddress: owner } as never, lifecycle: 'history', activeFilter: 'all', tokenInfoByKey,
       ensureTokenInfo: async () => {}, search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest',
-      confirmFunding: async () => {}, runWalletFlow: async operation => operation(), onBusyChange: () => {}
+      confirmFunding: async () => {}, runWalletFlow: async operation => operation(), onBusyChange: () => {}, onSelect: () => {}, selectionVersion: 0
     };
     const html = renderToStaticMarkup(createElement(LinkTradeV2Activity, props));
     expect(html).toContain('counter settled');
@@ -104,7 +104,7 @@ describe('Link activity projection over the shared canonical boundary; chain and
       activity: { snapshot: result, busy: false, error: '', refresh: async () => {}, loadOlder: async () => {} },
       runtime: { ownerAddress: owner } as never, lifecycle: 'history', activeFilter: 'all', tokenInfoByKey,
       ensureTokenInfo: async () => {}, search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest',
-      confirmFunding: async () => {}, runWalletFlow: async operation => operation(), onBusyChange: () => {},
+      confirmFunding: async () => {}, runWalletFlow: async operation => operation(), onBusyChange: () => {}, onSelect: () => {}, selectionVersion: 0,
     };
     const html = renderToStaticMarkup(createElement(LinkTradeV2Activity, props));
     expect(html).toContain('Sold 0.04 OFFER · Received 0.006 PAY');

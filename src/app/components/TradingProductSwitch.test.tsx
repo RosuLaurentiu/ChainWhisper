@@ -23,6 +23,13 @@ const controls = (node: ReactNode): ReactElement<ControlProps>[] => Children.toA
   isValidElement<ControlProps>(child) ? [child, ...controls(child.props.children)] : []);
 
 describe('TradingProductSwitch', () => {
+  it('labels current-source check age separately from the original sample age',()=>{
+    const clock=vi.spyOn(Date,'now').mockReturnValue(1_000_000);
+    try{
+      const markup=renderToStaticMarkup(createElement(TradingProductSwitch,{activeProduct:'dex',dexCandidate:STAGED_SHARED_HISTORY_DEX_CANDIDATE,onNavigate:()=>{},selectedPair:['BCN','HBR'],onSelectedPairChange:()=>{},priceDisplayInverted:false,onPriceDisplayInvertedChange:()=>{},marketReference:{status:'available',price:2,sampledAt:'1',checkedAt:'975',revision:'3'}}));
+      expect(markup).toContain('aria-label="Market check age"');expect(markup).toContain('title="Valid for 120s after the last check">25s ago');expect(markup).not.toContain('999s ago');
+    }finally{clock.mockRestore();}
+  });
   it('uses the new deployment token labels and all six markets without a market-price substitute',()=>{
     const markup=renderToStaticMarkup(createElement(TradingProductSwitch,{activeProduct:'dex',dexCandidate:STAGED_SHARED_HISTORY_DEX_CANDIDATE,
       onNavigate:()=>{},selectedPair:['BCN','HBR'],onSelectedPairChange:()=>{},priceDisplayInverted:false,onPriceDisplayInvertedChange:()=>{}}));
@@ -38,7 +45,7 @@ describe('TradingProductSwitch', () => {
         priceDisplayInverted: inverted, onPriceDisplayInvertedChange: () => {},
         marketReference: { status: 'available', price: 2, sampledAt: '975', revision: '1' }
       }));
-      expect(markup).toContain(inverted ? '0.5 BCN per ORBT' : '2 ORBT per BCN');
+      expect(markup).toContain(inverted ? '0.5 BCN/ORBT' : '2 ORBT/BCN');
       expect(markup).toContain('Rounded Pool reference · excludes Limits');
       expect(markup).toContain('COTI Testnet · Live Pool reference');
       expect(markup).toContain('title="Expires after 120s">25s ago');
@@ -46,7 +53,7 @@ describe('TradingProductSwitch', () => {
       expect(markup).not.toContain('Test token 0');
     } finally { clock.mockRestore(); }
   });
-  it.each([[false, false], [false, true], [true, false], [true, true]])('overrides DEX reference units without relabelling the selected pair (global=%s, reference=%s)', (globalInverted, referenceInverted) => {
+  it.each([[false, false], [false, true], [true, false], [true, true]])('keeps selected units despite an obsolete input-side override (selected=%s, obsolete=%s)', (globalInverted, referenceInverted) => {
     const markup = renderToStaticMarkup(createElement(TradingProductSwitch, {
       activeProduct: 'dex', dexCandidate: STAGED_EXIT_PREVIEW_DEX_CANDIDATE,
       onNavigate: () => {}, selectedPair: ['BCN', 'ORBT'], onSelectedPairChange: () => {},
@@ -54,7 +61,7 @@ describe('TradingProductSwitch', () => {
       marketReference: { status: 'available', price: 2, sampledAt: '1', revision: '1' }
     } as ComponentProps<typeof TradingProductSwitch>));
     expect(markup).toContain(globalInverted ? 'Selected displayed pair ORBT and BCN' : 'Selected displayed pair BCN and ORBT');
-    expect(markup).toContain(referenceInverted ? '0.5 BCN per ORBT' : '2 ORBT per BCN');
+    expect(markup).toContain(globalInverted ? '0.5 BCN/ORBT' : '2 ORBT/BCN');
   });
   it('rejects a pair outside the explicitly selected candidate', () => {
     expect(() => renderToStaticMarkup(createElement(TradingProductSwitch, {
@@ -69,15 +76,24 @@ describe('TradingProductSwitch', () => {
       priceDisplayInverted:inverted,onPriceDisplayInvertedChange:()=>{},
       marketReference:{status:'available',price:2,sampledAt:'1',revision:'1'}
     }));
-    expect(markup).toContain(inverted?'0.5 Test token 0 per Test token 1':'2 Test token 1 per Test token 0');
+    expect(markup).toContain(inverted?'0.5 Test token 0/Test token 1':'2 Test token 1/Test token 0');
     expect(markup).not.toContain('Price unavailable');
   });
   it.each(['loading','stale','unavailable'] as const)('shows %s without a substituted seed price',status=>{
     const markup=renderToStaticMarkup(createElement(TradingProductSwitch,{
       activeProduct:'dex',onNavigate:()=>{},selectedPair:['BCN','HBR'],onSelectedPairChange:()=>{},
-      priceDisplayInverted:false,referenceDisplayInverted:true,onPriceDisplayInvertedChange:()=>{},marketReference:{status}
+      priceDisplayInverted:false,onPriceDisplayInvertedChange:()=>{},marketReference:{status}
     }));
     expect(markup).toContain(status==='loading'?'Checking price':status==='stale'?'Price stale':'Price unavailable');
+  });
+  it.each([false,true])('keeps the last Pool price and recorded time in the selected units (inverted=%s)',inverted=>{
+    const markup=renderToStaticMarkup(createElement(TradingProductSwitch,{
+      activeProduct:'dex',dexCandidate:STAGED_EXIT_PREVIEW_DEX_CANDIDATE,onNavigate:()=>{},selectedPair:['BCN','ORBT'],onSelectedPairChange:()=>{},
+      priceDisplayInverted:inverted,onPriceDisplayInvertedChange:()=>{},marketReference:{status:'last-known',price:2,sampledAt:'1000',revision:'1'}
+    }));
+    expect(markup).toContain(inverted?'0.5 BCN/ORBT':'2 ORBT/BCN');
+    expect(markup).toContain('Last Pool price');expect(markup).toContain('Recorded ');
+    expect(markup).not.toContain('Live Pool reference');expect(markup).not.toContain('Price unavailable');
   });
   it('presents DEX and P2P as one local trading choice', () => {
     const markup = renderToStaticMarkup(createElement(TradingProductSwitch, {
@@ -95,7 +111,7 @@ describe('TradingProductSwitch', () => {
     expect(markup).toContain('aria-live="polite"');
     expect(markup).toContain('aria-atomic="true"');
     expect(markup).toContain('cwTPB / cwTPQ');
-    expect(markup).toContain('cwTPQ <small>per cwTPB</small>');
+    expect(markup).toContain('cwTPQ/cwTPB');
     expect(markup).toContain('Price unavailable');
     expect(markup).toMatch(new RegExp(`<option value="0x${'11'.repeat(20)}"[^>]* selected=""`));
     expect(markup).toMatch(new RegExp(`<option value="0x${'22'.repeat(20)}"[^>]* selected=""`));
@@ -106,7 +122,7 @@ describe('TradingProductSwitch', () => {
   it.each([false, true])('uses actual P2P identities and reference labels with inversion=%s', inverted => {
     const market = { ...p2pMarket(), reference: { label: inverted ? '4 cwTPB' : '0.25 cwTPQ', title: 'Carbon market reference', basisLabel: inverted ? 'cwTPB/cwTPQ' : 'cwTPQ/cwTPB' } };
     const markup = renderToStaticMarkup(createElement(TradingProductSwitch, { activeProduct: 'p2p', p2pMarket: market,
-      onNavigate: vi.fn(), priceDisplayInverted: inverted, referenceDisplayInverted: !inverted,
+      onNavigate: vi.fn(), priceDisplayInverted: inverted,
       onPriceDisplayInvertedChange: vi.fn() }));
     expect(markup).toContain(inverted ? 'Selected displayed pair cwTPQ and cwTPB' : 'Selected displayed pair cwTPB and cwTPQ');
     expect(markup).toContain(market.reference.label);
@@ -156,7 +172,7 @@ describe('TradingProductSwitch', () => {
     }));
 
     expect(markup).toContain('Selected displayed pair Test token 1 and Test token 0');
-    expect(markup).toContain('Test token 0 <small>per Test token 1</small>');
+    expect(markup).toContain('Test token 0/Test token 1');
     expect(markup).toContain('Reverse price display to 1 Test token 0 priced in Test token 1');
     expect(markup).toContain('Price unavailable');
     expect(markup).not.toContain('0.2500');

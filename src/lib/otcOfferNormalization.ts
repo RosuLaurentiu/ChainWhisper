@@ -1,9 +1,9 @@
 import {
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetKind,
   type TradeAssetPayload,
   type TradeSnapshot
 } from './appShared';
+import { CURRENT_P2P_BINDING } from './currentP2PBinding';
 import { getRemainingOfferAmount, getRemainingRequestAmount, getTradeTermsVisibility } from './p2pTradeView';
 import { isZeroTradeTakerAddress } from './tradePerspective';
 
@@ -143,9 +143,17 @@ const calculatePrice = ({
 const calculatePayAmount = (buyAmount: bigint, offer: NormalizedOffer): bigint =>
   ceilDiv(buyAmount * offer.wantsAmount, offer.givesAmount);
 
-const isStandardEscrowTrade = (trade: Pick<TradeSnapshot, 'escrowContract'>): boolean =>
-  normalizeAddress(trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS) ===
-  normalizeAddress(TRADE_ESCROW_CONTRACT_ADDRESS);
+export const isCurrentOneOffOtcTrade = (trade: TradeSnapshot): boolean => {
+  const identity = trade.v2;
+  if (!identity || !['standard-v2', 'private-v2', 'direct-v2'].includes(identity.protocol)) return false;
+  const deployment = CURRENT_P2P_BINDING.deployments[identity.protocol];
+  return Boolean(deployment && identity.chainId === CURRENT_P2P_BINDING.chainId &&
+    normalizeAddress(identity.contractAddress) === deployment.contractAddress.toLowerCase() &&
+    normalizeAddress(trade.escrowContract) === deployment.contractAddress.toLowerCase());
+};
+
+const isStandardEscrowTrade = (trade: TradeSnapshot): boolean =>
+  trade.v2?.protocol === 'standard-v2' && isCurrentOneOffOtcTrade(trade);
 
 export const normalizeStandardPublicOtcOffer = (trade: TradeSnapshot): NormalizedOfferResult => {
   if (trade.status !== 'open') {
@@ -181,11 +189,11 @@ export const normalizeStandardPublicOtcOffer = (trade: TradeSnapshot): Normalize
   return {
     ok: true,
     offer: {
-      sourceContract: trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS,
+      sourceContract: trade.escrowContract || CURRENT_P2P_BINDING.deployments['standard-v2'].contractAddress,
       sourceType: 'standard',
       id: BigInt(trade.tradeId),
       tradeId: trade.tradeId,
-      tradeKey: `${normalizeAddress(trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS)}:${trade.tradeId}`,
+      tradeKey: `${normalizeAddress(trade.escrowContract)}:${trade.tradeId}`,
       maker: trade.maker,
       givesToken,
       wantsToken,

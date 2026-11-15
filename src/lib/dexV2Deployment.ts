@@ -3,12 +3,12 @@ import { STAGED_NATIVE_DEX_CANDIDATE } from './currentDexNativeCandidate';
 import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
 import { STAGED_PREPARED_DEX_CANDIDATE } from './currentDexPreparedCandidate';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './currentDexHistoryCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 export { STAGED_NATIVE_DEX_CANDIDATE } from './currentDexNativeCandidate';
 export { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
 export { STAGED_PREPARED_DEX_CANDIDATE } from './currentDexPreparedCandidate';
 export { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
-export { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './currentDexHistoryCandidate';
+export { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 
 const DECIMAL = /^(0|[1-9][0-9]*)$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;

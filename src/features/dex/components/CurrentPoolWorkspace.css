@@ -17,3 +17,44 @@
 }
 .app-shell-dex-v2 .dex-v2-current-pool-status:disabled { opacity: 0.5; }
 .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-activation-note { overflow-wrap: anywhere; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool > .dex-v2-composer-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-composer-heading h2 { margin: 0; font-size: 1.2rem; }
+:root body .app-shell-dex-v2 .dex-v2-pool-privacy-label { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: .8rem; }
+:root body .app-shell-dex-v2 .dex-v2-pool-privacy-label svg { color: var(--brand-strong); }
+:root body .app-shell-dex-v2 .dex-v2-pool-steps { display: flex; align-items: center; gap: 0; padding: 0; margin: 24px 0 12px; list-style: none; color: var(--text-secondary); font-size: .8rem; }
+:root body .app-shell-dex-v2 .dex-v2-pool-steps li { display: flex; align-items: center; gap: 7px; min-width: 0; }
+:root body .app-shell-dex-v2 .dex-v2-pool-steps li:not(:last-child) { flex: 1; }
+:root body .app-shell-dex-v2 .dex-v2-pool-steps li:not(:last-child)::after { content: ''; flex: 1; min-width: 8px; height: 1px; background: var(--border-default); margin: 0 10px; }
+:root body .app-shell-dex-v2 .dex-v2-pool-step-number { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; border: 1px solid var(--border-default); border-radius: 50%; }
+:root body .app-shell-dex-v2 .dex-v2-pool-steps [aria-current="step"] { color: var(--text-primary); font-weight: 600; }
+:root body .app-shell-dex-v2 .dex-v2-pool-steps :is([aria-current="step"], [data-complete="true"]) .dex-v2-pool-step-number { background: var(--brand); border-color: var(--brand-strong); color: #fff; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-section { gap: 12px; padding: 18px 0; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-section h3 { margin: 0; font-size: .95rem; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-current-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-current-fields label { grid-column: auto; padding: 12px; border: 1px solid var(--border-default); border-radius: 4px; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool :is(input, select) { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-amounts-section > p { margin: 0; text-align: right; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-fee-section { grid-template-columns: 1fr minmax(120px, 1fr); align-items: center; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-custom-fee { display: block; padding: 0; border: 0; background: transparent; }
+:root body .app-shell-dex-v2 .dex-v2-pool-spread-info { position: relative; }
+:root body .app-shell-dex-v2 .dex-v2-pool-spread-info > summary { min-width: 44px; min-height: 44px; display: grid; place-items: center; cursor: pointer; list-style: none; }
+:root body .app-shell-dex-v2 .dex-v2-pool-spread-info > p { position: absolute; z-index: 2; top: 100%; left: 0; width: min(260px, 55vw); margin: 0; padding: 12px; border: 1px solid var(--border-default); border-radius: 4px; background: var(--surface-overlay); }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-price-section { border-bottom: 0; padding-bottom: 12px; }
+:root body .app-shell-dex-v2 .dex-v2-pool-price-section label > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+:root body .app-shell-dex-v2 .dex-v2-pool-price-section p { margin: 0; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-settings { padding: 0; border: 1px solid var(--border-default); border-radius: 4px; margin: 12px 0 4px; }
+:root body .app-shell-dex-v2 .dex-v2-pool-settings > summary { display: flex; align-items: center; gap: 10px; padding: 12px; min-height: 48px; cursor: pointer; list-style: none; }
+:root body .app-shell-dex-v2 .dex-v2-pool-settings > summary::before { content: none; }
+:root body .app-shell-dex-v2 .dex-v2-pool-settings > summary > span { margin-left: auto; color: var(--text-secondary); font-size: .8rem; }
+:root body .app-shell-dex-v2 .dex-v2-pool-settings > div { padding: 0 12px 12px; }
+:root body .app-shell-dex-v2 .dex-v2-pool-help { margin: 8px 0; font-size: .8rem; }
+:root body .app-shell-dex-v2 .dex-v2-pool-help > summary { display: flex; justify-content: center; align-items: center; gap: 6px; min-height: 44px; color: var(--brand-strong); cursor: pointer; list-style: none; }
+:root body .app-shell-dex-v2 :is(.dex-v2-pool-help, .dex-v2-pool-settings)[open] > summary > svg:last-child { transform: rotate(180deg); }
+:root body .app-shell-dex-v2 :is(.dex-v2-pool-help, .dex-v2-pool-settings, .dex-v2-pool-spread-info) > summary::-webkit-details-marker { display: none; }
+:root body .app-shell-dex-v2 .dex-v2-current-pool .dex-v2-pool-preview-note { margin: 8px 0 0; text-align: center; }
+@media (max-width: 480px) {
+  :root body .app-shell-dex-v2 .dex-v2-pool-steps { font-size: .7rem; }
+  :root body .app-shell-dex-v2 .dex-v2-pool-steps li { gap: 4px; }
+  :root body .app-shell-dex-v2 .dex-v2-pool-steps li:not(:last-child)::after { margin: 0 5px; min-width: 4px; }
+  :root body .app-shell-dex-v2 .dex-v2-pool-step-number { width: 22px; height: 22px; flex-basis: 22px; }
+}

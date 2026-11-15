@@ -67,3 +67,17 @@ describe('TradeComposerPanel privacy copy', () => {
     expect(markup).not.toContain('Publish only the ratio');
   });
 });
+
+
+describe('TradeComposerPanel readiness', () => {
+  it('keeps an invalid untouched form disabled', () => {
+    const markup = render('public', { validationDisplayMode: 'after-interaction', privateTokenAmounts: false, canSend: false });
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Send Trade<\/button>/);
+    expect(markup).toContain('Network gas is separate');
+    expect(markup).toContain('Offer fee');
+  });
+  it('enables a valid public-token form without a privacy-only restriction', () => {
+    const markup = render('public', { validationDisplayMode: 'after-interaction', privateTokenAmounts: false, canSend: true });
+    expect(markup).toMatch(/<button(?![^>]* disabled=)[^>]*>Send Trade<\/button>/);
+  });
+});

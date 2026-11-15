@@ -17,7 +17,11 @@ export const isMobileWalletDiagnosticsEnabled = (): boolean => {
   if (typeof window === 'undefined') {
     return false;
   }
-  return readDiagnosticsFlag(window.sessionStorage) || readDiagnosticsFlag(window.localStorage);
+  try {
+    return readDiagnosticsFlag(window.sessionStorage) || readDiagnosticsFlag(window.localStorage);
+  } catch {
+    return false;
+  }
 };
 
 export const maskWalletForDiagnostics = (value?: string | null): string => {
@@ -54,8 +58,10 @@ export const logMobileWalletDiagnostic = (event: string, detail: Record<string, 
   if (!isMobileWalletDiagnosticsEnabled()) {
     return;
   }
-  console.info('[ChainWhisper mobile wallet]', event, {
-    route: getCurrentRouteForDiagnostics(),
-    ...detail
-  });
+  try {
+    console.info('[ChainWhisper mobile wallet]', event, {
+      route: getCurrentRouteForDiagnostics(),
+      ...detail
+    });
+  } catch { /* Diagnostics must not interrupt wallet or component lifecycle. */ }
 };

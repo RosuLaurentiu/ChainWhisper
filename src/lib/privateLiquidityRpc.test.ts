@@ -13,7 +13,7 @@ beforeEach(() => {
 const create = () => createPrivateLiquidityHttpProvider({ rpcUrl: 'https://testnet.coti.io/rpc' });
 
 describe('privateLiquidityRpc', () => {
-  it.each(['eth_blockNumber', 'eth_call', 'eth_chainId', 'eth_getBlockByNumber', 'eth_getCode', 'eth_getLogs', 'eth_getTransactionReceipt'])(
+  it.each(['eth_blockNumber', 'eth_call', 'eth_chainId', 'eth_getBlockByNumber', 'eth_getCode', 'eth_getLogs', 'eth_getTransactionReceipt', 'eth_getProof'])(
     'delegates read-only %s to the admitted shared provider', async method => {
       const provider = create();
       await expect(provider.request({ method, params: ['fixture'] })).resolves.toBe('0x123');

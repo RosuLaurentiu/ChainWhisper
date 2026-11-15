@@ -1,3 +1,4 @@
+import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
 import type { OnboardInfo } from '@coti-io/coti-ethers';
 import { ArrowLeft, WalletCards } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
@@ -17,7 +18,6 @@ import {
   type TradeSnapshot
 } from '../../../lib/appShared';
 import { getPreferredBrowserWalletId, saveWalletPreference } from '../../../lib/appStorage';
-import { CURRENT_DEX_DISPLAY_PAIR } from '../../../lib/currentDexDisplay';
 import {
   buildWalletAesHealthState,
   clearCotiAesUnlockRequest,
@@ -41,7 +41,6 @@ import {
 } from '../../../lib/appHelpers';
 import { resolveTradeBudgetPrivacyForPairChange } from '../../../lib/tradeComposer';
 import {
-  invertPriceInput,
   type TradePricingField
 } from '../../../lib/tradePricing';
 import { resolveCanonicalTradeActionSide, resolveDisplayedTradeActionSide } from '../../../lib/tradePerspective';
@@ -102,10 +101,10 @@ import useTradePricingSync from '../hooks/useTradePricingSync';
 import useTradeTerminalLinkActions from '../hooks/useTradeTerminalLinkActions';
 import LinkTradeV2Terminal from './LinkTradeV2Terminal';
 import LinkTradeV2FillControls from './LinkTradeV2FillControls';
-import CounterTradeV2Controls from './CounterTradeV2Controls';
+import CounterTradeV2Controls, { CounterTradeV2ParticipantControls } from './CounterTradeV2Controls';
 import TradeBalanceDisclosureV2 from './TradeBalanceDisclosureV2';
 import type { TradeBalanceDisclosureProtocol } from '../../../lib/currentP2PBinding';
-import CounterTradeV2Activity, { useCounterTradeV2Activity } from './CounterTradeV2Activity';
+import CounterTradeV2Activity, { useCounterTradeV2Activity, resolveCounterActivityRuntime, isCounterActivitySelectionCurrent, type CounterActivitySelection } from './CounterTradeV2Activity';
 import LinkTradeV2Activity, { useLinkTradeV2Activity } from './LinkTradeV2Activity';
 import LinkTradeV2CreationRecoveryPanel from './LinkTradeV2CreationRecoveryPanel';
 import PrivateBookV2RecoveryPanel from './PrivateBookV2RecoveryPanel';
@@ -476,6 +475,10 @@ export default function P2PTradingPage({
   const [expandedMakerControls, setExpandedMakerControls] = useState<Record<string, boolean>>({});
   const [myTradeGroupView, setMyTradeGroupView] = useState<MyTradeGroupView>('received');
   const [selectedMyTradeDetailKey, setSelectedMyTradeDetailKey] = useState('');
+  const [counterSelection, setCounterSelection] = useState<CounterActivitySelection | null>(null);
+  const [counterResolved, setCounterResolved] = useState<{ selection: NonNullable<typeof counterSelection>; target?: NonNullable<OtcV2ActionRuntime['counter']>; error?: string } | null>(null);
+  const [linkSelectionVersion, setLinkSelectionVersion] = useState(0);
+  const counterHeadingRef = useRef<HTMLHeadingElement>(null);
   const [historyTransactionTimestamps, setHistoryTransactionTimestamps] = useState<Record<string, number>>({});
   const [historyLifecycleTxHashes, setHistoryLifecycleTxHashes] = useState<Record<string, string>>({});
   const [historyTransactionTxHashes, setHistoryTransactionTxHashes] = useState<Record<string, string>>({});
@@ -1507,9 +1510,7 @@ export default function P2PTradingPage({
   });
 
   const {
-    clearSwapPinnedOrder,
-    openSwapOrderFromInput,
-    updateSwapOrderLinkInput
+    clearSwapPinnedOrder
   } = useOtcSwapRouteActions({
     lastAppliedSwapPinnedTradeKeyRef,
     navigateToTradePath,
@@ -1567,6 +1568,7 @@ export default function P2PTradingPage({
     swapSellTokenKey,
     swapTokenOptions,
     tradeComposerModel,
+    tradeReversePriceInput,
     updateTradeOfferAmountInput,
     updateTradePriceInput,
     updateTradeRequestAmountInput,
@@ -1603,6 +1605,7 @@ export default function P2PTradingPage({
     tradeOfferAmountInput,
     tradeOfferCustomTokenAddress,
     tradeOfferTokenSelection,
+    tradePriceInput,
     tradeRequestAmountInput,
     tradeRequestCustomTokenAddress,
     tradeRequestTokenSelection,
@@ -2054,8 +2057,26 @@ export default function P2PTradingPage({
     route.view !== 'create' &&
     route.view !== 'counter';
   const desktopCreateOffersOpen = !isMobileNav && route.view === 'create' && activeSwapVenue === 'otc';
-  const myTradeTerminalOpen = route.view === 'mine' && !emptyTerminalOpen && Boolean(selectedMyTradeDetail);
-  const myTradesSelectionEmpty = !isMobileNav && route.view === 'mine' && !selectedMyTradeDetail;
+  const counterRoot = sharedWalletSession?.otcV2ActionRuntime?.counter;
+  useEffect(() => { setCounterSelection(null); }, [walletKey, walletHasAes, counterRoot, myTradeGroupView, route.view]);
+  useEffect(() => {
+    if (!counterSelection) return;
+    let current = true;
+    setCounterResolved(null);
+    counterHeadingRef.current?.focus();
+    void resolveCounterActivityRuntime(counterSelection.root, counterSelection.reference, () => current).then(target => {
+      if (current) setCounterResolved({ selection: counterSelection, target });
+    }).catch(() => { if (current) setCounterResolved({ selection: counterSelection, error: 'Counter details could not be loaded for this contract.' }); });
+    return () => { current = false; };
+  }, [counterSelection]);
+  const counterRows = counterSelection?.lifecycle === 'active' ? counterActivity.snapshot?.orders : counterActivity.snapshot?.history;
+  const currentCounterSelection = route.view === 'mine' && walletHasAes && isCounterActivitySelectionCurrent(counterSelection, {
+    root: counterRoot, wallet: walletKey, group: myTradeGroupView, lifecycle: myTradeGroupView === 'history' ? 'history' : 'active', rows: counterRows
+  }) ? counterSelection : null;
+  useEffect(() => { setCounterSelection(null); }, [tradeSearchInput, tradePairFilter, tradeTypeFilter]);
+  useEffect(() => { if (counterSelection && counterActivity.snapshot && !currentCounterSelection) setCounterSelection(null); }, [counterSelection, counterActivity.snapshot, currentCounterSelection]);
+  const myTradeTerminalOpen = route.view === 'mine' && !emptyTerminalOpen && Boolean(selectedMyTradeDetail || currentCounterSelection);
+  const myTradesSelectionEmpty = !isMobileNav && route.view === 'mine' && !selectedMyTradeDetail && !currentCounterSelection;
   const currentTradePairLabel = `${swapBuyToken?.symbol ?? 'Base'}/${swapSellToken?.symbol ?? 'Quote'}`;
   const currentTradePairFilterKey = [swapBuyToken?.symbol, swapSellToken?.symbol]
     .filter((symbol): symbol is string => Boolean(symbol))
@@ -2170,7 +2191,15 @@ export default function P2PTradingPage({
   });
   const createdTradeCopyKey = 'created-trade-link';
   const focusTradeLinkInput = () => {
-    tradeLinkInputRef.current?.focus();
+    if (tradingHeaderDisabled || isWalletTransactionFlowActive(getTradeWalletFlowInput())) return;
+    if (!tradeLinkInputRef.current) {
+      setEmptyTerminalDrawerOpen(true);
+      if (route.view === 'trade') navigateToTradePath(buildCurrentTradeSurfacePath('public'));
+    }
+    window.requestAnimationFrame(() => {
+      tradeLinkInputRef.current?.scrollIntoView({ block: 'nearest' });
+      tradeLinkInputRef.current?.focus();
+    });
   };
   const {
     formatSwapAvailability,
@@ -2445,13 +2474,12 @@ export default function P2PTradingPage({
 
   const tradePricePairLabel =
     tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
-      ? `${tradeComposerModel.selectedTradeRequestToken.symbol} per ${tradeComposerModel.selectedTradeOfferToken.symbol}`
-      : 'quote per base';
+      ? `${tradeComposerModel.selectedTradeRequestToken.symbol}/${tradeComposerModel.selectedTradeOfferToken.symbol}`
+      : 'Quote/Base';
   const tradeReversePricePairLabel =
     tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
-      ? `${tradeComposerModel.selectedTradeOfferToken.symbol} per ${tradeComposerModel.selectedTradeRequestToken.symbol}`
-      : 'base per quote';
-  const tradeReversePriceInput = invertPriceInput(tradePriceInput);
+      ? `${tradeComposerModel.selectedTradeOfferToken.symbol}/${tradeComposerModel.selectedTradeRequestToken.symbol}`
+      : 'Base/Quote';
   const tradeComposerCarbonPriceReference = getCarbonReferenceDisplay(
     tradeComposerModel.selectedTradeOfferToken,
     tradeComposerModel.selectedTradeRequestToken
@@ -2595,8 +2623,8 @@ export default function P2PTradingPage({
       onUseMaxOfferAmount={() => updateTradeOfferAmountInput(tradeComposerModel.tradeOfferMaxInputValue)}
       offerAmountSummaryLabel={tradeComposerModel.tradeOfferAmountSummaryLabel}
       requestAmountSummaryLabel={tradeComposerModel.tradeRequestAmountSummaryLabel}
-      offerBalanceSummaryLabel={tradeComposerModel.tradeOfferBalanceSummaryLabel}
-      requestBalanceSummaryLabel={tradeComposerModel.tradeRequestBalanceSummaryLabel}
+      offerBalanceSummaryLabel={walletAddress && onCotiNetwork && !walletHasAes && tradeComposerModel.selectedTradeOfferToken?.kind === 'private-erc20' ? 'Locked' : tradeComposerModel.tradeOfferBalanceSummaryLabel}
+      requestBalanceSummaryLabel={walletAddress && onCotiNetwork && !walletHasAes && tradeComposerModel.selectedTradeRequestToken?.kind === 'private-erc20' ? 'Locked' : tradeComposerModel.tradeRequestBalanceSummaryLabel}
       offerBalanceBreakdownLabel={tradeComposerModel.tradeOfferBalanceBreakdownLabel}
       requestBalanceBreakdownLabel={tradeComposerModel.tradeRequestBalanceBreakdownLabel}
       pricingSourceFields={tradePricingEditedFields}
@@ -2793,9 +2821,8 @@ export default function P2PTradingPage({
         <OtcOffersPanel
           actionMode={swapActionMode}
           linkedActionModes={swapLinkedActionModes}
-          orderLinkInput={swapOrderLinkInput}
-          orderLinkError={swapOrderLinkError}
-          pinnedTradeKey={approvedOffersQaState === 'stale' ? 'qa-stale-offer' : swapPinnedTradeKey}
+          pinnedTradeKey={swapPinnedTradeKey}
+          onClearPinnedOrder={clearSwapPinnedOrder}
           pinnedTrade={approvedOffersQaState === 'stale' ? null : swapPinnedTrade}
           sellTokenSelection={swapSellTokenSelection}
           buyTokenSelection={swapBuyTokenSelection}
@@ -2834,10 +2861,8 @@ export default function P2PTradingPage({
           onRetryOffers={() => {
             void refreshPublicTrades();
           }}
-          onSubmitOrderLink={openSwapOrderFromInput}
-          onOrderLinkInputChange={updateSwapOrderLinkInput}
-          onClearPinnedOrder={clearSwapPinnedOrder}
           onCreateLimitOrder={openLimitOrderFromSwapPair}
+          onOpenTradeLink={focusTradeLinkInput}
           onOpenQuote={openSwapQuoteInTerminal}
           formatAvailability={approvedOffersDesignQa
             ? (quote) => !quote
@@ -2915,11 +2940,11 @@ export default function P2PTradingPage({
           onModeChange={setTradeAgentPanelMode}
           venueLabel={isDexProduct ? 'DEX' : 'P2P'}
           pairLabel={isDexProduct
-            ? CURRENT_DEX_DISPLAY_PAIR[swapPriceDisplayInverted ? 1 : 0] + ' / ' + CURRENT_DEX_DISPLAY_PAIR[swapPriceDisplayInverted ? 0 : 1]
+            ? 'No DEX market attached'
             : (swapDisplayBaseToken?.symbol ?? 'Base token') + ' / ' + (swapDisplayQuoteToken?.symbol ?? 'Quote token')}
           ratioLabel={(isDexProduct
-            ? CURRENT_DEX_DISPLAY_PAIR[swapPriceDisplayInverted ? 0 : 1] + ' per ' + CURRENT_DEX_DISPLAY_PAIR[swapPriceDisplayInverted ? 1 : 0]
-            : (swapDisplayQuoteToken?.symbol ?? 'Quote token') + ' per ' + (swapDisplayBaseToken?.symbol ?? 'Base token')) + ' · follows shared header orientation'}
+            ? 'DEX requests have no attached market'
+            : (swapDisplayQuoteToken?.symbol ?? 'Quote token') + '/' + (swapDisplayBaseToken?.symbol ?? 'Base token')) + (isDexProduct ? '' : ' · follows shared header orientation')}
           actionsAvailable={!isDexProduct}
           helpMessages={appHelpMessages}
           helpLoading={appHelpLoading}
@@ -3049,7 +3074,7 @@ export default function P2PTradingPage({
           <div className="standalone-trades-section-head">
             <div>
               <p className="landing-eyebrow">P2P</p>
-              <h2>{route.linkV2Reference ? 'Shared trade' : offersTerminalEmpty
+              <h2>{currentCounterSelection ? 'Counter review' : route.linkV2Reference ? 'Shared trade' : offersTerminalEmpty
                 ? 'Trade terminal'
                 : myTradesSelectionEmpty
                   ? 'Trade details'
@@ -3058,7 +3083,7 @@ export default function P2PTradingPage({
                 : OPEN_TERMINAL_LABEL}</h2>
             </div>
             {!offersTerminalEmpty && !myTradesSelectionEmpty ? (
-              <button type="button" className="standalone-trade-secondary-btn" onClick={closeTerminalPanel}>
+              <button type="button" className="standalone-trade-secondary-btn" onClick={() => { setCounterSelection(null); closeTerminalPanel(); }}>
                 <ArrowLeft size={16} strokeWidth={2.3} aria-hidden="true" />
                 <span>{route.view === 'mine' ? 'Back to my trades' : 'Back to offers'}</span>
               </button>
@@ -3090,6 +3115,17 @@ export default function P2PTradingPage({
                 : undefined}
             />
           ) : null}
+          {currentCounterSelection ? <section id="counter-trade-review" aria-labelledby="counter-trade-review-heading">
+            <h3 id="counter-trade-review-heading" ref={counterHeadingRef} tabIndex={-1}>Counter {currentCounterSelection.reference.id}</h3>
+            <p>Chain {currentCounterSelection.reference.chainId} · Escrow {currentCounterSelection.reference.escrow}</p>
+            {counterResolved?.selection !== currentCounterSelection ? <p role="status">Loading counter-offer...</p>
+              : counterResolved.error ? <p role="alert">{counterResolved.error}</p>
+              : counterResolved.target ? <CounterTradeV2ParticipantControls runtime={counterResolved.target} ownerAddress={counterResolved.target.ownerAddress}
+                proposalId={currentCounterSelection.reference.id} tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
+                confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
+                onBusyChange={busy => { setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy }); if (!busy) void counterActivity.refresh(); }}
+                actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)} /> : null}
+          </section> : null}
           {myTradesSelectionEmpty ? (
             <div className="p2p-terminal-selection-empty">
               <WalletCards size={30} aria-hidden="true" />
@@ -3225,7 +3261,7 @@ export default function P2PTradingPage({
           tradeTypeFilterOptions={tradeTypeFilterOptions}
           tradeSortMode={tradeSortMode}
           canOpenMyTradeTerminal={canOpenMyTradeTerminal}
-          openMyTradeTerminal={openMyTradeTerminal}
+          openMyTradeTerminal={(...args) => { setCounterSelection(null); setLinkSelectionVersion(version => version + 1); openMyTradeTerminal(...args); }}
           onRefreshMyTrades={() => { void refreshMyTrades().catch(() => {}); void linkActivity.refresh(); void counterActivity.refresh(); }}
           onSelectGroup={setMyTradeGroupView}
           currentPairLabel={currentTradePairLabel}
@@ -3245,17 +3281,17 @@ export default function P2PTradingPage({
           additionalIncomplete={Boolean(walletHasAes && (sharedWalletSession?.otcV2ActionRuntime?.link && (!linkActivity.snapshot?.complete || linkActivity.error) || sharedWalletSession?.otcV2ActionRuntime?.counter && (!counterActivity.snapshot?.complete || counterActivity.error)))}
           renderAdditionalTrades={walletHasAes && sharedWalletSession?.otcV2ActionRuntime?.link ? (lifecycle, activeFilter) => <><LinkTradeV2Activity
             activity={linkActivity} runtime={sharedWalletSession.otcV2ActionRuntime!.link!} lifecycle={lifecycle} activeFilter={activeFilter}
+            selectionVersion={linkSelectionVersion} onSelect={() => { setCounterSelection(null); setSelectedMyTradeDetailKey(''); }}
             tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
             search={tradeSearchInput} pairFilter={tradePairFilter} typeFilter={tradeTypeFilter} sortMode={tradeSortMode}
             confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
             onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
           />{sharedWalletSession?.otcV2ActionRuntime?.counter ? <CounterTradeV2Activity
             activity={counterActivity} runtime={sharedWalletSession.otcV2ActionRuntime.counter} lifecycle={lifecycle} activeFilter={activeFilter}
-            tokenInfoByKey={customTradeTokenInfoByAddress} ensureTokenInfo={ensureOtcV2TokenInfo}
+            tokenInfoByKey={customTradeTokenInfoByAddress}
             search={tradeSearchInput} pairFilter={tradePairFilter} typeFilter={tradeTypeFilter} sortMode={tradeSortMode}
-            actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy)}
-            confirmFunding={ensureTradeFunding} runWalletFlow={runTradeWalletPromptFlow}
-            onBusyChange={busy => setLinkOwnerActionState(previous => !busy && previous?.wallet !== walletKey ? previous : { wallet: walletKey, busy })}
+            actionInProgress={creatingTrade || Boolean(linkOwnerActionState?.wallet === walletKey && linkOwnerActionState.busy) || Boolean(currentCounterSelection && counterResolved?.selection !== currentCounterSelection)}
+            onSelect={(reference, root, selectedLifecycle) => { setSelectedMyTradeDetailKey(''); setLinkSelectionVersion(version => version + 1); setEmptyTerminalDrawerOpen(false); setCounterSelection({ reference: { chainId: reference.chainId, escrow: reference.escrow, id: reference.id }, root, lifecycle: selectedLifecycle, group: myTradeGroupView }); }}
           /> : null}</> : undefined}
           {...tradeOrderCardProps}
         />

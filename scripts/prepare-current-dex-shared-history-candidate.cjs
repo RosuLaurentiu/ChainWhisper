@@ -1,15 +1,14 @@
-/* global require, module, __dirname, process, console, structuredClone, setTimeout, clearTimeout */
-/* eslint-disable @typescript-eslint/no-require-imports -- Frozen CJS candidate readers. */
+/* global require, module, __dirname, process, console, setTimeout, clearTimeout */
 'use strict';
 // Reuse the public six-market collector. This does not grant signing authority.
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const { createHash } = require('node:crypto'), { createRequire } = require('node:module');
 const validation = path.resolve(__dirname, '../../ChainWhisper Contracts V2/validation');
 const root = path.join(validation, 'candidates/limit-fill-history-shared-receipt-2026-10-13');
-const report = path.resolve(__dirname, '../reports/shared-history-candidate-2026-10-13');
-const candidate = require(path.join(root, 'candidate.cjs'));
+const report = path.resolve(__dirname, '../reports/limit-directory-adoption-2026-11-04/public-binding');
+const deploymentAdapter = require(path.join(validation, 'candidates/packed-rate-input-2026-11-03/directory-deployment.cjs'));
+const { candidate } = deploymentAdapter;
 const { deployments } = require(path.join(root, 'deployment-package.cjs'));
-const deploymentAdapter = require(path.join(root, 'native-deployment.cjs'));
 const deploymentBoundary = require(path.join(validation, 'candidates/shared-core-markets-2026-10-07/deployment-boundary.cjs'));
 const { runtimeFor } = require(path.join(validation, 'candidates/core-advance-boundary-2026-10-06/runtime.cjs'));
 const prepared = require('./prepare-current-dex-prepared-candidate.cjs');
@@ -19,15 +18,16 @@ const sha = value => createHash('sha256').update(value).digest('hex');
 const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const endpoint = 'wss://testnet.coti.io/ws';
 const schema = 'SHARED_HISTORY_APP_PUBLIC_BINDING_V1';
-const GRAPH = '7b67bcbb7c5941a24471e62ba5a0d939c0800671b0bf121e81bad14cca737456';
-const MANIFEST = '97a923dbca5a7a5d2c5f382b614162283c5ecf7f54dea3befb0c8dcc754fa44a';
-const CORE = '0xaB5374daddeA783C3e58DE19DB497B54C79fD4cc';
-const PACKAGE = '82c4673cd899f16d8be1bf29de9043b169b8dcc5e723daf5cc2aa0d1713d4f4a';
+const GRAPH = '958eea2faf9aec536df3318d5b770acec1da36efa1665cfc11a0c788d97f8fdf';
+const MANIFEST = '1114fa31f799eed9caeef51507cb1415c186fddbfa6dd168f91d6e0b72a42be5';
+const CORE = '0x74ace210762C91CEA53E59edc232898F612F47A9';
+const PACKAGE = '0abc9673d4b81d1a300da3f28bf2fe0f27b489b532e9de08c1a2736a40f62a31';
 const DEPLOYMENT_FILES = Object.freeze({
-  'package.json': '7baace47f999fe77361d1a52535972674fc5547383cc456b17dd4611e6de612c',
-  'RESULT.json': '78243d9153c9e44aff06a7ca4a9428da8ebee129763aa4475e06c2073a398bf4',
-  'journal.jsonl': 'a1d0011e5547ca38b6991a77584a921ab22f375a4133ec0c56ca06a8ccbafef5',
-  'admission.json': '172ac21774cec4dbe956d7fb24c7dc404a91ffee49c0a1b203833d578e7147fc',
+  'base.json': 'bceecc3d62ed7dfc0a0be322eeea725f2757a615d45d87a4d9a2b25c4e39d6cb',
+  'package.json': '2bd8a03398d57cd9083737edc5e83be10092cd5b0196fa5a015f485d6f8c4ce5',
+  'RESULT.json': '3f82ec2fbca77ecb1ad920da22a64dcb6276e2b8badff9a36f231da3bbd76a25',
+  'journal.jsonl': '16435ad90c6b422d96c362cbe20fcde5c29f5ec52d3f49552ede22967ab7710b',
+  'admission.json': 'dc0347dec119361780bf329e35ca1b56d30ceef365279cf4000c35d01ff7c920',
 });
 
 function verifyJournal(rows, pkg, sources) {
@@ -49,7 +49,7 @@ function verifyJournal(rows, pkg, sources) {
 function baseInputs() {
   assert.equal(candidate.pins.graph, GRAPH, 'SHARED_HISTORY_GRAPH');
   assert.equal(candidate.pins.manifest, MANIFEST, 'SHARED_HISTORY_MANIFEST');
-  const frozen = candidate.frozen(), deployment = path.join(root, 'native-deployment-1');
+  const frozen = candidate.frozen(), deployment = deploymentAdapter.directory;
   for (const [name, hash] of Object.entries(DEPLOYMENT_FILES)) assert.equal(sha(fs.readFileSync(path.join(deployment, name))), hash, 'SHARED_HISTORY_DEPLOYMENT_DRIFT');
   const accepted = deploymentAdapter.admit(true), result = json(path.join(deployment, 'RESULT.json'));
   const pkg = json(path.join(deployment, 'package.json')), packageSha256 = sha(JSON.stringify(pkg));
@@ -61,7 +61,7 @@ function baseInputs() {
   assert.equal(result.graph, GRAPH); assert.equal(result.core, CORE);
   assert.equal(result.operationValidation, false); assert.equal(result.connectedAppWalletHold, true);
   assert.equal(result.public.additionalPairsRequireAtomicFunding, true);
-  assert.deepEqual(deployments(json(path.join(deployment, 'base.json')), frozen), pkg, 'HISTORY_PACKAGE_REPRODUCTION');
+  assert.deepEqual(deployments(json(path.join(deployment, 'base.json')), frozen, GRAPH), pkg, 'HISTORY_PACKAGE_REPRODUCTION');
   assert.equal(pkg.artifactGraphSha256, candidate.pins.graph, 'HISTORY_PACKAGE_GRAPH');
   const journal = fs.readFileSync(path.join(deployment, 'journal.jsonl'), 'utf8');
   assert(journal.endsWith('\n'), 'HISTORY_CONSTRUCTOR_JOURNAL_TRUNCATED');
@@ -82,10 +82,26 @@ function baseInputs() {
   const protocol = { name: 'quote-slippage', stages: { workCalls: 4, ready: 5, funded: 6, settled: 7, released: 8 },
     coreAbiSha256: sha(JSON.stringify(frozen.artifacts.ChainWhisperDexCore.abi)),
     quoteSignature: api('ChainWhisperDexCore').getFunction('quoteCheapAsync').format('sighash'), stagesSourceSha256: sha(source) };
-  const storage = json(path.join(root, 'build-1/all-storage-checks.json'));
-  for (const name of ['ChainWhisperDexCore', 'ChainWhisperFixedEngine']) assert.equal(storage[name].unchanged, true, 'SHARED_HISTORY_STORAGE');
-  const abi = json(path.join(root, 'build-1/abi-changes.json'));
-  for (const name of ['ChainWhisperDexCore', 'ChainWhisperFixedEngine']) assert.deepEqual(abi[name], { added: [], removed: [] }, 'SHARED_HISTORY_CALLER_ABI');
+  const storage = json(path.join(candidate.build, 'all-storage-checks.json'));
+  for (const check of Object.values(storage)) assert.equal(check.allPriorFieldsUnchanged, true, 'SHARED_HISTORY_STORAGE');
+  const previous = require(path.join(validation, 'candidates/packed-rate-input-2026-11-03/candidate.cjs')).frozen();
+  const engineLayout = value => {
+    const artifact = value.artifacts.ChainWhisperFixedEngine;
+    const layout = value.info.output.contracts[artifact.sourceName].ChainWhisperFixedEngine.storageLayout;
+    const shape = id => { const type = layout.types[id]; return { encoding: type.encoding, label: type.label, numberOfBytes: type.numberOfBytes,
+      ...(type.members ? { members: type.members.map(member => ({ label: member.label, slot: member.slot, offset: member.offset, type: shape(member.type) })) } : {}),
+      ...(type.base ? { base: shape(type.base) } : {}), ...(type.key ? { key: shape(type.key), value: shape(type.value) } : {}) }; };
+    return layout.storage.map(field => ({ label: field.label, slot: field.slot, offset: field.offset, type: shape(field.type) }));
+  };
+  const oldEngine = engineLayout(previous), newEngine = engineLayout(frozen);
+  assert.deepEqual(newEngine.slice(0, oldEngine.length), oldEngine, 'SHARED_HISTORY_ENGINE_STORAGE');
+  assert.equal(newEngine.length, oldEngine.length + 1, 'SHARED_HISTORY_ENGINE_STORAGE_COUNT');
+  assert.equal(newEngine.at(-1).label, '_directoryPages', 'SHARED_HISTORY_ENGINE_DIRECTORY');
+  assert.equal(newEngine.at(-1).slot, '46', 'SHARED_HISTORY_ENGINE_DIRECTORY_SLOT');
+  const abi = json(path.join(candidate.build, 'abi-changes.json'));
+  for (const change of Object.values(abi)) assert.deepEqual(change, { added: [], removed: [] }, 'SHARED_HISTORY_ABI');
+  assert.deepEqual(frozen.artifacts.ChainWhisperFixedEngine.abi, previous.artifacts.ChainWhisperFixedEngine.abi, 'SHARED_HISTORY_ENGINE_ABI');
+  assert.equal(protocol.coreAbiSha256, 'ebfe0ed3617c22a6c1db293430961532510838e40273038c2a980dc487834086', 'PACKED_CORE_ABI');
   return { frozen, pkg, packageSha256, verified, runtimes, factory, factoryStorage, api,
     runtime: runtimeFor(frozen, pkg), minimumBlock: result.public.blockNumber, protocol };
 }
@@ -98,9 +114,16 @@ function inputs() {
 async function main(mode, output, emitTarget) {
   assert(['--prove-embedded', '--check-inputs', '--capture', '--check', '--emit'].includes(mode), 'HISTORY_PUBLIC_MODE');
   if (mode === '--prove-embedded') {
-    const input = baseInputs(), request = structuredClone(input.frozen.info.input);
-    const key = input.frozen.artifacts.ChainWhisperFixedEngine.sourceName;
-    request.settings.outputSelection = { [key]: { ChainWhisperFixedEngine: ['evm.bytecode', 'evm.deployedBytecode', 'evm.legacyAssembly'] } };
+    const input = baseInputs(), key = input.frozen.artifacts.ChainWhisperFixedEngine.sourceName;
+    const phase = path.join(validation, 'candidates/packed-rate-input-2026-11-03/directory-build-1');
+    const requestBytes = fs.readFileSync(path.join(phase, 'modules-request.json'));
+    const outputBytes = fs.readFileSync(path.join(phase, 'modules-output.json'));
+    assert.equal(sha(requestBytes), 'beafc1750c36f0c6ffcbefd3740ca8e555152c43cf806ff0b2c37dbe3971ec6a', 'HISTORY_ENGINE_REQUEST');
+    assert.equal(sha(outputBytes), '71f9dbf8f4874fccd3d8d2c9ca5274d3e402334d623da839d7d0a219f12ec259', 'HISTORY_ENGINE_OUTPUT');
+    const recorded = JSON.parse(outputBytes).contracts[key].ChainWhisperFixedEngine;
+    assert.equal('0x' + recorded.evm.bytecode.object, input.frozen.artifacts.ChainWhisperFixedEngine.bytecode, 'HISTORY_ENGINE_PHASE');
+    const request = JSON.parse(requestBytes);
+    request.settings.outputSelection[key].ChainWhisperFixedEngine.push('evm.legacyAssembly');
     const native = require(path.join(validation, 'scripts/native-solc-019'));
     const compiled = JSON.parse(native.compile(request));
     assert.deepEqual((compiled.errors ?? []).filter(row => row.severity === 'error'), []);

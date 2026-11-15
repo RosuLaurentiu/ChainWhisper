@@ -1,3 +1,4 @@
+import { MAX_TOKEN_ALLOWANCE } from './tokenAllowance';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { toBeHex } from '@coti-io/coti-ethers';
@@ -5,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { STAGED_PREPARED_DEX_CANDIDATE as candidate } from './dexV2Deployment';
 import { checkPreparedPoolManagementTransition as transition, checkPreparedPoolManagementSnapshot as snapshot,
   checkPreparedPoolOwnershipTransition as ownership, type PreparedPoolManagementExpectation } from './currentDexPreparedPoolManagement';
-import type { PreparedPoolStoredState } from './currentDexPreparedPoolSnapshot';
+import type { PreparedPoolStoredState, PreparedPoolSelectedState } from './currentDexPreparedPoolSnapshot';
 
 const w = (value: number | bigint) => toBeHex(value, 32), empty = (n: number) => Array.from({ length: n }, () => w(0));
 const owner = toBeHex(123n, 20), id = '43';
@@ -78,6 +79,28 @@ function withdrawFixture(pairIndex = 0) {
 }
 
 describe('prepared Pool management accounting', () => {
+  it.each(['top-up','close'] as const)('checks complete selected %s and its final snapshot without full fixture fields', action => {
+    const f=fixture(action),select=(s:State):PreparedPoolSelectedState=>{
+      const pair=candidate.pairs.find(p=>p.marketId===s.marketId)!,raw=s.markets[s.marketId];
+      raw[4]=w(BigInt(candidate.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1]));raw[5]=w(BigInt(pair.poolTerms));
+      const {c1:_c1,engines:_engines,directories:_directories,fixedSources:_fixedSources,...common}=s;
+      const ids=[...raw.slice(18,25).map(v=>String(BigInt(v))),String(s.positionId)];
+      return {...common,scope:'selected-pool-accounting',candidateKey:'cheap-prepared',packageSha256:candidate.packageSha256,coreAddress:candidate.core,owner,
+        markets:{[s.marketId]:raw},claims:Object.fromEntries(ids.map(id=>[id,s.claims[id]])),nftOwners:{[String(s.positionId)]:s.nftOwners[String(s.positionId)]},
+        nftMinted:{[String(s.positionId)]:s.nftMinted[String(s.positionId)]},positionMarket:s.marketId,sourceIdForPosition:w(0),everPoolFunded:w(1)};
+    };
+    const before=select(f.input.before),managed=select(f.input.managed),after=select(f.after),input={...f.input,before,managed};
+    const expected=transition(input)as PreparedPoolManagementExpectation;
+    expect(snapshot({expected,managed,snapshot:after,observedAmounts:f.observedAmounts,managedWallets:input.managedWallets,snapshotWallets:clone(input.managedWallets)}).privateAccountingVerified).toBe(true);
+    for(const fault of ['anchor','ever-funded','nft-minted','escrow']as const){
+      const bad=clone(managed);
+      if(fault==='anchor')(bad.anchors[6]as string[])[13]=w(99);
+      if(fault==='ever-funded')Object.assign(bad,{everPoolFunded:w(0)});
+      if(fault==='nft-minted')(bad.nftMinted as Record<string,string>)[id]=w(0);
+      if(fault==='escrow')(bad.escrows[candidate.tokens[0][0]]as string[])[0]=w(99);
+      expect(()=>transition({...input,managed:bad}),fault).toThrow();
+    }
+  });
   it.each(['transfer','activate','resume'] as const)('checks the exact %s ownership transition without economic changes',action=>{
     const f=fixture(),before=f.input.before,after=clone(before),recipient=toBeHex(456n,20);
     if(action==='activate'){before.claim[0]=w(3);before.claim[13]=w(0);for(let i=0;i<10;i++){before.claim[16+4*i]=w(0);before.claim[17+4*i]=w(0);}}
@@ -272,3 +295,15 @@ const COMPILED_SOURCE_HASHES = ['0456f8efe324302b6cce266747f39e38f478be141266125
   'e4b860e4ebd12829fcc68fcace32f499f2491e06034767bbb907fde3083435a1',
   '1c45a07f22b55ef198fb75d7282c307eef712918296de2f3fdc0b5c62a1e901b',
   '84f3b7fcd638eb26e0c9f5ecc7001eb64680e345fb8974bbc563f086a541e7a9'];
+
+
+it.each([31n, MAX_TOKEN_ALLOWANCE])('accounts for sufficient Pool allowance %s after exact debit', allowance => {
+  const f=fixture('top-up');
+  f.input.beforeWallets.forEach((wallet,i)=>{
+    const debit=wallet.balance-f.input.managedWallets[i].balance;
+    wallet.allowance=allowance; f.input.managedWallets[i].allowance=allowance===MAX_TOKEN_ALLOWANCE?allowance:allowance-debit;
+  });
+  expect(()=>f.check()).not.toThrow();
+  f.input.managedWallets[0].allowance--;
+  expect(()=>f.check()).toThrow();
+});

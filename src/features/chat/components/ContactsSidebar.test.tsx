@@ -123,16 +123,24 @@ describe('ContactsSidebar group discovery status', () => {
   });
 });
 
-it('keeps former Group history selectable without current member or unread claims', () => {
+it('omits confirmed former memberships from normal Group navigation', () => {
   const markup = renderSidebar({ groupDiscoveryState: 'ready', unreadGroupMap: { '4': true }, sortedGroups: [
     { id: 4, title: 'Group #4', isPrivate: true, membershipEnded: true, memberCount: 99,
       lastTimestamp: 100, admin: '0xowner', createdAt: 0, members: [], lastBlock: 0 }
   ] });
-  expect(markup).toContain('Group #4 (#4)');
-  expect(markup).toContain('Membership ended');
+  expect(markup).not.toContain('Group #4 (#4)');
+  expect(markup).not.toContain('Membership ended');
   expect(markup).not.toContain('M: 99');
   expect(markup).not.toContain('Unread group messages');
-  expect(markup).toContain('role="button"');
+  expect(markup).toContain('No groups yet.');
+});
+
+it.each(['loading', 'error'] as const)('keeps memberships without confirmed end during %s discovery', (groupDiscoveryState) => {
+  const markup = renderSidebar({ groupDiscoveryState, sortedGroups: [
+    { id: 7, title: 'Current group', isPrivate: true, memberCount: 2,
+      lastTimestamp: 100, admin: '0xowner', createdAt: 0, members: [], lastBlock: 0 }
+  ] });
+  expect(markup).toContain('Current group (#7)');
 });
 
 describe('ContactsSidebar Direct discovery status', () => {

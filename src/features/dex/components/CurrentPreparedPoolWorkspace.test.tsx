@@ -1,5 +1,6 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as poolInputs from '../../../lib/currentDexPoolFunding';
 import CurrentPoolWorkspace, { currentPoolIntent } from './CurrentPoolWorkspace';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
@@ -28,7 +29,7 @@ vi.mock('react', async original => ({ ...await original<typeof import('react')>(
   useRef: (initial: unknown) => { const i = hooks.refIndex++; return hooks.refs[i] ?? (hooks.refs[i] = { current: initial }); }
 }));
 vi.mock('../../trading/hooks/useTradeActionConfirmationState', () => ({ default: () => ({ confirmation: null, requestConfirmation: hooks.confirm, resolveConfirmation: vi.fn() }) }));
-type Props = { children?: ReactNode; onClick?: () => void; disabled?: boolean; role?: string; 'aria-label'?: string };
+type Props = { children?: ReactNode; onClick?: () => void; disabled?: boolean; role?: string; 'aria-label'?: string; 'aria-current'?: string };
 const elements = (node: ReactNode): ReactElement<Props>[] => Array.isArray(node) ? node.flatMap(elements) : isValidElement<Props>(node) ? [node, ...elements(node.props.children)] : [];
 const text = (node: ReactNode): string => Array.isArray(node) ? node.map(text).join('') : isValidElement<Props>(node) ? text(node.props.children) : typeof node === 'string' || typeof node === 'number' ? String(node) : '';
 const owner = `0x${'22'.repeat(20)}`;
@@ -37,7 +38,7 @@ const candidate = resolveCurrentCheapDexCandidate(key);
 function fixture() {
   vi.stubGlobal('window', { sessionStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() } });
   const getPool = vi.fn(), getSender = vi.fn(), request = vi.fn();
-  const session = { walletAddress: owner, chainId: Number(candidate.chainId), browserProvider: { request },
+  const session = { walletAddress: owner, sessionOnboardInfo: { [owner]: { aesKey: 'local-fixture-only' } }, walletAesHealthByAddress: {}, chainId: Number(candidate.chainId), browserProvider: { request },
     actions: { getCurrentDexPoolFundingCapability: getPool, getCurrentDexSubmissionCapability: getSender } } as unknown as SharedWalletSession;
   const props = { sharedWalletSession: session, candidateKey: key as CurrentCheapDexCandidateKey,
     selectedPair: ['EMBR', 'ORBT'] as readonly [string, string], priceDisplayInverted: false };
@@ -48,7 +49,7 @@ function fixture() {
 afterEach(() => { hooks.states = []; hooks.refs = []; hooks.allowNative = false; vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 function fundingFixture() {
-  const f = fixture(), scope = hooks.refs[0].current;
+  const f = fixture(), scope = hooks.refs[2].current;
   const pair = readCurrentDexDisplay(candidate).pairs.find(value => value.tokens.every(token => ['EMBR', 'ORBT'].includes(token.label)))!;
   const funding = { intent: currentPoolIntent('1', '1', '2', 1, '0.5'), amounts: { used0: 1234567n, used1: 2345678n },
     abandonUnfunded: vi.fn(async () => ({ status: 'unfunded-cleanup-required', cleanupRequired: [true, false] })) };
@@ -60,8 +61,10 @@ function fundingFixture() {
   const recover = vi.fn(async () => outcome), prepared = { data: 'test-only' };
   const sender = { checkCurrentCheapCandidate: vi.fn(async () => ({ owner, chainId: BigInt(candidate.chainId), core: candidate.core,
     graph: candidate.graph, packageSha256: candidate.packageSha256, readyToSign: false })),
+    readSharedPoolAllowances: vi.fn(async (): Promise<readonly [boolean, boolean]> => [false, false]),
     prepareSharedPoolApproval: vi.fn(async () => prepared), prepareSharedPoolAllowanceCleanup: vi.fn(async () => prepared),
     submitSharedPoolApproval: vi.fn(async () => ({ transactionHash: 'test-only-hash', recover })),
+    waitForCurrentCheapReceipt: vi.fn(async () => false),
     submitPoolFunding: vi.fn(), recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null),
     recoverPendingSharedPoolApproval: vi.fn(async () => ({ status: 'observed-mined', privateAccountingVerified: false })),
     recoverPendingPoolAttempt: vi.fn(async () => null) };
@@ -69,6 +72,132 @@ function fundingFixture() {
   return { ...f, scope, pair, funding, sender, prepared, recover, outcome, tokens };
 }
 describe('prepared Pool creation view', () => {
+  it('keeps blank and locked deposit reviews disabled without wallet calls', () => {
+    const f = fixture();
+    expect(f.button('Preview deposit').props.disabled).toBe(true);
+    hooks.states[0] = '1'; hooks.states[1] = '1'; hooks.states[2] = '2';
+    expect(f.button('Preview deposit').props.disabled).toBe(false);
+    f.props.sharedWalletSession = { ...f.props.sharedWalletSession, sessionOnboardInfo: {} };
+    expect(f.button('Preview deposit').props.disabled).toBe(true);
+    expect(text(f.render())).toContain('Unlock privacy with MetaMask');
+    expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled();
+  });
+  it('shows scoped creation steps without treating recovery as a ready position', () => {
+    const f = fundingFixture(); hooks.states[10] = null;
+    const current = () => text(elements(f.render()).find(element => element.props['aria-current'] === 'step')!);
+    expect(current()).toBe('1Preview');
+    const preview = { amounts: { operation: 'add', used0: 1n, used1: 1n, unused0: 0n, unused1: 0n, mintedShares: 1n, ownedShares: 1n, toleranceN: 1n, toleranceD: 200n } };
+    hooks.states[9] = { value: preview, scope: f.scope };
+    expect(current()).toBe('2Approve (0/2)');
+    hooks.states[10] = { value: f.funding, scope: f.scope };
+    expect(current()).toBe('2Approve (0/2)');
+    hooks.states[11] = [true, false]; expect(current()).toBe('2Approve (1/2)');
+    hooks.states[11] = [true, true]; expect(current()).toBe('3Deposit');
+    hooks.states[13] = { phase: 'fund', scope: f.scope, recover: vi.fn() };
+    expect(current()).toBe('3Deposit');
+    hooks.states[13] = null; hooks.states[10] = null; hooks.states[15] = 42n; hooks.refs[4].current = f.scope;
+    expect(current()).toBe('Done · Complete');
+    expect(text(f.render())).toContain('Approve · Complete');
+    hooks.states[6] = true; expect(current()).not.toContain('Done');
+    hooks.states[6] = false; hooks.states[16] = true; expect(current()).not.toContain('Done');
+    hooks.states[10] = { value: f.funding, scope: f.scope }; hooks.states[17] = true;
+    expect(elements(f.render()).some(element => element.props['aria-current'] === 'step')).toBe(false);
+    expect(text(f.render())).toContain('Deposit stopped. Unused approvals cleared.');
+    f.props.sharedWalletSession = { ...f.props.sharedWalletSession, walletAddress: `0x${'33'.repeat(20)}` };
+    expect(current()).toBe('1Preview');
+  });
+  it.each(['unchanged', 'owner', 'pair'] as const)('handles a submitted preview when scope is %s during confirmation', async change => {
+    hooks.allowNative = true; const f = fundingFixture(); hooks.states[10] = null;
+    hooks.states[0] = '1'; hooks.states[1] = '1'; hooks.states[2] = '2';
+    const hash = `0x${'44'.repeat(32)}`;
+    const preview = { prepareFunding: vi.fn(), amounts: { operation: 'add', used0: 1234567n, used1: 2345678n,
+      unused0: 0n, unused1: 0n, mintedShares: 17n, ownedShares: 17n, toleranceN: 1n, toleranceD: 200n } };
+    const recover = vi.fn(async () => preview);
+    let confirmReceipt!: (value: boolean) => void;
+    const receipt = new Promise<boolean>(resolve => { confirmReceipt = resolve; });
+    const sender = { ...f.sender, submitPoolPreview: vi.fn(async () => ({ transactionHash: hash, recover })),
+      waitForCurrentCheapReceipt: vi.fn(() => receipt) };
+    f.getSender.mockResolvedValue(sender); f.request.mockResolvedValue({ number: '0x1', hash });
+    f.getPool.mockResolvedValue({ preparePoolCreation: vi.fn(async () => ({ data: 'preview' })) });
+    f.button('Preview deposit').props.onClick!();
+    await vi.waitFor(() => expect(sender.waitForCurrentCheapReceipt).toHaveBeenCalledWith(hash));
+    expect(f.button('Preview deposit').props.disabled).toBe(true);
+    if (change === 'owner') f.props.sharedWalletSession = { ...f.props.sharedWalletSession, walletAddress: `0x${'33'.repeat(20)}` };
+    if (change === 'pair') f.props.selectedPair = ['BCN', 'HBR'];
+    if (change !== 'unchanged') f.render();
+    confirmReceipt(true);
+    if (change === 'unchanged') {
+      await vi.waitFor(() => expect(text(f.render())).toContain('Private Pool preview verified'));
+      expect(text(f.render())).toContain('1.234567');
+      expect(f.button('Review funding').props.disabled).toBe(false);
+      expect(f.button('Preview deposit')).toBeUndefined();
+      await vi.waitFor(() => expect(hooks.states[5]).toBe(false));
+      expect(text(f.render())).toContain('1.234567');
+      expect(sender.submitPoolPreview).toHaveBeenCalledOnce();
+      expect(f.getSender).toHaveBeenCalledOnce();
+      expect(f.request).toHaveBeenCalledOnce();
+      hooks.states[0] = '2';
+      expect(f.button('Preview deposit').props.disabled).toBe(false);
+      expect(recover).toHaveBeenCalledOnce();
+      f.button('Preview deposit').props.onClick!();
+      await vi.waitFor(() => expect(sender.submitPoolPreview).toHaveBeenCalledTimes(2));
+    } else {
+      await vi.waitFor(() => expect(hooks.states[5]).toBe(false));
+      expect(recover).not.toHaveBeenCalled();
+      expect(text(f.render())).not.toContain('1.234567');
+      expect(hooks.states[13]).not.toBeNull();
+    }
+    expect(sender.submitPoolFunding).not.toHaveBeenCalled();
+    expect(sender.submitSharedPoolApproval).not.toHaveBeenCalled();
+  });
+  it('verifies a confirmed approval without a manual status check', async () => {
+    hooks.allowNative = true; const f = fundingFixture();
+    f.tokens.find(token => token.address === f.pair.tokens[0].address)!.allowance = f.funding.amounts.used0;
+    f.sender.waitForCurrentCheapReceipt.mockResolvedValueOnce(true);
+    f.button(`Approve exact ${f.pair.tokens[0].label}`).props.onClick!();
+    await vi.waitFor(() => expect(text(f.render())).toContain(`Exact ${f.pair.tokens[0].label} approval verified`));
+    expect(f.sender.waitForCurrentCheapReceipt).toHaveBeenCalledOnce();
+    expect(f.recover).toHaveBeenCalledOnce();
+    expect(f.sender.submitPoolFunding).not.toHaveBeenCalled();
+  });
+  it.each(['timeout', 'proof failure'] as const)('keeps the approval held on %s', async fault => {
+    hooks.allowNative = true; const f = fundingFixture();
+    if (fault === 'proof failure') {
+      f.sender.waitForCurrentCheapReceipt.mockResolvedValueOnce(true);
+      f.outcome.privateAccountingVerified = false;
+    }
+    f.button(`Approve exact ${f.pair.tokens[0].label}`).props.onClick!();
+    await vi.waitFor(() => expect(text(f.render())).toContain(fault === 'timeout' ? 'Pool transaction is pending' : 'no authenticated private accounting'));
+    expect(hooks.states[6]).toBe(true);
+    expect(hooks.states[13]).not.toBeNull();
+    expect(f.sender.submitPoolFunding).not.toHaveBeenCalled();
+    expect(f.recover).toHaveBeenCalledTimes(fault === 'timeout' ? 0 : 1);
+  });
+  it('shows the position only after funding confirmation and private recovery', async () => {
+    hooks.allowNative = true; const f = fundingFixture(); hooks.states[11] = [true, true];
+    const recover = vi.fn(async () => ({ positionId: 42n }));
+    f.sender.submitPoolFunding.mockResolvedValueOnce({ transactionHash: 'test-funding-hash', recover } as never);
+    f.sender.waitForCurrentCheapReceipt.mockResolvedValueOnce(true);
+    f.button('Review and fund Pool').props.onClick!();
+    await vi.waitFor(() => expect(text(f.render())).toContain('Position NFT 42 minted'));
+    expect(recover).toHaveBeenCalledOnce();
+    expect(f.sender.submitPoolFunding).toHaveBeenCalledOnce();
+    expect(f.sender.submitSharedPoolApproval).not.toHaveBeenCalled();
+  });
+  if (key === 'cheap-history') it('shows deposit preparation while the wallet call is pending and blocks a second submit', async () => {
+    hooks.allowNative = true; const f = fundingFixture(); hooks.states[11] = [true, true];
+    let finish!: (value: unknown) => void;
+    f.sender.submitPoolFunding.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    f.button('Review and fund Pool').props.onClick!();
+    await vi.waitFor(() => expect(text(f.render())).toContain('Preparing the Pool deposit. Complete wallet requests when they appear.'));
+    f.button('Review and fund Pool').props.onClick!();
+    expect(f.sender.submitPoolFunding).toHaveBeenCalledOnce();
+    const recover = vi.fn(); finish({ transactionHash: 'test-funding-hash', recover });
+    await vi.waitFor(() => expect(text(f.render())).toContain('Pool transaction is pending'));
+    expect(recover).not.toHaveBeenCalled();
+    expect(hooks.states[6]).toBe(true);
+    expect(hooks.states[13]).not.toBeNull();
+  });
   it.each([0, 1, 2, 3, 4, 5])('shows only canonical token budgets for selected market %i', index => {
     const f = fixture(), pair = readCurrentDexDisplay(candidate).pairs[index];
     f.props.selectedPair = [pair.tokens[1].label, pair.tokens[0].label];
@@ -83,14 +212,14 @@ describe('prepared Pool creation view', () => {
   it('requires live submission capability before provider or private input prompts', async () => {
     const f = fixture(); hooks.states[0] = '1'; hooks.states[1] = '1'; hooks.states[2] = '2';
     if (key === 'cheap-history') f.getSender.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
-    const button = f.button('Review deposit'); expect(button.props.disabled).toBe(false);
+    const button = f.button('Preview deposit'); expect(button.props.disabled).toBe(false);
     button.props.onClick!();
     await vi.waitFor(() => expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).toHaveBeenCalledTimes(key==='cheap-history'?1:0); expect(f.request).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
   });
   it.each(['pair', 'candidate', 'owner'] as const)('hides an old private preview after %s changes', change => {
     const f = fixture();
-    hooks.states[9] = { scope: hooks.refs[0].current, value: { amounts: { operation: 'add', used0: 1234567n, used1: 2345678n,
+    hooks.states[9] = { scope: hooks.refs[2].current, value: { amounts: { operation: 'add', used0: 1234567n, used1: 2345678n,
       unused0: 0n, unused1: 0n, mintedShares: 17n, ownedShares: 17n, toleranceN: 1n, toleranceD: 200n } } };
     expect(text(f.render())).toContain('1.234567');
     if (change === 'pair') f.props.selectedPair = ['BCN', 'HBR'];
@@ -112,17 +241,68 @@ describe('prepared Pool creation view', () => {
     expect(f.sender.prepareSharedPoolApproval).not.toHaveBeenCalled();
     expect(f.sender.submitSharedPoolApproval).not.toHaveBeenCalled();
   });
+  it.each([false, true])('shows candidate-specific funding signature count (packed=%s)', async packed => {
+    const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(packed);
+    try {
+      hooks.allowNative = true; const f = fundingFixture(); hooks.states[10] = null;
+      const amounts = { ...f.funding.amounts, operation: 'add', unused0: 0n, unused1: 0n,
+        mintedShares: 17n, ownedShares: 17n, toleranceN: 1n, toleranceD: 200n };
+      hooks.states[9] = { value: { prepareFunding: async (confirm: (v: unknown) => Promise<boolean>) => {
+        await confirm(amounts); return null;
+      }, intent: f.funding.intent, amounts }, scope: f.scope };
+      hooks.states[18] = { value: { intent: f.funding.intent }, scope: f.scope };
+      f.button('Review funding').props.onClick!();
+      await vi.waitFor(() => expect(text(f.render())).toContain('Pool funding cancelled.'));
+      expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({ summaryRows: expect.arrayContaining([
+        { label: 'Private-input signatures for funding', value: packed ? '8' : '13' }
+      ]) }));
+      expect(f.sender.submitPoolFunding).not.toHaveBeenCalled();
+    } finally { profile.mockRestore(); }
+  });
   it('stages the confirmed deposit before either approval or funding', async () => {
     hooks.allowNative = true; const f = fundingFixture(); hooks.states[10] = null;
     const prepareFunding = vi.fn(async () => f.funding);
     hooks.states[9] = { value: { prepareFunding, intent: f.funding.intent, amounts: { ...f.funding.amounts, operation: 'add', unused0: 0n, unused1: 0n,
       mintedShares: 17n, ownedShares: 17n, toleranceN: 1n, toleranceD: 200n } }, scope: f.scope };
     hooks.states[18] = { value: { intent: f.funding.intent }, scope: f.scope };
-    f.button('Review funding and approvals').props.onClick!();
+    f.button('Review funding').props.onClick!();
     await vi.waitFor(() => expect(text(f.render())).toContain('Review and approve each exact token amount'));
     expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId), { candidate: key });
     expect(f.sender.submitPoolFunding).not.toHaveBeenCalled(); expect(f.sender.prepareSharedPoolApproval).not.toHaveBeenCalled();
-    expect(f.button('Review and fund Pool').props.disabled).toBe(true);
+    expect(f.button('Review and fund Pool')).toBeUndefined();
+  });
+  it('reuses existing exact allowances during funding review', async () => {
+    hooks.allowNative = true; const f = fundingFixture(); hooks.states[10] = null;
+    hooks.states[9] = { value: { prepareFunding: vi.fn(async () => f.funding), intent: f.funding.intent,
+      amounts: { ...f.funding.amounts, operation: 'add', unused0: 0n, unused1: 0n,
+        mintedShares: 17n, ownedShares: 17n, toleranceN: 1n, toleranceD: 200n } }, scope: f.scope };
+    hooks.states[18] = { value: { intent: f.funding.intent }, scope: f.scope };
+    f.sender.readSharedPoolAllowances.mockResolvedValueOnce([true, false]);
+    f.button('Review funding').props.onClick!();
+    await vi.waitFor(() => expect(f.button(`Approve exact ${f.pair.tokens[1].label}`)).toBeDefined());
+    expect(f.button(`Approve exact ${f.pair.tokens[0].label}`)).toBeUndefined();
+    expect(f.button(`Approve exact ${f.pair.tokens[1].label}`).props.disabled).toBe(false);
+    expect(f.sender.submitSharedPoolApproval).not.toHaveBeenCalled();
+  });
+  it('rechecks the allowance before sending an approval', async () => {
+    hooks.allowNative = true; const f = fundingFixture();
+    f.sender.readSharedPoolAllowances.mockResolvedValueOnce([true, true]);
+    f.button(`Approve exact ${f.pair.tokens[0].label}`).props.onClick!();
+    await vi.waitFor(() => expect(text(f.render())).toContain(`Exact ${f.pair.tokens[0].label} allowance verified`));
+    expect(f.sender.prepareSharedPoolApproval).not.toHaveBeenCalled();
+    expect(f.button('Review and fund Pool').props.disabled).toBe(false);
+  });
+  it('keeps recovery available and locks its controls while busy', () => {
+    const f = fundingFixture();
+    const recovery = elements(f.render()).find(element => element.type === 'details' &&
+      elements(element).some(child => child.type === 'summary' && text(child) === 'Recovery'));
+    expect(recovery).toBeDefined();
+    expect(elements(recovery).some(child => child.type === 'button' && text(child) === 'Check Pool status')).toBe(true);
+    expect(f.button(`Approve exact ${f.pair.tokens[1].label}`)).toBeUndefined();
+    hooks.states[5] = true;
+    expect(f.button(`Approve exact ${f.pair.tokens[0].label}`).props.disabled).toBe(true);
+    expect(f.button('Check Pool status').props.disabled).toBe(true);
+    expect(f.button('Review stop and clear approvals').props.disabled).toBe(true);
   });
   if (key === 'cheap-history') it('admits an engineering owner with exact creation terms before capability access', async () => {
     hooks.states[0] = '1'; hooks.states[1] = '1'; hooks.states[2] = '2'; hooks.states[3] = 0; hooks.states[4] = '0.5';
@@ -138,7 +318,7 @@ describe('prepared Pool creation view', () => {
       submitPoolPreview: vi.fn(async () => ({ transactionHash: hash, recover: vi.fn(async () => null) })) };
     f.request.mockResolvedValue({ number: '0x1', hash }); f.getSender.mockResolvedValue(sender);
     f.getPool.mockResolvedValue({ preparePoolCreation });
-    f.button('Review deposit').props.onClick!();
+    f.button('Preview deposit').props.onClick!();
     await vi.waitFor(() => expect(preparePoolCreation).toHaveBeenCalledOnce());
     expect(f.getPool).toHaveBeenCalledWith(BigInt(candidate.chainId), { candidate: key });
     expect(preparePoolCreation.mock.calls[0][0]).toEqual(expect.objectContaining({ pair: pair.tokens.map(token => token.address),
@@ -149,10 +329,10 @@ describe('prepared Pool creation view', () => {
     f.tokens.find(token => token.address === f.pair.tokens[0].address)!.allowance = f.funding.amounts.used0;
     f.button(`Approve exact ${f.pair.tokens[0].label}`).props.onClick!();
     await vi.waitFor(() => expect(f.sender.submitSharedPoolApproval).toHaveBeenCalledWith(f.prepared));
-    expect(f.sender.prepareSharedPoolApproval).toHaveBeenCalledWith({ funding: f.funding, canonicalIndex: 0, cleanup: false, confirm: expect.any(Function) });
+    expect(f.sender.prepareSharedPoolApproval).toHaveBeenCalledWith({ funding: f.funding, canonicalIndex: 0, cleanup: false, approvalMode: expect.any(Function), confirm: expect.any(Function) });
     f.button('Check Pool status').props.onClick!();
     await vi.waitFor(() => expect(text(f.render())).toContain(`Exact ${f.pair.tokens[0].label} approval verified`));
-    expect(f.button('Review and fund Pool').props.disabled).toBe(true);
+    expect(f.button('Review and fund Pool')).toBeUndefined();
     f.outcome.token = f.pair.tokens[1].address;
     f.tokens.find(token => token.address === f.pair.tokens[1].address)!.allowance = f.funding.amounts.used1;
     f.button(`Approve exact ${f.pair.tokens[1].label}`).props.onClick!();
@@ -173,7 +353,7 @@ describe('prepared Pool creation view', () => {
     await vi.waitFor(() => expect(f.sender.submitSharedPoolApproval).toHaveBeenCalledOnce());
     f.button('Check Pool status').props.onClick!();
     await vi.waitFor(() => expect(f.sender.recoverPendingSharedPoolApproval).toHaveBeenCalledOnce());
-    expect(f.button('Review and fund Pool').props.disabled).toBe(true);
+    expect(f.button('Review and fund Pool')).toBeUndefined();
     expect(text(f.render())).toContain('no authenticated private result');
   });
   it('stops the exact unfunded deposit and exposes only remaining zero-approval cleanup', async () => {
@@ -182,7 +362,7 @@ describe('prepared Pool creation view', () => {
     await vi.waitFor(() => expect(f.funding.abandonUnfunded).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(text(f.render())).toContain('Funding cannot restart'));
     expect(f.getSender).not.toHaveBeenCalled();
-    expect(f.button('Review and fund Pool').props.disabled).toBe(true);
+    expect(f.button('Review and fund Pool')).toBeUndefined();
     expect(f.button(`Clear ${f.pair.tokens[1].label} approval`).props.disabled).toBe(true);
     f.button(`Clear ${f.pair.tokens[0].label} approval`).props.onClick!();
     await vi.waitFor(() => expect(f.sender.prepareSharedPoolApproval).toHaveBeenCalledWith(expect.objectContaining({ funding: f.funding, cleanup: true })));

@@ -11,6 +11,7 @@ vi.mock('../../lib/currentDexNativePoolSnapshotReader',()=>({createCurrentOwnerP
   state:async()=>structuredClone(m.nativeState)
 })}));
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI } from '../../lib/currentDexPoolFunding';
+import * as poolInputs from '../../lib/currentDexPoolFunding';
 import { assertCurrentNativePoolProfile, issueCurrentNativePoolSourceFit, assertCurrentNativePoolSourceFit,
   CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_SOURCE } from '../../lib/currentDexNativePoolPolicy';
 import { createCurrentAttemptBoundary } from '../../lib/currentDexSubmission';
@@ -37,6 +38,37 @@ vi.mock('../../lib/privateUint256', () => ({ encryptPrivateUint128Input: m.small
 const abi = new Interface(CURRENT_POOL_FUNDING_ABI), owner = `0x${'22'.repeat(20)}`, hash = toBeHex(33n, 32), context = toBeHex(44n, 32);
 const signature = `0x${'11'.repeat(65)}`;
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends readonly (infer V)[] ? Mutable<V>[] : T[K] extends object ? Mutable<T[K]> : T[K] };
+
+describe('packed Pool preparation with isolated candidate selection', () => {
+  it('requests eight creation signatures and re-signs the same eight ciphertexts', async () => {
+    const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
+    try {
+      const f = await fixture('cheap-history'), pair = resolvePreparedDexScope('cheap-history').candidate.pairs[0];
+      f.request.pair = pair.tokens;
+      const prepared = (await f.cap.preparePoolCreation(f.request))!;
+      expect(m.small.mock.calls.map(c => c[1])).toEqual([1n]);
+      expect(m.wide.mock.calls.map(c => c[1])).toEqual([120n, 50n,
+        ...[0, 2, 4, 6, 8].map(i => poolInputs.packPoolInputPair(f.request.intent.terms[i], f.request.intent.terms[i + 1]))]);
+      f.mine(prepared.data);
+      const preview = (await prepared.readPreview(hash))!;
+      await preview.prepareFunding(async () => true);
+      expect(m.resign).toHaveBeenCalledTimes(8);
+      expect(m.resign.mock.calls.map(c => c[1])).toEqual([2n, ...m.wide.mock.calls.map(c => ({ ciphertextHigh: 1n, ciphertextLow: c[1] }))]);
+      expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+    } finally { profile.mockRestore(); }
+  });
+  it('requests three top-up inputs and retains them for funding', async () => {
+    const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(true);
+    try {
+      const f = await topUpFixture(0, 'cheap-history'); await f.prepare();
+      expect(m.small).not.toHaveBeenCalled();
+      expect(m.wide.mock.calls.map(c => c[1])).toEqual([10n, 20n, poolInputs.packPoolInputPair(1n, 200n)]);
+      expect(m.resign).toHaveBeenCalledTimes(3);
+      expect(m.resign.mock.calls.map(c => c[1])).toEqual(m.wide.mock.calls.map(c => ({ ciphertextHigh: 1n, ciphertextLow: c[1] })));
+      expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+    } finally { profile.mockRestore(); }
+  });
+});
 describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s owner Pool top-up preparation', candidateKey => {
   const c = resolvePreparedDexScope(candidateKey).candidate;
   it.each(c.pairs.map((_, i) => i))('binds canonical pair %s, exact inputs and genuine approval brand', async index => {
@@ -93,7 +125,7 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s ow
   it.each(['selected-allowance', 'other-allowance', 'balance', 'other-balance'] as const)('rejects changed top-up wallet %s before funding', async fault => {
     const f = await topUpFixture(0, candidateKey), { funding } = await f.prepare(); f.approve();
     const wallet = f.wallets.find(wallet => fault.startsWith('other') ? !f.pair.tokens.includes(wallet.token as never) : f.pair.tokens.includes(wallet.token as never))!;
-    if (fault.includes('allowance')) wallet.allowance += 1n; else wallet.balance -= 1n;
+    if (fault.includes('allowance')) wallet.allowance += fault === 'selected-allowance' ? -1n : 1n; else wallet.balance -= 1n;
     await expect(funding.assertBeforeFunding()).rejects.toThrow('wallet');
   });
   it('stops an unfunded top-up and permits only known allowance cleanup', async () => {
@@ -108,6 +140,11 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s ow
     const f = await topUpFixture(index, candidateKey), { funding } = await f.prepare(); f.approve(); await funding.assertBeforeFunding(); f.mineManage(funding.data);
     const result = (await funding.readFunding(hash))!;
     expect(result).toMatchObject({ positionId: 43n, privateAccountingVerified: false, status: 'manage-verified-snapshot-required' });
+    assertCurrentPoolFundingPrepared(result,f.signer);
+    expect(()=>assertCurrentPoolFundingPrepared({...result},f.signer)).toThrow('not prepared');
+    expect(()=>assertCurrentPoolFundingPrepared(result,{})).toThrow('not prepared');
+    expect(result).toMatchObject({chainId:BigInt(c.chainId),from:owner,to:c.core,graph:c.graph,packageSha256:c.packageSha256});
+    await expect(result.assertCurrent()).resolves.toBeUndefined();
     expect(f.issue.mock.calls.some(call => call[1] === 'top-up')).toBe(false);
     f.snapshotNow();
     await expect(result.verifySnapshot(toBeHex(99n, 32))).resolves.toMatchObject({ privateAccountingVerified: true, status: 'owner-action-verified' });
@@ -153,6 +190,12 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s ow
     f.provider.getTransactionReceipt.mockImplementation(async value => ({ hash: value, blockHash: hash, index: value === hash ? 5 : index }));
     if (index > 5) await expect(result.verifySnapshot(toBeHex(99n, 32))).resolves.toMatchObject({ privateAccountingVerified: true });
     else await expect(result.verifySnapshot(toBeHex(99n, 32))).rejects.toThrow('follow management');
+  });
+  it('rejects a changed funding receipt before admitting its snapshot handoff',async()=>{
+    const f=await topUpFixture(0,candidateKey),{funding}=await f.prepare();f.approve();await funding.assertBeforeFunding();f.mineManage(funding.data);
+    const result=(await funding.readFunding(hash))!,original=f.canonical.getMockImplementation()!;
+    f.canonical.mockImplementation(async value=>{const proof=await original(value);return {...proof,block:{...proof.block,hash:toBeHex(998n,32)}};});
+    await expect(result.assertCurrent()).rejects.toThrow('management receipt changed');expect(f.signer.sendTransaction).not.toHaveBeenCalled();
   });
   it('rejects a snapshot block change after financial checks', async () => {
     const f = await topUpFixture(0, candidateKey), { funding } = await f.prepare(); f.approve(); await funding.assertBeforeFunding(); f.mineManage(funding.data);
@@ -211,7 +254,7 @@ async function topUpFixture(pairIndex = 0, candidateKey: 'cheap-prepared' | 'che
     return { ...producer, kind, transactionHash,
       amounts: kind === 'snapshot' && state === snapshot ? snapshotAmounts : beforeAmounts, block: state.block };
   });
-  m.preparedFactory.mockReturnValue({ state: readState, wallets: readWallets, canonical, current, issue });
+  m.preparedFactory.mockReturnValue({ selectedState: readState, wallets: readWallets, canonical, current, issue });
   f.provider.send.mockImplementation(async (method: string) => method === 'eth_getStorageAt' ? pair.marketId :
     method === 'eth_getBlockByNumber' ? { number: '0xc', hash } : undefined);
   f.values.splice(0, 10, 1n, 10n, 20n, 0n, 0n, 5n, 15n, 1n, 200n, 0n);
@@ -271,7 +314,7 @@ async function fixture(candidateKey:CurrentCheapDexCandidateKey='cheap-archived'
     m.preparedReadState.mockImplementation(async () => structuredClone(m.preparedState));
     m.preparedReadWallets.mockImplementation(async () => structuredClone(m.preparedWallets));
     m.preparedIssue.mockImplementation(async () => ({ transactionHash: hash, amounts: { shares: 100n, classId: 1n } }));
-    return { state: m.preparedReadState, wallets: m.preparedReadWallets, issue: m.preparedIssue };
+    return { selectedState: m.preparedReadState, wallets: m.preparedReadWallets, issue: m.preparedIssue };
   });
   m.issue.mockImplementation(async args => { expect(args.requirePrivacy).toBe(true); return args.bindCapability({ signer,
     readProvider: provider, ownerAddress: owner, chainId: BigInt(candidate.chainId), assertCurrent: async () => guard(), assertSnapshotCurrent: guard }); });
@@ -554,8 +597,23 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
     K extends 'anchors' ? string[][] : K extends 'claims' ? Record<string, { marketId: string; words: string[] }> :
     K extends 'markets' | 'c1' | 'ledgers' | 'escrows' | 'custody' | 'engines' | 'directories' ? Record<string, string[]> :
     K extends 'nftOwners' | 'nftMinted' ? Record<string, string> : PreparedPoolStoredState[K] };
-  const financialFixture = async (index = 0) => {
+  const financialFixture = async (index = 0, selected = false) => {
     const f = await fixture(candidateKey), c = resolvePreparedDexScope(candidateKey).candidate, pair = c.pairs[index];
+    if(selected){
+      const factory=m.preparedFactory.getMockImplementation()!;
+      m.preparedFactory.mockImplementation(input=>{
+        const reader=factory(input),s=m.preparedState as unknown as MutableState,w=(n:bigint|number)=>toBeHex(n,32),
+          raw=s.markets[pair.marketId],nft=c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1];
+        [raw[0],raw[1],raw[2],raw[3],raw[4],raw[5]]=[c.releaseId,pair.marketId,w(BigInt(pair.tokens[0])),w(BigInt(pair.tokens[1])),w(BigInt(nft)),w(BigInt(pair.poolTerms))];
+        s.anchors.forEach((a,i)=>{a[0]=w(1);a[62]=w(i);});
+        Object.assign(s,{scope:'selected-pool-accounting',candidateKey,packageSha256:c.packageSha256,coreAddress:c.core,owner,
+          positionMarket:w(0),sourceIdForPosition:w(0),everPoolFunded:w(0),markets:{[pair.marketId]:raw},
+          claims:Object.fromEntries(s.anchors.map((words,i)=>[String(i+1),{marketId:pair.marketId,words}])),
+          nftOwners:{'52':w(0)},nftMinted:{'52':w(0)}});
+        for(const field of ['c1','engines','directories','fixedSources'])delete m.preparedState[field];
+        return reader;
+      });
+    }
     f.request.pair = [pair.tokens[1], pair.tokens[0]];
     const previewCall = (await f.cap.preparePoolCreation(f.request))!; f.mine(previewCall.data);
     const preview = (await previewCall.readPreview(hash))!, funding = (await preview.prepareFunding(async () => true))!;
@@ -568,6 +626,7 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
       for (const i of [4, 5, 6, 7]) state.claim[i] = toBeHex(1n, 32);
       state.claims['52'] = { marketId: pair.marketId, words: state.claim };
       state.nftOwners['52'] = toBeHex(BigInt(owner), 32); state.nftMinted['52'] = toBeHex(1n, 32);
+      if(selected)Object.assign(state,{positionMarket:pair.marketId,everPoolFunded:toBeHex(1n,32)});
       state.anchors.forEach(anchor => { anchor[4] = toBeHex(2n, 32); });
       state.markets[pair.marketId][11] = toBeHex(2n, 32);
       for (const token of pair.tokens) {
@@ -585,9 +644,42 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
     };
     return { ...f, c, pair, funding, state, used, approve, complete };
   };
+  it.each(['same-market','incoming-nft','later-snapshot'] as const)('verifies own selected funding with %s interference without assigning aggregate values',async interference=>{
+    const f=await financialFixture(2,true);f.approve();await f.funding.assertBeforeFunding();f.complete();
+    if(interference==='incoming-nft')f.state.ownerNftBalance++;
+    if(interference==='same-market'){
+      f.state.anchors.forEach(anchor=>{anchor[4]=toBeHex(3n,32);for(const i of [8,9,10,11,14,15,18,19])anchor[i]=toBeHex(99n,32);});
+      for(let i=25;i<39;i++)f.state.markets[f.pair.marketId][i]=toBeHex(99n,32);
+    }
+    if(interference==='later-snapshot')m.preparedIssue.mockResolvedValue({transactionHash:hash,amountsTransactionHash:toBeHex(99n,32),
+      amounts:{amount0:75n,amount1:40n,totalShares:900n,shares:100n,classId:1n}});
+    await expect(f.funding.readFunding(hash)).resolves.toMatchObject({positionId:52n,readyToSign:false,aggregateState:'not-attributed',
+      ownerAmountsTransactionHash:interference==='later-snapshot'?toBeHex(99n,32):hash,amounts:{used0:100n,used1:50n,mintedShares:100n}});
+  });
+  it.each([0,1,2,3,4,5,6])('keeps anchor%s exact before selected funding signature',async index=>{
+    const f=await financialFixture(2,true);f.approve();f.state.anchors[index][4]=toBeHex(2n,32);
+    await expect(f.funding.assertBeforeFunding()).rejects.toThrow();expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+  });
+  it.each(['debit','payout','shares','class','revision','owner','market','source','status','context','runtime','canonical'] as const)(
+    'keeps own selected funding %s strict',async fault=>{
+      const f=await financialFixture(2,true);f.approve();await f.funding.assertBeforeFunding();const mined=f.complete();
+      if(fault==='debit')m.preparedWallets.find(wallet=>wallet.token===f.pair.tokens[0])!.balance--;
+      if(fault==='payout')mined.receipt.logs.push({address:f.pair.tokens[0],...tokenAbi.encodeEventLog(tokenAbi.getEvent('Transfer')!,[f.c.core,owner,[999n,0n],[1n,0n]])});
+      if(fault==='shares'||fault==='class')m.preparedIssue.mockResolvedValue({transactionHash:hash,
+        amounts:{shares:fault==='shares'?101n:100n,classId:fault==='class'?2n:1n}});
+      if(fault==='revision')f.state.claim[4]=toBeHex(2n,32);
+      if(fault==='owner')f.state.nftOwners['52']=toBeHex(BigInt(f.c.core),32);
+      if(fault==='market')Object.assign(f.state,{positionMarket:f.c.pairs[0].marketId});
+      if(fault==='source')Object.assign(f.state,{sourceIdForPosition:toBeHex(1n,32)});
+      if(fault==='status')f.state.claim[0]=toBeHex(2n,32);
+      if(fault==='context')f.state.anchors[0][13]=toBeHex(99n,32);
+      if(fault==='runtime')f.state.core[50]=toBeHex(99n,32);
+      if(fault==='canonical')f.provider.getTransactionReceipt.mockResolvedValueOnce(mined.receipt).mockResolvedValue({...mined.receipt,blockHash:toBeHex(99n,32)});
+      await expect(f.funding.readFunding(hash)).rejects.toThrow();
+    });
   it.each([0, 1, 2, 3, 4, 5])('checks market%i against four wallets and exactly two selected approvals', async index => {
     const f = await financialFixture(index);
-    expect(m.preparedReadState).toHaveBeenCalledWith(52n, { number: 11n, hash });
+    expect(m.preparedReadState).toHaveBeenCalledWith(null, { number: 11n, hash });
     expect(m.preparedReadWallets).toHaveBeenCalledWith({ number: 11n, hash });
     expect(m.preparedWallets).toHaveLength(4);
     await expect(f.funding.assertBeforeFunding()).rejects.toThrow('exact selected-token allowances');
@@ -599,7 +691,7 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
   it.each(['selected0', 'selected1', 'unrelated-allowance', 'unrelated-balance', 'missing-wallet', 'protected-claim', 'limit-inventory'] as const)(
     'rejects %s drift before funding', async fault => {
       const f = await financialFixture(4); f.approve();
-      if (fault === 'selected0' || fault === 'selected1') m.preparedWallets.find(wallet => wallet.token === f.pair.tokens[fault === 'selected0' ? 0 : 1])!.allowance++;
+      if (fault === 'selected0' || fault === 'selected1') m.preparedWallets.find(wallet => wallet.token === f.pair.tokens[fault === 'selected0' ? 0 : 1])!.allowance--;
       if (fault === 'unrelated-allowance') m.preparedWallets.find(wallet => !f.used(wallet.token))!.allowance++;
       if (fault === 'unrelated-balance') m.preparedWallets.find(wallet => !f.used(wallet.token))!.balance--;
       if (fault === 'missing-wallet') m.preparedWallets.pop();
@@ -614,9 +706,8 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
     await expect(f.funding.assertUnfundedCleanupCurrent()).resolves.toBeUndefined();
     expect(m.preparedIssue).not.toHaveBeenCalled(); expect(f.signer.sendTransaction).not.toHaveBeenCalled();
   });
-  it.each(['selected-allowance', 'unrelated-allowance', 'balance', 'counter', 'escrow', 'missing-wallet'] as const)('rejects %s unfunded cleanup drift', async fault => {
+  it.each(['unrelated-allowance', 'balance', 'counter', 'escrow', 'missing-wallet'] as const)('rejects %s unfunded cleanup drift', async fault => {
     const f = await financialFixture(1);
-    if (fault === 'selected-allowance') m.preparedWallets.find(wallet => wallet.token === f.pair.tokens[0])!.allowance = 101n;
     if (fault === 'unrelated-allowance') m.preparedWallets.find(wallet => !f.used(wallet.token))!.allowance = 0n;
     if (fault === 'balance') m.preparedWallets[0].balance--;
     if (fault === 'counter') f.state.counter++;
@@ -667,7 +758,7 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
     expect(f.signer.sendTransaction).not.toHaveBeenCalled();
   });
   it.each([0, 1, 2, 3, 4, 5])('accepts market%i only after real financial transition checks and exact debits', async index => {
-    const f = await financialFixture(index); f.approve(); const mined = f.complete();
+    const f = await financialFixture(index); f.approve(); await f.funding.assertBeforeFunding(); const mined = f.complete();
     const receiptReads = f.provider.getTransactionReceipt.mock.calls.length;
     await expect(f.funding.readFunding(hash)).resolves.toMatchObject({ positionId: 52n, producerHash: hash,
       amounts: { used0: 100n, used1: 50n }, readyToSign: false });
@@ -678,7 +769,7 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
   });
   it.each(['debit0', 'debit1', 'unrelated-balance', 'unrelated-allowance', 'selected-allowance', 'shares', 'class', 'protected-claim', 'limit-inventory', 'operation', 'missing-wallet', 'receipt-reread'] as const)(
     'rejects %s funding accounting corruption', async fault => {
-      const f = await financialFixture(2); f.approve(); const mined = f.complete();
+      const f = await financialFixture(2); f.approve(); await f.funding.assertBeforeFunding(); const mined = f.complete();
       if (fault === 'debit0' || fault === 'debit1') m.preparedWallets.find(wallet => wallet.token === f.pair.tokens[fault === 'debit0' ? 0 : 1])!.balance--;
       if (fault === 'unrelated-balance') m.preparedWallets.find(wallet => !f.used(wallet.token))!.balance--;
       if (fault === 'unrelated-allowance') m.preparedWallets.find(wallet => !f.used(wallet.token))!.allowance++;

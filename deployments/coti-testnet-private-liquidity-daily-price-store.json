@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "status": "attested-analytics-candidate-not-app-active",
+  "network": "cotiTestnet",
+  "analyticsKind": "private-liquidity-daily-marginal-price-v1",
+  "contract": "ChainWhisperPrivateLiquidityDailyPriceStoreV1",
+  "chainId": "7082400",
+  "address": "0x64FBC6b326512FA2152aF8B68745A66473193ece",
+  "runtimeBytecodeHash": "0x8e28fdc565ac58b25f17836f67ccee2dc70abaa8bda8c38ca630612fa2a05886",
+  "deploymentBlock": "10341660",
+  "deploymentBlockHash": "0xe12015528968715fcba9f10622886620b53832d9aa4a7c067ee235bb9c150095",
+  "deploymentTransactionHash": "0x11d3b2d6acf26067d4069192d88bd0c385819c80254906c71b25db00d0d3e201",
+  "sourceBook": "0x71cC34b610E18Faf8223e60068b86dfEd4cfb8F7",
+  "sourceBookRuntimeHash": "0xa04372d0e19c2532683716229943285c8524c1c88d65dec2eb55003826c81a22",
+  "owner": "0x5DFcEe20b5a3FDd3577436A32f62d4C0b39e979d",
+  "recorder": "0x3783e8EA60E37A6FADDEb1578971D93CcBf29D0E",
+  "attestationBlock": {
+    "number": "10341660",
+    "hash": "0xe12015528968715fcba9f10622886620b53832d9aa4a7c067ee235bb9c150095"
+  },
+  "attestationMethod": "canonical constructor receipt, immutable-bound runtime and post-deployment getters",
+  "proofSha256": "3c867a389344521a7e70a4ed0908b35ed8c736901510d7ed74f240d1cf9dbd68",
+  "appActivated": false,
+  "manifestHash": "0x711d93f1c54c7818a38a89a381a98c8925025eebf680bc119fd297ceb5fcdbdd"
+}

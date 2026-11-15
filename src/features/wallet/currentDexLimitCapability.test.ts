@@ -1,3 +1,4 @@
+import { MAX_TOKEN_ALLOWANCE } from '../../lib/tokenAllowance';
 import { Interface,toBeHex } from '@coti-io/coti-ethers';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { issueCurrentDexLimitCapability,assertCurrentLimitPrepared } from './currentDexLimitCapability';
@@ -6,7 +7,9 @@ import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from '../../lib/appShared/contracts';
 import { CURRENT_CHEAP_DEX_CANDIDATE as c, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import * as limitPolicy from '../../lib/currentDexC1SwapPolicy';
-const mocks=vi.hoisted(()=>({issue:vi.fn(),graph:vi.fn(),registry:vi.fn(),funds:vi.fn(),small:vi.fn(),wide:vi.fn(),decrypt:vi.fn()}));
+import * as limitCodec from '../../lib/currentDexLimit';
+const mocks=vi.hoisted(()=>({issue:vi.fn(),graph:vi.fn(),registry:vi.fn(),funds:vi.fn(),small:vi.fn(),wide:vi.fn(),decrypt:vi.fn(),fills:vi.fn()}));
+vi.mock('../../lib/currentDexLimitFillHistory',async original=>({...await original<typeof import('../../lib/currentDexLimitFillHistory')>(),readCurrentLimitFillHistoryPage:mocks.fills}));
 vi.mock('./ownerCotiMetaMaskCapability',async original=>({...await original<typeof import('./ownerCotiMetaMaskCapability')>(),issueOwnerCotiMetaMaskCapability:mocks.issue}));
 vi.mock('../../lib/appShared/core',async original=>({...await original<typeof import('../../lib/appShared/core')>(),
   sendCotiScopedRead:(provider:{send:(method:string,params:readonly unknown[])=>Promise<unknown>},
@@ -327,10 +330,10 @@ describe('selected six-market Limit preparation and accounting',()=>{
     expect(mocks.registry).toHaveBeenCalledWith(expect.objectContaining({candidate:'cheap-history'}));
   });
   it.each([0,2,5])('rejects inadequate exact funding in pair %i before review or encrypted-input signatures',async index=>{
-    for(const direction of [true,false])for(const fault of ['balance','insufficient-allowance','excess-allowance']as const){
+    for(const direction of [true,false])for(const fault of ['balance','insufficient-allowance']as const){
       const f=await fixture(direction,'cheap-exit',index),offered=f.c.tokens.findIndex(([token])=>token===f.pair!.tokens[direction?0:1]),amount=f.request.intent.amount;
       if(fault==='balance')f.balances[offered]=amount-1n;
-      else f.allowances[offered]=amount+(fault==='insufficient-allowance'?-1n:1n);
+      else f.allowances[offered]=amount-1n;
       await expect(f.cap.prepareLimit(f.request)).rejects.toThrow(fault==='balance'?/balance/:/allowance/);
       expect(f.request.confirm).not.toHaveBeenCalled();expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
     }
@@ -415,6 +418,17 @@ describe('current plain Limit edit preparation',()=>{
     expect(await prepared.readResult(txHash)).toMatchObject({values:null,amounts:null,refreshRequired:true,termsRevision:1n,lifecycleRevision:1n,status:0n});
     await expect(prepared.assertAuthority({number:10n,hash})).rejects.toThrow(/changed/);
   });
+  it.each([[true,'cheap-history'],[false,'cheap-history']]as const)('preserves max allowance without Approval events for direction %s on %s, clears stale amount authority and checks the sender debit',async(direction,key)=>{
+    const f=await ownerFixture(direction,key,2); f.allowances.fill(MAX_TOKEN_ALLOWANCE); const prepared=(await edit(f,'topup'))!,call=f.abi.decodeFunctionData('topUpPrivateOrder',prepared.data);
+    expect(call[0]).toBe(9n);expect(call[1]).toBe(1n);expect(call[2]).toBe(1n);expect(call[3].ciphertext.ciphertextLow).toBe(11n);
+    expect(prepared).toMatchObject({fundingToken:f.scope.poolTokens[direction?0:1],topUpAmount:11n,expectedTermsRevision:1n});
+    expect(mocks.wide).toHaveBeenLastCalledWith(f.signer,11n,f.c.core,f.abi.getFunction('topUpPrivateOrder')!.selector);
+    const receipt=f.ownerMine(prepared,'refresh');receipt.logs.push({address:f.c.core,...f.abi.encodeEventLog(f.abi.getEvent('FixedPositionToppedUp')!,[9n])});
+    for(const [address]of f.c.tokens){if(!f.scope.poolTokens.includes(address))continue;const amount=address===prepared.fundingToken?11n:0n,index=f.c.tokens.findIndex(([a])=>a===address);f.balances[index]-=amount;receipt.logs.push({address,...transfer.encodeEventLog(transfer.getEvent('Transfer')!,[owner,f.c.core,[1n,amount],[999n,0n]])});}
+    f.set(f.c.core,slot(24n,l.coreSources)+13n,123n);f.set(f.engine,slot(24n,l.engineSources)+16n,456n);
+    expect(await prepared.readResult(txHash)).toMatchObject({values:null,amounts:null,refreshRequired:true,termsRevision:1n,lifecycleRevision:1n,status:0n});
+    await expect(prepared.assertAuthority({number:10n,hash})).rejects.toThrow(/changed/);
+  });
   it.each(['missing-approval','duplicate-approval','approval-owner','approval-spender','approval-amount','approval-encoding','duplicate-transfer','transfer-amount','other-event']as const)('rejects top-up receipt fault %s',async fault=>{
     const f=await ownerFixture(false,'cheap-history'),prepared=(await edit(f,'topup'))!,receipt=f.ownerMine(prepared,'refresh');
     receipt.logs.push({address:f.c.core,...f.abi.encodeEventLog(f.abi.getEvent('FixedPositionToppedUp')!,[9n])});
@@ -457,5 +471,80 @@ describe('current plain Limit edit preparation',()=>{
     const f=await ownerFixture(true,'cheap-exit');expect(await f.cap.prepareFundingReview({kind:'create',sellToken0:false,amount:1n})).toMatchObject({kind:'create',fundingToken:f.scope.poolTokens[1]});
     await expect(f.cap.prepareFundingReview({kind:'topup',positionId:9n,snapshot:{...f.result},expectedContext:f.result.context,amount:1n})).rejects.toThrow(/Refresh/);
     await expect(f.cap.prepareFundingReview({kind:'topup',positionId:9n,snapshot:f.result,expectedContext:f.result.context,amount:1n,sellToken0:false}as never)).rejects.toThrow(/Invalid/);
+  });
+});
+
+describe('selected Limit fill history',()=>{
+  it('reads one pair page at the current head and filters only after the full page',async()=>{
+    const f=await fixture(true,'cheap-history',2);
+    mocks.fills.mockImplementation(async args=>{await args.assertCurrent();await args.attest(args.head);return{fills:[{positionId:9n,record:8n},{positionId:99n,record:7n}],count:70n,nextBefore:6n,complete:false};});
+    const page=await f.cap.readFills({positionId:9n,before:38n});
+    expect(mocks.fills).toHaveBeenCalledTimes(1);
+    expect(mocks.fills).toHaveBeenCalledWith(expect.objectContaining({engine:f.engine,poolTokens:f.scope.poolTokens,head:{number:10n,hash,timestamp:100n},before:38n,pageSize:32}));
+    expect(page.fills).toEqual([{positionId:9n,record:8n}]);expect(page.nextBefore).toBe(6n);expect(page.complete).toBe(false);
+    expect(f.provider.send.mock.calls.filter(([method])=>method==='eth_getStorageAt')).toHaveLength(3);
+    expect(f.provider.send.mock.calls.every(([method,params])=>method!=='eth_getStorageAt'||params.at(-1).blockHash===hash)).toBe(true);
+    expect(f.provider.send.mock.calls.some(([method])=>method==='eth_call')).toBe(false);
+    expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
+  });
+  it('rejects privacy loss before publishing a page',async()=>{
+    const f=await fixture(true,'cheap-history');
+    mocks.fills.mockImplementation(async args=>{f.replaceAes();await args.assertCurrent();return{fills:[]};});
+    await expect(f.cap.readFills({positionId:9n})).rejects.toThrow('privacy');
+    expect(mocks.small).not.toHaveBeenCalled();
+  });
+});
+
+it('rejects a foreign selected position before reading fill receipts',async()=>{
+  const f=await fixture(true,'cheap-history');f.set(f.c.core,slot(9n,CURRENT_LIMIT_MARKET_FOR_POSITION),1n);
+  await expect(f.cap.readFills({positionId:9n})).rejects.toThrow('another selected market');expect(mocks.fills).not.toHaveBeenCalled();
+});
+it('uses a new current head for an older page and keeps its cursor',async()=>{
+  const f=await fixture(true,'cheap-history'),secondHash=toBeHex(11n,32),original=f.provider.send.getMockImplementation()!;
+  mocks.fills.mockResolvedValue({fills:[],count:70n,nextBefore:38n,complete:false});
+  await f.cap.readFills({positionId:9n});
+  f.provider.send.mockImplementation(async(method,params)=>{
+    if(method==='eth_getBlockByNumber')return{number:'0xb',hash:secondHash,timestamp:'0x65'};
+    if(method==='eth_getStorageAt'){expect(params.at(-1)).toEqual({blockHash:secondHash,requireCanonical:true});return toBeHex(f.words.get(`${params[0]}:${BigInt(params[1])}`)??0n,32);}
+    return original(method,params);
+  });
+  await f.cap.readFills({positionId:9n,before:38n});
+  expect(mocks.fills).toHaveBeenLastCalledWith(expect.objectContaining({head:{number:11n,hash:secondHash,timestamp:101n},before:38n}));
+});
+it('stops a scoped fill read before the next request after caller invalidation',async()=>{
+  const f=await fixture(true,'cheap-history');let active=true;
+  mocks.fills.mockImplementation(async args=>{active=false;await args.assertCurrent();return{fills:[]};});
+  await expect(f.cap.readFills({positionId:9n,assertCurrent:()=>{if(!active)throw Error('Obsolete selected order');}})).rejects.toThrow('Obsolete selected order');
+});
+describe('packed Limit owner preparation (local profile selection only)',()=>{
+  afterEach(()=>vi.restoreAllMocks());
+  const selectPacked=()=>{
+    const prior=limitCodec.currentLimitAbiForCandidate;
+    vi.spyOn(limitCodec,'currentLimitAbiForCandidate').mockImplementation(key=>key==='cheap-history'?limitCodec.packedLimitAbi:prior(key));
+    vi.spyOn(limitCodec,'usesPackedLimitInputs').mockImplementation(c=>c.graph===resolveCurrentCheapDexCandidate('cheap-history').graph);
+  };
+  it.each([true,false])('signs four exact creation inputs for direction %s in the current owner/selector domain',async direction=>{
+    selectPacked();const f=await fixture(direction,'cheap-history'),p=(await f.cap.prepareLimit(f.request))!;
+    const expected=[f.request.intent.amount,...limitCodec.packCurrentLimitTerms(f.request.intent.terms,direction)];
+    expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide.mock.calls.map(call=>call[1])).toEqual(expected);
+    for(const call of mocks.wide.mock.calls)expect(call).toEqual([f.signer,expect.any(BigInt),f.c.core,'0x10f95a7c']);
+    const args=f.abi.decodeFunctionData('createPrivateOrder',p.data);expect(args[0]).toBe(f.pair!.marketId);expect(args[2]).toHaveLength(3);
+    f.mine(p.data);expect(await p.readResult(txHash)).toMatchObject({positionId:9n,intent:f.request.intent});
+  });
+  it.each(['cancel','reject','revoke']as const)('stops packed creation on %s without a prepared transaction',async fault=>{
+    selectPacked();const f=await fixture(true,'cheap-history');
+    if(fault==='cancel')f.request.confirm.mockResolvedValue(false);
+    if(fault==='reject')mocks.wide.mockRejectedValueOnce(new Error('Rejected signature'));
+    if(fault==='revoke')mocks.wide.mockImplementationOnce(async()=>{f.revoke();return{ciphertext:{ciphertextHigh:1n,ciphertextLow:1n},signature:`0x${'44'.repeat(65)}`};});
+    if(fault==='cancel')await expect(f.cap.prepareLimit(f.request)).resolves.toBeNull();else await expect(f.cap.prepareLimit(f.request)).rejects.toThrow();
+    expect(mocks.wide.mock.calls.length).toBe(fault==='cancel'?0:1);expect(mocks.small).not.toHaveBeenCalled();
+  });
+  it('signs three reprice pairs with zero padding and keeps direction, custody and revision checks',async()=>{
+    selectPacked();const f=await ownerFixture(false,'cheap-history'),terms=[5n,2n,1n,1n,2n]as const;
+    const p=(await f.cap.prepareOwnerAction({positionId:9n,action:'reprice',snapshot:f.result,expectedContext:f.result.context,newTerms:terms,confirm:async()=>true}))!;
+    expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide.mock.calls.map(call=>call[1])).toEqual(limitCodec.packCurrentLimitTerms(terms));
+    for(const call of mocks.wide.mock.calls)expect(call).toEqual([f.signer,expect.any(BigInt),f.c.core,'0xf0927f97']);
+    const args=f.abi.decodeFunctionData('repricePrivateOrder',p.data);expect(args[0]).toBe(9n);expect(args[1]).toBe(1n);expect(args[2][2].ciphertext.ciphertextLow&((1n<<128n)-1n)).toBe(0n);
+    await p.assertAuthority({number:10n,hash});f.set(f.engine,slot(24n,l.engineSources)+9n,2n);await expect(p.assertAuthority({number:10n,hash})).rejects.toThrow();
   });
 });

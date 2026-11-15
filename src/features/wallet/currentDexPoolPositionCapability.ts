@@ -11,29 +11,42 @@ import { currentNativePoolSession, requireCurrentNativePoolSession } from '../..
 import { currentNativePoolSnapshotAbi, checkCurrentPoolSnapshotOnlyChange, checkCurrentPoolFinancialTransition, requireCurrentPoolProof } from '../../lib/currentDexNativePoolSnapshot';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { createPreparedOwnerPoolSnapshotReader, checkPreparedPoolSnapshotOnlyChange,
-  type PreparedPoolSnapshotProducer, type PreparedPoolStoredState } from '../../lib/currentDexPreparedPoolSnapshot';
+  type PreparedPoolSnapshotProducer, type PreparedPoolSelectedState } from '../../lib/currentDexPreparedPoolSnapshot';
 import { checkPreparedPoolManagementTransition, checkPreparedPoolManagementSnapshot, checkPreparedPoolOwnershipTransition,
   type PreparedPoolManagementExpectation } from '../../lib/currentDexPreparedPoolManagement';
-import { encodePoolExitPreview, encodePreviewedPoolWithdrawal, computePoolExitPreviewContext,
+import { packPoolInputPair, usesPackedPoolInputs } from '../../lib/currentDexPoolFunding';
+import { POOL_EXIT_PREVIEW_ABI, encodePoolExitPreview, encodePreviewedPoolWithdrawal, computePoolExitPreviewContext,
   decodePoolExitPreviewEvent, checkPoolExitPreviewValues, type PoolExitPreviewAmounts } from '../../lib/currentDexPoolExitPreview';
 import { readCurrentDexOwnedPositionIds } from '../../lib/currentDexOwnedPositions';
 import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonicalInclusion';
+import { CurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
+import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../lib/currentDexLimitInputCandidate';
 
 type IssueArgs = Omit<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>, 'bindCapability' | 'capabilityLabel' | 'requirePrivacy'> & Readonly<{ candidate?: CurrentCheapDexCandidateKey }>;
 
 const zeroAddress = '0x0000000000000000000000000000000000000000';
 const snapshotEvents = new Interface(['event PoolSnapshotRefreshed(uint256 indexed positionId,bytes32 context,(uint256 ciphertextHigh,uint256 ciphertextLow)[10] userValues)']);
 const preparedSessions = new WeakMap<object, object>();
+const verifiedPlainSnapshots = new WeakMap<object, object>();
+const verifiedSupersededSnapshots = new WeakMap<object, object>();
+export const assertVerifiedCurrentPoolSnapshot = (value: object, signer: object) => {
+  if (verifiedPlainSnapshots.get(value) !== signer) throw new Error('Snapshot was not verified in this owner wallet session.');
+};
+export const assertVerifiedSupersededPoolSnapshot = (value: object, signer: object) => {
+  if (verifiedSupersededSnapshots.get(value) !== signer) throw new Error('Superseded snapshot was not verified in this owner wallet session.');
+};
 type PreparedReader = ReturnType<typeof createPreparedOwnerPoolSnapshotReader>;
 type ManagedClose = Readonly<{ owner: string; transactionHash: string;
   proof: NonNullable<Awaited<ReturnType<PreparedReader['canonical']>>>;
-  state: PreparedPoolStoredState; wallets: Awaited<ReturnType<PreparedReader['wallets']>>;
+  state: PreparedPoolSelectedState; wallets: Awaited<ReturnType<PreparedReader['wallets']>>;
   expected: PreparedPoolManagementExpectation }>;
 // Keep private verification only in the selected signer session. A new issuer in
 // that same session must be able to finish the separate paid snapshot.
 const preparedCloses = new WeakMap<object, Map<bigint, ManagedClose>>();
+// The App issues a new capability per action; keep only the verified snapshot identity across issuers.
+const completedSnapshotSources = new WeakMap<object, Map<string, string>>();
 type ExitPreview = Readonly<{ graph: string; owner: string; transactionHash: string; data: string; context: string;
-  proof: ManagedClose['proof']; state: PreparedPoolStoredState; wallets: ManagedClose['wallets'];
+  proof: ManagedClose['proof']; state: PreparedPoolSelectedState; wallets: ManagedClose['wallets'];
   fraction: readonly [bigint, bigint]; amounts: PoolExitPreviewAmounts }>;
 const exitPreviews = new WeakMap<object, Map<string, ExitPreview>>();
 export const assertCurrentPoolPositionPrepared = (value: unknown, signer: object) => {
@@ -48,6 +61,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
   ...args, capabilityLabel: 'current Pool position owner', requirePrivacy: true,
   bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, chainId, ownerAddress }) => {
     const candidate = resolveCurrentCheapDexCandidate(candidateKey), nft = candidate.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
+    const packed = usesPackedPoolInputs(candidate);
     const poolTokens = [...candidate.tokens].sort(([a],[b]) => BigInt(a) < BigInt(b) ? -1 : 1);
     const guard = async () => { await assertCurrent(); assertSnapshotCurrent();
       if (!signer.getUserOnboardInfo()?.aesKey?.trim()) throw new Error('Unlock owner privacy before reading or managing this position.'); };
@@ -97,6 +111,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
     const exitCandidate = preparedScope?.key === 'cheap-exit' || preparedScope?.key === 'cheap-history';
     const preparedReaders = new Map<string, ReturnType<typeof createPreparedOwnerPoolSnapshotReader>>();
     const preparedProducers = new Map<bigint, PreparedPoolSnapshotProducer>();
+    const snapshotSourceKey = (id: bigint) => `${chainId}:${ownerAddress.toLowerCase()}:${candidate.graph}:${candidate.packageSha256}:${candidate.core.toLowerCase()}:${id}`;
     const identical = (a: unknown, b: unknown) => JSON.stringify(a, (_, v) => typeof v === 'bigint' ? v.toString() : v) ===
       JSON.stringify(b, (_, v) => typeof v === 'bigint' ? v.toString() : v);
     const financial = (value: object) => ({ ...value, block: null });
@@ -116,13 +131,14 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       }
       return { reader, pair };
     };
-    const readPreparedAt = async (id: bigint, block: { number: bigint; hash: string }, issued?: PreparedPoolSnapshotProducer) => {
+    const readPreparedAt = async (id: bigint, block: { number: bigint; hash: string }, issued?: PreparedPoolSnapshotProducer,
+      onVerifiedState?: (state: PreparedPoolSelectedState) => void) => {
       const { reader, pair } = await preparedFor(id, block), producer = issued ?? preparedProducers.get(id);
       if (!producer) throw new Error('Prepared position needs an authenticated fund or snapshot producer.');
       // issue() already authenticates this exact canonical block and owner envelopes.
       if (issued && (issued.positionId !== id || issued.block.number !== block.number || !same(issued.block.hash, block.hash)))
         throw new Error('Fresh position producer block changed.');
-      const fresh = await reader.current(producer, block, !!issued), pub = await publicState(id, block, producer.status === 4n);
+      const fresh = await reader.current(producer, block, !!issued, onVerifiedState), pub = await publicState(id, block, producer.status === 4n);
       requireCurrentPoolProof(pub.context.toLowerCase() === fresh.context.toLowerCase() && pub.status === fresh.status &&
         [pub.positionRevision, pub.ownershipRevision, pub.lifecycleRevision].every((v, i) => v === fresh.revisions[i]),
       'Prepared position public state differs from its producer.');
@@ -153,7 +169,8 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         marketId:undefined,poolTokens:undefined,
         producerKind:nativeReader?currentNativePoolSession(signer)?.producer?.kind:undefined,readyToSign:false as const});
     };
-    const readPosition = async (id:bigint, options?: {producerHash?:string;metadataOnly?:true}) => {
+    const readPositionWithState = async (id:bigint, options?: {producerHash?:string;metadataOnly?:true},
+      onVerifiedState?: (state: PreparedPoolSelectedState) => void) => {
       if (isPrepared) {
         const block = await head(), { reader, pair } = await preparedFor(id, block);
         const pub = await publicState(id, block, true);
@@ -200,10 +217,10 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
               managed?.name === 'managePoolPosition' && managed.args[2] === 5n ? 'resume' : 'fund';
           // This authenticates stored envelopes, not independent funding accounting.
           const issued = await reader.issue(id, kind, producerHash, kind !== 'snapshot' ? proof.data : undefined);
-          const snapshot = await readPreparedAt(id, issued.block, issued);
+          const snapshot = await readPreparedAt(id, issued.block, issued, onVerifiedState);
           preparedProducers.set(id, issued); return snapshot;
         }
-        return readPreparedAt(id, block);
+        return readPreparedAt(id, block, undefined, onVerifiedState);
       }
       if (nativeReader && options?.producerHash && currentNativePoolSession(signer)?.producer?.transactionHash.toLowerCase()!==options.producerHash.toLowerCase()) {
         const session = requireCurrentNativePoolSession(signer, ownerAddress, candidate);
@@ -217,6 +234,39 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       }
       return readAt(id,await head(), !!nativeReader && !!currentNativePoolSession(signer)?.closedPayouts);
     };
+    const readPosition = (id: bigint, options?: {producerHash?:string;metadataOnly?:true}) => readPositionWithState(id, options);
+    const transactionScopedSnapshots = candidateKey === 'cheap-history' && candidate.graph === STAGED_LIMIT_INPUT_DEX_CANDIDATE.graph &&
+      candidate.packageSha256 === STAGED_LIMIT_INPUT_DEX_CANDIDATE.packageSha256;
+    const verifyPlainSnapshot = async (id: bigint, hash: string, notBefore = 0n) => {
+      requireCurrentPoolProof(transactionScopedSnapshots && !preparedCloses.get(signer)?.has(id), 'This snapshot needs its original financial verifier.');
+      const block = await head(), { reader } = await preparedFor(id, block);
+      const data = abi.encodeFunctionData('poolSnapshot', [id]), proof = await reader.canonical(hash);
+      requireCurrentPoolProof(!!proof && same(proof.data, data) && proof.block.number >= notBefore, 'Prepared snapshot call changed.');
+      // The pinned 7bed snapshot call only writes owner snapshot output/context; intervening market activity is independent.
+      const producer = await reader.issue(id, 'snapshot', hash, data);
+      requireCurrentPoolProof(producer.status === 1n, 'Plain snapshot requires an active Pool claim.');
+      const snapshot = await readPreparedAt(id, producer.block, producer);
+      requireCurrentPoolProof(identical(await reader.canonical(hash), proof), 'Prepared snapshot canonical receipt changed after position reads.');
+      await guard();
+      preparedProducers.set(id, producer);
+      let sources = completedSnapshotSources.get(signer);
+      if (!sources) { sources = new Map(); completedSnapshotSources.set(signer, sources); }
+      sources.set(snapshotSourceKey(id), producer.transactionHash);
+      const result = Object.freeze({ action: 'snapshot' as const, positionId: id, transactionHash: hash, producerHash: hash, producer, snapshot,
+        status: 'active-snapshot-verified' as const, privateAccountingVerified: false as const, readyToSign: false as const });
+      verifiedPlainSnapshots.set(result, signer); return result;
+    };
+    const verifySupersededPlainSnapshot = async (id: bigint, originalHash: string, latestSnapshotHash: string) => {
+      requireCurrentPoolProof(transactionScopedSnapshots && !preparedCloses.get(signer)?.has(id), 'This snapshot needs its original financial verifier.');
+      const block = await head(), { reader } = await preparedFor(id, block);
+      const proof = await reader.verifySupersededSnapshot(id, originalHash, latestSnapshotHash);
+      await guard();
+      const result = Object.freeze({ action: 'snapshot-recovery' as const, status: 'superseded-snapshot-recovery-only' as const,
+        positionId: id, transactionHash: originalHash, latestSnapshotHash, chainId, owner: ownerAddress, core: candidate.core,
+        graph: candidate.graph, packageSha256: candidate.packageSha256, ...proof,
+        privateAccountingVerified: false as const, readyToSign: false as const });
+      verifiedSupersededSnapshots.set(result, signer); return result;
+    };
     const prepareSnapshot = async ({positionId:id,confirm}:{positionId:bigint;
       confirm:(review:{positionId:bigint;closed:boolean;gasCap:bigint})=>Promise<boolean>}) => {
       if (isPrepared) {
@@ -224,9 +274,11 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         const block = await head(), { reader, pair } = await preparedFor(id, block);
         const pub = await publicState(id, block, true), closed = pub.status === 4n;
         requireCurrentPoolProof([1n, 2n, 4n].includes(pub.status), 'Prepared Pool snapshot status is unsupported.');
-        const before = await reader.state(id, block), wallets = await reader.wallets(block);
+        let before = await reader.selectedState(id, block), wallets = await reader.wallets(block);
         const managed = preparedCloses.get(signer)?.get(id);
-        const replacementFrom = managed?.transactionHash ?? preparedProducers.get(id)?.transactionHash;
+        const freshBaseline = candidateKey === 'cheap-history' && pub.status === 1n && !managed;
+        let baselineSealed = false;
+        const replacementFrom = managed?.transactionHash ?? preparedProducers.get(id)?.transactionHash ?? completedSnapshotSources.get(signer)?.get(snapshotSourceKey(id));
         if (managed) requireCurrentPoolProof(same(managed.owner, ownerAddress) && closed === (managed.expected.action === 'close') &&
           identical(financial(before), financial(managed.state)) && identical(wallets, managed.wallets) &&
           identical(await reader.canonical(managed.transactionHash), managed.proof),
@@ -234,22 +286,42 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         requireCurrentPoolProof(wallets.length === candidate.tokens.length && wallets.every((wallet, i) => same(wallet.token, candidate.tokens[i][0])),
           'Prepared snapshot needs all four canonical wallets.');
         const data = abi.encodeFunctionData('poolSnapshot', [id]);
-        const assertBeforeSend = async () => {
+        const checkSnapshotIdentity = async () => {
           const current = await head(), resolved = await preparedFor(id, current);
-          requireCurrentPoolProof(resolved.pair.marketId === pair.marketId &&
-            identical(financial(await reader.state(id, current)), financial(before)) && identical(await reader.wallets(current), wallets),
-          'Prepared snapshot dependencies changed before signing.');
+          requireCurrentPoolProof(resolved.pair.marketId === pair.marketId, 'Prepared snapshot market changed before signing.');
+          if (freshBaseline) {
+            const observed = await publicState(id, current);
+            requireCurrentPoolProof(observed.status === pub.status && observed.ownershipRevision === pub.ownershipRevision &&
+              observed.lifecycleRevision === pub.lifecycleRevision, 'Prepared snapshot ownership or lifecycle changed before signing.');
+          }
+          return current;
+        };
+        const assertBeforeSend = async () => {
+          const current = await checkSnapshotIdentity();
+          const observedState = await reader.selectedState(id, current), observedWallets = await reader.wallets(current);
+          requireCurrentPoolProof(observedWallets.length === candidate.tokens.length && observedWallets.every((wallet, i) => same(wallet.token, candidate.tokens[i][0])),
+            'Prepared snapshot needs all four canonical wallets.');
+          // Refresh reviews identity and fees, not stale amounts. Seal the last baseline before the wallet request.
+          if (freshBaseline && !baselineSealed) { before = observedState; wallets = observedWallets; }
+          else {
+            requireCurrentPoolProof(identical(financial(observedState), financial(before)), 'Prepared snapshot state changed before signing.');
+            requireCurrentPoolProof(identical(observedWallets, wallets), 'Prepared snapshot wallet state changed before signing.');
+          }
           if (managed) requireCurrentPoolProof(identical(await reader.canonical(managed.transactionHash), managed.proof),
             'Prepared close receipt changed before snapshot signing.');
         };
         if (!await confirm({ positionId: id, closed, gasCap: 30_000_000n })) { await guard(); return null; }
-        await assertBeforeSend();
+        // An active refresh reviews identity and fees; capture its full baseline once at final signing.
+        if (freshBaseline) await checkSnapshotIdentity(); else await assertBeforeSend();
+        const sealBeforeSend = () => { baselineSealed = true; };
         const readResult = async (hash: string) => {
+          requireCurrentPoolProof(!freshBaseline || baselineSealed, 'Prepared snapshot signing baseline was not sealed.');
+          if (freshBaseline && transactionScopedSnapshots) return verifyPlainSnapshot(id, hash, before.block.number);
           const producer = await reader.issue(id, 'snapshot', hash, data);
           requireCurrentPoolProof(producer.block.number >= before.block.number, 'Prepared snapshot predates review.');
           const proof = await reader.canonical(hash);
           requireCurrentPoolProof(!!proof && proof.data.toLowerCase() === data.toLowerCase() && proof.block.number >= before.block.number, 'Prepared snapshot call changed.');
-          const after = await reader.state(id, producer.block);
+          const after = await reader.selectedState(id, producer.block);
           checkPreparedPoolSnapshotOnlyChange(before, after);
           const afterWallets = await reader.wallets(producer.block);
           requireCurrentPoolProof(identical(afterWallets, wallets), 'Prepared snapshot changed wallet balances/allowances.');
@@ -277,6 +349,9 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
           if (managed) requireCurrentPoolProof(identical(await reader.canonical(managed.transactionHash), managed.proof),
             'Prepared close canonical receipt changed after snapshot reads.');
           preparedProducers.set(id, producer);
+          let sources = completedSnapshotSources.get(signer);
+          if (!sources) { sources = new Map(); completedSnapshotSources.set(signer, sources); }
+          sources.set(snapshotSourceKey(id), producer.transactionHash);
           if (managed) preparedCloses.get(signer)?.delete(id);
           return Object.freeze({ action: 'snapshot' as const, positionId: id, transactionHash: hash, producerHash: hash, producer, snapshot,
             status: closed ? managed ? 'closed-proof-verified' as const : 'closed-snapshot-verified' as const : 'active-snapshot-verified' as const,
@@ -285,7 +360,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         const prepared = Object.freeze({ chainId, from: ownerAddress, to: candidate.core, value: 0n, data, graph: candidate.graph,
           packageSha256: candidate.packageSha256, positionId: id, marketId: pair.marketId, poolTokens: pair.tokens,
           action: 'snapshot' as const, closed, replacementFrom, recipient: null, assertCurrent: guard,
-          assertBeforeSend, readResult, readyToSign: false as const });
+          assertBeforeSend, captureBaselineAtSigning: freshBaseline, sealBeforeSend, readResult, readyToSign: false as const });
         preparedSessions.set(prepared, signer); return prepared;
       }
       if (!nativeReader || typeof confirm !== 'function') throw new Error('Signed snapshot requires the current native Pool profile.');
@@ -330,9 +405,9 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       if(code!=='0x')throw new Error('Only EOA NFT recipients have current native admission. Contract or malformed recipient code is not admitted.');
     };
     const previewKey = (id: bigint) => `${candidate.graph}:${id}`;
-    const previewContext = (data: string, state: PreparedPoolStoredState) => computePoolExitPreviewContext(data, {
+    const previewContext = (data: string, state: PreparedPoolSelectedState) => computePoolExitPreviewContext(data, {
       chainId, core: candidate.core, releaseId: preparedScope!.candidate.releaseId, marketId: state.marketId,
-      owner: ownerAddress, marketWords: state.markets[state.marketId], anchors: state.anchors });
+      owner: ownerAddress, marketWords: state.markets[state.marketId], anchors: state.anchors }, packed);
     const prepareExitPreview = async (request: { positionId: bigint; expectedContext: string; producerHash?: string;
       fraction: readonly [bigint, bigint]; confirm: (review: { snapshot: Awaited<ReturnType<typeof readPosition>>;
         fraction: readonly [bigint, bigint]; gasCap: bigint }) => Promise<boolean> }) => {
@@ -345,27 +420,27 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       requireCurrentPoolProof(before.context === expected && before.status === 1n && !!before.amounts,
         'Exit preview needs a fresh authenticated owner claim.');
       const amounts = before.amounts!, { reader, pair } = await preparedFor(id, before.block);
-      const state = await reader.state(id, before.block), wallets = await reader.wallets(before.block);
+      const state = await reader.selectedState(id, before.block), wallets = await reader.wallets(before.block);
       requireCurrentPoolProof(wallets.length === candidate.tokens.length && wallets.every((wallet, i) => same(wallet.token, candidate.tokens[i][0])),
         'Exit preview needs all four canonical wallets.');
       const assertBeforeSend = async () => {
         const block = await head(); await readPreparedAt(id, block);
-        requireCurrentPoolProof(identical(financial(await reader.state(id, block)), financial(state)) &&
+        requireCurrentPoolProof(identical(financial(await reader.selectedState(id, block)), financial(state)) &&
           identical(await reader.wallets(block), wallets), 'Exit preview dependencies changed before signing.');
       };
       if (await request.confirm(Object.freeze({ snapshot: before, fraction, gasCap: currentPoolOwnerGasCap('withdraw') })) !== true) { await guard(); return null; }
       await assertBeforeSend();
       const encrypted = [];
-      for (const value of fraction) { await guard(); encrypted.push(await encryptPrivateUint128Input(signer, value,
+      for (const value of packed ? [packPoolInputPair(...fraction)] : fraction) { await guard(); encrypted.push(await (packed ? encryptPrivateUint256Input : encryptPrivateUint128Input)(signer, value,
         candidate.core, abi.getFunction('managePoolPosition')!.selector)); await guard(); }
-      const data = encodePoolExitPreview(id, expected, encrypted), context = previewContext(data, state);
+      const data = encodePoolExitPreview(id, expected, encrypted, packed), context = previewContext(data, state);
       const readResult = async (hash: string) => {
         const proof = await reader.canonical(hash);
         requireCurrentPoolProof(!!proof && same(proof.data, data) && proof.block.number >= before.block.number,
           'Exit preview differs from its confirmed owner call.');
         const confirmed = proof!, event = decodePoolExitPreviewEvent(confirmed.logs, candidate.core, id);
         requireCurrentPoolProof(same(event.context, context), 'Exit preview reserve commitment changed.');
-        const after = await reader.state(id, confirmed.block), afterWallets = await reader.wallets(confirmed.block);
+        const after = await reader.selectedState(id, confirmed.block), afterWallets = await reader.wallets(confirmed.block);
         requireCurrentPoolProof(identical(financial(after), financial(state)) && identical(afterWallets, wallets),
           'Exit preview changed financial state or wallets.');
         await guard();
@@ -386,7 +461,72 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         action: 'withdraw' as const, exitPhase: 'preview' as const, recipient: null, assertCurrent: guard, assertBeforeSend, readResult, readyToSign: false as const });
       preparedSessions.set(prepared, signer); return prepared;
     };
-    return Object.freeze({readPosition, prepareSnapshot, prepareExitPreview,
+    const restoreExitPreview = async (request: { positionId: bigint; expectedContext: string; producerHash?: string;
+      fraction: readonly [bigint, bigint] }) => {
+      requireCurrentPoolProof(exitCandidate, 'Pool exit preview needs the exact exit candidate.');
+      const id = request.positionId;
+      exitPreviews.get(signer)?.delete(previewKey(id));
+      requireCurrentPoolProof(request.fraction?.length === 2, 'Select the completed preview fraction.');
+      const fraction = Object.freeze([...request.fraction]) as readonly [bigint, bigint];
+      fraction.forEach(v => uint(v, 128, true));
+      requireCurrentPoolProof(fraction[0] < fraction[1], 'Use Close for a full withdrawal.');
+      // Reuse only state authenticated during this invocation, never an earlier restore.
+      const verified: { state?: PreparedPoolSelectedState } = {};
+      const capture = (state: PreparedPoolSelectedState) => { verified.state = state; };
+      let observed = await readPositionWithState(id, request.producerHash ? { producerHash: request.producerHash } : undefined, capture);
+      if (!preparedProducers.has(id) && 'producerHash' in observed && observed.producerHash)
+        observed = await readPositionWithState(id, { producerHash: observed.producerHash }, capture);
+      requireCurrentPoolProof(observed.context === request.expectedContext && observed.status === 1n && !!observed.amounts,
+        'Restore needs a fresh authenticated owner claim.');
+      if (!('producerHash' in observed) || !observed.producerHash)
+        throw new CurrentPoolProofMismatch('Restore needs an authenticated prepared Pool producer.');
+      const snapshot = Object.freeze({ ...observed, producerHash: observed.producerHash }), currentState = verified.state;
+      requireCurrentPoolProof(!!currentState && currentState.positionId === id && currentState.graph === candidate.graph &&
+        same(currentState.marketId, snapshot.marketId!) && currentState.block.number === snapshot.block.number &&
+        same(currentState.block.hash, snapshot.block.hash), 'Restore authenticated state scope changed.');
+      const { reader } = await preparedFor(id, snapshot.block);
+      const logs = await readProvider.getLogs({ address: candidate.core,
+        fromBlock: Number(preparedScope!.candidate.attestationBlock.number), toBlock: Number(snapshot.block.number),
+        topics: [new Interface(POOL_EXIT_PREVIEW_ABI).getEvent('PoolExitPreviewed')!.topicHash, toBeHex(id, 32)] });
+      await guard();
+      requireCurrentPoolProof(logs.length <= 256, 'Exit preview history exceeds its read bound.');
+      const latest = [...logs].sort((a, b) => b.blockNumber - a.blockNumber || b.index - a.index)[0];
+      if (!latest) return null;
+      requireCurrentPoolProof(!latest.removed && same(latest.address, candidate.core) &&
+        latest.blockNumber <= Number(snapshot.block.number), 'Exit preview discovery changed.');
+      const proof = await reader.canonical(latest.transactionHash);
+      requireCurrentPoolProof(!!proof && proof.block.number === BigInt(latest.blockNumber) && same(proof.block.hash, latest.blockHash),
+        'Completed exit preview receipt is unavailable or changed.');
+      const confirmed = proof!, call = abi.decodeFunctionData('managePoolPosition', confirmed.data);
+      requireCurrentPoolProof(call[0] === id && same(call[1], snapshot.context), 'Completed exit preview belongs to a different claim or state.');
+      const event = decodePoolExitPreviewEvent(confirmed.logs, candidate.core, id);
+      // A stale commitment can be rejected even when the preview's state was pruned.
+      requireCurrentPoolProof(same(event.context, previewContext(confirmed.data, currentState!)),
+        'Completed exit preview is stale: Pool reserves changed.');
+      const state = confirmed.block.number === snapshot.block.number && same(confirmed.block.hash, snapshot.block.hash)
+        ? currentState! : await reader.selectedState(id, confirmed.block);
+      const wallets = await reader.wallets(confirmed.block);
+      requireCurrentPoolProof(wallets.length === candidate.tokens.length && wallets.every((wallet, i) => same(wallet.token, candidate.tokens[i][0])),
+        'Exit preview needs all four canonical wallets.');
+      requireCurrentPoolProof(identical(financial(currentState!), financial(state)) &&
+        identical(await reader.wallets(snapshot.block), wallets), 'Completed exit preview is stale: financial state or wallets changed.');
+      const context = previewContext(confirmed.data, state);
+      requireCurrentPoolProof(same(event.context, context), 'Exit preview reserve commitment changed.');
+      await guard();
+      const values = event.encrypted.map((value: { ciphertextHigh: bigint; ciphertextLow: bigint }) => decryptPrivateUint256Output(signer, value)); await guard();
+      const amounts = snapshot.amounts!, preview = checkPoolExitPreviewValues(values, { ownedShares: amounts.shares,
+        totalShares: amounts.totalShares, entitlements: [amounts.amount0, amounts.amount1], fraction });
+      requireCurrentPoolProof(identical(await reader.canonical(latest.transactionHash), confirmed),
+        'Exit preview canonical receipt changed after private checks.');
+      await guard();
+      let retained = exitPreviews.get(signer); if (!retained) { retained = new Map(); exitPreviews.set(signer, retained); }
+      retained.set(previewKey(id), Object.freeze({ graph: candidate.graph, owner: ownerAddress, transactionHash: latest.transactionHash,
+        data: confirmed.data, context, proof: confirmed, state, wallets, fraction, amounts: preview }));
+      return Object.freeze({ action: 'withdraw' as const, exitPhase: 'preview' as const, positionId: id,
+        transactionHash: latest.transactionHash, block: confirmed.block, snapshot, preview, payouts: null,
+        status: 'exit-preview-verified' as const, privateAccountingVerified: false as const, readyToSign: false as const });
+    };
+    return Object.freeze({readPosition, verifyPlainSnapshot, verifySupersededPlainSnapshot, prepareSnapshot, prepareExitPreview, restoreExitPreview,
       readOwnedPositions: async () => {
         if(candidateKey!=='cheap-exit'&&candidateKey!=='cheap-history')throw new Error('Position discovery requires a supported DEX deployment.');
         const block=await head(), inventory=await readCurrentDexOwnedPositionIds({candidate:candidateKey,owner:ownerAddress,block,
@@ -429,14 +569,14 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
             packageSha256: candidate.packageSha256, block, ...pub, amounts: null, producerKind: undefined,
             marketId: pair.marketId, poolTokens: pair.tokens, readyToSign: false as const });
         requireCurrentPoolProof(before.context === expected, 'Pool ownership review changed.');
-        const state = await reader.state(id, before.block), wallets = await reader.wallets(before.block);
+        const state = await reader.selectedState(id, before.block), wallets = await reader.wallets(before.block);
         const recipientBalance = recipient ? (await call(nftAbi, nft, 'balanceOf', [recipient], before.block))[0] as bigint : null;
         const approval = recipient ? (await call(nftAbi, nft, 'getApproved', [id], before.block))[0] as string : null;
         if (recipient) await requireEoaRecipient(recipient, before.block);
         const assertBeforeSend = async () => {
           const currentBlock = await head(), current = await publicState(id, currentBlock);
           requireCurrentPoolProof(current.context === expected && identical(current, pub) &&
-            identical(financial(await reader.state(id, currentBlock)), financial(state)) &&
+            identical(financial(await reader.selectedState(id, currentBlock)), financial(state)) &&
             identical(await reader.wallets(currentBlock), wallets), 'Pool ownership dependencies changed before signing.');
           if (recipient) {
             await requireEoaRecipient(recipient, currentBlock);
@@ -462,7 +602,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
           const confirmed = proof!; await checkGraph(confirmed.block);
           requireCurrentPoolProof(!confirmed.logs.some(log => candidate.tokens.some(([token]) => same(log.address, token)) &&
             same(log.topics[0] ?? null, transfer.getEvent('Transfer')!.topicHash)), 'Pool ownership action has token movement.');
-          const after = await reader.state(id, confirmed.block), afterWallets = await reader.wallets(confirmed.block);
+          const after = await reader.selectedState(id, confirmed.block), afterWallets = await reader.wallets(confirmed.block);
           checkPreparedPoolOwnershipTransition({ candidate, action, owner: ownerAddress, recipient: recipient ?? undefined,
             before: state, after, beforeWallets: wallets, afterWallets });
           if (recipient) {
@@ -502,7 +642,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         requireCurrentPoolProof(amounts.shares > 0n && minimums[0] <= amounts.amount0 && minimums[1] <= amounts.amount1,
           'Prepared close minimum exceeds the current owner entitlement.');
         const { reader, pair } = await preparedFor(id, before.block);
-        const state = await reader.state(id, before.block), wallets = await reader.wallets(before.block);
+        const state = await reader.selectedState(id, before.block), wallets = await reader.wallets(before.block);
         const checkExit = async () => {
           if (!exit) return;
           requireCurrentPoolProof(identical(financial(state), financial(exit.state)) && identical(wallets, exit.wallets) &&
@@ -514,7 +654,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         const assertBeforeSend = async () => {
           const block = await head();
           await readPreparedAt(id, block);
-          requireCurrentPoolProof(identical(financial(await reader.state(id, block)), financial(state)) &&
+          requireCurrentPoolProof(identical(financial(await reader.selectedState(id, block)), financial(state)) &&
             identical(await reader.wallets(block), wallets), 'Prepared close dependencies changed before signing.');
           await checkExit();
         };
@@ -525,7 +665,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         for (const value of minimums) {
           await guard(); encrypted.push(await encryptPrivateUint256Input(signer, value, candidate.core, abi.getFunction('managePoolPosition')!.selector)); await guard();
         }
-        const data = exit ? encodePreviewedPoolWithdrawal(exit.data, exit.context, encrypted) :
+        const data = exit ? encodePreviewedPoolWithdrawal(exit.data, exit.context, encrypted, packed) :
           abi.encodeFunctionData('managePoolPosition', [id, expected, 7n, encodeCurrentPoolExit(null, encrypted)]);
         const readResult = async (hash: string) => {
           const proof = await reader.canonical(hash);
@@ -544,7 +684,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
           }
           if (!exit) decodeCurrentPoolNftTransfer(confirmed.logs, nft, ownerAddress, zeroAddress, id);
           await checkExit();
-          const managed = await reader.state(id, confirmed.block), managedWallets = await reader.wallets(confirmed.block);
+          const managed = await reader.selectedState(id, confirmed.block), managedWallets = await reader.wallets(confirmed.block);
           const result = checkPreparedPoolManagementTransition({ candidate, owner: ownerAddress,
             request: exit ? { action: 'withdraw-previewed', fraction: exit.fraction, minimums, preview: exit.amounts } :
               { action: 'close', minimums }, receiptStatus: 1, before: state, managed, beforeAmounts: amounts,

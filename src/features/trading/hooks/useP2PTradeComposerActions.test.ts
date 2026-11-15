@@ -111,6 +111,11 @@ describe('Unlisted Link creation in the existing composer', () => {
       offerToken: offer.tokenAddress, requestToken: request.tokenAddress, privatePair: kind === 'private-erc20',
       priceOffer: '1', priceRequest: '2', expiresAt: '0' } });
     expect(f.input.ensureTradeFunding).toHaveBeenCalledWith(expect.objectContaining({ confirmationPolicy: 'always',
+      confirmationStats: expect.arrayContaining([
+        { label: 'COTI private inputs', value: kind === 'private-erc20' ? '3 confirmations' : '1 confirmation' },
+        { label: 'On-chain action', value: '1 transaction' },
+        { label: 'Token approval', value: kind === 'private-erc20' ? 'A: if needed (1 COTI confirmation + 1 transaction)' : 'A: if needed (1 transaction)' }
+      ]),
       requirements: [expect.objectContaining({ amountWei: 100n })], tradeSummary: expect.arrayContaining([
         { label: 'Access', value: 'Shared link' }, { label: 'Price', value: '1 A for 2 B' }]) }));
     expect(f.input.navigateToTradePath).toHaveBeenCalledWith(sharePath);

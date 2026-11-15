@@ -1,5 +1,7 @@
-import { COTI_TESTNET_NETWORK } from './chainWhisperNetworks';
-import { CURRENT_DEX_DAILY_PRICE_SOURCE, type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
+// Historical configuration fixture only; the replacement App does not import this file.
+import { COTI_TESTNET_NETWORK } from '../../src/lib/chainWhisperNetworks';
+import { type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceManifest } from '../../src/lib/currentDexDailyPrice';
+import { CURRENT_DEX_DAILY_PRICE_SOURCE } from './historicalDailyPriceSources';
 
 // CW-040.01: native-record-1/NATIVE_FINAL_SEAL.json
 // 2249051551615c39a5106cfd7227660310e16cb899c68a467a8969fdc57a6c94.

@@ -1,10 +1,11 @@
+import { MAX_TOKEN_ALLOWANCE } from './tokenAllowance';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
-import { getAddress, toBeHex } from '@coti-io/coti-ethers';
+import { getAddress, keccak256, toBeHex } from '@coti-io/coti-ethers';
 import { createCurrentSharedDexTokenFundingAdapter, assertCurrentSharedTokenFundingAppAuthority, currentSharedTokenFundingAbi as abi,
   assertCurrentSharedPoolApprovalPrepared, type CurrentSharedTokenFundingAction } from './currentSharedDexTokenFunding';
 import { CURRENT_SHARED_TOKEN_DISTRIBUTION as policy, CURRENT_SHARED_DEX_TOKENS, resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
-import { readCurrentDexPendingAttempt, CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
+import { readCurrentDexPendingAttempt, reserveCurrentDexPendingAttempt, CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY } from './currentDexPendingAttempt';
 import { currentTokenFundingAbi as approvalAbi } from './currentDexTokenFunding';
 import { STAGED_PREPARED_DEX_CANDIDATE, STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './dexV2Deployment';
 import { createCurrentAttemptBoundary } from './currentDexSubmission';
@@ -113,6 +114,20 @@ function fixture(candidate: Args['candidate'] = 'cheap-prepared', selectedOwner 
 afterEach(() => { localSubmissionAuthority.allowed = false; vi.unstubAllGlobals(); });
 
 describe('selected exit candidate funding identity', () => {
+  it('uses one funding observation per head read and reads again on the next check', async () => {
+    const f = fixture('cheap-history');
+    const first = await f.cap.readSharedTokenFunding();
+    expect(f.readFunds).toHaveBeenCalledTimes(1);
+    expect(first.tokens[0].balance).toBe(7n);
+    f.states[0].balance = 9n;
+    const second = await f.cap.readSharedTokenFunding();
+    expect(f.readFunds).toHaveBeenCalledTimes(2);
+    expect(second.tokens[0].balance).toBe(9n);
+    f.revoke();
+    await expect(f.cap.readSharedTokenFunding()).rejects.toThrow('Session changed');
+    expect(f.readFunds).toHaveBeenCalledTimes(2);
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
   it.each(['initial', 'refill'] as const)('admits current engineering %s for each of the four tokens with exact private credit', async action => {
     for (const selected of ['0x8b749251cf1f712d4e39fd048c53394af03e10be', '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d']) for (let index = 0; index < 4; index++) {
       const engineering = getAddress(selected), f = fixture('cheap-history', engineering);
@@ -227,8 +242,9 @@ function approvalFixture(pairIndex = 0, canonicalIndex: 0 | 1 = 0, cleanup = fal
     f.txs.value = { ...request, hash: txHash, blockNumber: f.receipt.blockNumber, blockHash: hash };
     f.receipt.to = request.to;
     if (f.receipt.status === 1) {
-      const input = approvalAbi.decodeFunctionData('approve', request.data)[1];
-      const approved = BigInt(input.ciphertext.ciphertextLow);
+      const call = approvalAbi.parseTransaction({data:request.data})!;
+      const input = call.args[1];
+      const approved = BigInt(input.ciphertext.ciphertextLow) + (call.name === 'increaseAllowance' ? f.states[selectedIndex].allowance : 0n);
       f.states[selectedIndex].allowance = approved;
       f.receipt.logs = [{ address: request.to, ...approvalAbi.encodeEventLog(approvalAbi.getEvent('Approval')!,
         [owner, policy.core, [77n, approved], [99n, 999n]]) }];
@@ -241,6 +257,49 @@ function approvalFixture(pairIndex = 0, canonicalIndex: 0 | 1 = 0, cleanup = fal
   return { ...f, cap, args, funding, request, encrypt, confirm, approvalAdmission, selectedIndex, amount,
     prepare: () => cap.prepareSharedPoolApproval(request), unknown: () => { unknownApproval = true; } };
 }
+
+describe('existing exact Pool allowances', () => {
+  it.each([0, 2, 5])('reads both canonical tokens for pair %s without preparing or sending an approval', async pairIndex => {
+    const f = approvalFixture(pairIndex);
+    const indices = f.funding.intent.poolTokens.map(address => f.states.findIndex(t => t.address.toLowerCase() === address.toLowerCase()));
+    f.states[indices[0]].allowance = 11n;
+    expect(await f.cap.readSharedPoolAllowances(f.request.funding)).toEqual([true, false]);
+    f.states[indices[1]].allowance = 13n;
+    expect(await f.cap.readSharedPoolAllowances(f.request.funding)).toEqual([true, true]);
+    f.states[indices[0]].allowance = 12n;
+    expect(await f.cap.readSharedPoolAllowances(f.request.funding)).toEqual([true, true]);
+    f.states[indices[1]].balance = 12n;
+    expect(await f.cap.readSharedPoolAllowances(f.request.funding)).toEqual([true, false]);
+    for (const fn of [f.confirm, f.encrypt, f.transport.estimateGas, f.transport.send]) expect(fn).not.toHaveBeenCalled();
+    expect(readCurrentDexPendingAttempt(f.storage)).toBeNull();
+  });
+  it.each(['copy', 'session', 'pending', 'stopped', 'identity', 'amount'] as const)('rejects changed %s before an allowance result', async reason => {
+    const f = approvalFixture(); let funding = f.request.funding;
+    if (reason === 'copy') funding = { ...funding };
+    if (reason === 'session') f.revoke();
+    if (reason === 'pending') f.storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, 'unreconciled');
+    if (reason === 'stopped') f.funding.assertApprovalCurrent.mockRejectedValue(new Error('Stopped'));
+    if (reason === 'identity') f.funding.intent.marketId = hash;
+    if (reason === 'amount') f.funding.amounts.used0 = 0n;
+    await expect(f.cap.readSharedPoolAllowances(funding)).rejects.toThrow();
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it('reuses the same exact check for branded top-up funding', async () => {
+    const f = approvalFixture(), topUp = Object.assign(f.funding, { positionId: 43n, ownerContext: hash });
+    f.states[f.selectedIndex].allowance = f.amount;
+    expect(await f.cap.readSharedPoolAllowances(topUp as unknown as CurrentPoolPreparedTopUpFunding)).toEqual([true, false]);
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it('holds when another pending action appears during the private read', async () => {
+    const f = approvalFixture(), read = f.readFunds.getMockImplementation()!;
+    f.readFunds.mockImplementation(async head => {
+      const result = await read(head); f.storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, 'unreconciled'); return result;
+    });
+    await expect(f.cap.readSharedPoolAllowances(f.request.funding)).rejects.toThrow();
+    expect(f.storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe('unreconciled');
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+});
 
 describe('Pool allowance cleanup after lost funding review', () => {
   const cleanupFixture = (canonicalIndex: 0 | 1 = 0) => {
@@ -402,7 +461,7 @@ describe('plain Limit exact allowance consumer', () => {
     f.states[f.selectedIndex].allowance = 1n; before[f.selectedIndex].allowance = 1n;
     const p = (await f.prepare())!;
     expect(f.confirm).toHaveBeenCalledWith({ token: p.token, amount: f.amount, previousAllowance: 1n, spender: f.policy.core });
-    expect(f.encrypt).toHaveBeenCalledWith(f.amount, p.token, approvalAbi.getFunction('approve')!.selector);
+    expect(f.encrypt).toHaveBeenCalledWith(f.amount - 1n, p.token, approvalAbi.getFunction('increaseAllowance')!.selector);
     allowLocalTechnicalSubmission(); const sent = await f.cap.submitSharedLimitApproval(p);
     f.funding.assertAuthority.mockRejectedValue(new Error('Allowance changed after its mined approval'));
     expect(await sent.recover()).toMatchObject({ fundingOutcome: 'verified', privateAccountingVerified: true });
@@ -416,7 +475,7 @@ describe('plain Limit exact allowance consumer', () => {
     await expect(cap.submitSharedLimitApproval({} as never)).rejects.toThrow('held');
     for (const call of [f.confirm, f.encrypt, f.readFunds, f.transport.readNonce, f.transport.estimateGas, f.transport.send]) expect(call).not.toHaveBeenCalled();
   });
-  it.each(['copy', 'session', 'core', 'market', 'pair', 'token', 'zero', 'overflow', 'balance', 'exact', 'source', 'review-drift'])('rejects changed Limit funding before a transaction: %s', async fault => {
+  it.each(['copy', 'session', 'core', 'market', 'pair', 'token', 'zero', 'overflow', 'balance', 'source', 'review-drift'])('rejects changed Limit funding before a transaction: %s', async fault => {
     const f = limitApprovalFixture();
     if (fault === 'copy') f.request.funding = { ...f.funding };
     if (fault === 'session') limitBrands.set(f.funding, {});
@@ -427,7 +486,6 @@ describe('plain Limit exact allowance consumer', () => {
     if (fault === 'zero') f.funding.amount = 0n;
     if (fault === 'overflow') f.funding.amount = 1n << 256n;
     if (fault === 'balance') f.states[f.selectedIndex].balance = 0n;
-    if (fault === 'exact') f.states[f.selectedIndex].allowance = f.amount;
     if (fault === 'source') f.funding.assertAuthority.mockRejectedValue(new Error('Source changed'));
     if (fault === 'review-drift') f.confirm.mockImplementation(async () => { f.states[3].balance++; return true; });
     await expect(f.prepare()).rejects.toThrow(); expect(f.encrypt).not.toHaveBeenCalled(); expect(f.transport.send).not.toHaveBeenCalled();
@@ -468,6 +526,46 @@ function swapApprovalFixture(tokenIndex = 0, candidate: 'cheap-exit' | 'cheap-hi
   const request = { token: f.states[tokenIndex].address, amount: 17n, assertReviewCurrent, confirm: vi.fn(async () => true) };
   return { ...f, args, cap, request, admission, assertReviewCurrent, prepare: () => cap.prepareSharedSwapApproval(request) };
 }
+
+describe('swap allowance cleanup', () => {
+  const cleanupFixture = () => {
+    const f = swapApprovalFixture(0, 'cheap-history');
+    f.states[0].allowance = 99n;
+    const request = { ...f.request, preparedQuote: {} as never };
+    return { ...f, request, prepareCleanup: () => f.cap.prepareSharedSwapAllowanceCleanup(request) };
+  };
+  it('prepares only zero for the selected Core allowance', async () => {
+    const f = cleanupFixture();
+    const prepared = (await f.prepareCleanup())!;
+    expect(prepared).toMatchObject({ cleanup: true, amount: 0n, token: getAddress(f.request.token), spender: f.policy.core });
+    expect(f.request.confirm).toHaveBeenCalledWith(expect.objectContaining({ cleanup: true, amount: 0n, previousAllowance: 99n }));
+    expect(f.encrypt).toHaveBeenCalledWith(0n, prepared.token, approvalAbi.getFunction('approve')!.selector);
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it('keeps default authority held and requires the original Quote', async () => {
+    const f = cleanupFixture(), cap = createCurrentSharedDexTokenFundingAdapter({ ...f.args, assertSwapApprovalAdmission: undefined });
+    await expect(cap.prepareSharedSwapAllowanceCleanup(f.request)).rejects.toThrow('held');
+    await expect(f.cap.prepareSharedSwapAllowanceCleanup({ ...f.request, preparedQuote: undefined as never })).rejects.toThrow('Original branded');
+    expect(f.encrypt).not.toHaveBeenCalled(); expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it('does not prompt or encrypt when allowance is already zero', async () => {
+    const f = cleanupFixture(); f.states[0].allowance = 0n;
+    expect(await f.prepareCleanup()).toBeNull();
+    expect(f.request.confirm).not.toHaveBeenCalled(); expect(f.encrypt).not.toHaveBeenCalled();
+  });
+  it.each(['prepare', 'sign'] as const)('rejects operation lookup uncertainty at %s', async phase => {
+    const f = cleanupFixture(), prepared = phase === 'sign' ? (await f.prepareCleanup())! : null;
+    f.storage.setItem(CURRENT_DEX_OPERATION_LOOKUPS_KEY, '{unreconciled');
+    await expect(prepared ? f.cap.submitSharedSwapApproval(prepared) : f.prepareCleanup()).rejects.toThrow();
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it('rejects an unbranded Quote at the shared send boundary', async () => {
+    const f = cleanupFixture(), prepared = (await f.prepareCleanup())!;
+    allowLocalTechnicalSubmission();
+    await expect(f.cap.submitSharedSwapApproval(prepared)).rejects.toThrow('not prepared in this owner wallet session');
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+});
 
 describe('history candidate exact swap approvals', () => {
   it.each([0, 1, 2, 3])('prepares and proves only token %s allowance for the current Core', async tokenIndex => {
@@ -519,9 +617,9 @@ describe('exit candidate exact swap approvals', () => {
     const prepared=await f.cap.prepareSharedSwapApproval({...f.request,amount:20_000_001n});
     expect(prepared).not.toBeNull();expect(f.encrypt).toHaveBeenCalled();expect(f.transport.send).not.toHaveBeenCalled();
   });
-  it.each(['balance', 'allowance'] as const)('rejects insufficient balance or unmatched nonzero %s', async field => {
-    const f = swapApprovalFixture(); f.states[0][field] = field === 'balance' ? 16n : 1n;
-    await expect(f.prepare()).rejects.toThrow('sufficient funds and zero prior allowance'); expect(f.encrypt).not.toHaveBeenCalled();
+  it('rejects insufficient balance', async () => {
+    const f = swapApprovalFixture(); f.states[0].balance = 16n;
+    await expect(f.prepare()).rejects.toThrow('sufficient input funds'); expect(f.encrypt).not.toHaveBeenCalled();
   });
   it('does not encrypt or send after cancelled confirmation', async () => {
     const f = swapApprovalFixture(); f.request.confirm.mockResolvedValue(false);
@@ -674,15 +772,21 @@ describe('prepared Pool exact token approvals', () => {
     }
     expect(f.transport.send).not.toHaveBeenCalled(); expect(readCurrentDexPendingAttempt(f.storage)).toBeNull();
   });
-  it.each(['foreign-allowance', 'already-exact', 'insufficient', 'zero', 'negative', 'overflow'])('rejects invalid allowance request: %s', async reason => {
+  it.each(['insufficient', 'zero', 'negative', 'overflow'])('rejects invalid allowance request: %s', async reason => {
     const f = approvalFixture();
-    if (reason === 'foreign-allowance') f.states[f.selectedIndex].allowance = 1n;
-    if (reason === 'already-exact') f.states[f.selectedIndex].allowance = f.amount;
     if (reason === 'insufficient') f.states[f.selectedIndex].balance = f.amount - 1n;
     if (reason === 'zero') f.funding.amounts.used0 = 0n;
     if (reason === 'negative') f.funding.amounts.used0 = -1n;
     if (reason === 'overflow') f.funding.amounts.used0 = 1n << 256n;
-    await expect(f.prepare()).rejects.toThrow(); expect(f.encrypt).not.toHaveBeenCalled(); expect(f.transport.send).not.toHaveBeenCalled();
+    const expected = reason === 'insufficient' ? 'Pool token balance is below the required deposit amount.' :
+      'Invalid exact Pool allowance.';
+    await expect(f.prepare()).rejects.toThrow(expected);
+    expect(f.confirm).not.toHaveBeenCalled(); expect(f.encrypt).not.toHaveBeenCalled(); expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it('reports an already cleared Pool allowance without another cleanup send', async () => {
+    const f = approvalFixture(0, 0, true); f.states[f.selectedIndex].allowance = 0n;
+    expect(await f.prepare()).toBeNull();
+    expect(f.confirm).not.toHaveBeenCalled(); expect(f.encrypt).not.toHaveBeenCalled(); expect(f.transport.send).not.toHaveBeenCalled();
   });
   it.each(['estimate', 'headroom', 'zero-estimate', 'nonce', 'fee', 'reserve'])('stops failed fresh prerequisites: %s', async reason => {
     const f = approvalFixture(), p = (await f.prepare())!;
@@ -960,6 +1064,27 @@ describe('four-token beta funding', () => {
     expect(await reload.recoverPendingSharedTokenFunding()).toEqual({ core: f.policy.core, graph: f.policy.graph, packageSha256: f.policy.packageSha256, status: 'observed-mined', privateAccountingVerified: false, privateCreditVerified: true });
     expect(readCurrentDexPendingAttempt(f.storage)).toBeNull(); expect(f.transport.send).toHaveBeenCalledOnce();
   });
+  it.each([false, true])('holds an old distributor refill after rotation without resending (hashless: %s)', async hashless => {
+    const f = fixture('cheap-history', getAddress('0x8b749251cf1f712d4e39fd048c53394af03e10be'));
+    f.states.forEach(token => { token.claimed = true; });
+    const oldVault = getAddress('0xB509dCfaa8a0AB7b976B84f091875246e0FDD8Cf');
+    expect(getAddress(f.policy.vault.address)).not.toBe(oldVault);
+    const data = abi.encodeFunctionData('claim', [f.states[0].address]);
+    reserveCurrentDexPendingAttempt(f.storage, { version: 1, chainId: String(f.policy.chainId), owner: f.args.ownerAddress.toLowerCase(),
+      core: f.policy.core.toLowerCase(), graph: `0x${f.policy.graph}`, phase: 'token-refill', callHash: keccak256(data), nonce: 3,
+      txHash: hashless ? null : txHash, target: oldVault.toLowerCase() });
+    f.txs.value = { chainId: f.policy.chainId, from: f.args.ownerAddress, to: oldVault, data, value: 0n, nonce: 3,
+      gasLimit: 5_000_000n, gasPrice: 50_000_000n, hash: txHash, blockNumber: Number(f.head.number), blockHash: f.head.hash };
+    f.receipt.to = oldVault;
+    const pending = readCurrentDexPendingAttempt(f.storage)!;
+    const reload = createCurrentSharedDexTokenFundingAdapter(f.args);
+    if (hashless) expect(await reload.recoverPendingSharedTokenFunding()).toMatchObject({ status: 'manual-reconciliation-required' });
+    else await expect(reload.recoverPendingSharedTokenFunding()).rejects.toThrow('target or calldata changed');
+    expect(readCurrentDexPendingAttempt(f.storage)).toMatchObject({ ...pending, ...(hashless ? {} : { verificationBlocked: true }) });
+    await expect(reload.prepareSharedTokenFunding({ action: 'refill', token: f.states[0].address, confirm: async () => true })).rejects.toThrow(/pending/i);
+    expect(f.transport.send).not.toHaveBeenCalled();
+    expect(getAddress(readCurrentDexPendingAttempt(f.storage)!.target!)).toBe(oldVault);
+  });
   it('recovers a normal known claim after historical state is pruned, with receipt credit and current funds kept separate', async () => {
     const f = fixture(), p = (await f.prepare())!; await f.cap.submitSharedTokenFunding(p);
     const mined = { ...f.head }, read = f.readFunds.getMockImplementation()!;
@@ -1030,4 +1155,99 @@ describe('four-token beta funding', () => {
     const record = JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!);
     expect(Object.keys(record).sort()).toEqual(['version', 'chainId', 'owner', 'core', 'graph', 'phase', 'callHash', 'nonce', 'txHash', 'target'].sort());
   });
+});
+
+
+describe('sufficient and unlimited token approvals', () => {
+  it('keeps cleanup at zero without consulting the unlimited switch',async()=>{
+    const f=approvalFixture(0,0,true);f.states[f.selectedIndex].allowance=99n;
+    const approvalMode=vi.fn(()=>'unlimited' as const);
+    await f.cap.prepareSharedPoolApproval({...f.request,approvalMode});
+    expect(approvalMode).not.toHaveBeenCalled();expect(f.encrypt).toHaveBeenCalledWith(0n,expect.any(String),approvalAbi.getFunction('approve')!.selector);
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it.each(['swap','limit','pool'] as const)('uses the %s switch choice made in the existing confirmation before encryption', async kind => {
+    const f=kind==='swap'?swapApprovalFixture():kind==='limit'?limitApprovalFixture():approvalFixture();
+    let unlimited=false;
+    const approvalMode=vi.fn(()=>unlimited?'unlimited' as const:'exact' as const);
+    const confirm=vi.fn(async()=>{unlimited=true;return true;});
+    const p=kind==='swap'?await f.cap.prepareSharedSwapApproval({...f.request as ReturnType<typeof swapApprovalFixture>['request'],approvalMode,confirm})
+      :kind==='limit'?await f.cap.prepareSharedLimitApproval({...f.request as ReturnType<typeof limitApprovalFixture>['request'],approvalMode,confirm})
+      :await f.cap.prepareSharedPoolApproval({...f.request as ReturnType<typeof approvalFixture>['request'],approvalMode,confirm});
+    expect(p).not.toBeNull();expect(confirm).toHaveBeenCalledOnce();expect(approvalMode).toHaveBeenCalledOnce();
+    expect(f.encrypt).toHaveBeenCalledWith(MAX_TOKEN_ALLOWANCE,expect.any(String),approvalAbi.getFunction('approve')!.selector);
+    expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it.each(['swap','limit','pool'] as const)('cancels the %s popup without reading its choice or encrypting', async kind => {
+    const f=kind==='swap'?swapApprovalFixture():kind==='limit'?limitApprovalFixture():approvalFixture();
+    const approvalMode=vi.fn(()=>'unlimited' as const),confirm=vi.fn(async()=>false);
+    const p=kind==='swap'?await f.cap.prepareSharedSwapApproval({...f.request as ReturnType<typeof swapApprovalFixture>['request'],approvalMode,confirm})
+      :kind==='limit'?await f.cap.prepareSharedLimitApproval({...f.request as ReturnType<typeof limitApprovalFixture>['request'],approvalMode,confirm})
+      :await f.cap.prepareSharedPoolApproval({...f.request as ReturnType<typeof approvalFixture>['request'],approvalMode,confirm});
+    expect(p).toBeNull();expect(approvalMode).not.toHaveBeenCalled();expect(f.encrypt).not.toHaveBeenCalled();expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it.each([11n, 12n, MAX_TOKEN_ALLOWANCE])('reuses Pool allowance %s without approval', async allowance => {
+    const f=approvalFixture(); f.states[f.selectedIndex].allowance=allowance;
+    expect(await f.prepare()).toBeNull(); expect(f.encrypt).not.toHaveBeenCalled(); expect(f.transport.send).not.toHaveBeenCalled();
+  });
+  it.each(['exact','unlimited'] as const)('increases only the selected Pool token using %s policy', async approvalMode => {
+    const f=approvalFixture(); f.states[f.selectedIndex].allowance=1n;
+    const before=f.states.map(token=>({...token})), target=approvalMode==='unlimited'?MAX_TOKEN_ALLOWANCE:f.amount;
+    const p=(await f.cap.prepareSharedPoolApproval({...f.request,approvalMode}))!;
+    expect(f.encrypt).toHaveBeenCalledWith(target-1n,p.token,approvalAbi.getFunction('increaseAllowance')!.selector);
+    expect(f.confirm).toHaveBeenCalledWith(expect.objectContaining({amount:target,previousAllowance:1n}));
+    allowLocalTechnicalSubmission(); const sent=await f.cap.submitSharedPoolApproval(p);
+    expect(await sent.recover()).toMatchObject({privateAccountingVerified:true});
+    expect(f.states).toEqual(before.map((token,i)=>i===f.selectedIndex?{...token,allowance:target}:token));
+  });
+  it('rechecks the dependency hold before send and preserves the existing allowance',async()=>{
+    const f=approvalFixture(), idle=vi.fn(async()=>{}),cap=createCurrentSharedDexTokenFundingAdapter({...f.args,assertAllowanceMutationIdle:idle});
+    const p=(await cap.prepareSharedPoolApproval(f.request))!; idle.mockRejectedValue(new Error('Active swap'));
+    await expect(cap.submitSharedPoolApproval(p)).rejects.toThrow('Active swap');
+    expect(f.transport.send).not.toHaveBeenCalled();expect(f.states[f.selectedIndex].allowance).toBe(0n);
+  });
+  it.each([17n, 19n, MAX_TOKEN_ALLOWANCE])('reuses sufficient swap allowance %s',async allowance=>{
+    const f=swapApprovalFixture();f.states[0].allowance=allowance;
+    expect(await f.prepare()).toBeNull();expect(f.encrypt).not.toHaveBeenCalled();
+  });
+  it('increases a swap shortfall and verifies the resulting target',async()=>{
+    const f=swapApprovalFixture();f.states[0].allowance=1n;
+    const p=(await f.prepare())!;expect(f.encrypt).toHaveBeenCalledWith(16n,p.token,approvalAbi.getFunction('increaseAllowance')!.selector);
+    allowLocalTechnicalSubmission();const sent=await f.cap.submitSharedSwapApproval(p);
+    expect(await sent.recover()).toMatchObject({privateAccountingVerified:true});expect(f.states[0].allowance).toBe(17n);
+  });
+  it('reuses sufficient Limit allowance',async()=>{
+    const f=limitApprovalFixture();f.states[f.selectedIndex].allowance=MAX_TOKEN_ALLOWANCE;
+    expect(await f.prepare()).toBeNull();expect(f.encrypt).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('wallet menu durable approval reconciliation',()=>{
+  it.each(['verified','changed-balance','parent-reorg']as const)('accounts for a lost revocation handle: %s',async fault=>{
+    const f=approvalFixture(0,0,true),before=await f.args.readFunds(f.head),p=(await f.prepare())!;
+    allowLocalTechnicalSubmission();await f.cap.submitSharedPoolApproval(p);
+    const read=f.args.readFunds;
+    const cap=createCurrentSharedDexTokenFundingAdapter({...f.args,
+      readReceiptBlock:async number=>({...f.head,number:BigInt(number)}),
+      readFunds:async head=>head.number<f.head.number?{...before,head}:read(head)});
+    if(fault==='changed-balance')f.states[1].balance++;
+    if(fault==='parent-reorg')vi.mocked(f.transport.readBlockHash).mockResolvedValue(toBeHex(789n,32));
+    if(fault==='verified'){
+      expect(await cap.reconcilePendingSharedTokenApproval()).toMatchObject({status:'observed-mined',privateAccountingVerified:true,reviewedTargetVerified:false});
+      expect(readCurrentDexPendingAttempt(f.storage)).toBeNull();
+    }else{
+      await expect(cap.reconcilePendingSharedTokenApproval()).rejects.toThrow();
+      expect(readCurrentDexPendingAttempt(f.storage)?.verificationBlocked).toBe(true);
+    }
+    expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+});
+
+it('explicit Unlimited can upgrade an already sufficient finite Pool allowance',async()=>{
+  const f=approvalFixture();f.states[f.selectedIndex].allowance=f.amount+1n;
+  expect(await f.cap.readSharedPoolAllowances(f.request.funding)).toEqual([true,false]);
+  expect(await f.cap.readSharedPoolAllowances(f.request.funding,['unlimited','exact'])).toEqual([false,false]);
+  const p=await f.cap.prepareSharedPoolApproval({...f.request,approvalMode:'unlimited'});
+  expect(p).not.toBeNull();expect(f.encrypt).toHaveBeenCalledWith(MAX_TOKEN_ALLOWANCE-f.amount-1n,expect.any(String),approvalAbi.getFunction('increaseAllowance')!.selector);
 });

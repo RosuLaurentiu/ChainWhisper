@@ -31,6 +31,21 @@ const contextBaseline = () => {
 };
 
 describe('private exact Pool exit preview codec', () => {
+  it('retains one packed fraction and both minimums on the packed candidate', () => {
+    const packedFraction = [large(17n)];
+    const p = encodePoolExitPreview(id, ownerContext, packedFraction, true);
+    const w = abi.decodeFunctionData('managePoolPosition', encodePreviewedPoolWithdrawal(p, previewContext, minimums, true));
+    const fields = coder.decode(['bytes32', wide, `${wide}[2]`], w[3]);
+    expect(fields[1].ciphertext.ciphertextHigh).toBe(17n);
+    expect(fields[1].ciphertext.ciphertextLow).toBe(18n);
+    expect(fields[1].signature).toBe(packedFraction[0].signature);
+    expect(fields[2][0].ciphertext.ciphertextHigh).toBe(31n);
+    const baseline = contextBaseline();
+    const original = computePoolExitPreviewContext(p, baseline, true);
+    expect(computePoolExitPreviewContext(encodePoolExitPreview(id, ownerContext, [large(19n)], true), baseline, true)).not.toBe(original);
+    expect(() => encodePoolExitPreview(id, ownerContext, packedFraction)).toThrow(/two/);
+    expect(() => encodePoolExitPreview(id, ownerContext, [narrow(1n)], true)).toThrow(/wide/);
+  });
   it('keeps preview and withdrawal on the same Core selector and exact encrypted fraction', () => {
     const p = abi.decodeFunctionData('managePoolPosition', preview());
     expect([...p.slice(0, 3)]).toEqual([id, ownerContext, 11n]);

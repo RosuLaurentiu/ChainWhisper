@@ -1,34 +1,47 @@
 import { AbiCoder, Interface, keccak256 } from '@coti-io/coti-ethers';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../tests/fixtures/history.fixture';
-import { CURRENT_DEX_DAILY_PRICE_SOURCE, readCurrentDexDailyPrice, readCurrentDexPublicReference } from './currentDexDailyPrice';
+import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE as CURRENT_DEX_DAILY_PRICE_SOURCE, readCurrentDexDailyPrice, readCurrentDexPublicReference } from './currentDexDailyPrice';
 import { currentDexMarketReference, currentDexEstimatedReceive } from './currentDexMarketReference';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate, type CurrentCheapDexCandidate } from './dexV2Deployment';
+import type { CurrentCheapDexCandidate } from './dexV2Deployment';
+import { STAGED_GAP_DEX_CANDIDATE as candidate } from './currentDexGapCandidate';
+vi.mock('./selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('./selectedCurrentDexCandidate')>();const current=await import('./currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});
+
 import { readCurrentDexDisplay } from './currentDexDisplay';
-import { CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT } from './currentDexHistoryDailyPriceArtifact';
+import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT as CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT } from './packedInputDexDailyPriceArtifact';
+import { makeCurrentReferenceStorage } from '../../tests/fixtures/currentReferenceSource.fixture';
+afterEach(()=>vi.restoreAllMocks());
 import { HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS } from './currentDexHistoryDailyPriceTestnet';
 
 const runtimeHashes = vi.hoisted(() => new Map([
-  ['0x6001', '0xa5a60403d5c4ab01cd2baddb94cefdcd108bc99d249f21c6e217be2187cb3d34'],
+  ['0x6001', '0x4fd3079f945285b696694ea995c7c7eca423042589a7b2e15eef4cd62a3fca3b'],
   ['0x6002', '0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0']
 ]));
+runtimeHashes.set('0x6001', candidate.runtimes.find(([role])=>role==='ChainWhisperDexCore')![2]);
+runtimeHashes.set('0x6002', candidate.tokens[0][1]);
 vi.mock('@coti-io/coti-ethers', async importOriginal => {
   const actual = await importOriginal<typeof import('@coti-io/coti-ethers')>();
   return { ...actual, keccak256: (value: string) => runtimeHashes.get(value) ?? actual.keccak256(value) };
 });
 
 const referenceTypes = ['bytes32','bytes32','uint256','address','bytes32','bytes32','bytes32','bytes32','uint256','uint256','uint256','address','address','uint8','uint8','uint256','uint256','uint256','uint256','bytes32','bool'];
-const referenceFixture = (options: { chainId?: string; codeFault?: string; observationFault?: (values: unknown[]) => unknown[]; malformed?: boolean; noncanonical?: boolean; reorg?: boolean } = {}) => {
+const referenceFixture = (options: { chainId?: string; codeFault?: string; observationFault?: (values: unknown[]) => unknown[]; sourceMode?: 'aged'|'unobserved'|'suppressed'; malformed?: boolean; noncanonical?: boolean; reorg?: boolean } = {}) => {
   const coder = AbiCoder.defaultAbiCoder(), sourceApi = new Interface(['function poolReference(bytes32) view returns(bytes)']);
   const market = candidate.pairs[0], display = readCurrentDexDisplay(candidate).pairs.find(row => row.marketId === market.marketId)!;
   const [token0, token1] = display.tokens;
   const core = candidate.runtimes.find(([name]) => name === 'ChainWhisperDexCore')!;
-  const headTimestamp = 1_800_000_000n, sampleTimestamp = headTimestamp - 1n;
+  const headTimestamp = 1_800_000_000n, sampleTimestamp = headTimestamp - (options.sourceMode==='aged'?121n:1n);
   let values: unknown[] = [CURRENT_DEX_DAILY_PRICE_SOURCE.schema, CURRENT_DEX_DAILY_PRICE_SOURCE.policy, candidate.chainId,
     candidate.core, core[2], candidate.releaseId, market.marketId,
     keccak256(coder.encode(['uint256','address','address'], [candidate.chainId, token0.address, token1.address])),
     market.canonicalId, 1n, 1n, token0.address, token1.address, token0.decimals, token1.decimals,
     2n * 10n ** 18n, sampleTimestamp, 199n, 3n, `0x${'77'.repeat(32)}`, true];
+  if(options.sourceMode==='unobserved'){values[15]=0n;values[16]=0n;values[17]=0n;values[18]=0n;values[20]=false;}
+  if(options.sourceMode==='suppressed'){values[15]=0n;values[20]=false;}
+  if(options.sourceMode==='aged')values[20]=false;
+  vi.spyOn(Date,'now').mockReturnValue(Number(headTimestamp)*1000);
+  const storage=makeCurrentReferenceStorage({sourceGraph:candidate.graph,chainId:candidate.chainId,source:candidate.core,sourceRuntimeHash:core[2],releaseId:candidate.releaseId,market:market.marketId,canonicalId:market.canonicalId,token0:token0.address,token1:token1.address,decimals0:token0.decimals,decimals1:token1.decimals},values);
+  values[19]=storage.commitment;
   if (options.observationFault) values = options.observationFault(values);
   const encoded = coder.encode(referenceTypes, values);
   const observation = options.noncanonical ? `${encoded.slice(0,-64)}${'2'.padStart(64,'0')}` : encoded;
@@ -54,6 +67,7 @@ const referenceFixture = (options: { chainId?: string; codeFault?: string; obser
       if (options.malformed) return sourceApi.encodeFunctionResult('poolReference', ['0x1234']);
       return sourceApi.encodeFunctionResult('poolReference', [observation]);
     }
+    if(method==='eth_getProof')return storage.rpc(method,params);
     throw new Error(`Unexpected public RPC method: ${method}`);
   } };
   return { provider, display, market, headTimestamp, observation };
@@ -144,7 +158,7 @@ describe('shared current DEX reference and chart reads', () => {
         expect(Number.isSafeInteger(value.at)).toBe(true);
         expect(Number(value.at)).toBeGreaterThanOrEqual(Number(value.attemptStartedAt));
         expect(['pending', 'completed', 'failed']).toContain(value.state);
-        expect(['eth_chainId', 'eth_getBlockByNumber', 'eth_getCode', 'eth_getTransactionReceipt', 'eth_call', 'validation']).toContain(value.method);
+        expect(['eth_chainId', 'eth_getBlockByNumber', 'eth_getCode', 'eth_getTransactionReceipt', 'eth_call', 'eth_getProof', 'validation']).toContain(value.method);
         expect(JSON.stringify(value)).not.toContain('0x');
         expect(JSON.stringify(value)).not.toContain('Synthetic');
       }
@@ -257,15 +271,16 @@ describe('shared current DEX reference and chart reads', () => {
     await f.readChart(); expect(f.constructorReads()).toBe(15);
   });
 
-  it('acquires the new head and reports an aged current reference even with warm recorder bindings', async () => {
+  it('acquires a new checked head for unchanged source state even with warm recorder bindings', async () => {
     const f = combinedFixture(); await f.readChart(); f.requests.length = 0;
     f.intercept(args => args.method === 'eth_getBlockByNumber' && ['latest', '0xc9'].includes(String(args.params?.[0]))
       ? { number: '0xc9', hash: `0x${'99'.repeat(32)}`, timestamp: `0x${1_800_000_121n.toString(16)}` } : undefined);
+    vi.spyOn(Date,'now').mockReturnValue(1_800_000_121_000);
     const [reference, chart] = await Promise.all([f.readReference(), f.readChart()]);
     for (const snapshot of [reference, chart]) {
       expect(snapshot.atBlock.number).toBe('201');
-      expect(snapshot.currentReference).toBe('stale');
-      expect(snapshot.currentObservation).toBeUndefined();
+      expect(snapshot.currentReference).toBe('available');
+      expect(snapshot.currentObservation?.checkedAt).toBe('1800000121');
     }
     expect(f.constructorReads()).toBe(0);
     expect(f.requests.filter(args => args.method === 'eth_getCode')).toHaveLength(7);
@@ -287,7 +302,7 @@ describe('authenticated public market reference',()=>{
     const reversed=currentDexMarketReference({status:'empty',snapshot},reversedPair,now);
     expect(currentDexEstimatedReceive({...args,reference:reversed,pair:reversedPair,inputIndex:0})).toBe('5.0');
     for(const edited of [{reference:undefined},{reference:{status:'stale' as const}},{reference:{status:'loading' as const}},
-      {reference:{...reference}},{pair:reversedPair},{now:now+111n},{now:now-11n},{input:0n},{input:-1n},{input:1n<<256n}]){
+      {reference:{...reference}},{pair:reversedPair},{now:now+121n},{now:now-11n},{input:0n},{input:-1n},{input:1n<<256n}]){
       expect(currentDexEstimatedReceive({...args,inputIndex:0,...edited})).toBeNull();
     }
   });
@@ -299,18 +314,18 @@ describe('authenticated public market reference',()=>{
     expect(currentDexMarketReference(view,[f.manifest.symbols[1],f.manifest.symbols[0]],now)).toMatchObject({status:'available',price:0.5});
     expect(currentDexMarketReference(view,['wrong',f.manifest.symbols[1]],now).status).toBe('unavailable');
     expect(currentDexMarketReference({...view,snapshot:{...snapshot}},f.manifest.symbols,now).status).toBe('unavailable');
-    expect(currentDexMarketReference(view,f.manifest.symbols,now+111n).status).toBe('stale');
+    expect(currentDexMarketReference(view,f.manifest.symbols,now+121n).status).toBe('last-known');
     expect(currentDexMarketReference(view,f.manifest.symbols,now-11n).status).toBe('stale');
   });
   it.each(['stale','suppressed','unobserved'] as const)('does not replace %s current state with historical prices',async mode=>{
     const f=makeHistoryFixture(mode),snapshot=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
     expect(snapshot.slots.some(s=>s.point!==null)).toBe(true);
-    expect(currentDexMarketReference({status:'ready',snapshot},f.manifest.symbols,HISTORY_FIXTURE_DAY*86400n+100n).status).toBe(mode==='stale'?'stale':'unavailable');
+    expect(currentDexMarketReference({status:'ready',snapshot},f.manifest.symbols,HISTORY_FIXTURE_DAY*86400n+100n).status).toBe(mode==='stale'?'available':'unavailable');
   });
 });
 
 describe('Core-backed public market reference', () => {
-  it('reads the exact 7b67 HBR/BCN pair and preserves forward and reverse display orientation', async () => {
+  it('reads the exact7bed HBR/BCN pair and preserves forward and reverse display orientation', async () => {
     const f = referenceFixture(), snapshot = await readCurrentDexPublicReference({ provider: f.provider, candidate, pair: ['HBR', 'BCN'], finalityLagBlocks: 0 });
     const now = f.headTimestamp;
     expect(snapshot).toMatchObject({ symbols: ['HBR', 'BCN'], currentReference: 'available', currentObservation: { priceE18: '2000000000000000000', sampledBlock: '199', revision: '3' } });
@@ -318,7 +333,7 @@ describe('Core-backed public market reference', () => {
     expect(currentDexMarketReference({ status: 'reference', snapshot }, ['HBR', 'BCN'], now)).toMatchObject({ status: 'available', price: 2 });
     expect(currentDexMarketReference({ status: 'reference', snapshot }, ['BCN', 'HBR'], now)).toMatchObject({ status: 'available', price: 0.5 });
     expect(currentDexMarketReference({ status: 'reference', snapshot: { ...snapshot } }, ['HBR', 'BCN'], now).status).toBe('unavailable');
-    expect(currentDexMarketReference({ status: 'reference', snapshot }, ['HBR', 'BCN'], now + 120n).status).toBe('stale');
+    expect(currentDexMarketReference({ status: 'reference', snapshot }, ['HBR', 'BCN'], now + 121n).status).toBe('last-known');
   });
 
   it('rejects a forged candidate and a pair outside its maintained display scope', async () => {
@@ -342,15 +357,12 @@ describe('Core-backed public market reference', () => {
     const f = referenceFixture(options as Parameters<typeof referenceFixture>[0]);
     await expect(readCurrentDexPublicReference({ provider: f.provider, candidate, pair: ['HBR', 'BCN'], finalityLagBlocks: 0 })).rejects.toThrow();
   });
-  it.each(['stale','unobserved','suppressed-or-changed'] as const)('keeps %s source data unavailable without a substitute price',async mode=>{
-    const f=referenceFixture({observationFault:values=>{
-      if(mode==='stale')values[16]=1_799_999_879n;
-      if(mode==='unobserved')values[16]=0n;
-      if(mode==='suppressed-or-changed')values[20]=false;
-      return values;
-    }});
+  it.each(['aged','unobserved','suppressed'] as const)('verifies %s source state independently of saved history',async mode=>{
+    const f=referenceFixture({sourceMode:mode});
     const snapshot=await readCurrentDexPublicReference({provider:f.provider,candidate,pair:['HBR','BCN'],finalityLagBlocks:0});
-    expect(snapshot.currentReference).toBe(mode);expect(snapshot.currentObservation).toBeUndefined();
-    expect(currentDexMarketReference({status:'reference',snapshot},['HBR','BCN'],f.headTimestamp).status).toBe(mode==='stale'?'stale':'unavailable');
+    expect(snapshot.currentReference).toBe(mode==='aged'?'available':mode==='suppressed'?'suppressed-or-changed':'unobserved');
+    if(mode==='aged')expect(snapshot.currentObservation?.checkedAt).toBe(String(f.headTimestamp));
+    else expect(snapshot.currentObservation).toBeUndefined();
+    expect(currentDexMarketReference({status:'reference',snapshot},['HBR','BCN'],f.headTimestamp).status).toBe(mode==='aged'?'available':'unavailable');
   });
 });

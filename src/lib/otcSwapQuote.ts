@@ -1,7 +1,4 @@
 import {
-  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   RECURRING_OTC_CONTRACT_ADDRESS,
   type TradeAssetPayload,
   type TradeSnapshot
@@ -10,6 +7,7 @@ import type { ResolvedTradeToken } from './appHelpers';
 import { getSnapshotKey, getTradeDisplayTerms, getTradeTermsVisibility } from './p2pTradeView';
 import {
   getNormalizedOfferAssetKey,
+  isCurrentOneOffOtcTrade,
   normalizeStandardPublicOtcOffer,
   type NormalizedOfferAsset
 } from './otcOfferNormalization';
@@ -204,12 +202,7 @@ const isSupportedLinkedStandardTrade = (trade: TradeSnapshot): boolean => {
   if (trade.recurringOrder || trade.status !== 'open') {
     return false;
   }
-  const escrowContract = normalizeAddress(trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS);
-  return [
-    normalizeAddress(TRADE_ESCROW_CONTRACT_ADDRESS),
-    normalizeAddress(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS),
-    normalizeAddress(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)
-  ].includes(escrowContract);
+  return isCurrentOneOffOtcTrade(trade);
 };
 
 const buildLinkedStandardSwapCandidate = ({
@@ -262,7 +255,7 @@ const buildLinkedStandardSwapCandidate = ({
     trade,
     tradeId: trade.tradeId,
     tradeKey: getSnapshotKey(trade),
-    escrowContract: trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS,
+    escrowContract: trade.v2!.contractAddress,
     sourceType: 'standard',
     sellToken: sellAsset,
     buyToken: buyAsset,

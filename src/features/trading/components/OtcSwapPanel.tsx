@@ -311,7 +311,7 @@ export default function OtcSwapPanel({
             </button>
             {bestQuote || pinnedTrade ? (
               <button type="button" className="standalone-trade-secondary-btn" onClick={onOpenCurrentOrder}>
-                Open order
+                Open trade
               </button>
             ) : null}
           </div>

@@ -1,13 +1,18 @@
-import { useRef, useState } from 'react';
+import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
+import { MAX_TOKEN_ALLOWANCE } from '../../../lib/tokenAllowance';
+import { useEffect, useRef, useState } from 'react';
+import { logMobileWalletDiagnostic } from '../../../lib/mobileWalletDiagnostics';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { assertCurrentPoolFundingNativeAdmission } from '../../../lib/currentDexPoolSubmission';
+import { usesPackedPoolInputs } from '../../../lib/currentDexPoolFunding';
 import { assertCurrentAppPoolAuthority, type CurrentAppPoolScope } from '../../../lib/currentDexC1SwapPolicy';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
 import { formatDexCandidateTokenAmount, parseDexCandidateTokenAmount, readCurrentDexDisplay, hasCurrentDexPendingAction } from '../../../lib/currentDexDisplay';
 import type { CurrentPoolPreparedTopUpPreview, CurrentPoolPreparedTopUpFunding } from '../../wallet/currentDexPoolFundingCapability';
 import { currentPoolIntent } from './CurrentPoolWorkspace';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
+import { currentPoolVerificationMessage } from '../../../lib/currentDexPoolProofError';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
 
@@ -41,15 +46,34 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     onboard: session.sessionOnboardInfo, health: session.walletAesHealthByAddress, wallet: session.browserWalletId, source: session.activeSignerSource,
     getFunding, getSender, getPositions, id: position.positionId, proof: position.producerHash, positionContext: position.context,
     pair: position.poolTokens.join(':'), terms: [budget0, budget1, tolerance].join(':') };
+  const [approvalMode0, setApprovalMode0, getApprovalMode0] = useTokenApprovalMode(`${context.owner}:${candidate.graph}:${position.poolTokens[0]}`);
+  const [approvalMode1, setApprovalMode1, getApprovalMode1] = useTokenApprovalMode(`${context.owner}:${candidate.graph}:${position.poolTokens[1]}`);
   const scope = useRef(context), inFlight = useRef(false), messageScope = useRef<object | null>(null);
-  if ((Object.keys(context) as (keyof typeof context)[]).some(key => context[key] !== scope.current[key])) scope.current = context;
+  const changedScopeFields=(Object.keys(context) as (keyof typeof context)[]).filter(key=>context[key]!==scope.current[key]);
+  if(changedScopeFields.length){
+    logMobileWalletDiagnostic('pool-top-up-scope-invalidated',{phase:'render',fields:changedScopeFields});
+    scope.current=context;
+  }
+  useEffect(()=>{
+    logMobileWalletDiagnostic('pool-top-up-mounted');
+    return()=>logMobileWalletDiagnostic('pool-top-up-unmounted');
+  },[]);
   const { confirmation, requestConfirmation, resolveConfirmation } = useTradeActionConfirmationState(scope.current);
   const current = <T,>(value: { value: T; scope: object } | null) => value?.scope === scope.current ? value.value : null;
+  const canAdvanceSnapshot = () => {
+    const value=current(managed);if(!value)return false;
+    try {
+      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage());
+      return !!saved&&saved.phase==='pool-fund'&&saved.poolTopUpHash===null&&!saved.verificationBlocked&&saved.txHash===value.transactionHash.toLowerCase()&&
+        saved.chainId===candidate.chainId&&saved.owner===context.owner&&saved.core===candidate.core.toLowerCase()&&saved.graph===`0x${candidate.graph}`;
+    } catch { return false; }
+  };
   const stopped = stopState === scope.current;
   const approvals = approvalState?.scope === scope.current ? approvalState.values : [false, false];
   const setStopped = () => setStopState(scope.current);
   const setApprovals = (values: readonly boolean[]) => setApprovalState({ scope: scope.current, values });
   const labels = position.poolTokens.map(token => readCurrentDexDisplay(candidate).tokens.find(value => value.address === token)!.label);
+  const approvalIndex = confirmation?.summaryRows.find(row=>row.label==='Token')?.value===labels[1]?1:0;
   const format = (value: bigint, index: number) => formatDexCandidateTokenAmount(candidate, position.poolTokens[index], value);
   const assertScope = (captured: object) => { if (scope.current !== captured) throw new Error('Top-up position, inputs or wallet session changed.'); };
   const appAuthority = (action: CurrentAppPoolScope['action']): CurrentAppPoolScope => {
@@ -67,8 +91,8 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     if (!getSender) throw new Error('Connect the owner wallet.');
     const value = await getSender(BigInt(candidate.chainId), { candidate: key }); assertScope(captured); return value;
   };
-  const run = async (work: (captured: object) => Promise<void>, recovery = false, authority?: () => CurrentAppPoolScope) => {
-    if (inFlight.current || busy || (!recovery && (disabled || pending || hasCurrentDexPendingAction()))) return;
+  const run = async (work: (captured: object) => Promise<void>, recovery = false, authority?: () => CurrentAppPoolScope, snapshotHandoff=false) => {
+    if (inFlight.current || busy || (!recovery && (disabled || pending || hasCurrentDexPendingAction()&&!(snapshotHandoff&&canAdvanceSnapshot())))) return;
     const captured = scope.current; inFlight.current = true; setBusy(true);
     try { if (!recovery) { assertCurrentPoolFundingNativeAdmission(candidate, 'top-up'); if(key!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph, authority!()); } await work(captured); }
     catch (error) {
@@ -94,7 +118,11 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
       producerHash: position.producerHash, pair: position.poolTokens, intent: { budgets, tolerance: fraction },
       confirmPrivateInputs: async () => { const accepted = await confirm('Review liquidity top-up', [
         { label: 'Position NFT', value: position.positionId.toString() }, ...budgets.map((value, i) => ({ label: `${labels[i]} maximum`, value: format(value, i) })),
-        { label: 'Funding tolerance', value: `${tolerance}%` } ]); assertScope(captured); return accepted; } });
+        { label: 'Funding tolerance', value: `${tolerance}%` },
+        { label: 'Private-input signatures for preview', value: String(usesPackedPoolInputs(candidate) ? 3 : 4) },
+        { label: 'Preview transaction', value: '1 transaction; network fee applies' } ]); assertScope(captured);
+        if (accepted) show(`Complete ${usesPackedPoolInputs(candidate) ? 3 : 4} private-input signatures for this preview. The transaction request follows separately.`);
+        return accepted; } });
     assertScope(captured); if (!prepared) { show('Top-up preview cancelled.'); return; }
     setApprovalState(null); setPreview(null); setFunding(null); setManaged(null);
     onBegin(); const sent = await next.submitPoolTopUpPreview(prepared); assertScope(captured);
@@ -104,19 +132,35 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     const value = current(preview); if (!value || stopped || current(managed)) return;
     const prepared = current(funding) ?? await value.prepareFunding(async amounts => {
       const accepted = await confirm('Review exact top-up amounts', [ ...[amounts.used0, amounts.used1].map((v, i) => ({ label: `${labels[i]} debit`, value: format(v, i) })),
-        ...[amounts.unused0, amounts.unused1].map((v, i) => ({ label: `${labels[i]} left in wallet`, value: format(v, i) })),
-        { label: 'Added shares', value: amounts.mintedShares.toString() } ]); assertScope(captured); return accepted; });
+        ...[amounts.unused0, amounts.unused1].map((v, i) => ({ label: `${labels[i]} unused from entered budget`, value: format(v, i) })),
+        { label: 'Added shares', value: amounts.mintedShares.toString() },
+        { label: 'Private-input signatures for funding', value: String(usesPackedPoolInputs(candidate) ? 3 : 4) },
+        { label: 'After signing', value: 'If token approvals are ready, your wallet will request the top-up transaction. Otherwise, approve the remaining token amounts first.' },
+        { label: 'Token approvals, top-up and snapshot', value: 'Separate wallet requests; network fees apply' } ]); assertScope(captured);
+      if (accepted) show(`Complete ${usesPackedPoolInputs(candidate) ? 3 : 4} private-input signatures for funding. Token approvals and transactions are separate.`);
+      return accepted; });
     assertScope(captured); if (!prepared) { show('Top-up cancelled.'); return; }
-    if (!current(funding)) { setApprovals([false, false]); setFunding({ value: prepared, scope: captured }); show('Approve both exact token amounts, then submit the top-up.'); return; }
-    if (!approvals.every(Boolean)) { show('Approve both exact token amounts, then submit the top-up.'); return; }
+    let ready = approvals;
+    if (!current(funding)) {
+      ready = await (await sender(captured)).readSharedPoolAllowances(prepared, [approvalMode0, approvalMode1]); assertScope(captured);
+      setApprovals(ready); setFunding({ value: prepared, scope: captured });
+    }
+    if (!ready.every(Boolean)) { show('Funding prepared. Approve the remaining token amounts, then select Submit liquidity top-up.'); return; }
+    show('Checking funding. Your wallet will ask you to confirm the top-up transaction.');
     const sent = await (await sender(captured)).submitPoolTopUpFunding(prepared); assertScope(captured);
     setPending({ phase: 'fund', recover: sent.recover, scope: captured }); show('Top-up submitted. Check exact debits before the paid snapshot.');
   }, false, () => appAuthority('top-up'));
   const approve = (index: 0 | 1, cleanup = false) => run(async captured => {
     const value = current(funding); if (!value || current(managed) || stopped && !cleanup) return;
-    const next = await sender(captured), prepared = await next.prepareSharedPoolApproval({ funding: value, canonicalIndex: index, cleanup,
-      confirm: async review => { const accepted = await confirm(cleanup ? 'Clear unused top-up approval' : 'Approve exact top-up amount', [
-        { label: labels[index], value: format(review.amount, index) }, { label: 'Spender', value: review.spender } ]); assertScope(captured); return accepted; } });
+    const next = await sender(captured);
+    if (!cleanup) {
+      const existing = await next.readSharedPoolAllowances(value, [approvalMode0, approvalMode1]); assertScope(captured);
+      setApprovals(existing);
+      if (existing[index]) { show(`Exact ${labels[index]} allowance verified.`); return; }
+    }
+    const prepared = await next.prepareSharedPoolApproval({ funding: value, canonicalIndex: index, cleanup, approvalMode: index === 0 ? getApprovalMode0 : getApprovalMode1,
+      confirm: async review => { const accepted = await confirm(cleanup ? 'Clear unused top-up approval' : 'Approve top-up token', [
+        { label: 'Token', value: labels[index] }, { label: cleanup ? 'New allowance' : 'Top-up amount', value: format(review.amount, index) }, { label: 'Spender', value: review.spender } ]); assertScope(captured); return accepted; } });
     assertScope(captured); if (!prepared) { show('Approval cancelled.'); return; }
     const sent = await next.submitSharedPoolApproval(prepared); assertScope(captured);
     setPending({ phase: cleanup ? index ? 'clear-1' : 'clear-0' : index ? 'approval-1' : 'approval-0', recover: sent.recover, scope: captured }); show('Approval submitted. Check its private result.');
@@ -126,34 +170,30 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     const result = await value.abandonUnfunded(async review => { const accepted = await confirm('Stop this unfunded top-up',
       review.allowances.map((v, i) => ({ label: `${labels[i]} remaining approval`, value: format(v, i) }))); assertScope(captured); return accepted; });
     assertScope(captured); if (!result) return; setStopped(); setApprovals(result.cleanupRequired);
-    show(result.cleanupRequired.some(Boolean) ? 'Top-up stopped. Clear its remaining approvals.' : 'Top-up stopped. Both allowances are zero.');
+    show(result.cleanupRequired.some(Boolean) ? 'Top-up stopped. Keep approvals for later use or revoke them separately.' : 'Top-up stopped. Both allowances are zero.');
     if (!result.cleanupRequired.some(Boolean)) onReleased();
   }, false, () => appAuthority('top-up'));
   const snapshot = () => run(async captured => {
-    if (!current(managed) || !getPositions) return;
+    const topUp = current(managed); if (!topUp || !getPositions) return;
     const cap = await getPositions(BigInt(candidate.chainId), { candidate: key }); assertScope(captured);
     const prepared = await cap.prepareSnapshot({ positionId: position.positionId, confirm: async review => {
       const accepted = await confirm('Verify liquidity after top-up', [{ label: 'Position NFT', value: review.positionId.toString() },
         { label: 'Maximum network fee', value: `${review.gasCap * 50_000_000n} wei` } ]); assertScope(captured); return accepted; } });
     assertScope(captured); if (!prepared) return;
-    const sent = await (await sender(captured)).submitPoolPositionAction(prepared); assertScope(captured);
-    // The sender clears its journal after its own snapshot proof. Retain only
-    // the confirmed public hash so a later read failure can retry the full
-    // top-up checker, which rereads both canonical receipts and private state.
-    let snapshotHash: string | null = null;
-    setPending({ phase: 'snapshot', recover: async () => {
-      if (!snapshotHash) {
-        const result = await sent.recover();
-        if (!result || !('producerHash' in result) || typeof result.producerHash !== 'string') throw new Error('Top-up snapshot proof is unavailable.');
-        snapshotHash = result.producerHash;
-      }
-      return { producerHash: snapshotHash };
-    }, scope: captured }); show('Paid snapshot submitted. Check final private accounting.');
-  }, false, () => appAuthority('snapshot'));
+    const sent = await (await sender(captured)).submitPoolPositionAction(prepared, topUp); assertScope(captured);
+    setPending({ phase: 'snapshot', recover: sent.recover, scope: captured }); show('Paid snapshot submitted. Check final private accounting.');
+  }, false, () => appAuthority('snapshot'), true);
   const recover = () => run(async captured => {
     if (!pending || pending.scope !== captured) {
       const saved = readCurrentDexPendingAttempt(currentDexPendingStorage());
-      if (!saved) { show('No pending top-up transaction. This view has no retained private accounting proof.'); return; }
+      if (!saved) {
+        if (current(funding) && !current(managed) && !stopped) show(approvals.every(Boolean)
+          ? 'Funding prepared. Select Submit liquidity top-up to confirm the transaction in your wallet.'
+          : 'Funding prepared. Approve the remaining token amounts, then select Submit liquidity top-up.');
+        else if (current(preview) && !current(funding) && !stopped) show('Private top-up preview verified. Review its exact debit.');
+        else show('No pending top-up transaction. This view has no retained private accounting proof.');
+        return;
+      }
       const next = await sender(captured);
       const observed = saved.phase === 'token-approve' ? await next.recoverPendingSharedPoolApproval() :
         saved.phase === 'pool-preview' || saved.phase === 'pool-fund' ? await next.recoverPendingPoolAttempt() :
@@ -164,6 +204,9 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
         setPending(null); setPreview(null); setFunding(null); setManaged(null); setApprovalState(null); setStopped();
         show('Transaction ' + (observed.status === 'observed-mined' ? 'mined' : 'reverted') +
           '. Public recovery does not confirm private top-up accounting or approvals. Reconcile the position and allowances before another top-up.');
+      } else if (observed.status === 'observed-mined-verification-held' || observed.status === 'observed-reverted-verification-held') {
+        const action = saved.phase === 'pool-fund' ? 'Top-up deposit' : saved.phase === 'pool-snapshot' ? 'Top-up verification snapshot' : 'Transaction';
+        show(`${action} ${observed.status === 'observed-mined-verification-held' ? 'mined' : 'reverted'}, but verification remains on hold. ${observed.poolTopUpHash && !observed.verificationFailure ? 'Final top-up accounting has not completed.' : currentPoolVerificationMessage(observed.verificationFailure)} Keep the saved record. Do not resend.`);
       } else show('Transaction is pending or needs manual reconciliation. Do not resend it.');
       return;
     }
@@ -179,8 +222,8 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     } else if (pending.phase === 'snapshot') {
       const value = current(managed);
       if (!value || !('producerHash' in result) || typeof result.producerHash !== 'string') throw new Error('Top-up snapshot proof is unavailable.');
-      const verified = await value.verifySnapshot(result.producerHash); assertScope(captured);
-      if (!verified.privateAccountingVerified) throw new Error('Top-up final private accounting is unavailable.');
+      if (!('privateAccountingVerified' in result) || result.privateAccountingVerified !== true ||
+        !('poolTopUpHash' in result) || result.poolTopUpHash !== value.transactionHash.toLowerCase()) throw new Error('Top-up final private accounting is unavailable.');
       await onVerified(result.producerHash);
     } else {
       if (!('privateAccountingVerified' in result) || result.privateAccountingVerified !== true || !('funds' in result)) throw new Error('Approval private accounting is unavailable.');
@@ -193,9 +236,8 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
         candidate.tokens.some(([token]) => funds.tokens.filter(t => t.address.toLowerCase() === token).length !== 1)) throw new Error('Approval owner, token or candidate changed.');
       const allowances = position.poolTokens.map(token => funds.tokens.find(t => t.address.toLowerCase() === token)?.allowance);
       const used = [value.amounts.used0, value.amounts.used1];
-      if (allowances.some((v, i) => v !== 0n && v !== used[i])) throw new Error('Unknown top-up allowance. Reconcile before funding.');
-      if (observed.fundingOutcome === 'verified' && allowances[index] !== (cleanup ? 0n : used[index])) throw new Error('Approval result does not match the exact requested allowance.');
-      setApprovals(allowances.map((v, i) => stopped ? v !== 0n : v === used[i]));
+      if (observed.fundingOutcome === 'verified' && (cleanup ? allowances[index] !== 0n : allowances[index]! < used[index])) throw new Error('Approval result does not match the exact requested allowance.');
+      setApprovals(allowances.map((v, i) => stopped ? v !== 0n : v! >= ((i === 0 ? getApprovalMode0() : getApprovalMode1()) === 'unlimited' ? MAX_TOKEN_ALLOWANCE : used[i])));
       if (stopped && allowances.every(v => v === 0n)) onReleased();
       show(observed.fundingOutcome === 'reverted' ? 'Approval reverted. Its rollback was checked.' : stopped ? 'Unused approval checked. Clear any remaining approval.' : 'Exact approval checked. Both tokens must pass before funding.');
     }
@@ -219,13 +261,19 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
         onClick={() => { void approve(i, stopped); }}>{stopped ? 'Clear' : 'Approve'} {labels[i]} top-up amount</button>)}
       {!stopped ? <button type="button" disabled={locked} onClick={() => { void stop(); }}>Stop unfunded top-up</button> : null}
     </> : null}
-    {funded ? <button type="button" disabled={locked} onClick={() => { void snapshot(); }}>Review top-up verification snapshot</button> : null}
+    {funded ? <button type="button" disabled={busy||!!pending||disabled||!canAdvanceSnapshot()} onClick={() => { void snapshot(); }}>Review top-up verification snapshot</button> : null}
+    {stopped && current(preview) && candidateKey === 'cheap-history' && approvals.some(Boolean) ? <button type="button" disabled={locked} onClick={() => {
+      onReleased(); setStopState(null); setApprovalState(null); setPreview(null); setFunding(null); setManaged(null);
+      show('Top-up ended. Approvals remain available for later use.');
+    }}>Keep approvals and finish</button> : null}
     {stopped && current(preview) && !approvals.some(Boolean) ? <button type="button" disabled={locked} onClick={() => {
       setStopState(null); setApprovalState(null); setPreview(null); setFunding(null); setManaged(null);
       show('Unfunded top-up ended with no remaining approvals. Review a new preview.');
     }}>Start another top-up</button> : null}
     <button type="button" disabled={busy} onClick={() => { void recover(); }}>Check top-up status</button>
     <p role="status">{messageScope.current === scope.current ? message : 'Top-up keeps the current Pool spread. Only the exact previewed amounts can be charged.'}</p>
-    <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)}/>
+    <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)}
+      details={confirmation?.title==='Approve top-up token'?<TokenApprovalChoice token={labels[approvalIndex]} spender={candidate.core}
+        value={approvalIndex===0?approvalMode0:approvalMode1} onChange={approvalIndex===0?setApprovalMode0:setApprovalMode1}/>:null}/>
   </section>;
 }

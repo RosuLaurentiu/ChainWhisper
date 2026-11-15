@@ -8,6 +8,7 @@ import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { decryptPrivateUint256Output } from './privateUint256';
 import { verifyCurrentDexCanonicalInclusion } from './currentDexCanonicalInclusion';
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as currentCandidate } from './selectedCurrentDexCandidate';
 
 // Exact accepted prepared storage layout. No historical candidate or NFT19 policy.
 export const PREPARED_POOL_LAYOUT = Object.freeze({ marketMapping: 1n, marketWords: 71, positionMapping: 15n,
@@ -66,9 +67,51 @@ export type PreparedPoolSnapshotProducer = Readonly<{
   registryRevision: bigint; marketRevision: bigint; transactionHash: string; context: string;
   block: PreparedPoolBlock; status: bigint; revisions: readonly bigint[];
   amounts: ReturnType<typeof checkPreparedPoolPositionValues>; readyToSign: false;
+  amountsTransactionHash?: string;
 }>;
+export type PreparedPoolSelectedState = Omit<PreparedPoolStoredState, 'c1' | 'engines' | 'directories' | 'fixedSources'> & Readonly<{
+  scope: 'selected-pool-accounting'; candidateKey: import('./dexV2Deployment').CurrentCheapDexCandidateKey;
+  packageSha256: string; coreAddress: string; owner: string;
+  positionMarket: string; sourceIdForPosition: string; everPoolFunded: string;
+}>;
+export type PreparedPoolAccountingState = PreparedPoolStoredState | PreparedPoolSelectedState;
+export const isPreparedPoolSelectedState = (s: PreparedPoolAccountingState): s is PreparedPoolSelectedState => 'scope' in s;
+export const checkPreparedPoolSelectedScope = (s: PreparedPoolSelectedState) => {
+  const { candidate } = resolvePreparedDexScope(s.candidateKey), pair = candidate.pairs.find(p => p.marketId === s.marketId);
+  const keys = (v: object, expected: string[]) => same(Object.keys(v).sort(), expected.sort());
+  const validWords = (v: readonly string[], count: number) => v.length === count && v.every(w => /^0x[0-9a-fA-F]{64}$/.test(w));
+  requireProof(s.scope === 'selected-pool-accounting' && !!pair && s.graph === candidate.graph && s.packageSha256 === candidate.packageSha256 &&
+    s.coreAddress === candidate.core && /^0x[0-9a-f]{40}$/.test(s.owner) && BigInt(s.owner) !== 0n &&
+    s.market.marketId === s.marketId && s.market.token0 === pair!.tokens[0] && s.market.token1 === pair!.tokens[1] &&
+    s.market.engine === pair!.engine && s.market.poolTerms === pair!.poolTerms && s.market.enabled === true &&
+    s.market.canonicalId === BigInt(pair!.canonicalId) &&
+    same(s.market.companions, pair!.companions.map(([role, address, runtimeHash]) => ({ role, address, runtimeHash }))), 'Prepared selected Pool candidate scope changed.');
+  requireProof(validWords(s.core,149) && validWords(s.claim,64) && s.counter === BigInt(s.core[11]) && s.operation === BigInt(s.core[12]) &&
+    s.counter >= 42n && s.positionId > 0n && s.positionId <= s.counter + 1n &&
+    keys(s.markets,[s.marketId]) && validWords(s.markets[s.marketId],71), 'Prepared selected Pool storage scope is incomplete.');
+  const market = s.markets[s.marketId], anchors = market.slice(18,25).map(v => String(BigInt(v))), id = String(s.positionId);
+  requireProof(market[0] === candidate.releaseId && market[1] === s.marketId && addressAt(market[2]) === pair!.tokens[0] &&
+    addressAt(market[3]) === pair!.tokens[1] && addressAt(market[4]) === candidate.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1] &&
+    addressAt(market[5]) === pair!.poolTerms && new Set(anchors).size === 7 && !anchors.includes(id) && s.anchors.length === 7 &&
+    keys(s.claims,[...anchors,...(s.positionId <= s.counter ? [id] : [])]), 'Prepared selected Pool claim scope changed.');
+  anchors.forEach((key,i) => requireProof(BigInt(key)>0n && BigInt(key)<=s.counter && s.claims[key]?.marketId === s.marketId &&
+    validWords(s.anchors[i],64) && same(s.anchors[i],s.claims[key].words) && BigInt(s.anchors[i][0])===1n &&
+    BigInt(s.anchors[i][59])===0n && BigInt(s.anchors[i][62])===BigInt(i), 'Prepared selected Pool anchor scope changed.'));
+  requireProof(keys(s.nftOwners,[id]) && keys(s.nftMinted,[id]) && validWords([s.positionMarket,s.sourceIdForPosition,s.everPoolFunded,s.nftOwners[id],s.nftMinted[id]],5) &&
+    BigInt(s.sourceIdForPosition)===0n && BigInt(s.everPoolFunded)<=1n, 'Prepared selected Pool position identity changed.');
+  if(s.positionId>s.counter) requireProof(s.claim.every(v=>BigInt(v)===0n) && BigInt(s.positionMarket)===0n &&
+    BigInt(s.nftOwners[id])===0n && BigInt(s.nftMinted[id])===0n, 'Prepared selected future Pool claim is not empty.');
+  else requireProof(s.positionMarket===s.marketId && same(s.claims[id],{marketId:s.marketId,words:s.claim}) &&
+    BigInt(s.claim[59])===1n && s.claim.slice(1,4).every(v=>BigInt(v)===0n) && BigInt(s.claim[54])===0n && BigInt(s.claim[7])===1n &&
+    [1n,2n,3n,4n].includes(BigInt(s.claim[0])) && BigInt(s.nftMinted[id])===1n &&
+    (BigInt(s.claim[0])===4n ? BigInt(s.nftOwners[id])===0n && addressAt(s.claim[12])===s.owner : BigInt(s.nftOwners[id])!==0n),
+    'Prepared selected Pool claim or NFT changed.');
+  const tokens=candidate.tokens.map(([token])=>token);
+  for(const values of [s.ledgers,s.escrows,s.custody]) requireProof(keys(values,[...tokens]),'Prepared selected Pool token scope changed.');
+  tokens.forEach(token=>requireProof(validWords(s.ledgers[token],12)&&validWords(s.escrows[token],2)&&validWords(s.custody[token],4),'Prepared selected Pool token state is incomplete.'));
+};
 type Canonical = Readonly<{ block: PreparedPoolBlock; data: string; logs: readonly Log[] }>;
-const produced = new WeakMap<object, { signer: object; state: PreparedPoolStoredState; canonical: Canonical }>();
+const produced = new WeakMap<object, { signer: object; state: PreparedPoolSelectedState; canonical: Canonical }>();
 export const assertPreparedPoolSnapshotProducer = (producer: PreparedPoolSnapshotProducer, signer: object) =>
   requireProof(produced.get(producer)?.signer === signer, 'Prepared Pool producer is outside this owner session.');
 
@@ -208,6 +251,39 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
       engines: Object.freeze(engines), directories: Object.freeze(directories), fixedSources: Object.freeze(fixedSources),
       nftOwners: Object.freeze(nftOwners), nftMinted: Object.freeze(nftMinted), ownerNftBalance, counter, operation });
   };
+  const selectedState = async (id: bigint | null, block: PreparedPoolBlock): Promise<PreparedPoolSelectedState> => {
+    if(id!==null)uint(id);uint(block.number);hash(block.hash);await checkedGuard();await attest(block);
+    const registry=await readPreparedDexMarketRegistry({capability:readCapability,blockNumber:block.number,blockHash:block.hash,candidate:candidateKey});
+    requireProof(registry.graph===prepared.graph && registry.packageSha256===prepared.packageSha256 && registry.core===prepared.core &&
+      same(registry.markets.map(value=>value.marketId),prepared.pairs.map(pair=>pair.marketId)),'Prepared Pool registry candidate scope changed.');
+    const market=registry.markets.find(value=>value.marketId===marketId.toLowerCase());
+    requireProof(!!market,'Prepared selected Pool registry market is unavailable.');
+    const core=await words(prepared.core,0n,149,block),counter=BigInt(core[11]),operation=BigInt(core[12]);
+    if(id===null)id=uint(counter+1n);
+    requireProof(counter>=42n && id>0n && id<=counter+1n,'Prepared selected Pool allocated scope exceeds its finite bound.');
+    const raw=await words(prepared.core,mapping(marketId,1n,'bytes32'),71,block);
+    const anchors: (readonly string[])[]=[],claims:Record<string,{marketId:string;words:readonly string[]}>={};
+    for(let i=0;i<7;i++) {
+      const anchorId=BigInt(raw[18+i]),anchor=await words(prepared.core,preparedPoolPositionStorageBase(marketId,anchorId),64,block);
+      anchors.push(anchor);claims[String(anchorId)]=Object.freeze({marketId,words:anchor});
+    }
+    const claim=await words(prepared.core,preparedPoolPositionStorageBase(marketId,id),64,block);
+    if(id<=counter)claims[String(id)]=Object.freeze({marketId,words:claim});
+    const positionMarket=await word(prepared.core,mapping(id,18n),block),sourceIdForPosition=await word(prepared.core,mapping(id,19n),block),
+      everPoolFunded=await word(prepared.core,mapping(marketId,124n,'bytes32'),block);
+    const ledgers:Record<string,readonly string[]>={},escrows:Record<string,readonly string[]>={},custody:Record<string,readonly string[]>={};
+    for(const [token]of prepared.tokens){const base=mapping(token,22n,'address');
+      ledgers[token]=await words(prepared.core,base,12,block);escrows[token]=await words(prepared.core,mapping(owner,base+8n,'address'),2,block);
+      custody[token]=await words(token,mapping(prepared.core,4n,'address'),4,block);
+    }
+    const nftOwner=await word(nft,mapping(id,2n),block),minted=await word(nft,mapping(id,6n),block),ownerNftBalance=BigInt(await word(nft,mapping(owner,3n,'address'),block));
+    const result:PreparedPoolSelectedState=Object.freeze({scope:'selected-pool-accounting',candidateKey,packageSha256:prepared.packageSha256,coreAddress:prepared.core,owner:owner.toLowerCase(),
+      graph:prepared.graph,marketId,positionId:id,block:Object.freeze({...block}),market:market!,core,counter,operation,claim,anchors:Object.freeze(anchors),
+      markets:Object.freeze({[marketId]:raw}),claims:Object.freeze(claims),positionMarket,sourceIdForPosition,everPoolFunded,
+      ledgers:Object.freeze(ledgers),escrows:Object.freeze(escrows),custody:Object.freeze(custody),
+      nftOwners:Object.freeze({[String(id)]:nftOwner}),nftMinted:Object.freeze({[String(id)]:minted}),ownerNftBalance});
+    checkPreparedPoolSelectedScope(result);await attest(block);await checkedGuard();return result;
+  };
   const ownerState = async (id: bigint, block: PreparedPoolBlock) => {
     await checkedGuard(); await attest(block);
     const registry = await readPreparedDexMarketRegistry({capability:readCapability,blockNumber:block.number,blockHash:block.hash,candidate:candidateKey});
@@ -221,7 +297,8 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
     await attest(block);await checkedGuard();
     return {marketId:marketId.toLowerCase(),market:market!,claim,nftOwners:{[String(id)]:nftOwner},block};
   };
-  const authenticate = async (id: bigint, kind: PreparedPoolProducerKind, transactionHash: string, expectedData?: string, viewOnly=false): Promise<PreparedPoolSnapshotProducer> => {
+  const authenticate = async (id: bigint, kind: PreparedPoolProducerKind, transactionHash: string, expectedData?: string, viewOnly=false,
+    pinnedStateBlock?: PreparedPoolBlock): Promise<PreparedPoolSnapshotProducer> => {
     uint(id); requireProof(id > 0n, 'Prepared Pool producer needs a position.');
     const lifecycle = kind === 'activate' || kind === 'resume';
     requireProof(kind === 'fund' || kind === 'snapshot' || lifecycle, 'This prepared owner action needs a separate poolSnapshot producer.');
@@ -242,11 +319,11 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
     }
     // Snapshot events bind the exact owner envelopes. Authenticate them against
     // current canonical storage; COTI may prune the receipt's historical state.
-    const latest = kind === 'snapshot' ? await rpc('eth_getBlockByNumber', ['latest', false]) as { number: string; hash: string } : null;
-    const stateBlock = latest ? Object.freeze({ number: BigInt(latest.number), hash: hash(latest.hash) }) : confirmed.block;
+    const latest = kind === 'snapshot' && !pinnedStateBlock ? await rpc('eth_getBlockByNumber', ['latest', false]) as { number: string; hash: string } : null;
+    const stateBlock = pinnedStateBlock ?? (latest ? Object.freeze({ number: BigInt(latest.number), hash: hash(latest.hash) }) : confirmed.block);
     requireProof(stateBlock.number >= confirmed.block.number, 'Prepared Pool state precedes its producer.');
-    let retainedState:PreparedPoolStoredState|undefined;
-    const captured = viewOnly ? await ownerState(id,stateBlock) : (retainedState=await state(id,stateBlock));
+    let retainedState:PreparedPoolSelectedState|undefined;
+    const captured = viewOnly ? await ownerState(id,stateBlock) : (retainedState=await selectedState(id,stateBlock));
     const claim = captured.claim, status = BigInt(claim[0]), closed = status === 4n;
     requireProof([1n, 2n, 4n].includes(status) && BigInt(claim[59]) === 1n && BigInt(claim[1]) === 0n && BigInt(claim[2]) === 0n && BigInt(claim[3]) === 0n && BigInt(claim[7]) === 1n, 'Prepared Pool claim type/status changed.');
     const pub = (await call(currentPoolPositionAbi, prepared.core, 'poolPublicState', [id], stateBlock))[0];
@@ -269,8 +346,40 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
       requireProof(parsed.args.positionId === id && encoded.data.toLowerCase() === found[0].data.toLowerCase() && same(encoded.topics.map(v => v.toLowerCase()), found[0].topics.map(v => v.toLowerCase())), 'Non-canonical prepared Pool producer event.');
       if (kind === 'snapshot') requireProof(parsed.args.context.toLowerCase() === claim[13] && same(parsed.args.userValues.map((v: { ciphertextHigh: bigint; ciphertextLow: bigint }) => ({ ciphertextHigh: v.ciphertextHigh, ciphertextLow: v.ciphertextLow })), envelopes), 'Prepared Pool snapshot event differs from stored owner envelopes.');
     }
-    if (kind === 'fund') requireProof(decodeCurrentPoolClaimMint(confirmed.logs, prepared.core, nft, owner) === id && status === 1n, 'Prepared Pool creation claim/mint changed.');
+    if (kind === 'fund') requireProof(decodeCurrentPoolClaimMint(confirmed.logs, prepared.core, nft, owner) === id && status === 1n &&
+      claim.slice(4,8).every(v=>BigInt(v)===1n), 'Prepared Pool creation claim/mint changed.');
     const amounts = checkPreparedPoolPositionValues(envelopes.map(cipher => decryptPrivateUint256Output(signer, cipher)));
+    let amountsTransactionHash = transactionHash;
+    if (kind === 'fund') {
+      // A later poolSnapshot replaces these envelopes without advancing claim revisions.
+      requireProof(confirmed.block.number <= BigInt(Number.MAX_SAFE_INTEGER), 'Prepared Pool receipt block exceeds the snapshot read bound.');
+      const logs = await provider.getLogs({ address: prepared.core, fromBlock: Number(confirmed.block.number), toBlock: Number(confirmed.block.number),
+        topics: [events.getEvent('PoolSnapshotRefreshed')!.topicHash, toBeHex(id,32)] });
+      await checkedGuard();
+      requireProof(logs.length <= 256, 'Prepared Pool funding snapshot history exceeds its read bound.');
+      if (logs.length) {
+        const header = await rpc('eth_getBlockByNumber', [`0x${confirmed.block.number.toString(16)}`, false]) as { number: string; hash: string; transactions: string[] };
+        requireProof(BigInt(header.number) === confirmed.block.number && hash(header.hash) === confirmed.block.hash && Array.isArray(header.transactions),
+          'Prepared Pool funding snapshot block changed.');
+        const transactions = header.transactions.map(hash), fundIndex = transactions.indexOf(transactionHash.toLowerCase()), seen = new Set<string>();
+        requireProof(fundIndex >= 0 && new Set(transactions).size === transactions.length, 'Prepared Pool funding transaction ordering changed.');
+        const ordered = logs.map(log => {
+          const parsed = events.parseLog({ topics: [...log.topics], data: log.data }), snapshotHash = hash(log.transactionHash), index = transactions.indexOf(snapshotHash);
+          requireProof(!log.removed && log.address.toLowerCase() === prepared.core && BigInt(log.blockNumber) === confirmed.block.number &&
+            hash(log.blockHash) === confirmed.block.hash && Number.isSafeInteger(log.index) && log.index >= 0 &&
+            !!parsed && parsed.name === 'PoolSnapshotRefreshed' && parsed.args.positionId === id && index > fundIndex && !seen.has(snapshotHash),
+            'Prepared Pool funding snapshot discovery changed.');
+          seen.add(snapshotHash); return { index, transactionHash: snapshotHash, log };
+        }).sort((a,b) => b.index-a.index);
+        const last = ordered[0], snapshotProof = await canonical(last.transactionHash);
+        requireProof(!!snapshotProof && same(snapshotProof.block,confirmed.block) && snapshotProof.logs.filter(log => same(log,
+          { address:last.log.address,topics:[...last.log.topics],data:last.log.data })).length === 1, 'Prepared Pool funding snapshot receipt changed.');
+        const snapshot = await authenticate(id,'snapshot',last.transactionHash,undefined,true,confirmed.block);
+        requireProof(same(snapshot.amounts,amounts) && snapshot.context === claim[13] && same(snapshot.revisions,claim.slice(4,8).map(BigInt)),
+          'Prepared Pool funding snapshot differs from its owner state.');
+        amountsTransactionHash = snapshot.transactionHash;
+      }
+    }
     requireProof(closed ? amounts.shares === 0n : kind === 'fund' ? amounts.shares > 0n :
       amounts.shares > 0n || amounts.amount0 === 0n && amounts.amount1 === 0n, 'Prepared Pool private share state changed.');
     requireProof(same(await canonical(transactionHash), confirmed), 'Prepared Pool canonical producer changed after decryption.');
@@ -279,13 +388,62 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
     await checkedGuard();
     const value = Object.freeze({ kind, positionId: id, marketId: captured.marketId, canonicalId: captured.market.canonicalId,
       registryRevision: captured.market.registryRevision, marketRevision: captured.market.marketRevision, transactionHash, context: claim[13],
-      block: captured.block, status, revisions: Object.freeze(claim.slice(4, 8).map(BigInt)), amounts, readyToSign: false as const });
+      block: captured.block, status, revisions: Object.freeze(claim.slice(4, 8).map(BigInt)), amounts, readyToSign: false as const,
+      ...(kind === 'fund' ? { amountsTransactionHash } : {}) });
     if(retainedState)produced.set(value, { signer, state: retainedState, canonical: confirmed }); return value;
   };
   const issue = (id:bigint,kind:PreparedPoolProducerKind,transactionHash:string,expectedData?:string) => authenticate(id,kind,transactionHash,expectedData);
   // A view snapshot has no producer brand and cannot authorize financial actions.
   const readSnapshot = (id:bigint,transactionHash:string) => authenticate(id,'snapshot',transactionHash,undefined,true);
-  const current = async (producer: PreparedPoolSnapshotProducer, block: PreparedPoolBlock, reuseIssuedState = false) => {
+  const verifySupersededSnapshot = async (id: bigint, originalHash: string, latestSnapshotHash: string) => {
+    requireProof(candidateKey === 'cheap-history' && prepared.graph === currentCandidate.graph &&
+      prepared.packageSha256 === currentCandidate.packageSha256 && hash(originalHash) !== hash(latestSnapshotHash),
+    'Superseded snapshot recovery requires the pinned candidate and a distinct current snapshot.');
+    const original = await canonical(originalHash), latest = await canonical(latestSnapshotHash);
+    const data = currentPoolPositionAbi.encodeFunctionData('poolSnapshot', [id]).toLowerCase();
+    requireProof(!!original && !!latest && original.data.toLowerCase() === data && latest.data.toLowerCase() === data,
+      'Superseded snapshot calls are unavailable or changed.');
+    const found = original!.logs.filter(log => log.address.toLowerCase() === prepared.core &&
+      log.topics[0]?.toLowerCase() === events.getEvent('PoolSnapshotRefreshed')!.topicHash.toLowerCase());
+    requireProof(found.length === 1, 'Superseded snapshot needs one unique Core event.');
+    const parsed = events.parseLog({ topics: [...found[0].topics], data: found[0].data })!;
+    const encoded = events.encodeEventLog(parsed.fragment, parsed.args);
+    requireProof(parsed.args.positionId === id && encoded.data.toLowerCase() === found[0].data.toLowerCase() &&
+      same(encoded.topics.map(v => v.toLowerCase()), found[0].topics.map(v => v.toLowerCase())), 'Superseded snapshot event changed.');
+    let later = latest!.block.number > original!.block.number;
+    if (latest!.block.number === original!.block.number) {
+      requireProof(same(latest!.block, original!.block), 'Superseded snapshot block identity changed.');
+      const header = await rpc('eth_getBlockByNumber', [`0x${original!.block.number.toString(16)}`, false]) as { hash: string; transactions: string[] };
+      requireProof(hash(header.hash) === original!.block.hash && Array.isArray(header.transactions), 'Superseded snapshot block ordering is unavailable.');
+      const transactions = header.transactions.map(hash), index = transactions.indexOf(hash(originalHash));
+      requireProof(index >= 0 && new Set(transactions).size === transactions.length, 'Superseded snapshot transaction ordering changed.');
+      later = transactions.indexOf(hash(latestSnapshotHash)) > index;
+    }
+    requireProof(later, 'Replacement snapshot must follow the saved snapshot.');
+    // Only the later event may authenticate current amounts; the old event is recovery evidence only.
+    const view = await readSnapshot(id, latestSnapshotHash);
+    requireProof(view.status === 1n && view.revisions.length === 4 && view.revisions.every(v => v === 1n),
+      'Superseded snapshot has prior owner management. Keep the accounting hold.');
+    const raw = await rpc('eth_getBlockByNumber', ['latest', false]) as { number: string; hash: string };
+    const current = await ownerState(id, { number: BigInt(raw.number), hash: hash(raw.hash) });
+    requireProof(current.block.number >= view.block.number && BigInt(current.claim[0]) === 1n && current.claim.slice(4, 8).every(v => BigInt(v) === 1n) &&
+      current.claim[13] === view.context && addressAt(current.nftOwners[String(id)]) === owner.toLowerCase() &&
+      (await call(currentPoolNftAbi, nft, 'ownerOf', [id], current.block))[0].toLowerCase() === owner.toLowerCase(),
+    'Superseded snapshot current owner or revisions changed.');
+    const latestEvent = latest!.logs.filter(log => log.address.toLowerCase() === prepared.core &&
+      log.topics[0]?.toLowerCase() === events.getEvent('PoolSnapshotRefreshed')!.topicHash.toLowerCase());
+    requireProof(latestEvent.length === 1 && same(events.parseLog({ topics: [...latestEvent[0].topics], data: latestEvent[0].data })!.args.userValues.map(
+      (v: { ciphertextHigh: bigint; ciphertextLow: bigint }) => ({ ciphertextHigh: v.ciphertextHigh, ciphertextLow: v.ciphertextLow })),
+    preparedPoolStoredEnvelopes(current.claim)), 'Replacement snapshot is no longer current.');
+    requireProof(same(await canonical(originalHash), original) && same(await canonical(latestSnapshotHash), latest) &&
+      hash((await rpc('eth_getBlockByNumber', [`0x${current.block.number.toString(16)}`, false]) as { hash: string }).hash) === current.block.hash,
+    'Superseded snapshot canonical proof changed.');
+    await checkedGuard();
+    return Object.freeze({ block: current.block, originalBlock: original!.block, latestSnapshotBlock: latest!.block,
+      revisions: Object.freeze(current.claim.slice(4, 8).map(BigInt)), claimStatus: 1n });
+  };
+  const current = async (producer: PreparedPoolSnapshotProducer, block: PreparedPoolBlock, reuseIssuedState = false,
+    onVerifiedState?: (state: PreparedPoolSelectedState) => void) => {
     assertPreparedPoolSnapshotProducer(producer, signer); const retained = produced.get(producer)!;
     requireProof(producer.marketId === marketId.toLowerCase() && same(await canonical(producer.transactionHash), retained.canonical), 'Prepared Pool producer identity changed.');
     if (reuseIssuedState) {
@@ -293,10 +451,10 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
         'Prepared Pool issued block changed.');
       await attest(block);
     }
-    const observed = reuseIssuedState ? retained.state : await state(producer.positionId, block);
+    const observed = reuseIssuedState ? retained.state : await selectedState(producer.positionId, block);
     requireProof(same({ ...observed, block: null }, { ...retained.state, block: null }), 'Prepared Pool producer is stale; sign a new snapshot.');
     if (producer.status !== 4n) requireProof((await call(currentPoolNftAbi, nft, 'ownerOf', [producer.positionId], block))[0].toLowerCase() === owner.toLowerCase(), 'Prepared Pool owner changed.');
-    await checkedGuard(); return producer;
+    await checkedGuard(); onVerifiedState?.(observed); return producer;
   };
   const wallets = async (block: PreparedPoolBlock) => {
     await attest(block); const result = [];
@@ -316,28 +474,78 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
     }
     await checkedGuard(); return Object.freeze(result);
   };
-  return Object.freeze({ state, issue, readSnapshot, current, wallets, canonical });
+  return Object.freeze({ state, selectedState, issue, readSnapshot, verifySupersededSnapshot, current, wallets, canonical });
 };
 
-export const checkPreparedPoolSnapshotOnlyChange = (before: PreparedPoolStoredState, after: PreparedPoolStoredState) => {
+export const checkPreparedPoolSnapshotOnlyChange = (before: PreparedPoolAccountingState, after: PreparedPoolAccountingState) => {
+  if(isPreparedPoolSelectedState(before))checkPreparedPoolSelectedScope(before);
+  if(isPreparedPoolSelectedState(after))checkPreparedPoolSelectedScope(after);
   const closed = BigInt(before.claim[0]) === 4n;
   const cleanClaim = (claim: readonly string[]) => claim.map((v, i) =>
     (closed ? i >= 14 && i < 54 && (i - 14) % 4 >= 2 : i >= 13 && i < 54) ? 'snapshot' : v);
-  const clean = (s: PreparedPoolStoredState) => ({ ...s, block: null, claim: cleanClaim(s.claim), claims: { ...s.claims,
+  const clean = (s: PreparedPoolAccountingState) => ({ ...s, block: null, claim: cleanClaim(s.claim), claims: { ...s.claims,
     [String(s.positionId)]: { marketId: s.marketId, words: cleanClaim(s.claim) } } });
   requireProof(same(clean(before), clean(after)), 'Prepared snapshot changed financial state.');
 };
 
-// Funding rules retain the compiled native Pool allowlist and prepared fixtures'
-// token custody/ledger rules. This is bounded to the declared six-market scope.
-export const checkPreparedPoolFinancialTransition = (before: PreparedPoolStoredState, after: PreparedPoolStoredState, action: 'fund') => {
+// Frozen 7c allocator counters advance across users; C1 active state is separate.
+const advancingCoreFields = [11,12,13,14,16,17];
+const creationCore = (s:PreparedPoolSelectedState) => s.core.map((v,i)=>advancingCoreFields.includes(i)?'allocator':i>=58&&i<=98?'separate-c1':v);
+const checkCreationCore = (before:PreparedPoolSelectedState,after:PreparedPoolSelectedState) => {
+  requireProof(advancingCoreFields.every(i=>BigInt(after.core[i])>=BigInt(before.core[i])) && same(creationCore(before),creationCore(after)),
+    'Prepared Pool creation Core configuration or monotonic counters changed.');
+};
+const creationLedgers = (s:PreparedPoolSelectedState) => Object.fromEntries(Object.entries(s.ledgers).map(([token,raw])=>
+  [token,raw.map((v,i)=>i===9||i===10?'global-pool-inventory':v)]));
+/** The next free row proves allocator admission, not a reserved output ID. */
+export const checkPreparedPoolFundingCurrent = (before:PreparedPoolAccountingState,after:PreparedPoolAccountingState) => {
+  if(!isPreparedPoolSelectedState(before)||!isPreparedPoolSelectedState(after)) {
+    requireProof(!isPreparedPoolSelectedState(before)&&!isPreparedPoolSelectedState(after)&&same({...before,block:null},{...after,block:null}),
+      'Prepared Pool financial preview dependencies changed.');return;
+  }
+  checkPreparedPoolSelectedScope(before);checkPreparedPoolSelectedScope(after);checkCreationCore(before,after);
+  requireProof(before.positionId===before.counter+1n && after.positionId===after.counter+1n,'Prepared Pool creation needs a fresh empty allocator row.');
+  const clean=(s:PreparedPoolSelectedState)=>({...s,block:null,positionId:0n,counter:0n,operation:0n,core:creationCore(s),
+    nftOwners:{},nftMinted:{},ledgers:creationLedgers(s),custody:'global-token-custody'});
+  requireProof(same(clean(before),clean(after)),'Prepared Pool financial preview dependencies changed.');
+};
+
+// Normal funding uses complete selected accounting; the full six-market state
+// remains available for qualification with the same custody/ledger masks.
+export const checkPreparedPoolFinancialTransition = (before: PreparedPoolAccountingState, after: PreparedPoolAccountingState, action: 'fund') => {
+  requireProof(isPreparedPoolSelectedState(before)===isPreparedPoolSelectedState(after),'Prepared Pool accounting scopes changed.');
+  if(isPreparedPoolSelectedState(before))checkPreparedPoolSelectedScope(before);
+  if(isPreparedPoolSelectedState(after))checkPreparedPoolSelectedScope(after);
   requireProof(action === 'fund', 'Prepared financial action needs its own proven transition checker.');
+  if(isPreparedPoolSelectedState(before)&&isPreparedPoolSelectedState(after)) {
+    checkCreationCore(before,after);
+    requireProof(before.positionId===before.counter+1n && after.positionId>before.counter && after.positionId<=after.counter &&
+      after.positionMarket===before.marketId && BigInt(after.everPoolFunded)===1n &&
+      addressAt(after.nftOwners[String(after.positionId)])===before.owner && after.claim.slice(4,8).every(v=>BigInt(v)===1n),
+      'Prepared selected Pool funding allocation or identity changed.');
+    const poolFields=[4,8,9,10,11,14,15,18,19],marketFields=[11,12,13,14,...Array.from({length:14},(_,i)=>25+i)];
+    const clean=(s:PreparedPoolSelectedState)=>({...s,block:null,positionId:0n,counter:0n,operation:0n,core:creationCore(s),claim:[],
+      positionMarket:'funded-market',everPoolFunded:'funded',ownerNftBalance:0n,nftOwners:{},nftMinted:{},
+      anchors:s.anchors.map(raw=>raw.map((v,i)=>poolFields.includes(i)?'shared-anchor':v)),
+      claims:Object.fromEntries(Object.entries(s.claims).filter(([id])=>id!==String(s.positionId)).map(([id,value])=>[id,
+        {...value,words:value.words.map((v,i)=>poolFields.includes(i)?'shared-anchor':v)}])),
+      markets:{[s.marketId]:s.markets[s.marketId].map((v,i)=>marketFields.includes(i)?'shared-pool':v)},
+      ledgers:creationLedgers(s),custody:'global-token-custody'});
+    requireProof(same(clean(before),clean(after)),'Prepared funding changed protected selected Pool accounting.');
+    // Receipt-block aggregates can include later owners' work; own claim proof stays exact.
+    before.anchors.forEach((anchor,i)=>requireProof(BigInt(after.anchors[i][4])>BigInt(anchor[4]) &&
+      after.anchors[i][8]===after.anchors[i][14] && after.anchors[i][9]===after.anchors[i][15] &&
+      after.anchors[i][10]===after.anchors[i][18] && after.anchors[i][11]===after.anchors[i][19],'Prepared funding anchor revision changed.'));
+    requireProof(BigInt(after.claim[0])===1n,'Prepared funding did not create a shared active claim.');
+    return;
+  }
   requireProof(before.positionId === before.counter + 1n && after.counter === before.counter + 1n && after.positionId === before.positionId && before.operation === after.operation &&
     before.claim.every(v => BigInt(v) === 0n) && after.ownerNftBalance === before.ownerNftBalance + 1n &&
     BigInt(before.nftOwners[String(before.positionId)]) === 0n && BigInt(before.nftMinted[String(before.positionId)]) === 0n &&
     BigInt(after.nftOwners[String(after.positionId)]) !== 0n && BigInt(after.nftMinted[String(after.positionId)]) === 1n, 'Prepared creation counter/baseline changed.');
   const poolFields = [4, 8, 9, 10, 11, 14, 15, 18, 19];
-  const clean = (s: PreparedPoolStoredState) => ({ ...s, block: null, counter: 0n, claim: [], anchors: [], ownerNftBalance: 0n,
+  const clean = (s: PreparedPoolAccountingState) => ({ ...s,
+    block: null, counter: 0n, claim: [], anchors: s.anchors.map(raw=>raw.map((v,i)=>poolFields.includes(i)?'shared-anchor':v)), ownerNftBalance: 0n,
     nftOwners: Object.fromEntries(Object.entries(s.nftOwners).filter(([id]) => id !== String(s.positionId))),
     nftMinted: Object.fromEntries(Object.entries(s.nftMinted).filter(([id]) => id !== String(s.positionId))),
     core: s.core.map((v, i) => i === 11 ? 'counter' : v),
@@ -349,6 +557,8 @@ export const checkPreparedPoolFinancialTransition = (before: PreparedPoolStoredS
     ledgers: Object.fromEntries(Object.entries(s.ledgers).map(([token, raw]) => [token, [s.market.token0, s.market.token1].includes(token) ? raw.map((v, i) => i === 9 || i === 10 ? 'pool-inventory' : v) : raw])),
     custody: Object.fromEntries(Object.entries(s.custody).map(([token, raw]) => [token, [s.market.token0, s.market.token1].includes(token) ? 'selected-token-custody' : raw])) });
   requireProof(same(clean(before), clean(after)), 'Prepared funding changed a protected market, claim, ledger, escrow or Core field.');
-  before.anchors.forEach((anchor, i) => requireProof(BigInt(after.anchors[i][4]) === BigInt(anchor[4]) + 1n, 'Prepared funding anchor revision changed.'));
+  before.anchors.forEach((anchor, i) => requireProof(BigInt(after.anchors[i][4]) === BigInt(anchor[4]) + 1n &&
+    after.anchors[i][8]===after.anchors[i][14] && after.anchors[i][9]===after.anchors[i][15] &&
+    after.anchors[i][10]===after.anchors[i][18] && after.anchors[i][11]===after.anchors[i][19], 'Prepared funding anchor revision changed.'));
   requireProof(BigInt(after.claim[0]) === 1n && BigInt(after.claim[59]) === 1n && after.claim.slice(1, 4).every(v => BigInt(v) === 0n), 'Prepared funding did not create a shared active claim.');
 };

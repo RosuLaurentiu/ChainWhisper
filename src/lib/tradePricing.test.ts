@@ -10,6 +10,12 @@ import {
 } from './tradePricing';
 
 describe('tradePricing helpers', () => {
+  it.each(['baseAmount', 'quoteAmount', 'price'] as const)('does not refill the most recently cleared %s field', field => {
+    expect(deriveTradePricingUpdate({ baseAmountInput: field === 'baseAmount' ? '' : '10',
+      quoteAmountInput: field === 'quoteAmount' ? '' : '30', priceInput: field === 'price' ? '' : '3',
+      baseDecimals: 6, quoteDecimals: 6, editedFields: [field] })).toBeNull();
+  });
+
   it('derives price from base and quote amounts', () => {
     expect(
       deriveTradePricingUpdate({

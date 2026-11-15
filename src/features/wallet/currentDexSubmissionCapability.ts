@@ -31,7 +31,7 @@ import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonica
 import { issueCurrentDexReceiptCapability } from './currentDexReceiptCapability';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
 import { createCurrentSharedDexTokenFundingAdapter, assertCurrentSharedTokenFundingAppAuthority } from '../../lib/currentSharedDexTokenFunding';
-import { readCurrentSharedDexTokenFunds } from '../../lib/currentSharedDexTokenFunds';
+import { readCurrentSharedDexTokenFunds, readCurrentSharedDexSwapFunds } from '../../lib/currentSharedDexTokenFunds';
 import { verifyCurrentDexOwnerTokenMovements, type CurrentDexOwnerTokenReceipt } from '../../lib/currentDexOwnerTokenProof';
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, encodeCurrentCheapDexOperationRead, decodeCurrentCheapDexOperation } from '../../lib/currentDexOperation';
 import { currentCheapDexStages } from '../../lib/dexV2Deployment';
@@ -43,6 +43,7 @@ import { CURRENT_LIMIT_FILL_HISTORY_GRAPHS, readCurrentLimitFillHistoryPage, typ
 
 import { assertCurrentCheapDexPreparedQuote } from './currentDexQuoteCapability';
 import { assertCurrentNativeSwapIntent } from '../../lib/currentDexNativeSwapPolicy';
+import { isCurrentDexBrowserSigner } from '../../lib/currentDexBrowserPolicy';
 
 type IssueArgs = Omit<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>, 'bindCapability' | 'capabilityLabel' | 'requirePrivacy'> &
   Readonly<{ admission: CurrentDexSubmissionAdmission<'quote'> | null; candidate?: CurrentCheapDexCandidateKey;
@@ -61,8 +62,8 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         hash: string; chainId: bigint; from: string; to: string | null; value: bigint; data: string;
         nonce: number; gasLimit: bigint; blockNumber: number | null; blockHash: string | null } | null> } = {
       assertCurrent: async () => { await assertCurrent(); assertSnapshotCurrent(); },
-      admitOwnerRecord: async (swapScope, gasCap) => {
-        await admitOwnerRecord(swapScope, gasCap);
+      admitOwnerRecord: async (swapScope, gasCap, heldSnapshot, topUpHandoff) => {
+        await admitOwnerRecord(swapScope, gasCap, heldSnapshot, topUpHandoff);
       },
       verifyCanonicalInclusion: (transaction, receipt) => verifyCurrentDexCanonicalInclusion({
         rpc: (method, params) => readProvider.send(method, params),
@@ -229,10 +230,18 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           graph.core.toLowerCase() !== selected.core) throw new Error('Current-mode graph changed.');
       await assertCurrent(); assertSnapshotCurrent();
     };
-    const attestCheap = (head: { number: bigint; hash: string }) => attestCandidate(head, candidate);
+    const fundingHeads = new WeakMap<object, { number: bigint; hash: string }>();
+    const attestCheap = async (head: { number: bigint; hash: string }) => {
+      fundingHeads.delete(head);
+      const checked = { number: head.number, hash: head.hash };
+      await attestCandidate(head, candidate);
+      if (head.number === checked.number && head.hash === checked.hash) fundingHeads.set(head, checked);
+    };
+    const reviewReceipts = new WeakMap<object, { issued: object; privacy: string }>();
     const readCheapReceipt = async (issued: Parameters<Parameters<typeof createCurrentCheapDexSubmissionAdapter>[0]['readReceipt']>[0],
       origin?: {number:bigint;hash:string}, observation?:{number:bigint;hash:string}) => {
       if (!receiptCapability) receiptCapability = await issueCurrentDexReceiptCapability(args);
+      const privacy = signer.getUserOnboardInfo()?.aesKey?.trim();
       const receipt = await receiptCapability.readCurrent({ candidate: cheapCandidate, profile: issued.intent.profile, operationId: issued.operationId,
         expected: { chainId, core: issued.core, runtimeHash: issued.runtimeHash, releaseId: issued.releaseId,
           ...(observation?{blockNumber:observation.number,blockHash:observation.hash}:{}),
@@ -240,12 +249,18 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           originBlockHash: origin?.hash ?? issued.originBlock.hash } });
       await attestCheap(receipt.block);
       await assertCurrent(); assertSnapshotCurrent();
+      if (privacy) {
+        if (signer.getUserOnboardInfo()?.aesKey?.trim() !== privacy) throw new Error('Owner privacy changed during the private Quote read.');
+        reviewReceipts.set(receipt, { issued, privacy });
+      }
       return receipt;
     };
     const token = new Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
-    const requirePrivateFunding = async (inputToken: string, amount: bigint, head: { number: bigint; hash: string }, key = candidate, exactAllowance = false, allowanceAmount = amount) => {
+    const requirePrivateFunding = async (inputToken: string, amount: bigint, head: { number: bigint; hash: string }, key = candidate, exactAllowance = false, allowanceAmount = amount, attestedHead = false) => {
+      head = Object.freeze({ ...head });
       await assertCurrent(); assertSnapshotCurrent();
-      if (!signer.getUserOnboardInfo()?.aesKey?.trim()) throw new Error('Unlock privacy before checking current-mode funding.');
+      const privacy = signer.getUserOnboardInfo()?.aesKey?.trim();
+      if (!privacy) throw new Error('Unlock privacy before checking current-mode funding.');
       const readToken = async (method: 'balanceOf(address)' | 'allowance(address,address)', values: string[]) => {
         const raw = await readProvider.send('eth_call', [{ from: ownerAddress, to: inputToken,
           data: token.encodeFunctionData(method, values) }, { blockHash: head.hash, requireCanonical: true }]);
@@ -259,11 +274,21 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       };
       const balance = await readToken('balanceOf(address)', [ownerAddress]);
       const allowance = await readToken('allowance(address,address)', [ownerAddress, resolveCurrentCheapDexCandidate(key).core]);
-      await attestCandidate(head, key);
+      if (attestedHead) {
+        // The swap caller just checked this exact head; only its canonical anchor needs a second read.
+        const observedChain = await readProvider.send('eth_chainId', []);
+        await assertCurrent(); assertSnapshotCurrent();
+        const block = await readProvider.send('eth_getBlockByNumber', [toQuantity(head.number), false]) as Record<string, unknown> | null;
+        await assertCurrent(); assertSnapshotCurrent();
+        if (typeof observedChain !== 'string' || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(observedChain) || BigInt(observedChain) !== chainId ||
+            typeof block?.number !== 'string' || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(block.number) || BigInt(block.number) !== head.number ||
+            typeof block.hash !== 'string' || block.hash.toLowerCase() !== head.hash.toLowerCase()) throw new Error('Current-mode funding chain or canonical head changed.');
+      } else await attestCandidate(head, key);
+      if (signer.getUserOnboardInfo()?.aesKey?.trim() !== privacy) throw new Error('Owner privacy changed during current-mode funding.');
       if (typeof amount !== 'bigint' || amount <= 0n) throw new Error('Current-mode funding amount is invalid.');
       if (balance < amount) throw new Error('Current-mode input balance is insufficient. Check current state, then check current input funds.');
       if (allowance < allowanceAmount) throw new Error('Current-mode Core allowance is insufficient. Check current state, then approve the exact input allowance.');
-      if (exactAllowance && allowance !== allowanceAmount) throw new Error('Current-mode allowance must equal the confirmed amount.');
+      if (exactAllowance && key !== 'cheap-history' && allowance !== allowanceAmount) throw new Error('Current-mode allowance must equal the confirmed amount.');
     };
     const cheap = createCurrentCheapDexSubmissionAdapter({ candidate, signer, ownerAddress, chainId, transport, attest: attestCheap,
       authenticateReload: async record => {
@@ -318,6 +343,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         expected: { chainId, core: cheapCandidate.core, runtimeHash: cheapCandidate.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2],
           releaseId: cheapCandidate.releaseId, originBlockNumber: origin?.number, originBlockHash: origin?.hash } }),
       readReceipt: readCheapReceipt,
+      verifySwapAllowanceCleanup: (request, transactionHash) => sharedFunding.verifySharedSwapAllowanceCleanup(request, transactionHash),
       ...(candidate === 'cheap-exit' || candidate === 'cheap-history' ? {
         verifyOwnerTokens: async ({ issued, amounts, phase, receipt, contextHash }) => {
           await transport.assertCurrent();
@@ -409,8 +435,17 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           return { receipt, phase };
         }
       } : {}),
-      requireFunding: (prepared, head, beforeApproval) => requirePrivateFunding(prepared.intent.inputToken, prepared.intent.maximumInput, head, candidate, candidate === 'cheap-exit' || candidate === 'cheap-history', beforeApproval ? 0n : prepared.intent.maximumInput),
-      reviewAcceptance: async (issued, confirm) => {
+      requireFunding: (prepared, head, beforeApproval) => {
+        const attested = fundingHeads.get(head);
+        fundingHeads.delete(head);
+        return requirePrivateFunding(prepared.intent.inputToken, prepared.intent.maximumInput, head, candidate,
+          candidate === 'cheap-exit' || candidate === 'cheap-history', beforeApproval ? 0n : prepared.intent.maximumInput,
+          attested?.number === head.number && attested.hash === head.hash);
+      },
+      reviewAcceptance: async (issued, confirm, initialReceipt) => {
+        const initial = initialReceipt && reviewReceipts.get(initialReceipt);
+        if (initialReceipt) reviewReceipts.delete(initialReceipt);
+        if (initialReceipt && initial?.issued !== issued) throw new Error('Initial private Quote receipt is outside this wallet review.');
         const selectedKey = currentCheapDexCandidateKey(cheapCandidate), identity = issued.intent.candidate;
         const shared = sharedCandidate !== undefined;
         if ((shared && !identity) || (identity && currentCheapDexCandidateKey(identity) !== selectedKey)) {
@@ -430,9 +465,16 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
             throw new Error('Invalid acceptance review token metadata.');
           }
         }
+        let firstReceipt = initialReceipt;
         return prepareCurrentDexAcceptance({ intent: issued.intent, now: () => BigInt(Math.floor(Date.now() / 1000)),
           input, output,
-          readReceipt: () => readCheapReceipt(issued), confirm });
+          readReceipt: async () => {
+            await assertCurrent(); assertSnapshotCurrent();
+            if (initial && signer.getUserOnboardInfo()?.aesKey?.trim() !== initial.privacy) throw new Error('Owner privacy changed during private Quote review.');
+            const receipt = firstReceipt;
+            firstReceipt = undefined;
+            return receipt ?? readCheapReceipt(issued);
+          }, confirm });
       } });
     const admitOwnerRecord=cheap.admitCurrentOwnerNormalRecord;
     const poolTokens = [...cheapCandidate.tokens].sort((a, b) => BigInt(a[0]) < BigInt(b[0]) ? -1 : 1);
@@ -519,29 +561,37 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         if (!block || BigInt(block.number) !== BigInt(number) || !/^0x[0-9a-fA-F]{64}$/.test(block.hash)) throw new Error('Refill receipt block is unavailable.');
         return Object.freeze({ number: BigInt(block.number), hash: block.hash, timestamp: BigInt(block.timestamp), gasLimit: BigInt(block.gasLimit) });
       } });
+    const fundingReadScope = () => {
+      const capturedKey = args.sessionOnboardInfo?.[ownerAddress.toLowerCase()]?.aesKey?.trim();
+      const guard = async () => {
+        await assertCurrent(); assertSnapshotCurrent();
+        if (!capturedKey || signer.getUserOnboardInfo()?.aesKey?.trim() !== capturedKey) throw new Error('Unlock the selected owner privacy before checking beta funds.');
+      };
+      return { assertCurrent: guard,
+        rpc: async (method: string, params: unknown[]) => { await guard(); const value = await readProvider.send(method, params); await guard(); return value; },
+        decrypt: (cipher: Parameters<typeof decryptPrivateUint256Output>[1]) => decryptPrivateUint256Output(signer, cipher) };
+    };
     const sharedFunding = createCurrentSharedDexTokenFundingAdapter({ candidate: sharedCandidate, signer, ownerAddress, chainId, transport,
       assertAdmission: (action,token) => assertCurrentSharedTokenFundingAppAuthority({candidate,owner:ownerAddress,token,action},signer),
       authorizeInitialClaimSigning: candidate === 'cheap-exit' ? cheap.authorizeCurrentCheapInitialClaim : undefined,
-      assertSwapApprovalAdmission: (review, preparedQuote) => {
+      assertSwapApprovalAdmission: async (review, preparedQuote) => {
         if (!preparedQuote) throw new Error('Original branded swap approval scope is absent.');
-        assertCurrentCheapDexPreparedQuote(preparedQuote,signer);assertCurrentNativeSwapIntent(preparedQuote,BigInt(Math.floor(Date.now()/1000)),false,false,signer);
-        if(review.owner.toLowerCase()!==ownerAddress.toLowerCase()||review.graph!==cheapCandidate.graph||review.packageSha256!==cheapCandidate.packageSha256||review.core.toLowerCase()!==cheapCandidate.core||review.spender.toLowerCase()!==cheapCandidate.core||review.token.toLowerCase()!==preparedQuote.intent.inputToken.toLowerCase()||review.amount!==preparedQuote.intent.maximumInput)throw new Error('Exact swap approval differs from the branded Quote.');
+        assertCurrentCheapDexPreparedQuote(preparedQuote,signer);assertCurrentNativeSwapIntent(preparedQuote,BigInt(Math.floor(Date.now()/1000)),Boolean(review.cleanup),false,signer);
+        if(review.owner.toLowerCase()!==ownerAddress.toLowerCase()||review.graph!==cheapCandidate.graph||review.packageSha256!==cheapCandidate.packageSha256||review.core.toLowerCase()!==cheapCandidate.core||review.spender.toLowerCase()!==cheapCandidate.core||review.token.toLowerCase()!==preparedQuote.intent.inputToken.toLowerCase()||review.amount!==(review.cleanup ? 0n : preparedQuote.intent.maximumInput))throw new Error('Exact swap approval differs from the branded Quote.');
+        if (review.cleanup) {
+          if (!isCurrentDexBrowserSigner(signer, cheapCandidate.graph, ownerAddress)) throw new Error('Swap allowance cleanup requires the current browser wallet.');
+          await cheap.assertCurrentCheapSwapAllowanceCleanupIdle(preparedQuote);
+        }
       },
+      assertAllowanceMutationIdle: cheap.assertCurrentAllowanceMutationIdle,
       authorizeSwapApprovalSigning: cheap.authorizeCurrentCheapSwapApproval,
       rememberSwapApprovalHash: cheap.rememberCurrentCheapSwapApproval,
+      completeSwapAllowanceCleanup: cheap.reconcileCurrentCheapSwapAllowanceCleanup,
       encrypt: (amount, token, selector) => encryptPrivateUint256Input(signer, amount, token, selector),
       decrypt: cipher => decryptPrivateUint256Output(signer, cipher),
       readFunds: async head => {
-        await assertCurrent(); assertSnapshotCurrent();
-        const capturedKey = args.sessionOnboardInfo?.[ownerAddress.toLowerCase()]?.aesKey?.trim();
-        const guard = async () => {
-          await assertCurrent(); assertSnapshotCurrent();
-          if (!capturedKey || signer.getUserOnboardInfo()?.aesKey?.trim() !== capturedKey) throw new Error('Unlock the selected owner privacy before checking beta funds.');
-        };
-        await guard();
-        return readCurrentSharedDexTokenFunds({ candidate: sharedCandidate, owner: ownerAddress, head, assertCurrent: guard,
-          rpc: async (method, params) => { await guard(); const value = await readProvider.send(method, params); await guard(); return value; },
-          decrypt: cipher => decryptPrivateUint256Output(signer, cipher) });
+        const scope = fundingReadScope(); await scope.assertCurrent();
+        return readCurrentSharedDexTokenFunds({ candidate: sharedCandidate, owner: ownerAddress, head, ...scope });
       },
       readReceiptBlock: async number => {
         await assertCurrent(); assertSnapshotCurrent();
@@ -551,6 +601,12 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         return Object.freeze({ number: BigInt(block.number), hash: block.hash, timestamp: BigInt(block.timestamp), gasLimit: BigInt(block.gasLimit) });
       } });
     return Object.freeze({ ...legacy, ...current, ...cheap, ...pool, ...positions, ...limit, ...funding, ...refill, ...sharedFunding,
+      readSharedSwapInputFunding: async (inputToken: string, outputToken: string) => {
+        if (!sharedCandidate) throw new Error('Swap input funds require the selected shared candidate.');
+        const scope = fundingReadScope(); await scope.assertCurrent();
+        const head = await transport.readHead(); await scope.assertCurrent();
+        return readCurrentSharedDexSwapFunds({ candidate: sharedCandidate, owner: ownerAddress, tokens: [inputToken, outputToken], head, ...scope });
+      },
       readCurrentDexActivityPage: async ({ cursor, head: savedHead, onProgress, assertCurrent: assertCallerCurrent = () => {} }: { cursor: CurrentDexActivityCursor;
         head?: { number: bigint; hash: string }; onProgress?: (checked: number, total: number, phase?: string) => void; assertCurrent?: () => void }) => {
         if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new Error('History requires a supported DEX deployment.');

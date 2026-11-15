@@ -5,10 +5,12 @@ import { AbiCoder,keccak256 } from '@coti-io/coti-ethers';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as candidate, STAGED_PREPARED_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE,
   CURRENT_CHEAP_DEX_CANDIDATE, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
 import { readCurrentDexDisplay } from './currentDexDisplay';
-import { CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE, CURRENT_DEX_DAILY_PRICE_CONFIG, type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
+import { CURRENT_DEX_DAILY_PRICE_CONFIG, type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
+import { CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE } from '../../tests/fixtures/historicalDailyPriceSources';
 import { COTI_TESTNET_NETWORK } from './chainWhisperNetworks';
-import { currentExitDexDailyPriceManifestMatches,currentExitDexDailyPriceConfig,EXIT_TESTNET_DEX_DAILY_PRICE_MANIFESTS } from './currentDexExitDailyPriceTestnet';
-import { currentNativeDexDailyPriceConfig,NATIVE_TESTNET_DEX_DAILY_PRICE_MANIFEST } from './currentDexNativeDailyPriceTestnet';
+import { currentExitDexDailyPriceManifestMatches,currentExitDexDailyPriceConfig,EXIT_TESTNET_DEX_DAILY_PRICE_MANIFESTS } from '../../tests/fixtures/currentDexExitDailyPriceTestnet';
+import { currentNativeDexDailyPriceConfig } from './currentDexNativeDailyPriceTestnet';
+import {NATIVE_TESTNET_DEX_DAILY_PRICE_MANIFEST} from '../../tests/fixtures/nativeDailyPriceManifest';
 
 // Synthetic deployment fields only; canonical candidate/market/unit fields are real.
 function manifest(index:number):CurrentDexDailyPriceManifest{
@@ -59,7 +61,7 @@ describe('current shared-Core recorder market scope',()=>{
     for(const pair of [m.symbols,[m.symbols[1],m.symbols[0]] as const]){
       const config=currentExitDexDailyPriceConfig(candidate,pair);
       expect(config).toEqual({status:'active',manifest:m,rpcUrl:COTI_TESTNET_NETWORK.rpcUrl,finalityLagBlocks:2});
-      expect(currentNativeDexDailyPriceConfig(candidate,pair)).toEqual(config);expect(Object.isFrozen(config)).toBe(true);
+      expect(currentNativeDexDailyPriceConfig(candidate,pair)).toEqual({status:'inactive'});expect(Object.isFrozen(config)).toBe(true);
       expect(config).not.toHaveProperty('readyToSign');expect(config).not.toHaveProperty('priceE18');
     }
   });

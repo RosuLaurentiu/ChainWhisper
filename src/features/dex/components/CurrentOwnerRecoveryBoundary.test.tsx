@@ -4,6 +4,7 @@ import CurrentLimitWorkspace from './CurrentLimitWorkspace';
 import CurrentPoolPositionsWorkspace from './CurrentPoolPositionsWorkspace';
 import { CURRENT_CHEAP_DEX_CANDIDATE as c } from '../../../lib/dexV2Deployment';
 import type { SharedWalletSession } from '../../../lib/walletSession';
+import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 // Historical position fallback awaits the retained native recovery method.
 vi.mock('../../../lib/dexV2Deployment', async original => {
   const actual = await original<typeof import('../../../lib/dexV2Deployment')>();
@@ -11,6 +12,7 @@ vi.mock('../../../lib/dexV2Deployment', async original => {
 });
 const hooks = vi.hoisted(() => ({ index:0, refIndex:0, states:[] as unknown[], refs:[] as {current:unknown}[] }));
 vi.mock('react', async original => ({...await original<typeof import('react')>(),
+  useEffect:vi.fn(),
   useState:(initial:unknown)=>{const i=hooks.index++;if(!(i in hooks.states))hooks.states[i]=initial;return[hooks.states[i],(value:unknown)=>{hooks.states[i]=value;}];},
   useRef:(initial:unknown)=>{const i=hooks.refIndex++;return hooks.refs[i]??(hooks.refs[i]={current:initial});}
 }));
@@ -55,6 +57,29 @@ function fixture(operation:Operation, Positions=CurrentPoolPositionsWorkspace, p
   return{sender,getSender,metadata,privateRead,prepareSnapshot,capability,writes,store,button,status,idle,startDelayed,change,finish:()=>finish()};
 }
 afterEach(()=>{hooks.states=[];hooks.refs=[];vi.unstubAllGlobals();});
+it.each(['RPC stopped','Prepared snapshot changed financial state.'])('does not hide a retained recovery error or continue reads: %s',async message=>{
+  const f=fixture('position-issuer'),recover=vi.fn(async()=>{throw new Error(message);});
+  hooks.states[9]={recover,scope:hooks.refs[1].current,snapshot:true};
+  await f.button().props.onClick!();await f.idle();
+  expect(f.status()).toBe(message);expect(f.getSender).not.toHaveBeenCalled();expect(f.metadata).not.toHaveBeenCalled();expect(f.writes).not.toHaveBeenCalled();
+});
+it.each(['snapshot','top-up'] as const)('shows a mined %s hold with no signing authority',async kind=>{
+  const f=fixture('position-issuer');
+  f.metadata.mockResolvedValue({status:'observed-mined-verification-held',transactionHash:`0x${'77'.repeat(32)}`,...(kind==='snapshot'?{verificationFailure:'snapshot-financial-state'}:{poolTopUpHash:`0x${'88'.repeat(32)}`}),privateAccountingVerified:false,readyToSign:false} as never);
+  await f.button().props.onClick!();await f.idle();
+  expect(f.status()).toContain('mined');expect(f.status()).toContain(kind==='snapshot'?'Prepared snapshot changed financial state.':'Final top-up accounting has not completed.');expect(f.status()).toContain('Do not resend');expect(hooks.states[6]).toBe(true);expect(f.writes).not.toHaveBeenCalled();
+});
+it('inspects an already-held snapshot without invoking its retained private recovery',async()=>{
+  const f=fixture('position-issuer'),recover=vi.fn(async()=>{throw new Error('Known Pool verification failure.');});
+  hooks.states[9]={recover,scope:hooks.refs[1].current,snapshot:true};
+  const saved=JSON.stringify({version:1,chainId:c.chainId,owner,core:c.core.toLowerCase(),graph:`0x${c.graph}`,phase:'pool-snapshot',nonce:394,txHash:`0x${'77'.repeat(32)}`,callHash:`0x${'88'.repeat(32)}`,verificationBlocked:true});
+  f.store.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);
+  f.metadata.mockResolvedValue({status:'observed-mined-verification-held',transactionHash:`0x${'77'.repeat(32)}`,privateAccountingVerified:false,readyToSign:false} as never);
+  await f.button().props.onClick!();await f.idle();
+  expect(recover).not.toHaveBeenCalled();expect(f.privateRead).not.toHaveBeenCalled();expect(f.metadata).toHaveBeenCalledOnce();
+  expect(f.status()).toContain('mined');expect(f.status()).toContain('original verification reason was not retained');
+  expect(f.store.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(hooks.states[6]).toBe(true);expect(f.writes).not.toHaveBeenCalled();
+});
 for(const operation of ['limit-create','limit-status','limit-snapshot','position-issuer','position-fallback'] as const)describe(`retained native ${operation}`,()=>{
   it.each(changes)('stops at the awaited boundary after %s changes',async kind=>{
     const f=fixture(operation);await f.startDelayed();f.change(kind);f.finish();await f.idle();

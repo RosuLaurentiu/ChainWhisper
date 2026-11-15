@@ -1,4 +1,5 @@
 // Public reconciliation metadata only. Storage is a duplicate-send guard, not signing authority.
+import { currentPoolVerificationFailure, isCurrentPoolVerificationFailure, type CurrentPoolVerificationFailure } from './currentDexPoolProofError';
 type PendingStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type CurrentDexPendingAttempt = Readonly<{
   version: 1; chainId: string; owner: string; core: string; graph: string;
@@ -6,8 +7,28 @@ export type CurrentDexPendingAttempt = Readonly<{
   operationId?: string;
   target?: string;
   verificationBlocked?: true;
+  verificationFailure?: CurrentPoolVerificationFailure;
+  // Null marks funding; the snapshot retains that funding transaction's hash.
+  poolTopUpHash?: string | null;
 }>;
 export const CURRENT_DEX_PENDING_ATTEMPT_KEY = 'chainwhisper:dex:current-pending-attempt:v1';
+export type CurrentDexOwnerRecoveryView = 'positions' | 'liquidity' | 'activity';
+// This selects a view only. It never verifies or clears the saved action.
+export const currentDexOwnerRecovery = (attempt: CurrentDexPendingAttempt | null,
+  binding: Pick<CurrentDexPendingAttempt, 'chainId' | 'owner' | 'core' | 'graph'>) => {
+  if (!attempt || !/^(pool|limit)-/.test(attempt.phase)) return null;
+  if (attempt.chainId !== binding.chainId || attempt.owner !== binding.owner.toLowerCase() ||
+      attempt.core !== binding.core.toLowerCase() || attempt.graph !== binding.graph.toLowerCase())
+    throw new Error('The saved action belongs to another wallet, network or contract. Restore that session to check it. Do not resend.');
+  const view: CurrentDexOwnerRecoveryView = attempt.phase.startsWith('limit-') ? 'activity' :
+    attempt.phase === 'pool-preview' || attempt.phase === 'pool-fund' && attempt.poolTopUpHash !== null ? 'liquidity' : 'positions';
+  const preview = attempt.phase === 'pool-preview';
+  return { view, alternateView: preview ? 'positions' as const : null,
+    label: preview ? 'Open new-Pool recovery' : view === 'activity' ? 'Open order recovery' : view === 'liquidity' ? 'Open liquidity recovery' : 'Open position recovery',
+    message: preview ? 'A Pool preview needs verification. For a new Pool, open Liquidity. For a top-up, open Manage → Positions. Use the existing action recovery; do not request another preview.' :
+      `${view === 'activity' ? 'A Limit' : 'A Pool'} action needs verification. Open ${view === 'activity' ? 'Manage → Orders' : view === 'positions' ? 'Manage → Positions' : 'Liquidity'} and use Status and recovery. The saved record stays protected. Do not resend.` };
+};
+export const CURRENT_POOL_REFRESH_ATTEMPT_KEY = 'chainwhisper:dex:pool-refresh-attempt:v1';
 // Public lookup only. Confirmed Accept is no longer an uncertain send, but its
 // operation must remain discoverable until authenticated terminal verification.
 export const CURRENT_DEX_OPERATION_LOOKUPS_KEY = 'chainwhisper:dex:current-operation-lookups:v1';
@@ -29,6 +50,14 @@ const valid = (value: unknown): value is CurrentDexPendingAttempt => {
     'callHash,chainId,core,graph,nonce,operationId,owner,phase,txHash,version' :
     'callHash,chainId,core,graph,nonce,owner,phase,txHash,version').split(',');
   if (targeted) keys.push('target');
+  if (a.poolTopUpHash !== undefined) {
+    if (!(a.phase === 'pool-fund' && a.poolTopUpHash === null || a.phase === 'pool-snapshot' && hex32(a.poolTopUpHash))) return false;
+    keys.push('poolTopUpHash');
+  }
+  if (a.verificationFailure !== undefined) {
+    if (!blocked || !['pool-owner', 'pool-snapshot', 'pool-preview', 'pool-fund'].includes(a.phase ?? '') || !isCurrentPoolVerificationFailure(a.verificationFailure)) return false;
+    keys.push('verificationFailure');
+  }
   return Object.keys(value).sort().join(',') === keys.sort().join(',') &&
     (!targeted || address(a.target) && ['token-faucet', 'token-refill', 'token-approve'].includes(a.phase ?? '')) &&
     a.version === 1 && typeof a.chainId === 'string' && /^[1-9]\d*$/.test(a.chainId) &&
@@ -47,12 +76,64 @@ export const readCurrentDexPendingAttempt = (storage: PendingStorage | null): Cu
   try { raw = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY); } catch {
     throw new Error('Current DEX pending-attempt storage is unavailable.');
   }
-  if (raw === null) return null;
+  if (raw === null) {
+    if (storage.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY) !== null) throw new Error('A private refresh record needs reconciliation. Do not resend.');
+    return null;
+  }
   try {
     const value: unknown = JSON.parse(raw);
     if (valid(value)) return Object.freeze(value);
   } catch { /* A malformed record must not be cleared automatically. */ }
   throw new Error('Current DEX pending-attempt record is invalid; reconcile manually.');
+};
+export const heldPoolSnapshotRefreshEligible = (attempt: CurrentDexPendingAttempt | null,
+  binding: Pick<CurrentDexPendingAttempt, 'chainId' | 'owner' | 'core' | 'graph'>) =>
+  !!attempt && attempt.phase === 'pool-snapshot' && attempt.verificationBlocked === true && !!attempt.txHash &&
+  attempt.poolTopUpHash === undefined && attempt.target === undefined && attempt.operationId === undefined &&
+  attempt.chainId === binding.chainId && attempt.owner === binding.owner.toLowerCase() && attempt.core === binding.core.toLowerCase() &&
+  attempt.graph === binding.graph.toLowerCase();
+
+// A new refresh owns a separate send slot. The original hold never moves or clears.
+export const currentPoolRefreshStorage = (storage: PendingStorage | null, held: CurrentDexPendingAttempt, callHash?: string): PendingStorage => {
+  if (!storage || !heldPoolSnapshotRefreshEligible(held, held)) throw new Error('A confirmed plain snapshot hold is required.');
+  const original = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY);
+  if (JSON.stringify(readCurrentDexPendingAttempt(storage)) !== JSON.stringify(held)) throw new Error('Original snapshot hold changed.');
+  const guard = () => {
+    if (storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY) !== original) throw new Error('Original snapshot hold changed. Do not resend.');
+  };
+  const read = () => {
+    guard(); const raw = storage.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY); if (raw === null) return null;
+    let record: { original?: unknown; attempt?: unknown };
+    try { record = JSON.parse(raw); } catch { throw new Error('Private refresh record is invalid. Do not resend.'); }
+    if (!record || Object.keys(record).sort().join(',') !== 'attempt,original' || record.original !== original ||
+      typeof record.attempt !== 'string') throw new Error('Private refresh record changed. Do not resend.');
+    return record.attempt;
+  };
+  // A send binds its prepared call; reload binds the existing refresh, not the old position.
+  let refreshCallHash = callHash?.toLowerCase();
+  const check = (raw: string) => {
+    const attempt: unknown = JSON.parse(raw);
+    if (!valid(attempt) || attempt.phase !== 'pool-snapshot' || attempt.poolTopUpHash !== undefined ||
+      attempt.target !== undefined || attempt.operationId !== undefined || attempt.nonce <= held.nonce ||
+      refreshCallHash !== undefined && attempt.callHash !== refreshCallHash ||
+      ['chainId','owner','core','graph'].some(k => attempt[k as keyof CurrentDexPendingAttempt] !== held[k as keyof CurrentDexPendingAttempt]))
+      throw new Error('Independent snapshot identity or nonce changed. Do not resend.');
+    refreshCallHash ??= attempt.callHash;
+    return raw;
+  };
+  return {
+    getItem: key => key === CURRENT_DEX_PENDING_ATTEMPT_KEY ? (() => { const raw = read(); return raw === null ? null : check(raw); })() :
+      key === CURRENT_POOL_REFRESH_ATTEMPT_KEY ? null : (guard(), storage.getItem(key)),
+    setItem: (key, value) => {
+      guard();
+      if (key === CURRENT_DEX_PENDING_ATTEMPT_KEY) storage.setItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY, JSON.stringify({ original, attempt: check(value) }));
+      else if (key === CURRENT_POOL_REFRESH_ATTEMPT_KEY) throw new Error('Private refresh slot cannot be overwritten directly.');
+      else storage.setItem(key, value);
+      guard();
+    },
+    removeItem: key => { guard(); if (key !== CURRENT_DEX_PENDING_ATTEMPT_KEY) throw new Error('Only the private refresh slot can be cleared.');
+      read(); storage.removeItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY); guard(); },
+  };
 };
 const validLookup = (value: unknown): value is CurrentDexOperationLookup => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -107,7 +188,7 @@ export const clearCurrentDexOperationLookup = (storage: PendingStorage | null, e
 const same = (left: CurrentDexPendingAttempt, right: CurrentDexPendingAttempt) =>
   left.chainId === right.chainId && left.owner === right.owner && left.core === right.core &&
   left.graph === right.graph && left.phase === right.phase && left.callHash === right.callHash &&
-  left.nonce === right.nonce && left.txHash === right.txHash && left.operationId === right.operationId && left.target === right.target && left.verificationBlocked === right.verificationBlocked;
+  left.nonce === right.nonce && left.txHash === right.txHash && left.operationId === right.operationId && left.target === right.target && left.poolTopUpHash === right.poolTopUpHash && left.verificationBlocked === right.verificationBlocked && left.verificationFailure === right.verificationFailure;
 const write = (storage: PendingStorage, attempt: CurrentDexPendingAttempt) => {
   try { storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify(attempt)); } catch {
     throw new Error('Current DEX pending attempt could not be saved.');
@@ -127,6 +208,14 @@ export const recordCurrentDexPendingHash = (storage: PendingStorage | null, atte
   if (!current || !same(current, attempt) || !hex32(txHash)) throw new Error('Current DEX pending attempt changed.');
   write(storage!, { ...attempt, txHash });
 };
+export const advanceCurrentPoolTopUpAttempt = (storage: PendingStorage | null, funding: CurrentDexPendingAttempt, snapshot: CurrentDexPendingAttempt) => {
+  const current = readCurrentDexPendingAttempt(storage);
+  if (!current || !same(current, funding) || current.verificationBlocked || current.phase !== 'pool-fund' || current.poolTopUpHash !== null || !current.txHash ||
+    !valid(snapshot) || snapshot.phase !== 'pool-snapshot' || snapshot.poolTopUpHash !== current.txHash || snapshot.txHash !== null || snapshot.nonce <= current.nonce ||
+    snapshot.chainId !== current.chainId || snapshot.owner !== current.owner || snapshot.core !== current.core || snapshot.graph !== current.graph)
+    throw new Error('Top-up snapshot handoff changed. Keep the pending record.');
+  write(storage!, snapshot);
+};
 export const blockCurrentTokenFundingVerification = (storage: PendingStorage | null, attempt: CurrentDexPendingAttempt) => {
   const current = readCurrentDexPendingAttempt(storage);
   if (!current || !same(current, attempt) || !['token-faucet', 'token-approve', 'token-refill'].includes(current.phase)) throw new Error('Current-token pending attempt changed.');
@@ -137,10 +226,11 @@ export const blockCurrentSwapVerification = (storage: PendingStorage | null, att
   if (!current || !same(current, attempt) || !['quote', 'accept', 'cancel', 'recover'].includes(current.phase)) throw new Error('Current-swap pending attempt changed.');
   write(storage!, { ...current, verificationBlocked: true });
 };
-export const blockCurrentPoolVerification = (storage: PendingStorage | null, attempt: CurrentDexPendingAttempt) => {
+export const blockCurrentPoolVerification = (storage: PendingStorage | null, attempt: CurrentDexPendingAttempt, error?: unknown) => {
   const current = readCurrentDexPendingAttempt(storage);
   if (!current || !same(current, attempt) || !['pool-preview', 'pool-fund', 'pool-owner', 'pool-snapshot'].includes(current.phase)) throw new Error('Current-Pool pending attempt changed.');
-  write(storage!, { ...current, verificationBlocked: true });
+  write(storage!, { ...current, verificationBlocked: true,
+    ...(current.verificationBlocked || error === undefined ? {} : { verificationFailure: currentPoolVerificationFailure(error) }) });
 };
 export const blockCurrentLimitVerification = (storage: PendingStorage | null, attempt: CurrentDexPendingAttempt) => {
   const current=readCurrentDexPendingAttempt(storage);

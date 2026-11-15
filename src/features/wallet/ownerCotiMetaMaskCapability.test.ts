@@ -14,6 +14,7 @@ import {
 } from './ownerCotiMetaMaskCapability';
 import type { BrowserWalletSession, BrowserWalletSignerLease } from './hooks/useWalletOnboarding';
 import type { CotiSnapOwnerAesResult } from '../../lib/cotiSnap';
+import { CURRENT_BROWSER_DEX_GRAPH, CURRENT_BROWSER_DEX_CORE, isCurrentDexBrowserSigner, assertCurrentDexBrowserWindow } from '../../lib/currentDexBrowserPolicy';
 
 const privacyMocks = vi.hoisted(() => ({
   recover: vi.fn(async ({ signer }: {
@@ -147,10 +148,18 @@ describe('owner COTI browser-wallet provider pool', () => {
     expect(hasCurrentDexBrowserSigner({},OWNER,7082400n)).toBe(false);
     expect(hasCurrentDexBrowserSigner(capability.signer,`0x${'22'.repeat(20)}`,7082400n)).toBe(false);
     expect(hasCurrentDexBrowserSigner(capability.signer,OWNER,7082400n)).toBe(CHAIN_ID===7082400);
+    expect(isCurrentDexBrowserSigner(capability.signer,CURRENT_BROWSER_DEX_GRAPH,OWNER)).toBe(CHAIN_ID===7082400);
+    expect(isCurrentDexBrowserSigner(capability.signer,'unknown',OWNER)).toBe(false);
+    expect(isCurrentDexBrowserSigner(capability.signer,CURRENT_BROWSER_DEX_GRAPH,`0x${'22'.repeat(20)}`)).toBe(false);
+    if (CHAIN_ID===7082400) {
+      expect(() => assertCurrentDexBrowserWindow(capability.signer,CURRENT_BROWSER_DEX_GRAPH,OWNER,CURRENT_BROWSER_DEX_CORE,7082400n,1n,0,1n,50_000_000n)).not.toThrow();
+      expect(() => assertCurrentDexBrowserWindow(capability.signer,CURRENT_BROWSER_DEX_GRAPH,OWNER,CURRENT_BROWSER_DEX_CORE,1n,1n,0,1n,50_000_000n)).toThrow();
+    }
     releaseOwnerCotiMetaMaskProviderPool(lease.sessionProvider);
     await Promise.resolve();
     if(CHAIN_ID===7082400)expect(()=>hasCurrentDexBrowserSigner(capability.signer,OWNER,7082400n)).toThrow('lease ended');
     else expect(hasCurrentDexBrowserSigner(capability.signer,OWNER,7082400n)).toBe(false);
+    if(CHAIN_ID===7082400)expect(()=>isCurrentDexBrowserSigner(capability.signer,CURRENT_BROWSER_DEX_GRAPH,OWNER)).toThrow('lease ended');
   });
   it.each(['cold', 'pooled'] as const)('imports an unlocked owner session into a %s signer without prompting for privacy', async state => {
     const lease = createLease();

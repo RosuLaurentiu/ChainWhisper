@@ -20,8 +20,8 @@ describe('HomePage app launcher', () => {
     expect(markup.match(/<article/g)).toHaveLength(4);
     expect(markup).toContain('Encrypted Chat');
     expect(markup).toContain('DEX &amp; P2P');
-    expect(markup).toContain('private DEX strategies');
-    expect(markup).toContain('peer-to-peer offers');
+    expect(markup).toContain('shared DEX Pools and plain Limit orders');
+    expect(markup).toContain('peer-to-peer escrow offers');
     expect(markup).toContain('Privacy Portal');
     expect(markup).toContain('COTI Private TVL');
     expect(markup).toContain('verified Band USD values');

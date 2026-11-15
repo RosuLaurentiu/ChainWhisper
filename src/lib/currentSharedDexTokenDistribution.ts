@@ -20,14 +20,14 @@ export const CURRENT_SHARED_TOKEN_DISTRIBUTION = Object.freeze({
   refillAmount: 1_000n * 10n ** 6n,
   initialQuota: 1_000_000n * 10n ** 6n,
   cooldown: 86_400n,
-  vault: Object.freeze({ address: '0xB509dCfaa8a0AB7b976B84f091875246e0FDD8Cf',
-    runtimeHash: '0xfe4f3fcc2f5e9346e7d2f4abc2b4cddee9f373a0853c1dbc71b5251aad4f1453',
-    recovery: '0xC737b5850e15d03ed09bfAdc8A33062f6073a850', expiresAt: 1793930246n }),
+  vault: Object.freeze({ address: '0x93569e6ae15d42F60A642B3F306e50c37Ca78FbF',
+    runtimeHash: '0x1b905cca2b1c984e9edd8b39c6a8064e4e5858f6b21282ad0dfed379ef0260d5',
+    recovery: '0xC737b5850e15d03ed09bfAdc8A33062f6073a850', expiresAt: 1796608723n }),
   vaultDeployment: Object.freeze({
-    transactionHash: '0x8f11bfe6c84edd854a3b22fca9d8e6b7e15933d6f6956ae57f4321c8415d88c7',
-    blockNumber: 9950466n,
-    blockHash: '0x0f1b0c66319391b931287284b1678b44282f8378eaadd865c0fe81837869adf2',
-    transactionIndex: 0n, from: '0x23aBDe1d22019D52852D6845c9444326Dde1D99e', nonce: 231n,
+    transactionHash: '0xad5ce94cfef71c07ce2555f8226ed8d9a81210f11be42485bd048f9c461218ff',
+    blockNumber: 10484977n,
+    blockHash: '0xd167bbe87e47d6577d96592d9ca066301d8ec173a79f4a6330b24b8dcff5ab09',
+    transactionIndex: 0n, from: '0xC737b5850e15d03ed09bfAdc8A33062f6073a850', nonce: 7641n,
     calldataHash: '0x11d113a270aab79a95b873c560510c4bb307e8a93f05e372669df6837114244b' })
 });
 export const CURRENT_SHARED_DEX_TOKENS = Object.freeze(prepared.tokenMetadata
@@ -126,7 +126,7 @@ export const readCurrentSharedDexTokenDistribution = async ({ owner, head: suppl
   };
   const [release, admission] = await Promise.all(['releaseId', 'tokenAdmissionCommitment'].map(name => call(p.core, currentSharedDistributionCoreAbi, name)));
   if (!same(release, p.releaseId) || !same(admission, p.tokenAdmissionCommitment)) throw new Error('Distribution Core identity changed.');
-  // The vault predates this Core. Its deployment proof is independent of DEX operation evidence.
+  // The vault deployment proof is independent of DEX operation evidence.
   const [txValue, receiptValue, deployBlockValue] = await Promise.all([
     readRpc('eth_getTransactionByHash', [d.transactionHash]), readRpc('eth_getTransactionReceipt', [d.transactionHash]),
     readRpc('eth_getBlockByNumber', [hex(d.blockNumber), false])

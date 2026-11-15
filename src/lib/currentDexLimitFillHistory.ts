@@ -1,8 +1,9 @@
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 import { AbiCoder, Interface, getAddress } from '@coti-io/coti-ethers';
 import type { PrivateUint256Output } from './privateUint256';
 
 export const CURRENT_LIMIT_FILL_HISTORY_GRAPH = '3717c866cd23fcd793f98753df5fc5974d25cdffbc5d57633bca353aaa13fdc1';
-export const SHARED_RECEIPT_LIMIT_FILL_HISTORY_GRAPH = '9591af0d1ea77bdb952adf0a859ef895398f0bbf5600d8a1addd941cce4ff3eb';
+export const SHARED_RECEIPT_LIMIT_FILL_HISTORY_GRAPH = STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph;
 export const CURRENT_LIMIT_FILL_HISTORY_GRAPHS: readonly string[] = Object.freeze([
   CURRENT_LIMIT_FILL_HISTORY_GRAPH, SHARED_RECEIPT_LIMIT_FILL_HISTORY_GRAPH
 ]);

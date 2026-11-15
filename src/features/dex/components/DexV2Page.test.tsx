@@ -42,15 +42,20 @@ describe('selected swap funding adapter', () => {
       privateFundsVerified: true, readyToSign: false, head: { number: 99n, hash: `0x${'22'.repeat(32)}` },
       tokens: CURRENT_SHARED_DEX_TOKENS.map((token, i) => ({ ...token, balance: BigInt(100 + i), allowance: BigInt(17 + i), claimed: true })) };
     const readSharedTokenFunding = vi.fn(async () => funds), readCurrentTokenFunding = vi.fn(async () => { throw new Error('Historical adapter must not run'); });
-    const sender = { readSharedTokenFunding, readCurrentTokenFunding } as unknown as Parameters<typeof readCurrentSwapInputFunding>[0];
-    return { funds, sender, readSharedTokenFunding, readCurrentTokenFunding };
+    const readSharedSwapInputFunding = vi.fn(async (token: string) => ({ ...funds,
+      tokens: funds.tokens.filter(t => t.address.toLowerCase() === token.toLowerCase()) }));
+    const sender = { readSharedSwapInputFunding, readSharedTokenFunding, readCurrentTokenFunding } as unknown as Parameters<typeof readCurrentSwapInputFunding>[0];
+    return { funds, sender, readSharedSwapInputFunding, readSharedTokenFunding, readCurrentTokenFunding };
   };
   it.each(['cheap-prepared', 'cheap-exit'] as const)('reads all four selected tokens through shared funding for %s', async candidateKey => {
     const f = make(candidateKey);
     for (const [i, token] of CURRENT_SHARED_DEX_TOKENS.entries()) {
-      expect(await readCurrentSwapInputFunding(f.sender, candidateKey, owner, token.address, 0)).toEqual({ balance: BigInt(100 + i), allowance: BigInt(17 + i), claimed: true, block: f.funds.head });
+      const output = CURRENT_SHARED_DEX_TOKENS[(i + 1) % 4].address;
+      expect(await readCurrentSwapInputFunding(f.sender, candidateKey, owner, token.address, 0, output)).toEqual({ balance: BigInt(100 + i), allowance: BigInt(17 + i), block: f.funds.head });
+      expect(f.readSharedSwapInputFunding).toHaveBeenLastCalledWith(token.address, output);
     }
-    expect(f.readCurrentTokenFunding).not.toHaveBeenCalled(); expect(f.readSharedTokenFunding).toHaveBeenCalledTimes(4);
+    expect(f.readCurrentTokenFunding).not.toHaveBeenCalled(); expect(f.readSharedTokenFunding).not.toHaveBeenCalled();
+    expect(f.readSharedSwapInputFunding).toHaveBeenCalledTimes(4);
   });
   it('keeps the historical adapter on the historical candidate', async () => {
     const f = make('cheap-exit'), historical = { balance: 7n, allowance: 5n, claimed: true,
@@ -58,7 +63,7 @@ describe('selected swap funding adapter', () => {
       token: resolveCurrentCheapDexCandidate('cheap-current').tokens[1][0], owner,
       faucetAmount: 10_000n * 10n ** 18n, decimals: 18n, publicAmounts: false, encryptionAddress: owner };
     const readCurrentTokenFunding = vi.fn(async () => historical);
-    expect(await readCurrentSwapInputFunding({ ...f.sender, readCurrentTokenFunding } as Parameters<typeof readCurrentSwapInputFunding>[0], 'cheap-current', owner, CURRENT_SHARED_DEX_TOKENS[0].address, 1)).toBe(historical);
+    expect(await readCurrentSwapInputFunding({ ...f.sender, readCurrentTokenFunding } as Parameters<typeof readCurrentSwapInputFunding>[0], 'cheap-current', owner, CURRENT_SHARED_DEX_TOKENS[0].address, 1, CURRENT_SHARED_DEX_TOKENS[1].address)).toBe(historical);
     expect(readCurrentTokenFunding).toHaveBeenCalledWith(1); expect(f.readSharedTokenFunding).not.toHaveBeenCalled();
   });
   it.each(['owner', 'core', 'graph', 'packageSha256', 'privateFundsVerified', 'readyToSign', 'decimals', 'balance', 'allowance'] as const)('rejects changed %s before Quote consumes shared funds', async field => {
@@ -66,7 +71,7 @@ describe('selected swap funding adapter', () => {
     if (field === 'decimals') f.funds.tokens[0].decimals = 18 as 6;
     else if (field === 'balance' || field === 'allowance') f.funds.tokens[0][field] = -1n;
     else Object.assign(f.funds, { [field]: field === 'privateFundsVerified' ? false : field === 'readyToSign' ? true : 'changed' });
-    await expect(readCurrentSwapInputFunding(f.sender, 'cheap-exit', owner, CURRENT_SHARED_DEX_TOKENS[0].address, 0)).rejects.toThrow('identity or private state');
+    await expect(readCurrentSwapInputFunding(f.sender, 'cheap-exit', owner, CURRENT_SHARED_DEX_TOKENS[0].address, 0, CURRENT_SHARED_DEX_TOKENS[1].address)).rejects.toThrow('identity or private state');
     expect(f.readCurrentTokenFunding).not.toHaveBeenCalled();
   });
 });
@@ -77,6 +82,10 @@ describe('DexV2Page', () => {
     const html = renderToStaticMarkup(<DexV2Page />);
     const navigation = html.match(/<nav[^>]*aria-label="Manage views"[^>]*>([\s\S]*?)<\/nav>/)?.[1];
     expect(navigation).toBeDefined();
+    expect(html).toContain('dex-desktop-management-navigation');
+    expect(html).toContain('dex-mobile-management-navigation');
+    expect(html).not.toContain('dex-v2-secondary-navigation');
+    expect(html).not.toContain('dex-management-navigation');
     for (const label of ['Orders', 'Positions', 'History']) expect(navigation).toContain(`>${label}</button>`);
     expect(navigation).toMatch(pathname.endsWith('positions') ? /aria-current="page"[^>]*>Positions/ : /aria-current="page"[^>]*>Orders/);
     expect(html).not.toContain('aria-label="Liquidity views"');
@@ -97,8 +106,8 @@ describe('DexV2Page', () => {
       const markup = renderToStaticMarkup(<DexV2Page swapCandidate={candidateKey} selectedPair={selectedPair} />);
       const limit = markup.match(/<section class="[^"]*dex-v2-current-limit[^"]*"[\s\S]*?<\/section>/)?.[0];
       expect(limit).toBeDefined();
-      expect(limit).toContain(`Amount (${selectedPair[0]})`);
-      expect(limit).toContain(`${selectedPair[1]} per ${selectedPair[0]}`);
+      expect(limit).toContain(`<strong>You send</strong><small>${selectedPair[0]}</small>`);
+      expect(limit).toContain(`${selectedPair[1]}/${selectedPair[0]}`);
       expect(limit).not.toContain('Test token');
     }
   });
@@ -107,7 +116,7 @@ describe('DexV2Page', () => {
     expect(markup).toContain('Buy EMBR');
     expect(markup).toContain('<strong>You send</strong><small>ORBT</small>');
     expect(markup).toContain('<strong>Estimated receive</strong><small>EMBR</small>');
-    expect(markup).toContain('ORBT per EMBR');
+    expect(markup).toContain('ORBT/EMBR');
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*><span>Get Quote<\/span>/);
   });
   it.each(['quote', 'accept', 'cancel', 'recover', 'pool-fund', 'limit-create', 'token-faucet', 'token-approve'] as const)(
@@ -309,8 +318,8 @@ describe('DexV2Page', () => {
     expect(markup).toContain('<strong>You send</strong><small>Test token 1</small>');
     expect(markup).toContain('<strong>Estimated receive</strong><small>Test token 0</small>');
     expect(markup).toContain('aria-label="Swap side"');
-    expect(markup).toContain('aria-pressed="true">Buy</button>');
-    expect(markup).toContain('aria-pressed="false">Sell</button>');
+    expect(markup).toContain('aria-label="Buy" aria-pressed="true"');
+    expect(markup).toContain('aria-label="Sell" aria-pressed="false"');
     expect(markup).toContain('aria-label="Reverse price ratio"');
     expect(markup).toContain('<small>Test token 1</small>');
     expect(markup).toContain('<small>Test token 0</small>');
@@ -360,8 +369,8 @@ describe('DexV2Page', () => {
     expect(markup).toContain('<h2>Sell Test token 1</h2>');
     expect(markup).toContain('<strong>You send</strong><small>Test token 1</small>');
     expect(markup).toContain('<strong>Estimated receive</strong><small>Test token 0</small>');
-    expect(markup).toContain('aria-pressed="false">Buy</button>');
-    expect(markup).toContain('aria-pressed="true">Sell</button>');
+    expect(markup).toContain('aria-label="Buy" aria-pressed="false"');
+    expect(markup).toContain('aria-label="Sell" aria-pressed="true"');
   });
 
   it('shows independent exact current trial protections without a synthetic price', () => {
@@ -376,7 +385,7 @@ describe('DexV2Page', () => {
     expect(markup).not.toContain('aria-label="Minimum net price denominator"');
     expect(markup).toContain('aria-label="DEX daily sampled price history"');
     expect(markup).toContain('No admitted daily recorder');
-    expect(markup).toContain('Show illustrative preview');
+    expect(markup).not.toContain('Show illustrative preview');
     expect(markup).not.toContain('/ Preview');
     expect(markup).not.toContain('Slippage tolerance');
     expect(markup).not.toContain('Exact price override');
@@ -388,8 +397,8 @@ describe('DexV2Page', () => {
     expect(source).not.toContain('runtime.manifest.strategies.filter');
     for (const leakedTerm of [
       'Sell EMBR for BCN',
-      '0.1667 BCN per EMBR',
-      '24.0000–26.4000 ORBT per BCN',
+      '0.1667 BCN/EMBR',
+      '24.0000–26.4000 ORBT/BCN',
       '1,000 EMBR + 0 ORBT',
       'Shared compatible private lane'
     ]) expect(source).not.toContain(leakedTerm);

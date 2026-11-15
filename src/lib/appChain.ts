@@ -3541,7 +3541,7 @@ export const ensureTradeTokenAllowance = async (
     if (allowance === null) {
       throw new Error('Private token allowance could not be read before approval.');
     }
-    if (allowance === requiredAmount) {
+    if (allowance >= requiredAmount) {
       return;
     }
 
@@ -3568,7 +3568,7 @@ export const ensureTradeTokenAllowance = async (
   if (typeof allowanceRaw !== 'bigint') {
     throw new Error('Public token allowance could not be read before approval.');
   }
-  if (allowanceRaw === requiredAmount) {
+  if (allowanceRaw >= requiredAmount) {
     return;
   }
 

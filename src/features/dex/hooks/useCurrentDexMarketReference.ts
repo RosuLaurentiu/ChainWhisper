@@ -5,7 +5,7 @@ import { CURRENT_DEX_DISPLAY_PAIR } from '../../../lib/currentDexDisplay';
 import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
 import { CurrentDexDailyPriceError, getCurrentDexPriceReadProvider, isVerifiedCurrentDexPublicReference, readCurrentDexPublicReference, type CurrentDexDailyPriceView, type CurrentDexPublicReferenceView } from '../../../lib/currentDexDailyPrice';
 import { currentNativeDexDailyPriceConfig } from '../../../lib/currentDexNativeDailyPriceTestnet';
-import { currentDexMarketReference } from '../../../lib/currentDexMarketReference';
+import { currentDexMarketReference, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
 import useCurrentDexDailyPrice from './useCurrentDexDailyPrice';
 
@@ -60,5 +60,13 @@ export default function useCurrentDexMarketReference(active: boolean,candidate:C
     const read = window.setInterval(()=>{if(!readPending.current)refresh();},30000);
     return () => { window.clearInterval(expiry); window.clearInterval(read); };
   },[active,refresh]);
-  return currentDexMarketReference(view,pair,now);
+  const reference=currentDexMarketReference(view,pair,now);
+  const last=useRef<{candidate:CurrentCheapDexCandidate;pair:readonly[string,string];reference:Extract<CurrentDexMarketReference,{status:'available'|'last-known'}>}|null>(null);
+  if(!active||last.current&&(last.current.candidate!==candidate||last.current.pair[0]!==base||last.current.pair[1]!==quote))last.current=null;
+  if(reference.status==='available'||reference.status==='last-known')last.current={candidate,pair:[base,quote],reference};
+  else if(last.current&&now>=BigInt(last.current.reference.sampledAt)){
+    const {price,sampledAt,revision}=last.current.reference;
+    return {status:'last-known' as const,price,sampledAt,revision};
+  }
+  return reference;
 }

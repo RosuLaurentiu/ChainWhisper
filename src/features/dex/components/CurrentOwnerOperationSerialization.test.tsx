@@ -64,7 +64,7 @@ function fixture(kind: 'pool' | 'position' | 'limit', components = {
 }
 
 describe('retained native owner workspace operation serialization with local capabilities', () => {
-  it.each(['Review deposit', 'Check Pool status'])('starts only one Pool operation for repeated %s callbacks', async label => {
+  it.each(['Preview deposit', 'Check Pool status'])('starts only one Pool operation for repeated %s callbacks', async label => {
     const f = fixture('pool'), callback = f.button(label).props.onClick!;
     callback(); callback(); await f.done(); expect(f.getSender).toHaveBeenCalledTimes(1);
   });

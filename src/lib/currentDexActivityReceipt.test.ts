@@ -1,5 +1,6 @@
 import { Interface, toBeHex } from '@coti-io/coti-ethers';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as limitCodec from './currentDexLimit';
 import { readCurrentDexActivityReceipt } from './currentDexActivityReceipt';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as c } from './currentDexExitCandidate';
 import { currentDexOwnerTransferAbi as transfers } from './currentDexOwnerTokenProof';
@@ -19,6 +20,18 @@ function fixture(candidate: CurrentDexActivityCandidate = 'cheap-exit') {
   return { token, transaction, receipt, assertCurrent, verifyCanonical, decrypt, read };
 }
 describe('canonical owner DEX action history', () => {
+  afterEach(()=>vi.restoreAllMocks());
+  it.each(['createPrivateOrder','repricePrivateOrder'])('decodes selected packed %s without retrying its old ABI',async name=>{
+    const f=fixture(),wide={ciphertext:{ciphertextHigh:1n,ciphertextLow:2n},signature:`0x${'44'.repeat(65)}`};
+    vi.spyOn(limitCodec,'currentLimitAbiForCandidate').mockReturnValue(limitCodec.packedLimitAbi);
+    f.transaction.to=c.core as typeof f.transaction.to;f.receipt.to=c.core as typeof f.receipt.to;
+    const create=name==='createPrivateOrder';
+    f.transaction.data=limitCodec.packedLimitAbi.encodeFunctionData(name,create?[c.pairs[0].marketId,wide,[wide,wide,wide]]:[9n,1n,[wide,wide,wide]]);
+    f.receipt.status=create?0:1;f.receipt.logs=create?[]:[{address:c.core as typeof f.token,...limitCodec.packedLimitAbi.encodeEventLog(limitCodec.packedLimitAbi.getEvent('FixedPositionRepriced')!,[9n,2n])}];
+    expect(await f.read()).toMatchObject({action:create?'Limit created':'Limit repriced',status:create?'Failed':'Confirmed',...(create?{}:{positionId:9n}),readyToSign:false,nativeAdmission:false});
+    f.transaction.data=limitCodec.exitLimitAbi.encodeFunctionData(name,create?[c.pairs[0].marketId,wide,{ciphertext:1n,signature:wide.signature},{ciphertext:0n,signature:wide.signature},Array(5).fill({ciphertext:1n,signature:wide.signature}),[wide,wide,wide]]:[9n,1n,Array(5).fill({ciphertext:1n,signature:wide.signature}),[wide,wide,wide]]);
+    expect(await f.read()).toBeNull();expect(f.decrypt).not.toHaveBeenCalled();
+  });
   it('binds new History token receipts to the exact new descriptor without admitting signing', async () => {
     const f = fixture('cheap-history');
     expect(await f.read()).toMatchObject({ core: historyCandidate.core, readyToSign: false, nativeAdmission: false,

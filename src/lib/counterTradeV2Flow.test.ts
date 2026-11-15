@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Interface, keccak256 } from '@coti-io/coti-ethers';
-import artifact from '../../tests/fixtures/full-candidate-ChainWhisperCounterOTCEscrowV2.json';
-import linkArtifact from '../../tests/fixtures/full-candidate-ChainWhisperLinkOTCEscrowV2.json';
+const artifact = JSON.parse(readFileSync(new URL('../../reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperCounterOTCEscrowV2.json', import.meta.url), 'utf8'));
+const linkArtifact = JSON.parse(readFileSync(new URL('../../reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperLinkOTCEscrowV2.json', import.meta.url), 'utf8'));
 import bookArtifact from '../../tests/fixtures/production-ChainWhisperPrivateOTCEscrowV2.json';
 import standardArtifact from '../../tests/fixtures/production-ChainWhisperStandardOTCEscrowV2.json';
 import { COUNTER_TRADE_V2_ABI } from './counterTradeV2Abi';
@@ -67,7 +68,7 @@ const fixture = async (privatePair = false, bookParent: boolean | 'standard' = f
   });
   m.balance.mockImplementation(async () => balance); m.allowance.mockImplementation(async () => allowance);
   m.plan.mockImplementation((_current, requested) => ({ selectorSignature: 'approve(address,((uint256,uint256),bytes))', method: 'approve', amountWei: requested }));
-  m.encrypt.mockImplementation(async (_signer, value) => ({ ciphertext: { ciphertextHigh: 0n, ciphertextLow: value }, signature: '0x1234' }));
+  m.encrypt.mockImplementation(async (_signer, value) => ({ ciphertext: { ciphertextHigh: value >> 128n, ciphertextLow: value & ((1n << 128n) - 1n) }, signature: '0x1234' }));
   m.decrypt.mockImplementation((_signer, ct) => { if (BigInt(ct.ciphertextLow) >= 1000n) throw new Error('Other recipient ciphertext.'); return BigInt(ct.ciphertextLow); });
   const provider = {
     getNetwork: vi.fn(async () => ({ chainId: 7082400n })), getCode: vi.fn(async () => code), getFeeData: vi.fn(async () => ({ gasPrice: 2n })),
@@ -109,8 +110,8 @@ const fixture = async (privatePair = false, bookParent: boolean | 'standard' = f
   }) };
   m.binding.mockReturnValue({ ownerAddress: owner, chainId: 7082400n, signer, readProvider: provider });
   m.wait.mockImplementation(async (_binding, h) => { if (loseWait && h === hash(3)) throw new Error('RPC unavailable.'); return receipts.get(h); });
-  const capability = {} as never, deployment = { protocol: 'counter-v2', chainId: '7082400', contractAddress: escrow, runtimeBytecodeHash: codeHash } as never;
-  const parentDeployment = { protocol: bookParent === 'standard' ? 'standard-v2' : bookParent ? 'private-v2' : 'link-v2', chainId: '7082400', contractAddress: link, runtimeBytecodeHash: codeHash } as never;
+  const capability = {} as never, deployment = { protocol: 'counter-v2', chainId: '7082400', contractAddress: escrow, runtimeBytecodeHash: codeHash, finalityLagBlocks: '5' } as never;
+  const parentDeployment = { protocol: bookParent === 'standard' ? 'standard-v2' : bookParent ? 'private-v2' : 'link-v2', chainId: '7082400', contractAddress: link, runtimeBytecodeHash: codeHash, finalityLagBlocks: '7' } as never;
   const readCapability = {} as never, journal = createLinkTradeV2CreationJournal({ capability, deployment, store });
   const review = bookParent ? { bookReference: root, maker, offerToken: tokenA, requestToken: tokenB } : await readLinkTradeV2Review({ capability: readCapability, deployment: parentDeployment, reference: root, secret });
   const input = { capability, deployment, parentDeployment, readCapability, journal };
@@ -118,7 +119,30 @@ const fixture = async (privatePair = false, bookParent: boolean | 'standard' = f
     closeParent: () => { open = false; }, setAllowance: (value: bigint) => { allowance = value; }, loseWait: () => { loseWait = true; }, restoreWait: () => { loseWait = false; }, badRoot: () => { badRoot = true; } };
 };
 beforeEach(() => vi.resetAllMocks());
+const lagCanonicalReads = (f: Awaited<ReturnType<typeof fixture>>) => {
+  const read = m.read.getMockImplementation()!, mature = new Set(f.transactions.keys());
+  m.wait.mockImplementation(async (_binding, h: string, options) => {
+    const tx = f.transactions.get(h) as { to: string };
+    if (options?.finalityLagBlocks === (tx.to === link ? 7n : 5n)) mature.add(h);
+    return f.receipts.get(h);
+  });
+  m.read.mockImplementation(async input => {
+    const entries = [...f.transactions.entries()], last = entries[entries.length - 1];
+    const tx = last?.[1] as { to?: string } | undefined;
+    if (last && (tx?.to === link || tx?.to === escrow) && !mature.has(last[0])) {
+      throw new Error('Canonical history predates the Counter action');
+    }
+    return read(input);
+  });
+};
 describe('Link counters; real client, sender and encrypted journal, modelled wallet/token/RPC', () => {
+  it('waits for Link authorization, Counter creation and cancellation to enter canonical history', async () => {
+    const f = await fixture(true); lagCanonicalReads(f);
+    expect(await executeCounterTradeV2Proposal({ ...f.input, parent: f.review, amounts: f.amounts })).toMatchObject({ kind: 'create', proposalId: '1' });
+    expect(await cancelCounterTradeV2Proposal({ ...f.input, proposalId: '1' })).toMatchObject({ kind: 'cancel', refund: '4' });
+    expect(f.signer.sendTransaction).toHaveBeenCalledTimes(4);
+    expect(await f.journal.read()).toMatchObject({ active: false });
+  });
   it('funds and restores a public Standard Book counter without a Link credential', async () => {
     const f = await fixture(false, 'standard');
     expect(await executeCounterTradeV2Proposal({ ...f.input, publicOnly: true, parent: f.review, amounts: f.amounts })).toMatchObject({ kind: 'create', proposalId: '1', offer: '4', request: '5' });
@@ -229,7 +253,7 @@ describe('Link counters; real client, sender and encrypted journal, modelled wal
     m.encrypt.mockClear();
     const prepared = await prepareCounterTradeV2Proposal(f.input, reviewed.material), call = abi.parseTransaction({ data: prepared.data })!;
     expect(call.name).toBe('createPrivateChild'); expect(call.args.parentId).toBe(2n);
-    expect(m.encrypt.mock.calls.map(c => c.slice(1))).toEqual([ [4n, escrow, abi.getFunction('createPrivateChild')!.selector], [5n, escrow, abi.getFunction('createPrivateChild')!.selector] ]);
+    expect(m.encrypt.mock.calls.map(c => c.slice(1))).toEqual([ [(4n << 128n) | 5n, escrow, abi.getFunction('createPrivateChild')!.selector] ]);
     expect(reviewed).not.toHaveProperty('link');
   });
   it.each([false, true])('funds and refunds a child proposal without a Link authorization call, private=%s', async privatePair => {
@@ -322,6 +346,12 @@ const recipientFixture = async (privatePair: boolean, child: boolean | 'even' = 
     corruptBookRevision: () => { corruptBookRevision = true; }, corruptRootRefund: () => { corruptRootRefund = true; } };
 };
 describe('Counter recipient settlement; selected full ABI, real sender/journal and modelled chain', () => {
+  it.each(['accept', 'decline'] as const)('waits for canonical state before accounting Counter %s', async kind => {
+    const f = await recipientFixture(true); lagCanonicalReads(f);
+    expect(await executeCounterTradeV2RecipientAction({ ...f.input, proposal: f.proposal, kind })).toMatchObject({ kind });
+    expect(await f.journal.read()).toMatchObject({ active: false });
+    expect(f.signer.sendTransaction).toHaveBeenCalledTimes(kind === 'accept' ? 2 : 1);
+  });
   it.each([false, true, 'even'] as const)('settles a Standard parent with its exact saved remaining refund, child=%s', async child => {
     const f = await recipientFixture(false, child, 'standard');
     expect(await executeCounterTradeV2RecipientAction({ ...f.input, publicOnly: true, proposal: f.proposal, kind: 'accept' })).toMatchObject({ kind: 'accept', payment: '5', received: '4', refund: child === 'even' ? '4' : child ? '11' : '7' });
@@ -379,6 +409,8 @@ describe('Counter recipient settlement; selected full ABI, real sender/journal a
     const f = await recipientFixture(privatePair);
     expect(await executeCounterTradeV2RecipientAction({ ...f.input, proposal: f.proposal, kind: 'accept' })).toMatchObject({ kind: 'accept', payment: '5', received: '4', refund: '7' });
     expect(f.signer.sendTransaction.mock.calls.map(([r]) => r.to)).toEqual([tokenA, escrow]);
+    const privateAccept = m.encrypt.mock.calls.filter(call => call[3] === abi.getFunction('acceptPrivateCounter')!.selector);
+    expect(privateAccept.map(call => call.slice(1))).toEqual(privatePair ? [[(4n << 128n) | 5n, escrow, abi.getFunction('acceptPrivateCounter')!.selector]] : []);
     expect(await f.journal.read()).toMatchObject({ active: false, feeWei: '320', counter: { beforeRequestBalance: '0', ancestors: [] }, records: [{ step: 'approval' }, { step: 'accept', state: 'confirmed' }] });
   });
   it.each([false, true])('binds the selected ancestors and counts only the owner refunds, private=%s', async privatePair => {

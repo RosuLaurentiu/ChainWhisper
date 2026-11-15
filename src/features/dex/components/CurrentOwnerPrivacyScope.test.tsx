@@ -56,7 +56,6 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
     return panel === 'pool' ? components.pool({ sharedWalletSession: session }) : panel === 'position' ? components.position({ sharedWalletSession: session }) : CurrentLimitWorkspace({ sharedWalletSession: session, view: 'manage' }); };
   const button = (label: string) => elements(render()).find(e => e.type === 'button' && text(e.props.children) === label)!;
   const idle = async () => { await vi.waitFor(() => expect(hooks.states[panel === 'limit' ? 4 : 5]).toBe(false)); };
-  const click = async (label: string) => { button(label).props.onClick!(); await idle(); };
   render();
   if (panel !== 'pool') {
     const label = panel === 'position' ? 'Liquidity NFT ID' : 'Limit owner NFT ID';
@@ -64,7 +63,7 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
     input.props.onChange!({ target: { value: '9' } }); render();
   }
   const start = async () => {
-    if (panel === 'limit') { await click('Load private order'); button('Check Limit status').props.onClick!(); }
+    if (panel === 'limit') { const calls=read.mock.calls.length;button('Load private order').props.onClick!();await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(calls+1)); }
     else button(panel === 'pool' ? 'Check Pool status' : 'Load private position').props.onClick!();
   };
   const load = async () => { await start(); await idle(); };

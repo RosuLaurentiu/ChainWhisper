@@ -20,7 +20,7 @@ test('price check uses the fixed offline service session only', async t => {
   t.mock.method(service, 'selectSession', () => assert.fail('check must not select a session'));
   const result = await app.main(['--check']);
   assert.equal(result.status, 'CURRENT_PRICE_SERVICE_OFFLINE_CHECKED');
-  assert.equal(result.sessionName, 'service-session-7b67-4');
+  assert.equal(result.sessionName, service.NAME);
   assert.equal(result.noNetwork, true);
   assert.equal(result.noCredentials, true);
   assert.equal(result.noSend, true);
@@ -35,8 +35,8 @@ function windowService(t, change = () => {}) {
   const calls = [], source = { fixed: 'source' };
   let epoch = -1, stopped = false;
   t.mock.method(service, 'pins', () => ({ ...source }));
-  t.mock.method(service, 'selectSession', () => 'service-session-7b67-' + (epoch + 6));
-  t.mock.method(service, 'main', async (mode, name) => {
+  t.mock.method(service, 'selectSession', () => 'service-session-9591-' + (epoch + 6));
+  t.mock.method(service, 'main', async (mode, name, options) => {
     calls.push([mode, name]);
     let result;
     if (mode === '--check') result = {
@@ -53,7 +53,7 @@ function windowService(t, change = () => {}) {
     if (mode === '--inspect') result = { state: { stopped, pending: null, attempts: 12,
       verified: Array.from({ length: 12 }, (_, i) => ({ kind: 'refresh',
         transaction: '0x' + (epoch * 12 + i + 1).toString(16).padStart(64, '0'), gasUsed: '100000' })) } };
-    await change({ mode, epoch, result, source });
+    await change({ mode, epoch, result, source, options });
     return result;
   });
   return calls;
@@ -67,7 +67,7 @@ test('normal window renews only closed verified epochs within its aggregate boun
   assert.equal(result.transactions, 144);
   assert.equal(result.actualFeeWei, String(epochFee * 12n));
   assert.equal(result.limits.maximumCommittedWei, '306000000000000000');
-  assert.equal(result.limits.newWorkMs, 1800000);
+  assert.equal(result.limits.newWorkMs, 600000);
   assert.equal(calls.filter(x => x[0] === '--stop').length, 12);
   for (let i = 1; i < calls.length; i += 5) {
     assert.deepEqual(calls.slice(i, i + 5).map(x => x[0]), ['--prepare', '--run', '--inspect', '--stop', '--inspect']);
@@ -138,6 +138,33 @@ test('deadline requests a graceful stop during the current epoch without renewal
   assert.equal(result.status, 'CURRENT_DEX_PRICES_WINDOW_STOPPED');
   assert.equal(result.reason, 'TIME_BOUND');
   assert.equal(calls.filter(x => x[0] === '--run').length, 1);
+});
+
+test('new work stops with an action completion reserve and keeps its accounting checks', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  let stopRequested = false;
+  const onStop = () => { stopRequested = true; };
+  process.on('SIGINT', onStop);
+  try {
+    const calls = windowService(t, ({ mode, result, options }) => {
+      if (mode === '--run') {
+        assert.equal(options?.newWorkDeadline, Date.now() + 600000);
+        t.mock.timers.tick(599999);
+        assert.equal(stopRequested, false);
+        t.mock.timers.tick(1);
+        assert.equal(stopRequested, true, 'stop new work before the transport deadline');
+        t.mock.timers.tick(900000 + 60000);
+        assert(Date.now() < options.newWorkDeadline + 1200000);
+        result.status = 'SERVICE_STOPPED'; result.reason = 'TIME_BOUND';
+      }
+      if (mode === '--inspect') result.state.stopped = true;
+    });
+    const result = await app.main(['--start']);
+    assert.equal(result.reason, 'TIME_BOUND');
+    assert.equal(result.transactions, 12);
+    assert.equal(result.actualFeeWei, String(epochFee));
+    assert.equal(calls.filter(x => x[0] === '--run').length, 1);
+  } finally { process.removeListener('SIGINT', onStop); }
 });
 
 test('external epoch stop is terminal for the window', async t => {

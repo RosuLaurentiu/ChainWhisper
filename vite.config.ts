@@ -1,10 +1,25 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  let graph: string;
+  const dexBuildIdentity: Plugin = {
+    name: 'current-dex-build-identity',
+    apply: 'build',
+    configResolved(config) {
+      graph = config.env.VITE_LOW_RPC_TRIAL;
+      if (mode === 'coti-testnet-candidate' && !/^[0-9a-f]{64}$/.test(graph ?? ''))
+        throw new Error('Testnet build requires an explicit current DEX graph.');
+    },
+    generateBundle() {
+      if (mode === 'coti-testnet-candidate') this.emitFile({ type: 'asset', fileName: 'DEX_BUILD_IDENTITY.json',
+        source: JSON.stringify({ schema: 'CURRENT_DEX_BUILD_V1', graph }) + '\n' });
+    }
+  };
+  return {
   // Custom domain (chainwhisper.app) serves the app from root.
   base: '/',
-  plugins: [react()],
+  plugins: [react(), dexBuildIdentity],
   // Manual testnet wallet journeys must run against one stable client build.
   // Applying Fast Refresh while MetaMask/Snap prompts or reads are active can
   // preserve incompatible React state and repeatedly reconnect wallet streams.
@@ -66,4 +81,5 @@ export default defineConfig(({ mode }) => ({
       }
     }
   }
-}));
+  };
+});

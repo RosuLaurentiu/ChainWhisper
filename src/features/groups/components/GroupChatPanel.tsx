@@ -86,6 +86,7 @@ type GroupChatPanelProps = {
   chatMessagesRef: Ref<HTMLDivElement>;
   activeGroupMessages: ChatMessage[];
   messageLoadPhase: 'initial' | 'history' | null;
+  historyUnavailable?: boolean;
   hasOlderHistory?: boolean;
   loadingOlderHistory?: boolean;
   onLoadOlderHistory?: () => void;
@@ -177,6 +178,7 @@ export default function GroupChatPanel({
   chatMessagesRef,
   activeGroupMessages,
   messageLoadPhase,
+  historyUnavailable = false,
   hasOlderHistory = false,
   loadingOlderHistory = false,
   onLoadOlderHistory,
@@ -495,6 +497,12 @@ export default function GroupChatPanel({
             <span>{messageLoadLabel}</span>
           </div>
         ) : null}
+        {historyUnavailable ? (
+          <div className="chat-empty-state" role="status" aria-live="polite">
+            <strong>Group history unavailable</strong>
+            <p>The message list is incomplete. Try again later.</p>
+          </div>
+        ) : null}
         {showInitialMessageSkeleton ? (
           <div className="group-message-skeleton-list" role="status" aria-live="polite" aria-label={messageLoadAriaLabel}>
             {[0, 1, 2, 3, 4].map((index) => (
@@ -509,7 +517,7 @@ export default function GroupChatPanel({
               </div>
             ))}
           </div>
-        ) : renderableMessages.length === 0 && !groupEpochSyncRequired ? (
+        ) : renderableMessages.length === 0 && !groupEpochSyncRequired && !historyUnavailable ? (
           <div className="chat-empty-state" role="status" aria-live="polite">
             <strong>{hasOlderHistory ? 'No messages in this page' : membershipEnded ? 'No messages from your membership periods' : 'No group messages yet'}</strong>
             <p>{hasOlderHistory ? 'Older group history remains available.'

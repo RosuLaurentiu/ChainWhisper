@@ -146,6 +146,8 @@ export default function CounterTradeV2Controls(props: Props & { review?: LinkTra
   </section>;
 }
 
+export const counterProposalStatusLabel = (status: number): string => ['', 'Open', 'Accepted', 'Cancelled', 'Declined', 'Expired', 'Invalidated'][status] || 'Unavailable';
+
 /** Selected from participant discovery. Every financial action rechecks this immutable review on-chain. */
 export function CounterTradeV2ParticipantControls(props: Props & { proposalId: string }) {
   const { runtime, ownerAddress, proposalId, tokenInfoByKey, ensureTokenInfo, confirmFunding, runWalletFlow, onBusyChange, actionInProgress } = props;
@@ -202,6 +204,7 @@ export function CounterTradeV2ParticipantControls(props: Props & { proposalId: s
   if (session.owner !== runtime.ownerAddress.toLowerCase()) return null;
   return <section className="p2p-management-group-block" aria-label="Selected counter-offer" aria-busy={locked}>
     {!current ? <p role="status">Loading counter-offer…</p> : null}
+    {p ? <p>{current?.result || current?.error ? 'Last read status' : 'Status'}: {counterProposalStatusLabel(p.effectiveStatus)}</p> : null}
     {p && termsReady && ready(offer) && ready(request) ? <><strong>{own ? 'Your offer' : 'Counter-offer to you'}</strong>
       <p>{formatUnits(p.offer, offer.decimals)} {offer.symbol} for {formatUnits(p.request, request.decimals)} {request.symbol}</p>
       {p.status === 1 && p.effectiveStatus !== 1 ? <p>Offer unavailable for acceptance. Funded tokens can still be returned.</p> : null}

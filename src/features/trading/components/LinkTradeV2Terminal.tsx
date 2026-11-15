@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { formatUnits } from '@coti-io/coti-ethers';
 import { buildTradeCustomTokenInfoKey, type TradeCustomTokenInfo } from '../../../lib/appHelpers';
-import { readLinkTradeV2CurrentReview, type LinkTradeV2Deployment, type LinkTradeV2Review } from '../../../lib/linkTradeV2';
+import { LinkTradeV2UnavailableError, readLinkTradeV2CurrentReview, type LinkTradeV2Deployment, type LinkTradeV2Review } from '../../../lib/linkTradeV2';
 import type { LinkTradeV2Reference } from '../../../lib/linkTradeV2Terms';
 import type { TradeHistoryV2ReadCapability } from '../../../lib/tradeHistoryV2Chain';
 
@@ -46,7 +46,7 @@ export default function LinkTradeV2Terminal({ reference, secret, readContext, re
 }) {
   const request = useMemo(() => ({ reference, secret, readContext, resolveReadContext }), [reference, secret, readContext, resolveReadContext]);
   const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState<{ request: typeof request; review?: LinkTradeV2Review; failed?: boolean } | null>(null);
+  const [result, setResult] = useState<{ request: typeof request; review?: LinkTradeV2Review; failed?: boolean; unavailable?: boolean } | null>(null);
   useEffect(() => {
     let active = true;
     if ((!request.readContext && !request.resolveReadContext) || !request.secret) return;
@@ -61,8 +61,8 @@ export default function LinkTradeV2Terminal({ reference, secret, readContext, re
           const kind = review.terms.privatePair ? 'private-erc20' : 'erc20';
           await Promise.all([review.terms.offerToken, review.terms.requestToken].map(address => ensureTokenInfo({ address, kind })));
         }
-      } catch {
-        if (active) setResult({ request, failed: true });
+      } catch (error) {
+        if (active) setResult(error instanceof LinkTradeV2UnavailableError ? { request, unavailable: true } : { request, failed: true });
       }
     };
     void load();
@@ -72,6 +72,7 @@ export default function LinkTradeV2Terminal({ reference, secret, readContext, re
   if (!readContext && !resolveReadContext) return <p role="status">This shared trade is not available in this App deployment.</p>;
   const current = result?.request === request ? result : null;
   if (!current) return <p role="status">Loading shared trade…</p>;
+  if (current.unavailable) return <p role="status">This shared trade is closed or unavailable. No further fills are available.</p>;
   if (current.failed) return <div role="alert"><p>Could not load this shared trade.</p>
     <button type="button" className="standalone-trade-secondary-btn" onClick={() => { setResult(null); setAttempt(value => value + 1); }}>Retry</button></div>;
   return current.review ? <>

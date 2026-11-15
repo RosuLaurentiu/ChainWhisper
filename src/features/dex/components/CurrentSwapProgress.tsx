@@ -17,7 +17,7 @@ type CurrentSwapProgressProps = {
 /** Presentation only. The owning workspace keeps every action and safety guard. */
 export default function CurrentSwapProgress({ visible, status, result, fundingRecovery, operation, children }: CurrentSwapProgressProps) {
   if (!visible) return null;
-  return <section className="dex-v2-current-progress" aria-label="Swap status">
+  return <section className={`dex-v2-current-progress${!status && !result && !fundingRecovery && !operation ? ' is-idle' : ''}`} aria-label="Swap status">
     {status ? <p className="dex-v2-current-status" role="status">{status}</p> : null}
     {result && result !== status ? <p className="dex-v2-current-result">{result}</p> : null}
     {fundingRecovery ? <p role="alert">Check the pending funding transaction before another request.</p> : null}

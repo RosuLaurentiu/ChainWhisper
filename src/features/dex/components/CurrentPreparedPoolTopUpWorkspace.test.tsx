@@ -1,5 +1,6 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as poolInputs from '../../../lib/currentDexPoolFunding';
 import CurrentPreparedPoolTopUpWorkspace from './CurrentPreparedPoolTopUpWorkspace';
 import { resolveCurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
@@ -26,6 +27,7 @@ vi.mock('../../../lib/currentDexC1SwapPolicy', async original => {
   } };
 });
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
+  useEffect:()=>{},
   useState: (initial: unknown) => { const i = hooks.index++; if (!(i in hooks.states)) hooks.states[i] = initial;
     return [hooks.states[i], (value: unknown) => { hooks.states[i] = typeof value === 'function' ? value(hooks.states[i]) : value; }]; },
   useRef: (initial: unknown) => { const i = hooks.refIndex++; return hooks.refs[i] ?? (hooks.refs[i] = { current: initial }); }
@@ -70,10 +72,13 @@ function fixture(pairIndex = 0, wallet = owner) {
       classId: 1n, core: candidate.core, principal: wallet, chainId: BigInt(candidate.chainId), marketId: pair.marketId, poolTokens }) ? preparedPreview : null;
   });
   const previewRecover = vi.fn(async () => preview), fundRecover = vi.fn(async () => managed);
-  const verifySnapshot = vi.fn(async () => ({ privateAccountingVerified: true, producerHash: snapshotHash }));
-  const managed = { positionId: 52n, privateAccountingVerified: false, status: 'manage-verified-snapshot-required', verifySnapshot };
+  const verifySnapshot = vi.fn(async (_hash:string) => ({ privateAccountingVerified: true, producerHash: snapshotHash }));
+  const managed = { transactionHash: hash, positionId: 52n, privateAccountingVerified: false, status: 'manage-verified-snapshot-required', verifySnapshot };
   const submitPreview = vi.fn(async () => ({ transactionHash: hash, recover: previewRecover }));
-  const submitFunding = vi.fn(async () => ({ transactionHash: hash, recover: fundRecover }));
+  const submitFunding = vi.fn(async () => {
+    journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify({version:1,chainId:candidate.chainId,owner:wallet.toLowerCase(),core:candidate.core,graph:`0x${candidate.graph}`,phase:'pool-fund',nonce:2,txHash:hash,callHash:hash,poolTopUpHash:null}));
+    return {transactionHash:hash,recover:fundRecover};
+  });
   const funds = () => ({ owner: wallet, graph: candidate.graph, core: candidate.core, packageSha256: candidate.packageSha256, privateFundsVerified: true,
     tokens: candidate.tokens.map(([address]) => ({ address, allowance: poolTokens.includes(address) ? allowances[poolTokens.indexOf(address)] : 0n })) });
   const prepareApproval = vi.fn(async (request: { canonicalIndex: 0 | 1; cleanup: boolean;
@@ -89,9 +94,17 @@ function fixture(pairIndex = 0, wallet = owner) {
   const prepareSnapshot = vi.fn(async (request: Parameters<PositionsCap['prepareSnapshot']>[0]) => {
     return await request.confirm({ positionId: 52n, closed: false, gasCap: 30_000_000n }) ? { action: 'snapshot', positionId: 52n } : null;
   });
-  const snapshotRecover = vi.fn(async () => ({ positionId: 52n, action: 'snapshot', producerHash: snapshotHash, privateAccountingVerified: false }));
-  const submitSnapshot = vi.fn(async () => ({ transactionHash: snapshotHash, recover: snapshotRecover }));
-  const sender = { submitPoolTopUpPreview: submitPreview, submitPoolTopUpFunding: submitFunding, prepareSharedPoolApproval: prepareApproval,
+  const snapshotRecover = vi.fn(async () => {
+    await verifySnapshot(snapshotHash);journal.delete(CURRENT_DEX_PENDING_ATTEMPT_KEY);
+    return { positionId:52n,action:'snapshot',producerHash:snapshotHash,privateAccountingVerified:true,poolTopUpHash:hash };
+  });
+  const submitSnapshot = vi.fn(async (_prepared:unknown,topUp:unknown) => {
+    expect(topUp).toBe(managed);
+    journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify({version:1,chainId:candidate.chainId,owner:wallet.toLowerCase(),core:candidate.core,graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:3,txHash:snapshotHash,callHash:hash,poolTopUpHash:hash}));
+    return { transactionHash:snapshotHash,recover:snapshotRecover };
+  });
+  const readAllowances = vi.fn(async (): Promise<readonly [boolean, boolean]> => [allowances[0] === amounts.used0, allowances[1] === amounts.used1]);
+  const sender = { submitPoolTopUpPreview: submitPreview, submitPoolTopUpFunding: submitFunding, readSharedPoolAllowances: readAllowances, prepareSharedPoolApproval: prepareApproval,
     submitSharedPoolApproval: submitApproval, submitPoolPositionAction: submitSnapshot,
     recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null), recoverPendingPoolAttempt: vi.fn(async () => null),
     recoverPendingSharedPoolApproval: vi.fn(async () => null), recoverPendingPoolPositionAttempt: vi.fn(async () => null) };
@@ -114,11 +127,71 @@ function fixture(pairIndex = 0, wallet = owner) {
   return { props, pair, render, button, input, change, click, enter, previewFlow, fundingFlow, approveBoth, settle, journal,
     amounts, funding, managed, preview, funds, allowances, preparePoolTopUp, prepareFunding, abandon, previewRecover, fundRecover, verifySnapshot,
     submitPreview, submitFunding, prepareApproval, submitApproval, approvalRecover, prepareSnapshot, snapshotRecover, submitSnapshot,
-    getFunding, getSender, getPositions, request, sender };
+    getFunding, getSender, getPositions, request, sender, readAllowances };
 }
 afterEach(() => { hooks.states = []; hooks.refs = []; hooks.allowNative = false; vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('prepared Pool top-up money flow', () => {
+  it('continues reviewed funding to the wallet when exact allowances already pass', async () => {
+    const f = fixture(); hooks.allowNative = true;
+    f.allowances[0] = f.amounts.used0; f.allowances[1] = f.amounts.used1;
+    await f.fundingFlow();
+    expect(f.prepareFunding).toHaveBeenCalledOnce();
+    expect(f.readAllowances).toHaveBeenCalledOnce();
+    expect(f.submitFunding).toHaveBeenCalledOnce();
+    expect(f.submitApproval).not.toHaveBeenCalled();
+    expect(f.button('Submit liquidity top-up')!.disabled).toBe(true);
+    f.button('Submit liquidity top-up')!.element.props.onClick!(); await f.settle();
+    expect(f.submitFunding).toHaveBeenCalledOnce();
+  });
+  it('does not continue already-approved funding when its exact review is rejected', async () => {
+    const f = fixture(); hooks.allowNative = true;
+    f.allowances[0] = f.amounts.used0; f.allowances[1] = f.amounts.used1;
+    await f.previewFlow(); hooks.confirm.mockResolvedValueOnce(false);
+    await f.click('Review exact top-up');
+    expect(f.submitFunding).not.toHaveBeenCalled();
+    expect(f.readAllowances).not.toHaveBeenCalled();
+  });
+  it('keeps prepared funding guidance when no transaction is pending', async () => {
+    const f = fixture(); hooks.allowNative = true; await f.fundingFlow();
+    await f.click('Check top-up status');
+    expect(text(f.render())).toContain('Funding prepared. Approve the remaining token amounts');
+    expect(text(f.render())).not.toContain('no retained private accounting proof');
+    await f.approveBoth(); await f.click('Check top-up status');
+    expect(text(f.render())).toContain('Funding prepared. Select Submit liquidity top-up');
+    expect(f.submitFunding).not.toHaveBeenCalled();
+  });
+  it.each([false, true])('shows separate preview and funding signature counts (packed=%s)', async packed => {
+    const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(packed);
+    try {
+      const f = fixture(); hooks.allowNative = true; await f.fundingFlow();
+      for (const phase of ['preview', 'funding']) expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({
+        summaryRows: expect.arrayContaining([{ label: `Private-input signatures for ${phase}`, value: packed ? '3' : '4' }])
+      }));
+      expect(f.submitFunding).not.toHaveBeenCalled();
+    } finally { profile.mockRestore(); }
+  });
+  it('reuses exact allowances and rechecks before approval', async () => {
+    const f = fixture(); hooks.allowNative = true; f.allowances[0] = f.amounts.used0;
+    await f.fundingFlow();
+    expect(f.button(`Approve ${f.pair.tokens[0].label} top-up amount`)?.disabled).toBe(true);
+    f.allowances[1] = f.amounts.used1;
+    await f.click(`Approve ${f.pair.tokens[1].label} top-up amount`);
+    expect(text(f.render())).toContain(`Exact ${f.pair.tokens[1].label} allowance verified`);
+    expect(f.prepareApproval).not.toHaveBeenCalled(); expect(f.submitApproval).not.toHaveBeenCalled();
+  });
+  it('discards an allowance read when the wallet session changes', async () => {
+    const f = fixture(); hooks.allowNative = true; await f.previewFlow();
+    let finish!: (value: readonly [boolean, boolean]) => void;
+    f.readAllowances.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    f.button('Review exact top-up')!.element.props.onClick!();
+    await vi.waitFor(() => expect(f.readAllowances).toHaveBeenCalledOnce());
+    f.props.session = { ...f.props.session, walletAddress: `0x${'55'.repeat(20)}` }; f.render();
+    finish([true, true]);
+    await vi.waitFor(() => expect(text(f.render())).toContain('Top-up session changed'));
+    expect(f.button('Submit liquidity top-up')).toBeUndefined();
+    expect(f.submitApproval).not.toHaveBeenCalled(); expect(f.submitFunding).not.toHaveBeenCalled();
+  });
   it('routes current browser top-up through its capability and keeps other candidate holds', async () => {
     const f = fixture(); f.enter(); f.change(`${f.pair.tokens[0].label} top-up maximum`, '0.5');
     f.change(`${f.pair.tokens[1].label} top-up maximum`, '0.5'); await f.click('Review top-up preview');
@@ -159,7 +232,7 @@ describe('prepared Pool top-up money flow', () => {
     const f = fixture(4); hooks.allowNative = true; await f.fundingFlow();
     expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'Review exact top-up amounts', summaryRows: expect.arrayContaining([
       { label: `${f.pair.tokens[0].label} debit`, value: '1.000001' }, { label: `${f.pair.tokens[1].label} debit`, value: '2.000002' },
-      { label: `${f.pair.tokens[0].label} left in wallet`, value: '0.234566' }, { label: `${f.pair.tokens[1].label} left in wallet`, value: '0.345676' }
+      { label: `${f.pair.tokens[0].label} unused from entered budget`, value: '0.234566' }, { label: `${f.pair.tokens[1].label} unused from entered budget`, value: '0.345676' }
     ]) }));
     await f.click('Submit liquidity top-up'); expect(f.submitFunding).not.toHaveBeenCalled();
     await f.approveBoth();
@@ -204,6 +277,21 @@ describe('prepared Pool top-up money flow', () => {
     await f.click('Check top-up status'); expect(text(f.render())).toContain('management proof is unavailable');
     expect(f.props.onManaged).not.toHaveBeenCalled(); expect(f.props.onVerified).not.toHaveBeenCalled(); expect(f.submitSnapshot).not.toHaveBeenCalled();
   });
+  it.each(['funded','snapshot-failure'] as const)('retains the durable top-up hold after a reload: %s',async stage=>{
+    const f=fixture();hooks.allowNative=true;await f.fundingFlow();await f.approveBoth();await f.click('Submit liquidity top-up');await f.click('Check top-up status');
+    if(stage==='snapshot-failure'){
+      await f.click('Review top-up verification snapshot');f.verifySnapshot.mockRejectedValueOnce(new Error('Snapshot shares differ from management'));await f.click('Check top-up status');
+    }
+    const saved=f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!;expect(saved).toBeTruthy();
+    hooks.states=[];hooks.refs=[];
+    const metadata={status:'observed-mined-verification-held',poolTopUpHash:hash,privateAccountingVerified:false,readyToSign:false};
+    f.sender.recoverPendingPoolAttempt.mockResolvedValue(metadata as never);f.sender.recoverPendingPoolPositionAttempt.mockResolvedValue(metadata as never);
+    await f.click('Check top-up status');
+    expect(text(f.render())).toContain('Final top-up accounting has not completed.');expect(text(f.render())).toContain('Do not resend');
+    expect(text(f.render())).toContain(stage==='funded'?'Top-up deposit mined':'Top-up verification snapshot mined');
+    expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(f.props.onVerified).not.toHaveBeenCalled();expect(f.props.onReleased).not.toHaveBeenCalled();
+    expect(f.button('Review top-up preview')!.disabled).toBe(true);expect(f.submitFunding).toHaveBeenCalledOnce();expect(f.submitSnapshot).toHaveBeenCalledTimes(stage==='funded'?0:1);
+  });
   it('keeps final accounting open when separate snapshot verification rejects', async () => {
     const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth(); await f.click('Submit liquidity top-up');
     await f.click('Check top-up status'); await f.click('Review top-up verification snapshot');
@@ -211,14 +299,14 @@ describe('prepared Pool top-up money flow', () => {
     await f.click('Check top-up status'); expect(text(f.render())).toContain('Snapshot shares differ');
     expect(f.props.onVerified).not.toHaveBeenCalled(); expect(f.submitFunding).toHaveBeenCalledOnce();
   });
-  it('retries final snapshot reads without repeating snapshot recovery or sending', async () => {
+  it('rechecks final snapshot accounting on an explicit status request without sending again', async () => {
     const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth(); await f.click('Submit liquidity top-up');
     await f.click('Check top-up status'); await f.click('Review top-up verification snapshot');
     f.verifySnapshot.mockRejectedValueOnce(new Error('Temporary private snapshot read failure'));
     await f.click('Check top-up status'); expect(f.props.onVerified).not.toHaveBeenCalled();
     expect(f.snapshotRecover).toHaveBeenCalledOnce(); expect(f.verifySnapshot).toHaveBeenCalledOnce();
     await f.click('Check top-up status');
-    expect(f.snapshotRecover).toHaveBeenCalledOnce(); expect(f.verifySnapshot).toHaveBeenCalledTimes(2);
+    expect(f.snapshotRecover).toHaveBeenCalledTimes(2); expect(f.verifySnapshot).toHaveBeenCalledTimes(2);
     expect(f.submitSnapshot).toHaveBeenCalledOnce(); expect(f.submitFunding).toHaveBeenCalledOnce();
     expect(f.props.onVerified).toHaveBeenCalledWith(snapshotHash);
   });
@@ -269,6 +357,15 @@ describe('prepared Pool top-up money flow', () => {
     await f.click('Submit liquidity top-up');
     expect(f.submitFunding).toHaveBeenCalledOnce(); expect(f.button('Submit liquidity top-up')!.disabled).toBe(true);
     expect(f.submitSnapshot).not.toHaveBeenCalled(); expect(f.props.onReleased).not.toHaveBeenCalled(); expect(f.props.onVerified).not.toHaveBeenCalled();
+  });
+  it('keeps a mined snapshot verification hold after top-up reload',async()=>{
+    const f=fixture(),saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core,graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:3,txHash:hash,callHash:hash,verificationBlocked:true,verificationFailure:'snapshot-financial-state'});
+    f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);
+    f.sender.recoverPendingPoolPositionAttempt.mockResolvedValue({status:'observed-mined-verification-held',verificationFailure:'snapshot-financial-state',privateAccountingVerified:false,readyToSign:false} as never);
+    await f.click('Check top-up status');
+    expect(text(f.render())).toContain('mined');expect(text(f.render())).toContain('Prepared snapshot changed financial state.');
+    expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(f.props.onVerified).not.toHaveBeenCalled();
+    expect(f.submitSnapshot).not.toHaveBeenCalled();expect(f.submitFunding).not.toHaveBeenCalled();expect(f.button('Review exact top-up')).toBeUndefined();
   });
   it.each(['pool-preview', 'pool-fund', 'token-approve', 'pool-snapshot'] as const)('reloads %s as public metadata without private funding authority', async phase => {
     const f = fixture();

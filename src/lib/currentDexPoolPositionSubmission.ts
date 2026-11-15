@@ -1,8 +1,9 @@
 import { getAddress, keccak256 } from '@coti-io/coti-ethers';
-import { assertCurrentPoolPositionPrepared, type CurrentPoolPreparedPositionAction, type CurrentPoolPreparedSnapshot, type CurrentPoolPreparedExitPreview } from '../features/wallet/currentDexPoolPositionCapability';
+import { assertCurrentPoolPositionPrepared, assertVerifiedCurrentPoolSnapshot, assertVerifiedSupersededPoolSnapshot, type CurrentPoolPreparedPositionAction, type CurrentPoolPreparedSnapshot, type CurrentPoolPreparedExitPreview, type issueCurrentDexPoolPositionCapability } from '../features/wallet/currentDexPoolPositionCapability';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as currentCandidate } from './selectedCurrentDexCandidate';
 import { decodePoolExitPreviewEvent } from './currentDexPoolExitPreview';
 import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
-import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentPoolVerification } from './currentDexPendingAttempt';
+import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentPoolVerification, currentPoolRefreshStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, CURRENT_POOL_REFRESH_ATTEMPT_KEY, CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
 import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { assertCurrentAppPoolAuthority } from './currentDexC1SwapPolicy';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
@@ -11,10 +12,12 @@ import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi, currentPool
 import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
 import { requireCurrentNativePoolSession, CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_LIMITS } from './currentDexNativePoolPolicy';
 import { currentNativeSigningBudget, isCurrentNativeSwapCandidate, recordCurrentNativePoolOutcome, completeCurrentNativePoolScope } from './currentDexNativeSwapPolicy';
-import { isKnownCurrentPoolProofMismatch } from './currentDexPoolProofError';
+import { isKnownCurrentPoolProofMismatch, CurrentPoolProofMismatch } from './currentDexPoolProofError';
+import { assertCurrentPoolFundingPrepared, type CurrentPoolTopUpResult } from '../features/wallet/currentDexPoolFundingCapability';
 
 // Native ownership and previewed exit: shared-history-pool-{ownership,withdrawal}-2026-10-13/RESULT.json.
 // Full Close: native-direct-case; closed snapshot: shared-history-pool-closed-2026-10-14/RESULT.json.
+// Packed preview/withdrawal: reports/pool-input-signatures-2026-11-12/WITHDRAW_NATIVE_RESULT.json.
 // This admits the proved phases only; connected-wallet authority stays separate.
 export const assertCurrentPoolPositionNativeAdmission=(candidate:CurrentCheapDexCandidate,action:'snapshot'|CurrentPoolOwnerAction,closed=false,exitPhase?:'preview'|'withdrawal')=>{
   if(candidate.graph===STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph&&resolvePreparedDexScope(candidate).key==='cheap-history'&&
@@ -33,6 +36,8 @@ const snapshotReceipt = (receipt: NonNullable<Awaited<ReturnType<CurrentTranspor
 };
 const submitted=new WeakMap<object,Set<string>>();
 type NativeOwnerResult=Awaited<ReturnType<CurrentPoolPreparedPositionAction['readResult']>>|Awaited<ReturnType<CurrentPoolPreparedSnapshot['readResult']>>|Awaited<ReturnType<CurrentPoolPreparedExitPreview['readResult']>>;
+type SnapshotCapability = Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
+type SnapshotVerifier = (id: bigint, hash: string) => Promise<Awaited<ReturnType<SnapshotCapability['verifyPlainSnapshot'] | SnapshotCapability['verifySupersededPlainSnapshot']>>>;
 const ownerRecoveries=new WeakMap<object,Map<string,()=>Promise<NativeOwnerResult>>>();
 const same=(a:string|null,b:string)=>typeof a==='string'&&a.toLowerCase()===b.toLowerCase();
 const shape=(phase:string,data:string,owner:string,preparedCandidate=false,exitCandidate=false)=>{
@@ -65,8 +70,19 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       await transport.verifyCanonicalInclusion(tx,after);await transport.assertCurrent();}
   };
   let keys=submitted.get(signer);if(!keys){keys=new Set();submitted.set(signer,keys);}
-  return Object.freeze({submitPoolPositionAction:async(prepared:CurrentPoolPreparedPositionAction|CurrentPoolPreparedSnapshot|CurrentPoolPreparedExitPreview)=>{
+  const submitPoolPositionAction=async(prepared:CurrentPoolPreparedPositionAction|CurrentPoolPreparedSnapshot|CurrentPoolPreparedExitPreview,topUp?:CurrentPoolTopUpResult,options?:{refreshHeldSnapshot:true})=>{
+    let sendStorage=storage,sendBoundary=boundary;
+    const held=options?.refreshHeldSnapshot?boundary.pending():null;
+    if(options){
+      if(candidateKey!=='cheap-history'||topUp||prepared.action!=='snapshot'||prepared.closed||
+        !heldPoolSnapshotRefreshEligible(held,{chainId:String(chainId),owner,core,graph:`0x${candidate.graph}`}))
+        throw new Error('Only a new active-position snapshot may use the retained hold.');
+      sendStorage=currentPoolRefreshStorage(storage,held!,keccak256(prepared.data));
+      const refreshTransport={...transport,readNonce:async()=>{const nonce=await transport.readNonce();if(nonce<=held!.nonce)throw new Error('Independent snapshot needs a newer nonce.');return nonce;}};
+      sendBoundary=createCurrentAttemptBoundary({storage:sendStorage,c:candidate,core,owner,chainId,transport:refreshTransport,attest,now,historical:false,canonicalIndexProof:true,heldSnapshot:held!});
+    }
     const native=isCurrentNativeSwapCandidate(candidate), snapshot=prepared.action==='snapshot';
+    const finalSnapshotBaseline=candidateKey==='cheap-history'&&snapshot&&'captureBaselineAtSigning'in prepared&&prepared.captureBaselineAtSigning===true;
     const exitPhase='exitPhase' in prepared?prepared.exitPhase:undefined;
     const phase=snapshot?'pool-snapshot':prepared.action==='transfer'?'pool-transfer':'pool-owner';
     const cap=snapshot?CURRENT_NATIVE_POOL_LIMITS.snapshotCap:native?CURRENT_NATIVE_POOL_LIMITS.closeCap:currentPoolOwnerGasCap(prepared.action as CurrentPoolPreparedPositionAction['action']);
@@ -86,6 +102,12 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     };
     const validate=async()=>{
       assertCurrentPoolPositionPrepared(prepared,signer);await prepared.assertCurrent();
+      if(topUp){
+        assertCurrentPoolFundingPrepared(topUp,signer);await topUp.assertCurrent();
+        if(!preparedCandidate||!snapshot||!('marketId' in prepared)||topUp.expectation.action!=='top-up'||topUp.expectation.marketId!==prepared.marketId||topUp.positionId!==prepared.positionId||topUp.chainId!==chainId||!same(topUp.from,owner)||!same(topUp.to,core)||
+          topUp.graph!==candidate.graph||topUp.packageSha256!==candidate.packageSha256||!/^0x[0-9a-fA-F]{64}$/.test(topUp.transactionHash)||BigInt(topUp.transactionHash)===0n)
+          throw new Error('Top-up snapshot owner, position or candidate changed.');
+      }
       if(prepared.chainId!==chainId||!same(prepared.from,owner)||!same(prepared.to,phase==='pool-transfer'?nft:core)||prepared.value!==0n||
         prepared.graph!==candidate.graph||prepared.packageSha256!==candidate.packageSha256||prepared.readyToSign!==false) throw new Error('Position preparation differs from this owner candidate.');
       const decoded=shape(phase,prepared.data,owner,preparedCandidate,exitCandidate);
@@ -96,52 +118,79 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       }
     };
     await validate();admission();
-    boundary.requireEmptyPending();
-    const call=Object.freeze({chainId,from:owner,to:prepared.to,value:0n,data:prepared.data}),key=`${phase}:${keccak256(call.data).toLowerCase()}${snapshot?':'+budgetPhase:''}${snapshot&&prepared.replacementFrom?':'+prepared.replacementFrom:''}`;
+    const checkHeld=async()=>{if(!held)return;
+      sendBoundary.pending();
+      const result=await inspectPending(boundary,storage);
+      if(result?.status!=='observed-mined-verification-held'||result.transactionHash!==held.txHash)throw new Error('Original snapshot is not confirmed for this owner.');
+      sendBoundary.pending();
+    };
+    await checkHeld();
+    if(topUp)sendBoundary.requirePoolTopUpHandoff(topUp.transactionHash.toLowerCase());else sendBoundary.requireEmptyPending();
+    // A funded top-up needs its own snapshot even when the position reader retains an earlier source.
+    const snapshotSource=snapshot&&topUp?`:top-up:${topUp.transactionHash.toLowerCase()}`:snapshot&&prepared.replacementFrom?`:${prepared.replacementFrom}`:'';
+    const call=Object.freeze({chainId,from:owner,to:prepared.to,value:0n,data:prepared.data}),key=`${held?'refresh:':''}${phase}:${keccak256(call.data).toLowerCase()}${snapshot?':'+budgetPhase:''}${snapshotSource}`;
     const checkBudget=async()=>{if(!budget)return;admission();budget.check(budgetPhase,key,cap,session!.scope);
-      const head=await boundary.currentHead(undefined,cap);if(!transport.readNativeResources)throw new Error('Native Pool exit resources are unavailable.');
+      const head=await sendBoundary.currentHead(undefined,cap);if(!transport.readNativeResources)throw new Error('Native Pool exit resources are unavailable.');
       const resources=await transport.readNativeResources(head);if(resources.balance<budget.snapshot().poolRemainingTailWei+CURRENT_NATIVE_POOL_LIMITS.payerReserveWei)throw new Error('Native Pool reserved exit resources are insufficient.');};
     await checkBudget();
     if(keys!.has(key))throw new Error('Position action was already submitted. Recover it instead.');keys!.add(key);
     let signing=false;
     try{
-      const sent=await boundary.sendCurrent(phase,call,undefined,async()=>{await validate();admission();await prepared.assertBeforeSend();await validate();admission();await checkBudget();},()=>{signing=true;},undefined,cap,undefined,
-        async()=>{await checkBudget();budget?.commit(budgetPhase,key,cap,session!.scope);}, undefined, undefined, undefined, undefined, undefined,
-        candidateKey === 'cheap-history' ? { kind: 'position', prepared, signer } : undefined);
+      const sent=await sendBoundary.sendCurrent(phase,call,undefined,async()=>{await validate();admission();if(!finalSnapshotBaseline)await prepared.assertBeforeSend();await checkHeld();await validate();admission();await checkBudget();},()=>{
+        if(snapshot&&'sealBeforeSend' in prepared)prepared.sealBeforeSend();signing=true;
+      },undefined,cap,undefined,
+        async()=>{
+          if(finalSnapshotBaseline){await prepared.assertBeforeSend();await checkHeld();await validate();admission();}
+          await checkBudget();budget?.commit(budgetPhase,key,cap,session!.scope);
+        }, undefined, undefined, undefined, undefined, undefined,
+        candidateKey === 'cheap-history' ? { kind: 'position', prepared, signer } : undefined, topUp?.transactionHash.toLowerCase());
       const result=Object.freeze({...sent,status:'position-action-pending' as const,recover:async()=>{
-        const pending=boundary.pending();
+        const pending=sendBoundary.pending();
         if(!pending||pending.chainId!==chainId.toString()||!same(pending.owner,owner)||!same(pending.core,core)||pending.graph!==`0x${candidate.graph}`||pending.phase!==phase||pending.callHash!==keccak256(call.data).toLowerCase()||pending.nonce!==sent.request.nonce)throw new Error('Position pending attempt changed.');
-        boundary.requireOwnPending(pending,sent.transactionHash);
+        sendBoundary.requireOwnPending(pending,sent.transactionHash);
+        if(pending.poolTopUpHash!==topUp?.transactionHash.toLowerCase())throw new Error('Top-up snapshot journal binding changed.');
         if(pending.verificationBlocked)throw new Error('Known Pool verification failure. Manual reconciliation is required.');
         let canonical:ReturnType<typeof snapshotReceipt>,result:Awaited<ReturnType<typeof prepared.readResult>>;
-        try{canonical=snapshotReceipt(await boundary.verifyMinedCall(sent.request,sent.transactionHash));await validate();
+        try{canonical=snapshotReceipt(await sendBoundary.verifyMinedCall(sent.request,sent.transactionHash));await validate();
           result=await prepared.readResult(sent.transactionHash);await prepared.assertCurrent();
+          if(topUp){
+            if(!result||result.action!=='snapshot')throw new CurrentPoolProofMismatch('Top-up final private accounting is unavailable.');
+            const verified=await topUp.verifySnapshot(sent.transactionHash);await validate();
+            if(verified.privateAccountingVerified!==true||verified.positionId!==prepared.positionId||!same(verified.producerHash,sent.transactionHash))
+              throw new CurrentPoolProofMismatch('Top-up final private accounting is unavailable.');
+          }
           await recheck(sent.request,sent.transactionHash,canonical);
-        }catch(error){if((native||preparedCandidate)&&isKnownCurrentPoolProofMismatch(error))blockCurrentPoolVerification(storage,boundary.requireOwnPending(pending,sent.transactionHash));throw error;}
+          if(topUp)await topUp.assertCurrent();
+        }catch(error){if((native||preparedCandidate)&&isKnownCurrentPoolProofMismatch(error))blockCurrentPoolVerification(sendStorage,sendBoundary.requireOwnPending(pending,sent.transactionHash),error);throw error;}
         if(!result)throw new Error('Private position result is unavailable.');
         if(native){if(!snapshot)recordCurrentNativePoolOutcome(signer,session!.scope,'closed');
           else if(prepared.closed){completeCurrentNativePoolScope(signer,session!.scope);session!.completed=true;}}
-        clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,sent.transactionHash));return result;
+        clearCurrentDexPendingAttempt(sendStorage,sendBoundary.requireOwnPending(pending,sent.transactionHash));
+        return topUp&&result.action==='snapshot'?Object.freeze({...result,privateAccountingVerified:true as const,poolTopUpHash:topUp.transactionHash.toLowerCase()}):result;
       }});
-      if(native||preparedCandidate){let recoveries=ownerRecoveries.get(signer);if(!recoveries){recoveries=new Map();ownerRecoveries.set(signer,recoveries);}recoveries.set(`${phase}:${keccak256(call.data).toLowerCase()}`,result.recover);}
+      if(native||preparedCandidate){let recoveries=ownerRecoveries.get(signer);if(!recoveries){recoveries=new Map();ownerRecoveries.set(signer,recoveries);}recoveries.set(`${held?'refresh:':''}${phase}:${keccak256(call.data).toLowerCase()}`,result.recover);}
       return result;
     }catch(error){if(!signing)keys!.delete(key);throw error;}
-  },recoverCurrentPreparedPoolPositionResult:async()=>{
-    await transport.assertCurrent();const pending=boundary.pending();if(!pending||!preparedCandidate)return null;
+  };
+  const recoverCurrentPreparedPoolPositionResult=async()=>{
+    await transport.assertCurrent();const held=boundary.pending(),refresh=!!held&&storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)!==null;
+    const pending=refresh?readCurrentDexPendingAttempt(currentPoolRefreshStorage(storage,held!)):held;if(!pending||!preparedCandidate)return null;
     if(pending.chainId!==String(chainId)||!same(pending.owner,owner)||pending.graph!==`0x${candidate.graph}`||!same(pending.core,core)||!['pool-snapshot','pool-owner','pool-transfer'].includes(pending.phase))return null;
-    const recover=ownerRecoveries.get(signer)?.get(`${pending.phase}:${pending.callHash}`);
+    const recover=ownerRecoveries.get(signer)?.get(`${refresh?'refresh:':''}${pending.phase}:${pending.callHash}`);
     if(!recover)return null;return recover();
-  },recoverCurrentNativePoolPositionResult:async()=>{
+  };
+  const recoverCurrentNativePoolPositionResult=async()=>{
     await transport.assertCurrent();const pending=boundary.pending();if(!pending||!isCurrentNativeSwapCandidate(candidate))return null;
     if(pending.chainId!==String(chainId)||!same(pending.owner,owner)||pending.graph!==`0x${candidate.graph}`||!same(pending.core,core)||
       !['pool-owner','pool-snapshot'].includes(pending.phase))return null;
     const recover=ownerRecoveries.get(signer)?.get(`${pending.phase}:${pending.callHash}`);
     if(!recover)return null;return recover();
-  },recoverPendingPoolPositionAttempt:async()=>{
+  };
+  const inspectPending=async(boundary:ReturnType<typeof createCurrentAttemptBoundary>,storage:ReturnType<typeof currentDexPendingStorage>,retain=false,verifySnapshot?:SnapshotVerifier)=>{
     await transport.assertCurrent();const pending=boundary.pending();if(!pending)return null;
     if(pending.chainId!==chainId.toString()||!same(pending.owner,owner)||!same(pending.core,core)||pending.graph!==`0x${candidate.graph}`||
       !['pool-owner','pool-transfer','pool-snapshot'].includes(pending.phase))throw new Error('Pending action belongs to another owner or adapter.');
-    if(pending.verificationBlocked)return Object.freeze({status:'manual-reconciliation-required' as const,verificationBlocked:true as const,readyToSign:false as const});
+    if(pending.verificationBlocked&&pending.phase!=='pool-snapshot')return Object.freeze({status:'manual-reconciliation-required' as const,transactionHash:pending.txHash,verificationFailure:pending.verificationFailure,verificationBlocked:true as const,readyToSign:false as const});
     if(!pending.txHash)return Object.freeze({status:'manual-reconciliation-required' as const,readyToSign:false as const});
     const tx=await transport.readTransaction(pending.txHash),receipt=await transport.waitForReceipt(pending.txHash);await transport.assertCurrent();
     if(!tx||!receipt)return Object.freeze({status:'awaiting-chain-confirmation' as const,readyToSign:false as const});
@@ -152,7 +201,8 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     const request=Object.freeze({chainId,from:owner,to:pending.phase==='pool-transfer'?nft:core,value:0n,
       data:tx.data,nonce:pending.nonce,gasLimit:cap});
     const canonical=snapshotReceipt(await boundary.verifyMinedCall(request,pending.txHash,true));
-    await attest({number:BigInt(canonical.blockNumber!),hash:canonical.blockHash!});await transport.assertCurrent();
+    // Receipt inclusion is historical; public status does not need the old state trie.
+    await attest(await transport.readHead());await transport.assertCurrent();
     if(canonical.status===1&&pending.phase==='pool-transfer')decodeCurrentPoolNftTransfer(canonical.logs??[],nft,owner,decoded[1],decoded[2]);
     if(canonical.status===1&&pending.phase==='pool-owner'&&decoded[2]===7n)decodeCurrentPoolNftTransfer(canonical.logs??[],nft,owner,'0x0000000000000000000000000000000000000000',decoded[0]);
     if(canonical.status===1&&pending.phase==='pool-owner'&&decoded[2]===11n)decodePoolExitPreviewEvent(canonical.logs??[],core,decoded[0]);
@@ -163,11 +213,54 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       if(!same(encoded.data,log.data)||encoded.topics.length!==log.topics.length||encoded.topics.some((v,i)=>!same(v,log.topics[i])))throw new Error('Snapshot metadata event is non-canonical.');
     }
     await recheck(request,pending.txHash,canonical,true);
+    if(verifySnapshot&&candidateKey==='cheap-history'&&candidate.graph===currentCandidate.graph&&
+      candidate.packageSha256===currentCandidate.packageSha256&&canonical.status===1&&
+      pending.phase==='pool-snapshot'&&pending.verificationFailure==='snapshot-financial-state'&&
+      pending.poolTopUpHash===undefined&&pending.target===undefined&&pending.operationId===undefined){
+      const result=await verifySnapshot(decoded[0],pending.txHash);
+      const recoveryOnly=result.status==='superseded-snapshot-recovery-only';
+      if(recoveryOnly)assertVerifiedSupersededPoolSnapshot(result,signer);else assertVerifiedCurrentPoolSnapshot(result,signer);
+      await transport.assertCurrent();
+      const view=recoveryOnly?result:result.snapshot;
+      const status=recoveryOnly?result.claimStatus:result.producer.status, revisions=recoveryOnly?result.revisions:result.producer.revisions;
+      if(result.positionId!==decoded[0]||!same(result.transactionHash,pending.txHash)||view.chainId!==chainId||
+        !same(view.owner,owner)||!same(view.core,core)||view.graph!==candidate.graph||view.packageSha256!==candidate.packageSha256)
+        throw new Error('Verified snapshot differs from the saved operation.');
+      // Initial revisions exclude a lost withdrawal/Close verifier; those actions always advance the pinned contract's counters.
+      if(status!==1n||revisions.length!==4||revisions.some(v=>v!==1n))
+        throw new Error('This snapshot has prior owner management. Keep its original accounting hold.');
+      await recheck(request,pending.txHash,canonical);
+      boundary.requireOwnPending(pending,pending.txHash);
+      const original=storage!.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY);
+      const archiveKey=`chainwhisper:dex:verified-pool-snapshot:v1:${chainId}:${owner.toLowerCase()}:${core.toLowerCase()}:${pending.txHash}`;
+      const record=JSON.stringify({original,verification:recoveryOnly?'7bed-superseded-initial-claim-snapshot-recovery-only':'7bed-initial-claim-snapshot',
+        blockHash:canonical.blockHash,...(recoveryOnly?{latestSnapshotHash:result.latestSnapshotHash,latestSnapshotBlock:result.latestSnapshotBlock,
+          currentBlock:result.block,revisions:result.revisions.map(String)}:{}),intervalAccounting:'not-reconstructed'},(_,v)=>typeof v==='bigint'?String(v):v);
+      const existing=storage!.getItem(archiveKey);
+      if(existing!==null&&existing!==record)throw new Error('Saved snapshot verification record changed. Keep the hold.');
+      storage!.setItem(archiveKey,record);
+      if(storage!.getItem(archiveKey)!==record)throw new Error('Snapshot verification record was not retained. Keep the hold.');
+      clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,pending.txHash));
+      return result;
+    }
+    // A public receipt cannot clear a prior private-proof failure or recreate its baseline.
+    if(retain||pending.verificationBlocked||pending.poolTopUpHash)return Object.freeze({status:canonical.status===0?'observed-reverted-verification-held' as const:'observed-mined-verification-held' as const,
+      transactionHash:pending.txHash,positionId:decoded[0] as bigint,independentRefresh:retain,phase:pending.phase,poolTopUpHash:pending.poolTopUpHash,verificationFailure:pending.verificationFailure,verificationBlocked:true as const,privateAccountingVerified:false as const,readyToSign:false as const});
     clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,pending.txHash));
     const key=`${pending.phase}:${pending.callHash}`;if(canonical.status===0)keys!.delete(key);else keys!.add(key);
     return Object.freeze({status:canonical.status===0?'observed-reverted' as const:'observed-mined' as const,
       transactionHash:pending.txHash,phase:pending.phase,privateAccountingVerified:false as const,readyToSign:false as const});
-  }});
+  };
+  return Object.freeze({submitPoolPositionAction,recoverCurrentPreparedPoolPositionResult,recoverCurrentNativePoolPositionResult,
+    recoverPendingPoolPositionAttempt:async(verifySnapshot?:SnapshotVerifier)=>{
+      const held=boundary.pending();
+      if(held&&storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)!==null){
+        const refreshStorage=currentPoolRefreshStorage(storage,held);
+        const refreshBoundary=createCurrentAttemptBoundary({storage:refreshStorage,c:candidate,core,owner,chainId,transport,attest,now,historical:false,canonicalIndexProof:true});
+        return inspectPending(refreshBoundary,refreshStorage,true,verifySnapshot);
+      }
+      return inspectPending(boundary,storage,false,verifySnapshot);
+    }});
 };
 
 

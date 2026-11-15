@@ -60,16 +60,20 @@ describe('private uint256 input encryption', () => {
     }
   });
 
-  it('passes exact bigint amounts to the native SDK without reducing the amount domain', async () => {
-    const encrypted = { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n }, signature: SIGNATURE };
-    const encryptValue256 = vi.fn(async () => encrypted);
-    const signer = { encryptValue256 } as unknown as JsonRpcSigner;
-    for (const amount of [0n, (1n << 256n) - 1n, Number.MAX_SAFE_INTEGER]) {
-      await expect(encryptPrivateUint256Input(signer, amount,
-        '0x2222222222222222222222222222222222222222', '0x12345678')).resolves.toEqual(encrypted);
-      expect(encryptValue256).toHaveBeenLastCalledWith(BigInt(amount),
+  it('preserves the full signing domain even when the SDK provides encryptValue256', async () => {
+    const { signer, getSignedMessage } = createBrowserLikeSigner();
+    const nativeEncrypt = vi.fn(() => { throw new Error('digest signing must not be used'); });
+    Object.assign(signer, { encryptValue256: nativeEncrypt });
+    for (const amount of [0n, (1n << 128n) - 1n, (1n << 256n) - 1n, BigInt(Number.MAX_SAFE_INTEGER)]) {
+      const result = await encryptPrivateUint256Input(signer, amount,
         '0x2222222222222222222222222222222222222222', '0x12345678');
+      expect(decryptUint256(result.ciphertext, AES_KEY)).toBe(amount);
+      expect(toHex(getSignedMessage()!)).toBe(solidityPacked(
+        ['address', 'address', 'bytes4', 'uint256', 'uint256'],
+        [signer.address, '0x2222222222222222222222222222222222222222', '0x12345678',
+          result.ciphertext.ciphertextHigh, result.ciphertext.ciphertextLow]));
     }
+    expect(nativeEncrypt).not.toHaveBeenCalled();
   });
 
   it('encrypts trading amounts larger than the legacy 64-bit limit', async () => {

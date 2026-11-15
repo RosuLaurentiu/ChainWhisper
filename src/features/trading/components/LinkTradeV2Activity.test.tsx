@@ -90,7 +90,7 @@ describe.each(['link', 'counter'] as const)('%s recent activity UI', kind => {
     const props = { activity: { snapshot, busy: false, error: '', refresh: async () => {}, loadOlder: async () => {} },
       runtime: { ownerAddress: owner }, lifecycle: 'active', activeFilter: 'all', tokenInfoByKey: {}, ensureTokenInfo: async () => {},
       search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest', confirmFunding: async () => {}, runWalletFlow: async () => {},
-      onBusyChange: () => {}, actionInProgress: false };
+      onBusyChange: () => {}, onSelect: () => {}, selectionVersion: 0, actionInProgress: false };
     const html = renderToStaticMarkup(<Component {...props as unknown as Parameters<typeof LinkActivity>[0] & Parameters<typeof CounterActivity>[0]} />);
     expect(html).toContain('Refresh latest'); expect(html).toContain('Load older');
     expect(html).toContain('History is incomplete.'); expect(html).not.toMatch(/No (shared trades|counter-offers)/);
@@ -103,7 +103,7 @@ describe.each(['link', 'counter'] as const)('%s recent activity UI', kind => {
     const props = { activity: { snapshot, busy: false, error: '', refresh: async () => {}, loadOlder },
       runtime: { ownerAddress: owner }, lifecycle: 'history', activeFilter: 'all', tokenInfoByKey: {}, ensureTokenInfo: async () => {},
       search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest', confirmFunding: async () => {}, runWalletFlow: async () => {},
-      onBusyChange: () => {}, actionInProgress: false };
+      onBusyChange: () => {}, onSelect: () => {}, selectionVersion: 0, actionInProgress: false };
     renderToStaticMarkup(<Component {...props as unknown as Parameters<typeof LinkActivity>[0] & Parameters<typeof CounterActivity>[0]} />);
     (hooks.slots[0].value as { current: unknown }).current = { getBoundingClientRect: () => ({ top: 850, bottom: 860 }) };
     hooks.effects.splice(0).forEach(effect => effect());
@@ -111,4 +111,22 @@ describe.each(['link', 'counter'] as const)('%s recent activity UI', kind => {
     const scroll = addEventListener.mock.calls.find(([event]) => event === 'scroll')![1] as () => void;
     scroll(); expect(loadOlder).toHaveBeenCalledOnce();
   });
+});
+
+
+it('removes the selected Link controls in the render that changes selection version', () => {
+  const reference = { chainId: '7082400', escrow: `0x${'22'.repeat(20)}`, id: '1' };
+  const row = { reference, maker: owner, privatePair: false, offerToken: owner, requestToken: owner, status: 'Open', expiresAt: '0', enabled: true };
+  const props = { activity: { snapshot: { ...snapshot, orders: [row] }, busy: false, error: '', refresh: vi.fn(), loadOlder: vi.fn() }, runtime: { ownerAddress: owner }, lifecycle: 'active', activeFilter: 'all', tokenInfoByKey: {}, ensureTokenInfo: vi.fn(), search: '', pairFilter: 'all', typeFilter: 'all', sortMode: 'newest', confirmFunding: vi.fn(), runWalletFlow: vi.fn(), onBusyChange: vi.fn(), onSelect: vi.fn(), selectionVersion: 0 } as unknown as Parameters<typeof LinkActivity>[0];
+  const render = () => { hooks.index = 0; return LinkActivity(props); };
+  const find = (node: any, predicate: (value: any) => boolean): any => {
+    if (!node || typeof node !== 'object') return undefined;
+    if (Array.isArray(node)) return node.map(item => find(item, predicate)).find(Boolean);
+    return predicate(node) ? node : find(node.props?.children, predicate);
+  };
+  const first = render();
+  find(first, node => node.type === 'button' && Array.isArray(node.props.children) && node.props.children.join('') === 'Manage trade 1').props.onClick();
+  expect(find(render(), node => typeof node.type === 'function' && node.props.reference === reference)).toBeTruthy();
+  props.selectionVersion++;
+  expect(find(render(), node => typeof node.type === 'function' && node.props.reference === reference)).toBeUndefined();
 });

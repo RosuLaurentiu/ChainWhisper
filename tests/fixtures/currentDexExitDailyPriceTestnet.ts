@@ -1,9 +1,11 @@
+// Historical configuration fixture only; the replacement App does not import this file.
 import { AbiCoder, keccak256 } from '@coti-io/coti-ethers';
-import type { CurrentCheapDexCandidate } from './dexV2Deployment';
-import { resolvePreparedDexScope } from './currentDexPreparedScope';
-import { readCurrentDexDisplay } from './currentDexDisplay';
-import { COTI_TESTNET_NETWORK } from './chainWhisperNetworks';
-import { CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE, type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
+import type { CurrentCheapDexCandidate } from '../../src/lib/dexV2Deployment';
+import { resolvePreparedDexScope } from '../../src/lib/currentDexPreparedScope';
+import { readCurrentDexDisplay } from '../../src/lib/currentDexDisplay';
+import { COTI_TESTNET_NETWORK } from '../../src/lib/chainWhisperNetworks';
+import { type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceManifest } from '../../src/lib/currentDexDailyPrice';
+import { CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE } from './historicalDailyPriceSources';
 
 // Accepted runner-v3/APP_MANIFESTS.json, SHA-256 bbfc6a2aba4df58bd176c3a031ac493ec36d38eb74be654685b5a2978c30a74e.
 // Six native recorders; canonical1 retains an explicit empty history.

@@ -1,12 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { Interface } from '@coti-io/coti-ethers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import artifact from '../../tests/fixtures/full-candidate-ChainWhisperLinkOTCEscrowV2.json';
+const artifact = JSON.parse(readFileSync(new URL('../../reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperLinkOTCEscrowV2.json', import.meta.url), 'utf8'));
 import { createTradeAccessSecret } from './directTradeTerms';
 import { linkTradeV2CredentialDomain, sealLinkTradeV2Terms } from './linkTradeV2Terms';
 import { LINK_TRADE_V2_ABI } from './linkTradeV2Abi';
+import { packPrivateTradeV2Pair } from './privateTradeV2Packing';
 import { readLinkTradeV2Review, readLinkTradeV2CurrentReview, prepareLinkTradeV2Fill, recheckLinkTradeV2Fill, prepareLinkTradeV2Create, prepareLinkTradeV2CreateRecovery, recheckLinkTradeV2Create, parseLinkTradeV2CreationReceipt, bindLinkTradeV2CreationReceipt, prepareLinkTradeV2CounterAuthorization } from './linkTradeV2';
 import { parseLinkTradeV2Path } from './linkTradeV2Links';
 import { deriveLinkTradeV2Credential, openLinkTradeV2Terms } from './linkTradeV2Terms';
+import { LinkTradeV2UnavailableError } from './linkTradeV2';
 
 const mocks = vi.hoisted(() => ({ read: vi.fn(), assert: vi.fn(), binding: vi.fn(), current: vi.fn(), encrypt: vi.fn() }));
 vi.mock('./tradeHistoryV2Chain', () => ({ assertAttestedTradeHistoryV2Deployment: mocks.assert,
@@ -30,8 +33,8 @@ beforeEach(() => {
   mocks.encrypt.mockResolvedValue({ ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n }, signature: '0x1234' });
   mocks.read.mockImplementation(async () => abi.encodeFunctionResult('getOrderView', [tuple]));
 });
-const review = async (privatePair = false) => {
-  const secret = createTradeAccessSecret(), input = { ...terms, privatePair };
+const review = async (privatePair = false, prices = { priceOffer: terms.priceOffer, priceRequest: terms.priceRequest }) => {
+  const secret = createTradeAccessSecret(), input = { ...terms, privatePair, ...prices };
   const sealed = await sealLinkTradeV2Terms(context, input, secret);
   tuple = [[maker, tokenA, tokenB, hash, hash, hash, 0n, 2n, 1n, 1n, privatePair, true],
     1n, privatePair ? [0n, 0n] : [10n, 15n], privatePair ? 0n : 100n,
@@ -40,6 +43,16 @@ const review = async (privatePair = false) => {
 };
 
 describe('Link reader and selected-wallet preparation', () => {
+  it('classifies a cancelled current order without returning a usable review or encrypting a fill', async () => {
+    const previous = await review(true);
+    const order = tuple[0] as unknown[];
+    order[7] = 3n; order[9] = 2n; order[11] = false;
+    tuple[1] = 2n;
+    await expect(readLinkTradeV2CurrentReview({ capability, deployment, reference, secret: createTradeAccessSecret() }))
+      .rejects.toBeInstanceOf(LinkTradeV2UnavailableError);
+    await expect(prepareLinkTradeV2Fill({ review: previous, capability, maximumPayment: '15' })).rejects.toThrow();
+    expect(mocks.encrypt).not.toHaveBeenCalled();
+  });
   it('authorizes the proposer directly at the Link selector with no credential forwarded to Counter', async () => {
     const reviewed = await review(true);
     const prepared = await prepareLinkTradeV2CounterAuthorization({ review: reviewed, capability });
@@ -76,14 +89,25 @@ describe('Link reader and selected-wallet preparation', () => {
     expect(parsed.name).toBe(privatePair ? 'fillPrivateLink' : 'fillPublicLink');
     expect(parsed.args.ref.id).toBe(BigInt(reference.id));
     expect(parsed.args.ref.revision).toBe(2n);
-    expect(mocks.encrypt).toHaveBeenCalledTimes(privatePair ? 4 : 1);
+    expect(mocks.encrypt).toHaveBeenCalledTimes(privatePair ? 3 : 1);
     for (const call of mocks.encrypt.mock.calls) {
       expect(call[2]).toBe(target);
       expect(call[3]).toBe(abi.getFunction(parsed.name)!.selector);
     }
-    if (privatePair) expect(mocks.encrypt.mock.calls.slice(1).map(call => call[1])).toEqual([15n, 10n, 15n]);
+    if (privatePair) expect(mocks.encrypt.mock.calls.slice(1).map(call => call[1])).toEqual([15n, packPrivateTradeV2Pair(10n, 15n)]);
     else expect(parsed.args.maximumPayment).toBe(15n);
     expect('secret' in result).toBe(false);
+  });
+  it('preserves maximum and asymmetric uint128 reviewed prices in one full-width fill input', async () => {
+    const maximum = (1n << 128n) - 1n;
+    for (const [offer, request] of [[1n, maximum], [maximum, 1n], [maximum, maximum]]) {
+      mocks.encrypt.mockClear();
+      const reviewed = await review(true, { priceOffer: String(offer), priceRequest: String(request) });
+      await prepareLinkTradeV2Fill({ review: reviewed, capability, maximumPayment: '15' });
+      expect(mocks.encrypt).toHaveBeenCalledTimes(3);
+      expect(mocks.encrypt.mock.calls.slice(1).map(call => call[1])).toEqual([15n, (offer << 128n) | request]);
+      expect(mocks.encrypt.mock.calls.every(call => call[2] === target && call[3] === abi.getFunction('fillPrivateLink')!.selector)).toBe(true);
+    }
   });
   it('rejects a changed chain or escrow before a contract read', async () => {
     for (const changed of [{ ...reference, chainId: '1' }, { ...reference, escrow: tokenA }]) {
@@ -161,14 +185,14 @@ describe('Link reader and selected-wallet preparation', () => {
 
 describe('Link creation and receipt-to-link binding', () => {
   const full = new Interface(artifact.abi), txHash = `0x${'66'.repeat(32)}`;
-  const create = async (privatePair = false, offerBudget = '100') => {
+  const create = async (privatePair = false, offerBudget = '100', prices = { priceOffer: terms.priceOffer, priceRequest: terms.priceRequest }) => {
     mocks.binding.mockReturnValue({ chainId: 7082400n, ownerAddress: maker, signer: {} });
     mocks.read.mockImplementation(async ({ data }: { data: string }) => {
       const call = full.parseTransaction({ data })!;
       return full.encodeFunctionResult(call.name, [call.name === 'usedMakerNonce' ? false : hash]);
     });
     return prepareLinkTradeV2Create({ readCapability: capability, deployment, capability,
-      terms: { ...terms, privatePair }, offerBudget });
+      terms: { ...terms, privatePair, ...prices }, offerBudget });
   };
   const receipt = (prepared: Awaited<ReturnType<typeof prepareLinkTradeV2Create>>, changes: Record<string, unknown> = {}) => {
     const call = full.parseTransaction({ data: prepared.data })!, config = call.args.config;
@@ -184,21 +208,31 @@ describe('Link creation and receipt-to-link binding', () => {
     const call = full.parseTransaction({ data: prepared.data })!;
     expect(call.name).toBe(privatePair ? 'createPrivateLink' : 'createPublicLink');
     expect(prepared).toMatchObject({ chainId: '7082400', from: maker, to: target, value: 0n, offerBudget: '100' });
-    expect(mocks.encrypt).toHaveBeenCalledTimes(privatePair ? 4 : 1);
+    expect(mocks.encrypt).toHaveBeenCalledTimes(privatePair ? 3 : 1);
     for (const value of mocks.encrypt.mock.calls) {
       expect(value[2]).toBe(target); expect(value[3]).toBe(full.getFunction(call.name)!.selector);
     }
-    if (privatePair) expect(mocks.encrypt.mock.calls.map(call => call[1]).slice(0, 3)).toEqual([100n, 10n, 15n]);
+    if (privatePair) expect(mocks.encrypt.mock.calls.map(call => call[1]).slice(0, 2)).toEqual([100n, packPrivateTradeV2Pair(10n, 15n)]);
     else { expect(call.args.budget).toBe(100n); expect([...call.args.price]).toEqual([10n, 15n]); }
     const recovered = parseLinkTradeV2CreationReceipt({ prepared, transactionHash: txHash, receipt: receipt(prepared) });
     const link = parseLinkTradeV2Path(recovered.sharePath)!;
     expect(link.reference).toEqual({ chainId: '7082400', escrow: target, id: '9007199254740993', revision: '1', credentialEpoch: '1' });
     const domain = { ...context, makerNonce: call.args.config.makerNonce };
     expect(await openLinkTradeV2Terms(domain, call.args.sealedTerms, link.secret)).toEqual({ ...terms, privatePair });
-    expect(mocks.encrypt.mock.calls[privatePair ? 3 : 0][1]).toBe(await deriveLinkTradeV2Credential(domain, link.secret));
+    expect(mocks.encrypt.mock.calls[privatePair ? 2 : 0][1]).toBe(await deriveLinkTradeV2Credential(domain, link.secret));
     expect(prepared.data).not.toContain(link.secret.slice(2));
     expect('secret' in prepared).toBe(false);
     expect(new URL(recovered.sharePath, 'https://chainwhisper.invalid').pathname).not.toContain(link.secret);
+  });
+  it('keeps budget and credential separate from a maximum full-width private creation price', async () => {
+    const maximum = (1n << 128n) - 1n;
+    for (const [offer, request] of [[1n, maximum], [maximum, 1n], [maximum, maximum]]) {
+      mocks.encrypt.mockClear();
+      await create(true, '100', { priceOffer: String(offer), priceRequest: String(request) });
+      expect(mocks.encrypt).toHaveBeenCalledTimes(3);
+      expect(mocks.encrypt.mock.calls.slice(0, 2).map(call => call[1])).toEqual([100n, (offer << 128n) | request]);
+      expect(mocks.encrypt.mock.calls.every(call => call[2] === target && call[3] === full.getFunction('createPrivateLink')!.selector)).toBe(true);
+    }
   });
   it('uses independent fresh nonces and credentials without caller-supplied material', async () => {
     const first = await create(), second = await create();
@@ -232,7 +266,7 @@ describe('Link creation and receipt-to-link binding', () => {
     const nextCall = full.parseTransaction({ data: restored.data })!;
     expect(nextCall.args.config.makerNonce).toBe(firstCall.args.config.makerNonce);
     expect(nextCall.args.sealedTerms).not.toBe(firstCall.args.sealedTerms);
-    expect(mocks.encrypt).toHaveBeenCalledTimes(privatePair ? 4 : 1);
+    expect(mocks.encrypt).toHaveBeenCalledTimes(privatePair ? 3 : 1);
     const recovered = parseLinkTradeV2CreationReceipt({ prepared: restored, transactionHash: txHash, receipt: receipt(restored) });
     expect(parseLinkTradeV2Path(recovered.sharePath)?.secret).toBe(material!.secret);
     mocks.encrypt.mockClear();

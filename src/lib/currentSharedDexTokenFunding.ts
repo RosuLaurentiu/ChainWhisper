@@ -5,12 +5,13 @@ import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { assertCurrentAppInitialClaimAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, isCurrentAppCanonicalClaimRepair } from './currentDexC1SwapPolicy';
 import type { readCurrentSharedDexTokenFunds } from './currentSharedDexTokenFunds';
 import { createCurrentAttemptBoundary, CURRENT_NATIVE_RECOVERY_RESERVE, type CurrentTransport, type CurrentCheapDexPreparedQuote } from './currentDexSubmission';
-import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash } from './currentDexPendingAttempt';
+import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash, readCurrentDexOperationLookups } from './currentDexPendingAttempt';
 import type { PrivateUint256Input, PrivateUint256Output } from './privateUint256';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedFunding, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
 import { currentSwapFixedGasPrice } from './currentDexExitSwapPolicy';
 import { assertCurrentLimitPrepared, type CurrentLimitFundingReview } from '../features/wallet/currentDexLimitCapability';
+import { planTokenAllowance, type TokenApprovalMode } from './tokenAllowance';
 
 type PoolFunding = CurrentPoolPreparedFunding | CurrentPoolPreparedTopUpFunding;
 
@@ -53,7 +54,7 @@ export const assertCurrentSharedPoolApprovalPrepared = (prepared: CurrentSharedP
   return issued.funding;
 };
 export type CurrentSharedSwapApprovalReview = Readonly<{ candidate: CurrentCheapDexCandidateKey; owner: string; token: string;
-  spender: string; amount: bigint; core: string; graph: string; packageSha256: string }>;
+  spender: string; amount: bigint; cleanup?: true; core: string; graph: string; packageSha256: string }>;
 export type CurrentSharedSwapApprovalPrepared = CurrentSharedSwapApprovalReview & Readonly<{ data: string; readyToSign: false }>;
 export type CurrentSharedLimitApprovalPrepared = Readonly<{ kind: 'create' | 'topup'; marketId: string;
   token: string; amount: bigint; data: string; core: string; graph: string; packageSha256: string; readyToSign: false }>;
@@ -83,17 +84,20 @@ const prunedState = (error: unknown) => {
 export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-prepared', signer, ownerAddress, chainId, transport,
   readFunds, readReceiptBlock, decrypt, encrypt, assertAdmission, assertApprovalAdmission = assertCurrentSharedTokenFundingAppAuthority,
   assertSwapApprovalAdmission = assertCurrentSharedTokenFundingAppAuthority,
-  authorizeSwapApprovalSigning, authorizeInitialClaimSigning, rememberSwapApprovalHash,
+  authorizeSwapApprovalSigning, authorizeInitialClaimSigning, rememberSwapApprovalHash, completeSwapAllowanceCleanup,
+  assertAllowanceMutationIdle = async () => {},
   now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
   candidate?: CurrentCheapDexCandidateKey; signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport;
   readFunds: (head: Head) => Promise<Funds>; readReceiptBlock: (number: number) => Promise<Head>;
   decrypt: (cipher: PrivateUint256Output) => bigint;
   encrypt?: (amount: bigint, token: string, selector: string) => Promise<PrivateUint256Input>;
   assertApprovalAdmission?: () => void | Promise<void>;
+  assertAllowanceMutationIdle?: (preparedQuote?: CurrentCheapDexPreparedQuote) => Promise<void>;
   assertSwapApprovalAdmission?: (review: CurrentSharedSwapApprovalReview, preparedQuote?: CurrentCheapDexPreparedQuote) => void | Promise<void>;
-  authorizeSwapApprovalSigning?: (preparedQuote: CurrentCheapDexPreparedQuote, request: Request) => Promise<void>;
+  authorizeSwapApprovalSigning?: (preparedQuote: CurrentCheapDexPreparedQuote, request: Request, cleanup?: true) => Promise<void>;
   authorizeInitialClaimSigning?: (request: Request) => Promise<void>;
   rememberSwapApprovalHash?: (sent: {request: Request;transactionHash:string}) => Promise<void>;
+  completeSwapAllowanceCleanup?: () => Promise<void>;
   assertAdmission: (action: CurrentSharedTokenFundingAction, token: string, preparedQuote?: CurrentCheapDexPreparedQuote) => void | Promise<void>; now?: () => bigint;
 }) => {
   const policy = resolveCurrentSharedTokenDistribution(candidate), fixedGasPrice = currentSwapFixedGasPrice(policy);
@@ -112,8 +116,9 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
     }
     return funds;
   };
+  const fundingObservations = new WeakMap<Head, Funds>();
   const b = createCurrentAttemptBoundary({ storage, c: policy, core: policy.core, owner, chainId, transport,
-    attest: async head => { await inspect(head); }, now, bindTarget: true });
+    attest: async head => { fundingObservations.set(head, await inspect(head)); }, now, bindTarget: true });
   const indexOf = (token: string) => {
     const i = CURRENT_SHARED_DEX_TOKENS.findIndex(t => same(t.address, token));
     if (i < 0) throw new FundingProofError('Not a beta test token.'); return i;
@@ -207,8 +212,9 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
     if (last.number !== head.number || !same(last.hash, head.hash) || last.timestamp !== head.timestamp) throw new FundingProofError('Beta funding receipt timestamp changed.');
     await transport.assertCurrent(); return { receipt, after };
   };
-  const approvals = new WeakMap<object, { before: Funds; deadline: bigint; funding: PoolApprovalBinding }>();
-  const assertPoolApprovalAdmission = (funding: PoolApprovalBinding) => {
+  const approvals = new WeakMap<object, { before: Funds; deadline: bigint; funding: PoolApprovalBinding; targetAllowance?: bigint }>();
+  const assertPoolApprovalAdmission = async (funding: PoolApprovalBinding) => {
+    await assertAllowanceMutationIdle();
     if (isAllowanceCleanup(funding)) return assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner, signer);
     if (candidate !== 'cheap-history') return assertApprovalAdmission();
     assertCurrentPoolFundingPrepared(funding, signer);
@@ -217,15 +223,22 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       positionId: topUp ? funding.positionId : undefined, budgets: funding.intent.budgets,
       classId: funding.intent.classId, tolerance: 'tolerance' in funding.intent ? funding.intent.tolerance : [funding.intent.terms[8], funding.intent.terms[9]] }, signer);
   };
-  const limitApprovals = new WeakMap<object, { before: Funds; deadline: bigint; funding: CurrentLimitFundingReview }>();
-  const assertLimitApprovalAdmission = (funding: CurrentLimitFundingReview) => candidate==='cheap-history'
-    ?assertCurrentAppLimitAuthority(policy.graph,{owner,action:`approve-${funding.kind}`,amount:funding.amount},signer):assertApprovalAdmission();
-  const swapApprovals = new WeakMap<object, { before: Funds; deadline: bigint; assertReviewCurrent: () => void | Promise<void>; preparedQuote?: CurrentCheapDexPreparedQuote }>();
-  const swapReview = (token: string, amount: bigint): CurrentSharedSwapApprovalReview => {
+  const limitApprovals = new WeakMap<object, { before: Funds; deadline: bigint; funding: CurrentLimitFundingReview; targetAllowance: bigint }>();
+  const assertLimitApprovalAdmission = async (funding: CurrentLimitFundingReview) => {
+    await assertAllowanceMutationIdle();
+    return candidate==='cheap-history' ? assertCurrentAppLimitAuthority(policy.graph,{owner,action:`approve-${funding.kind}`,amount:funding.amount},signer) : assertApprovalAdmission();
+  };
+  const swapApprovals = new WeakMap<object, { before: Funds; deadline: bigint; targetAllowance: bigint; assertReviewCurrent: () => void | Promise<void>; preparedQuote?: CurrentCheapDexPreparedQuote }>();
+  const cleanupSnapshots = new Map<string, Funds>();
+  const swapReview = (token: string, amount: bigint, cleanup?: true): CurrentSharedSwapApprovalReview => {
     if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new FundingProofError('Swap approval requires a supported current DEX candidate.');
     indexOf(token);
-    if (typeof amount !== 'bigint' || amount <= 0n || amount >= 1n << 256n || amount > CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM) throw new FundingProofError('Invalid exact swap allowance.');
-    return Object.freeze({ candidate, owner, token: getAddress(token), spender: policy.core, amount, ...identity });
+    if (typeof amount !== 'bigint' || (cleanup ? amount !== 0n : amount <= 0n) || amount >= 1n << 256n || amount > CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM) throw new FundingProofError('Invalid exact swap allowance.');
+    return Object.freeze({ candidate, owner, token: getAddress(token), spender: policy.core, amount, ...(cleanup ? { cleanup } : {}), ...identity });
+  };
+  const requireSwapCleanupIdle = (cleanup?: true) => {
+    if (cleanup && readCurrentDexOperationLookups(storage).length) throw new FundingProofError('Reconcile the earlier operation before clearing its allowance.');
+    b.requireEmptyPending();
   };
   const requireFundingIdentity = (funding: PoolFunding) => {
     const pair = resolvePreparedDexScope(candidate).candidate.pairs.find(pair => pair.marketId === funding.intent.marketId &&
@@ -236,8 +249,10 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
     }
   };
   const approvalCall = (data: string) => {
-    const args = currentTokenFundingAbi.decodeFunctionData('approve', data);
-    if (!same(args[0], policy.core) || !same(currentTokenFundingAbi.encodeFunctionData('approve', args), data) ||
+    const call = currentTokenFundingAbi.parseTransaction({ data });
+    if (!call || !['approve', 'increaseAllowance'].includes(call.name)) throw new FundingProofError('Unsupported token allowance call.');
+    const args = call.args;
+    if (!same(args[0], policy.core) || !same(currentTokenFundingAbi.encodeFunctionData(call.name, args), data) ||
         !/^0x[0-9a-fA-F]{130}$/.test(args[1].signature)) throw new FundingProofError('Pool approval calldata changed.');
   };
   const validateApproval = async (p: CurrentSharedPoolApprovalPrepared, fresh: boolean) => {
@@ -283,13 +298,14 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
         !same(p.core, policy.core) || p.graph !== policy.graph || p.packageSha256 !== policy.packageSha256) {
       throw new FundingProofError('Swap approval was not prepared in this session.');
     }
-    const review = swapReview(p.token, p.amount);
+    const review = swapReview(p.token, p.amount, p.cleanup);
     approvalCall(p.data); await transport.assertCurrent();
     if (!same(await transport.readBlockHash(Number(saved.before.head.number)), saved.before.head.hash)) throw new FundingProofError('Swap approval review block changed.');
     if (fresh) {
-      await assertSwapApprovalAdmission(review, saved.preparedQuote); b.requireEmptyPending(); await saved.assertReviewCurrent();
+      await assertSwapApprovalAdmission(review, saved.preparedQuote); if (!review.cleanup) await assertAllowanceMutationIdle(saved.preparedQuote); requireSwapCleanupIdle(p.cleanup); await saved.assertReviewCurrent();
       const head = await b.currentHead(saved.deadline, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP), state = await inspect(head), index = indexOf(p.token);
-      if (!state.tokens.every((t, i) => equalToken(t, saved.before.tokens[i])) || state.tokens[index].balance < p.amount || state.tokens[index].allowance !== 0n) {
+      if (!state.tokens.every((t, i) => equalToken(t, saved.before.tokens[i])) || state.tokens[index].balance < p.amount ||
+          (p.cleanup ? state.tokens[index].allowance === 0n : state.tokens[index].allowance >= saved.targetAllowance)) {
         throw new FundingProofError('Swap approval private funds changed during review.');
       }
       const nonce = await transport.readNonce(); await resources(head, nonce);
@@ -297,9 +313,33 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       if (typeof estimate !== 'bigint' || estimate <= 0n || (estimate * 5n + 3n) / 4n + 1_000_000n > CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP) {
         throw new Error('Swap approval strict estimate exceeds its gas cap.');
       }
-      await saved.assertReviewCurrent(); await assertSwapApprovalAdmission(review, saved.preparedQuote); await transport.assertCurrent();
+      await saved.assertReviewCurrent(); await assertSwapApprovalAdmission(review, saved.preparedQuote); if (!review.cleanup) await assertAllowanceMutationIdle(saved.preparedQuote); await transport.assertCurrent(); requireSwapCleanupIdle(p.cleanup);
     }
     return saved;
+  };
+  const prepareSwapApproval = async ({ token, amount, cleanup, approvalMode = 'exact', assertReviewCurrent, preparedQuote, confirm }: {
+    token: string; amount: bigint; cleanup?: true; approvalMode?: TokenApprovalMode | (() => TokenApprovalMode); assertReviewCurrent: () => void | Promise<void>; preparedQuote?: CurrentCheapDexPreparedQuote;
+    confirm: (review: CurrentSharedSwapApprovalReview & { previousAllowance: bigint; targetAllowance: bigint }) => Promise<boolean>
+  }) => {
+    const review = swapReview(token, amount, cleanup); await assertSwapApprovalAdmission(review, preparedQuote); if (!review.cleanup) await assertAllowanceMutationIdle(preparedQuote); requireSwapCleanupIdle(cleanup);
+    if (cleanup && !preparedQuote) throw new FundingProofError('Original branded swap approval scope is absent.');
+    if (!encrypt || typeof confirm !== 'function' || typeof assertReviewCurrent !== 'function') throw new FundingProofError('Swap approval review or encryption is unavailable.');
+    await assertReviewCurrent();
+    const before = await inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP)), index = indexOf(token), state = before.tokens[index];
+    if (cleanup && state.allowance === 0n) return null;
+    if (state.balance < amount) throw new FundingProofError('Swap approval needs sufficient input funds.');
+    let plan = cleanup ? { method: 'approve' as const, value: 0n, target: 0n } : planTokenAllowance(state.allowance, amount, typeof approvalMode === 'function' ? 'exact' : approvalMode);
+    if (!plan) return null;
+    if (!await confirm({ ...review, previousAllowance: state.allowance, targetAllowance: plan.target })) return null;
+      if (!cleanup && typeof approvalMode === 'function') plan = planTokenAllowance(state.allowance, amount, approvalMode());
+      if (!plan) return null;
+    await assertReviewCurrent(); await assertSwapApprovalAdmission(review, preparedQuote); if (!review.cleanup) await assertAllowanceMutationIdle(preparedQuote); await transport.assertCurrent(); requireSwapCleanupIdle(cleanup);
+    const current = await inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP));
+    if (!current.tokens.every((t, i) => equalToken(t, before.tokens[i]))) throw new FundingProofError('Swap approval funds changed during confirmation.');
+    const input = await encrypt(plan.value, review.token, currentTokenFundingAbi.getFunction(plan.method)!.selector);
+    await assertReviewCurrent(); await transport.assertCurrent();
+    const p = Object.freeze({ ...review, data: currentTokenFundingAbi.encodeFunctionData(plan.method, [policy.core, input]), readyToSign: false as const });
+    swapApprovals.set(p, { before, deadline: now() + 300n, targetAllowance: plan.target, assertReviewCurrent, preparedQuote }); await validateSwapApproval(p, true); return p;
   };
   const requireLimitFundingIdentity = (funding: CurrentLimitFundingReview) => {
     assertCurrentLimitPrepared(funding, signer);
@@ -363,7 +403,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
     if (last.number !== head.number || !same(last.hash, head.hash) || last.timestamp !== head.timestamp) throw new FundingProofError('Pool approval receipt timestamp changed.');
     await transport.assertCurrent(); return { receipt, after };
   };
-  const recoverPendingApproval = async (knownHash?: string) => {
+  const recoverPendingApproval = async (knownHash?: string, verifyEffect = false) => {
     await transport.assertCurrent(); const pending = b.pending(); if (!pending) return null;
     if (pending.phase !== 'token-approve' || pending.chainId !== String(chainId) || !same(pending.owner, owner) ||
         !same(pending.core, policy.core) || pending.graph !== `0x${policy.graph}` || !pending.target) throw new Error('Pending token approval belongs to another adapter.');
@@ -380,28 +420,43 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       if (!same(tx.to, pending.target) || keccak256(tx.data).toLowerCase() !== pending.callHash) throw new FundingProofError('Token approval pending target or calldata changed.');
       const request = { chainId, from: owner, to: pending.target, data: tx.data, value: 0n as const, nonce: pending.nonce,
         gasLimit: CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP, gasPrice: fixedGasPrice };
-      const result = await proveApproval(request, hash, pending.target);
+      let before: Funds | undefined;
+      if (verifyEffect) {
+        const receipt = await canonical(request, hash);
+        if (!receipt.blockNumber || receipt.blockNumber < 1) throw new Error('Approval parent state is unavailable. Keep the pending transaction.');
+        const parent = await readReceiptBlock(receipt.blockNumber - 1);
+        if (parent.number !== BigInt(receipt.blockNumber - 1)) throw new FundingProofError('Approval parent block changed.');
+        before = await inspect(parent);
+      }
+      const result = await proveApproval(request, hash, pending.target, before);
+      if (before && !same(await transport.readBlockHash(Number(before.head.number)), before.head.hash))
+        throw new FundingProofError('Approval parent block changed after accounting.');
       if (!pending.txHash) recordCurrentDexPendingHash(storage, pending, hash);
       clearCurrentDexPendingAttempt(storage, b.requireOwnPending(pending, hash));
-      return Object.freeze({ ...identity, status: result.receipt.status === 0 ? 'observed-reverted' as const : 'observed-mined' as const, privateAccountingVerified: false as const });
+      return Object.freeze({ ...identity, status: result.receipt.status === 0 ? 'observed-reverted' as const : 'observed-mined' as const,
+        privateAccountingVerified: verifyEffect, ...(verifyEffect ? { reviewedTargetVerified: false as const } : {}) });
     } catch (error) { if (knownProofFailure(error)) blockCurrentTokenFundingVerification(storage, pending); throw error; }
   };
   return Object.freeze({
-    prepareSharedLimitApproval: async ({ funding, confirm }: { funding: CurrentLimitFundingReview;
+    reconcilePendingSharedTokenApproval: (knownHash?: string) => recoverPendingApproval(knownHash, true),
+    prepareSharedLimitApproval: async ({ funding, approvalMode = 'exact', confirm }: { funding: CurrentLimitFundingReview; approvalMode?: TokenApprovalMode | (() => TokenApprovalMode);
       confirm: (review: { token: string; amount: bigint; previousAllowance: bigint; spender: string }) => Promise<boolean> }) => {
       await assertLimitApprovalAdmission(funding); b.requireEmptyPending(); requireLimitFundingIdentity(funding); await funding.assertCurrent();
       if (!encrypt || typeof confirm !== 'function') throw new FundingProofError('Limit approval review or encryption is unavailable.');
       const head = await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP); await funding.assertAuthority(head);
       const before = await inspect(head), token = getAddress(funding.fundingToken), amount = funding.amount, state = before.tokens[indexOf(token)];
-      if (state.balance < amount || state.allowance === amount) throw new FundingProofError('Limit approval is unnecessary or has insufficient private funds.');
-      if (!await confirm(Object.freeze({ token, amount, previousAllowance: state.allowance, spender: policy.core }))) return null;
+      if (state.balance < amount) throw new FundingProofError('Limit approval has insufficient private funds.');
+      let plan = planTokenAllowance(state.allowance, amount, typeof approvalMode === 'function' ? 'exact' : approvalMode); if (!plan) return null;
+      if (!await confirm(Object.freeze({ token, amount: plan.target, previousAllowance: state.allowance, spender: policy.core }))) return null;
+      if (typeof approvalMode === 'function') plan = planTokenAllowance(state.allowance, amount, approvalMode());
+      if (!plan) return null;
       await assertLimitApprovalAdmission(funding); await funding.assertCurrent();
       const currentHead = await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP); await funding.assertAuthority(currentHead);
       if (!(await inspect(currentHead)).tokens.every((t, i) => equalToken(t, before.tokens[i]))) throw new FundingProofError('Limit approval funds changed during confirmation.');
-      const input = await encrypt(amount, token, currentTokenFundingAbi.getFunction('approve')!.selector); await funding.assertCurrent(); await transport.assertCurrent();
+      const input = await encrypt(plan.value, token, currentTokenFundingAbi.getFunction(plan.method)!.selector); await funding.assertCurrent(); await transport.assertCurrent();
       const p = Object.freeze({ kind: funding.kind, marketId: funding.marketId!, token, amount,
-        data: currentTokenFundingAbi.encodeFunctionData('approve', [policy.core, input]), ...identity, readyToSign: false as const });
-      limitApprovals.set(p, { before, deadline: now() + 300n, funding }); await validateLimitApproval(p, true); return p;
+        data: currentTokenFundingAbi.encodeFunctionData(plan.method, [policy.core, input]), ...identity, readyToSign: false as const });
+      limitApprovals.set(p, { before, deadline: now() + 300n, funding, targetAllowance: plan.target }); await validateLimitApproval(p, true); return p;
     },
     submitSharedLimitApproval: async (p: CurrentSharedLimitApprovalPrepared) => {
       const existing=limitApprovals.get(p);
@@ -420,7 +475,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
           if (!pending || pending.verificationBlocked || pending.phase !== 'token-approve' || !same(pending.target, p.token) || pending.callHash !== keccak256(p.data).toLowerCase()) throw new FundingProofError('Limit approval pending action changed.');
           b.requireOwnPending(pending, sent.transactionHash);
           try {
-            const result = await proveApproval(sent.request, sent.transactionHash, p.token, saved.before, p.amount);
+            const result = await proveApproval(sent.request, sent.transactionHash, p.token, saved.before, saved.targetAllowance ?? p.amount);
             clearCurrentDexPendingAttempt(storage, b.requireOwnPending(pending, sent.transactionHash));
             return Object.freeze({ ...identity, token: p.token, fundingOutcome: result.receipt.status === 0 ? 'reverted' as const : 'verified' as const,
               privateAccountingVerified: true as const, funds: result.after });
@@ -433,40 +488,47 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new Error('Swap approval requires a supported current DEX candidate.');
       return recoverPendingApproval(knownHash);
     },
-    prepareSharedSwapApproval: async ({ token, amount, assertReviewCurrent, preparedQuote, confirm }: {
-      token: string; amount: bigint; assertReviewCurrent: () => void | Promise<void>; preparedQuote?: CurrentCheapDexPreparedQuote;
-      confirm: (review: CurrentSharedSwapApprovalReview & { previousAllowance: bigint }) => Promise<boolean>
-    }) => {
-      const review = swapReview(token, amount); await assertSwapApprovalAdmission(review, preparedQuote); b.requireEmptyPending();
-      if (!encrypt || typeof confirm !== 'function' || typeof assertReviewCurrent !== 'function') throw new FundingProofError('Swap approval review or encryption is unavailable.');
-      await assertReviewCurrent();
-      const before = await inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP)), index = indexOf(token), state = before.tokens[index];
-      if (state.balance < amount || state.allowance !== 0n) throw new FundingProofError('Swap approval needs sufficient funds and zero prior allowance.');
-      if (!await confirm({ ...review, previousAllowance: state.allowance })) return null;
-      await assertReviewCurrent(); await assertSwapApprovalAdmission(review, preparedQuote); await transport.assertCurrent();
+    verifySharedSwapAllowanceCleanup: async (request: Request, transactionHash: string) => {
+      approvalCall(request.data); indexOf(request.to); b.requireEmptyPending();
+      if (readCurrentDexOperationLookups(storage).length) throw new FundingProofError('Reconcile the earlier operation before clearing its allowance.');
+      let before = cleanupSnapshots.get(transactionHash.toLowerCase());
+      if (!before) {
+        const receipt = await canonical(request, transactionHash);
+        if (!receipt.blockNumber || receipt.blockNumber < 1) throw new FundingProofError('Allowance cleanup parent block is unavailable.');
+        const parent = await readReceiptBlock(receipt.blockNumber - 1);
+        if (parent.number !== BigInt(receipt.blockNumber - 1)) throw new FundingProofError('Allowance cleanup parent block changed.');
+        before = await inspect(parent);
+      }
+      await proveApproval(request, transactionHash, request.to, before, 0n);
       const current = await inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP));
-      if (!current.tokens.every((t, i) => equalToken(t, before.tokens[i]))) throw new FundingProofError('Swap approval funds changed during confirmation.');
-      const input = await encrypt(amount, review.token, currentTokenFundingAbi.getFunction('approve')!.selector);
-      await assertReviewCurrent(); await transport.assertCurrent();
-      const p = Object.freeze({ ...review, data: currentTokenFundingAbi.encodeFunctionData('approve', [policy.core, input]), readyToSign: false as const });
-      swapApprovals.set(p, { before, deadline: now() + 300n, assertReviewCurrent, preparedQuote }); await validateSwapApproval(p, true); return p;
+      if (current.tokens[indexOf(request.to)].allowance !== 0n) throw new FundingProofError('Allowance cleanup is no longer zero.');
     },
+    prepareSharedSwapApproval: async (request: {
+      token: string; amount: bigint; approvalMode?: TokenApprovalMode | (() => TokenApprovalMode); assertReviewCurrent: () => void | Promise<void>; preparedQuote?: CurrentCheapDexPreparedQuote;
+      confirm: (review: CurrentSharedSwapApprovalReview & { previousAllowance: bigint; targetAllowance: bigint }) => Promise<boolean>
+    }) => prepareSwapApproval(request),
+    prepareSharedSwapAllowanceCleanup: async (request: {
+      token: string; preparedQuote: CurrentCheapDexPreparedQuote; assertReviewCurrent: () => void | Promise<void>;
+      confirm: (review: CurrentSharedSwapApprovalReview & { previousAllowance: bigint; targetAllowance: bigint }) => Promise<boolean>
+    }) => prepareSwapApproval({ ...request, amount: 0n, cleanup: true }),
     submitSharedSwapApproval: async (p: CurrentSharedSwapApprovalPrepared) => {
-      const review = swapReview(p.token, p.amount), original=swapApprovals.get(p);
-      await assertSwapApprovalAdmission(review, original?.preparedQuote); b.requireEmptyPending(); const saved = await validateSwapApproval(p, true);
+      const review = swapReview(p.token, p.amount, p.cleanup), original=swapApprovals.get(p);
+      await assertSwapApprovalAdmission(review, original?.preparedQuote); requireSwapCleanupIdle(p.cleanup); const saved = await validateSwapApproval(p, true);
       if (used.has(p)) throw new Error('Swap approval was already attempted. Reconcile it.'); used.add(p); let signing = false;
       try {
         const sent = await b.sendCurrent('token-approve', { chainId, from: owner, to: p.token, data: p.data, value: 0n, gasPrice: fixedGasPrice },
           saved.deadline, async () => { await validateSwapApproval(p, true); }, () => { signing = true; }, undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP,
-          undefined, async request => { await saved.assertReviewCurrent(); await assertSwapApprovalAdmission(review, saved.preparedQuote);
+          undefined, async request => { await saved.assertReviewCurrent(); await assertSwapApprovalAdmission(review, saved.preparedQuote); if (!review.cleanup) await assertAllowanceMutationIdle(saved.preparedQuote);
             await resources(await b.currentHead(saved.deadline, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP), request.nonce!);
-            await saved.assertReviewCurrent(); await assertSwapApprovalAdmission(review, saved.preparedQuote); await transport.assertCurrent();
+            await saved.assertReviewCurrent(); await assertSwapApprovalAdmission(review, saved.preparedQuote); if (!review.cleanup) await assertAllowanceMutationIdle(saved.preparedQuote); await transport.assertCurrent(); requireSwapCleanupIdle(p.cleanup);
             if (authorizeSwapApprovalSigning) {
               if (!saved.preparedQuote) throw new Error('Original branded swap approval scope is absent.');
-              await authorizeSwapApprovalSigning(saved.preparedQuote,request);
+              await authorizeSwapApprovalSigning(saved.preparedQuote, request, p.cleanup);
             }
-          }, undefined, saved.preparedQuote ? {prepared:saved.preparedQuote,signer} : undefined);
+            requireSwapCleanupIdle(p.cleanup);
+          }, undefined, saved.preparedQuote ? {prepared:saved.preparedQuote,signer,cleanup:p.cleanup} : undefined);
         if (rememberSwapApprovalHash) await rememberSwapApprovalHash(sent);
+        if (p.cleanup) cleanupSnapshots.set(sent.transactionHash.toLowerCase(), saved.before);
         return Object.freeze({ ...identity, transactionHash: sent.transactionHash, readyToSign: false as const, recover: async () => {
           // Reconciliation remains available after the UI review changes. It
           // requires the original preparation and transport session, not a new send.
@@ -475,12 +537,14 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
             throw new FundingProofError('Swap approval pending action changed.');
           }
           b.requireOwnPending(pending, sent.transactionHash);
+          let result: Awaited<ReturnType<typeof proveApproval>>;
           try {
-            const result = await proveApproval(sent.request, sent.transactionHash, p.token, saved.before, p.amount);
+            result = await proveApproval(sent.request, sent.transactionHash, p.token, saved.before, saved.targetAllowance ?? p.amount);
             clearCurrentDexPendingAttempt(storage, b.requireOwnPending(pending, sent.transactionHash));
-            return Object.freeze({ ...identity, token: p.token, fundingOutcome: result.receipt.status === 0 ? 'reverted' as const : 'verified' as const,
-              privateAccountingVerified: true as const, funds: result.after });
           } catch (error) { if (knownProofFailure(error)) blockCurrentTokenFundingVerification(storage, b.requireOwnPending(pending, sent.transactionHash)); throw error; }
+          if (p.cleanup && result.receipt.status === 1) await completeSwapAllowanceCleanup?.();
+          return Object.freeze({ ...identity, token: p.token, fundingOutcome: result.receipt.status === 0 ? 'reverted' as const : 'verified' as const,
+            privateAccountingVerified: true as const, funds: result.after });
         } });
       } catch (error) { if (!signing) used.delete(p); throw error; }
     },
@@ -488,7 +552,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       marketId: string; canonicalIndex: 0 | 1;
       confirm: (review: { token: string; amount: bigint; previousAllowance: bigint; spender: string; cleanup: boolean }) => Promise<boolean>
     }) => {
-      assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner, signer); b.requireEmptyPending();
+      assertCurrentAppPoolAllowanceCleanupAuthority(policy.graph, owner, signer); await assertAllowanceMutationIdle(); b.requireEmptyPending();
       const pair = resolvePreparedDexScope(candidate).candidate.pairs.find(pair => pair.marketId === marketId);
       if (candidate !== 'cheap-history' || !pair || (canonicalIndex !== 0 && canonicalIndex !== 1) || !encrypt || typeof confirm !== 'function') {
         throw new FundingProofError('Invalid registered Pool allowance cleanup.');
@@ -508,8 +572,22 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
         canonicalIndex, marketId, data: currentTokenFundingAbi.encodeFunctionData('approve', [policy.core, input]), readyToSign: false });
       approvals.set(p, { before, deadline: now() + 300n, funding }); poolApprovalSessions.set(p, { signer, funding }); await validateApproval(p, true); return p;
     },
-    prepareSharedPoolApproval: async ({ funding, canonicalIndex, cleanup = false, confirm }: {
-      funding: PoolFunding; canonicalIndex: 0 | 1; cleanup?: boolean;
+    readSharedPoolAllowances: async (funding: PoolFunding, modes: readonly [TokenApprovalMode, TokenApprovalMode] = ['exact', 'exact']): Promise<readonly [boolean, boolean]> => {
+      await assertPoolApprovalAdmission(funding); b.requireEmptyPending(); assertCurrentPoolFundingPrepared(funding, signer);
+      requireFundingIdentity(funding); await funding.assertCurrent(); await funding.assertApprovalCurrent();
+      const amounts = [funding.amounts.used0, funding.amounts.used1] as const;
+      if (amounts.some(amount => typeof amount !== 'bigint' || amount <= 0n || amount >= 1n << 256n)) {
+        throw new FundingProofError('Invalid exact Pool allowance.');
+      }
+      const head = await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP), funds = fundingObservations.get(head)!;
+      await transport.assertCurrent(); b.requireEmptyPending();
+      return Object.freeze(funding.intent.poolTokens.map((token, i) => {
+        const state = funds.tokens[indexOf(token)];
+        return state.balance >= amounts[i] && planTokenAllowance(state.allowance, amounts[i], modes[i]) === null;
+      })) as readonly [boolean, boolean];
+    },
+    prepareSharedPoolApproval: async ({ funding, canonicalIndex, cleanup = false, approvalMode = 'exact', confirm }: {
+      funding: PoolFunding; canonicalIndex: 0 | 1; cleanup?: boolean; approvalMode?: TokenApprovalMode | (() => TokenApprovalMode);
       confirm: (review: { token: string; amount: bigint; previousAllowance: bigint; spender: string; cleanup: boolean }) => Promise<boolean>
     }) => {
       await assertPoolApprovalAdmission(funding); b.requireEmptyPending(); assertCurrentPoolFundingPrepared(funding, signer); await funding.assertCurrent();
@@ -521,15 +599,20 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       if (!cleanup) await funding.assertApprovalCurrent();
       if (cleanup) await funding.assertUnfundedCleanupCurrent();
       const before = await inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP)), index = indexOf(token), state = before.tokens[index];
-      if (state.balance < amount || state.allowance === amount || state.allowance !== 0n && state.allowance !== (canonicalIndex === 0 ? funding.amounts.used0 : funding.amounts.used1)) throw new FundingProofError('Pool approval is unnecessary or its existing allowance is not exact.');
-      if (!await confirm({ token, amount, previousAllowance: state.allowance, spender: policy.core, cleanup })) return null;
+      if (state.balance < amount) throw new FundingProofError('Pool token balance is below the required deposit amount.');
+      if (cleanup && state.allowance === 0n) return null;
+      let plan = cleanup ? { method: 'approve' as const, value: 0n, target: 0n } : planTokenAllowance(state.allowance, amount, typeof approvalMode === 'function' ? 'exact' : approvalMode);
+      if (!plan) return null;
+      if (!await confirm({ token, amount: plan.target, previousAllowance: state.allowance, spender: policy.core, cleanup })) return null;
+      if (!cleanup && typeof approvalMode === 'function') plan = planTokenAllowance(state.allowance, amount, approvalMode());
+      if (!plan) return null;
       await assertPoolApprovalAdmission(funding); await transport.assertCurrent(); await funding.assertCurrent();
       const current = await inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP));
       if (!current.tokens.every((t, i) => equalToken(t, before.tokens[i]))) throw new FundingProofError('Pool approval funds changed during confirmation.');
-      const input = await encrypt(amount, token, currentTokenFundingAbi.getFunction('approve')!.selector); await transport.assertCurrent();
+      const input = await encrypt(plan.value, token, currentTokenFundingAbi.getFunction(plan.method)!.selector); await transport.assertCurrent();
       const p = Object.freeze({ token, amount, cleanup, canonicalIndex, marketId: funding.intent.marketId,
-        data: currentTokenFundingAbi.encodeFunctionData('approve', [policy.core, input]), ...identity, readyToSign: false as const });
-      approvals.set(p, { before, deadline: now() + 300n, funding }); poolApprovalSessions.set(p, { signer, funding }); await validateApproval(p, true); return p;
+        data: currentTokenFundingAbi.encodeFunctionData(plan.method, [policy.core, input]), ...identity, readyToSign: false as const });
+      approvals.set(p, { before, deadline: now() + 300n, funding, targetAllowance: plan.target }); poolApprovalSessions.set(p, { signer, funding }); await validateApproval(p, true); return p;
     },
     submitSharedPoolApproval: async (p: CurrentSharedPoolApprovalPrepared) => {
       if (!approvals.has(p)) { await assertApprovalAdmission(); throw new FundingProofError('Pool approval was not prepared in this session.'); }
@@ -545,7 +628,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
           if (!pending || pending.verificationBlocked || pending.phase !== 'token-approve' || !same(pending.target, p.token) || pending.callHash !== keccak256(p.data).toLowerCase()) throw new FundingProofError('Pool approval pending action changed.');
           b.requireOwnPending(pending, sent.transactionHash);
           try {
-            const result = await proveApproval(sent.request, sent.transactionHash, p.token, saved.before, p.amount);
+            const result = await proveApproval(sent.request, sent.transactionHash, p.token, saved.before, saved.targetAllowance ?? p.amount);
             clearCurrentDexPendingAttempt(storage, b.requireOwnPending(pending, sent.transactionHash));
             return Object.freeze({ ...identity, token: p.token, fundingOutcome: result.receipt.status === 0 ? 'reverted' as const : 'verified' as const,
               privateAccountingVerified: true as const, funds: result.after, cleanup: p.cleanup, recoveredCleanup: p.recovery === true });
@@ -554,7 +637,10 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
       } catch (error) { if (!signing) used.delete(p); throw error; }
     },
     recoverPendingSharedPoolApproval: () => recoverPendingApproval(),
-    readSharedTokenFunding: async () => inspect(await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP)),
+    readSharedTokenFunding: async () => {
+      const head = await b.currentHead(undefined, CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP);
+      return fundingObservations.get(head)!;
+    },
     prepareSharedTokenFunding: async ({ action, token, confirm, preparedQuote }: { preparedQuote?: CurrentCheapDexPreparedQuote; action: CurrentSharedTokenFundingAction; token: string;
       confirm: (review: CurrentSharedTokenFundingReview) => Promise<boolean> }) => {
       const call = shape(action, token); await assertAdmission(action, token, preparedQuote); b.requireEmptyPending();

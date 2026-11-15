@@ -8,6 +8,8 @@ It proves local compatibility, not remote configuration, wallet behavior, or rel
 - MCP runtime catalog: `0x081f564a48ef039f6f91b45d2aa9f8f2c543b519a83239b088409a23b61c92f9`
 - Chain: `7082400` (COTI testnet)
 - Candidate activation: `false`
+- APP Private Liquidity Book: `0x71cC34b610E18Faf8223e60068b86dfEd4cfb8F7` / `0xa04372d0e19c2532683716229943285c8524c1c88d65dec2eb55003826c81a22`
+- The unified candidate Private Liquidity graph remains the Worker/API and MCP graph; it is not the current APP graph.
 
 ## Consumer status
 
@@ -19,7 +21,7 @@ It proves local compatibility, not remote configuration, wallet behavior, or rel
 | MCP | Runtime catalog `0x081f564a48ef039f6f91b45d2aa9f8f2c543b519a83239b088409a23b61c92f9` | 15/15 identity/runtime/deployment matches | Independent catalog-hash review and signer canary |
 | Supabase images | Compiled Direct/Group selectors and event topics | ABI exact; addresses remain deployment settings | Set and verify remote Direct/Group addresses |
 | Supabase read cursors | Owner-forced RLS migration | Local migration contains owner and generation guards | Apply/lint remotely and run two-device isolation |
-| Daily-price chart | Separate analytics authority | Store `0x2F23Fa612557D33e46c1d5B2510EF9fBc7f27067` exactly manifest-bound | Record the first finalized UTC close and verify automatic demo-to-live transition |
+| Daily-price chart | Separate analytics authority | Store `0x64FBC6b326512FA2152aF8B68745A66473193ece` exactly manifest-bound | Record the first finalized UTC close and verify automatic demo-to-live transition |
 
 ## Exact component graph
 
@@ -30,9 +32,9 @@ It proves local compatibility, not remote configuration, wallet behavior, or rel
 | directOtcV2 | ChainWhisperDirectOTCEscrowV2 | `0x322e219B1275a99b556d852f425BFdc7900cAFCF` | `0x297a5796d584aaa7504a5c934270768cd5ba4f83e2926bbff6e95e7ca97d6ab7` | 8984225 | APP, MCP |
 | groupChatV2 | ChainWhisperGroupChatV2 | `0xBeA25B6066e241FE6aE14fE53367Da01cFFdf787` | `0x608dedd00c5aeff7ec5f756395cd8269e24be50e9ae3da0f015c030963f88fd9` | 8982896 | APP, MCP, Supabase images |
 | private-recurringOtcV2 | ChainWhisperPrivateRecurringOTCEscrowV2 | `0x86b515a2452B81A494AA21D9f3f44606DA93868e` | `0xa8f4471c5add7e7f1fce55e2d325510e258b6aa1b6e47ee22b4a5a29deccfade` | 8984235 | APP, MCP |
-| privateLiquidityBookV2 | ChainWhisperPrivateLiquidityBookV2 | `0x034f5c24a4B9C28E861dDd1DD183E0BE10d818F9` | `0xc33f938f8110a1539a6041bfcace07777b03c8905dcf71e98884eaaf50d33b54` | 9000892 | APP, Worker/API, MCP |
-| privateLiquidityHiddenIntentV2 | ChainWhisperPrivateLiquidityHiddenIntentModuleV2 | `0xee2488935880b9B25b20bf968e2d446474942271` | `0xae3fdfacb1eade48bd40506a09fffe5c22f4b37772c92a78e225762d41a90980` | 9000891 | APP, Worker/API, MCP |
-| privateLiquidityPositionNftV2 | ChainWhisperPrivateLiquidityPositionNFTV2 | `0x2eE8B8D613d438DEE4df17da08Bb9F6826627335` | `0x8c0e39e24480b6c6657d67c750c2a0d7889afca0f364bc647c819c367f7d88bd` | 9000892 | APP, Worker/API, MCP |
+| privateLiquidityBookV2 | ChainWhisperPrivateLiquidityBookV2 | `0x034f5c24a4B9C28E861dDd1DD183E0BE10d818F9` | `0xc33f938f8110a1539a6041bfcace07777b03c8905dcf71e98884eaaf50d33b54` | 9000892 | Worker/API, MCP (retained graph) |
+| privateLiquidityHiddenIntentV2 | ChainWhisperPrivateLiquidityHiddenIntentModuleV2 | `0xee2488935880b9B25b20bf968e2d446474942271` | `0xae3fdfacb1eade48bd40506a09fffe5c22f4b37772c92a78e225762d41a90980` | 9000891 | Worker/API, MCP (retained graph) |
+| privateLiquidityPositionNftV2 | ChainWhisperPrivateLiquidityPositionNFTV2 | `0x2eE8B8D613d438DEE4df17da08Bb9F6826627335` | `0x8c0e39e24480b6c6657d67c750c2a0d7889afca0f364bc647c819c367f7d88bd` | 9000892 | Worker/API, MCP (retained graph) |
 | privateOtcV2 | ChainWhisperPrivateOTCEscrowV2 | `0xf4122D763d148C49956aA3A2704905904BC6900e` | `0xe20848f75e59634a16c7d33dd393e91698292a9b29400d456ff57ab0c04ac680` | 8984231 | APP, MCP |
 | privateTestTokenA | ChainWhisperTestPrivateTokenV1 | `0x222381287eB9f5b3eEa825A3ca5B6c22c6C1893d` | `0x6418567abdfa4986b3f9607955e8834956014e8d7c9a6f859c4ff97083ef76ce` | 8984097 | APP, MCP |
 | privateTestTokenB | ChainWhisperTestPrivateTokenV1 | `0x9467E348a5a4B415eA65e551785273E650ee5CA3` | `0x6418567abdfa4986b3f9607955e8834956014e8d7c9a6f859c4ff97083ef76ce` | 8984098 | APP, MCP |

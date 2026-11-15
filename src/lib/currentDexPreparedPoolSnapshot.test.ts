@@ -4,13 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CotiReadProvider } from './appShared';
 import { STAGED_PREPARED_DEX_CANDIDATE as candidate } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
+import { STAGED_GAP_DEX_CANDIDATE as currentGap } from './currentDexGapCandidate';
 import { readPreparedDexMarketRegistry, type DexV2ReadCapability } from './dexV2Chain';
 import { currentPoolPositionAbi, currentPoolNftAbi } from './currentDexPoolPosition';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { encodePreparedPoolCreation, encodePreparedPoolFundingPreview } from './currentDexPoolFunding';
 import { PREPARED_POOL_LAYOUT as layout, preparedPoolPositionStorageBase, preparedPoolStoredEnvelopes,
   checkPreparedPoolPositionValues, createPreparedOwnerPoolSnapshotReader, checkPreparedPoolFinancialTransition,
-  checkPreparedPoolSnapshotOnlyChange, type PreparedPoolStoredState } from './currentDexPreparedPoolSnapshot';
+  checkPreparedPoolSnapshotOnlyChange, checkPreparedPoolSelectedScope, checkPreparedPoolFundingCurrent, type PreparedPoolStoredState } from './currentDexPreparedPoolSnapshot';
 
 vi.mock('./dexV2Chain', () => ({ readPreparedDexMarketRegistry: vi.fn() }));
 vi.mock('./privateUint256', () => ({ decryptPrivateUint256Output: (_signer: unknown, cipher: { ciphertextLow: bigint }) => cipher.ciphertextLow }));
@@ -99,6 +100,7 @@ const fixture = (closed = false, fund = false, withLimits: 0 | 51 | 64 = 0,
   let revoked = false, wrongOwner = false, reorg = false;
   const signer = { getAddress: async () => wrongOwner ? nft : owner } as unknown as JsonRpcSigner;
   const provider = {
+    getLogs: async () => [],
     getTransaction: async () => tx, getTransactionReceipt: async () => receipt,
     send: async (method: string, params: unknown[]) => {
       if (method === 'eth_getStorageAt') return get(String(params[0]), BigInt(params[1] as string));
@@ -131,7 +133,234 @@ const fixture = (closed = false, fund = false, withLimits: 0 | 51 | 64 = 0,
     revoke: () => { revoked = true; }, wrongOwner: () => { wrongOwner = true; }, reorg: () => { reorg = true; } };
 };
 
+describe.runIf(resolvePreparedDexScope('cheap-history').candidate.graph === currentGap.graph)('superseded plain snapshot recovery proof', () => {
+  it.each(['success', 'same-hash', 'order', 'missing-latest', 'wrong-call', 'wrong-id', 'duplicate-event', 'event-encoding',
+    'latest-envelope', 'position-revision', 'ownership-revision', 'lifecycle-revision', 'terms-revision', 'owner', 'closed', 'reorg', 'late-revision'] as const)(
+    'keeps old amounts outside normal producers and checks recovery: %s', async fault => {
+      const selected = resolvePreparedDexScope('cheap-history').candidate;
+      expect(selected.graph).toBe(currentGap.graph);
+      const f = fixture(false, false, 0, selected), latestHash = word(78), current = { number: 101n, hash: word(101) };
+      const base = preparedPoolPositionStorageBase(f.pair.marketId, 8n), nft = selected.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
+      f.put(selected.core, base + 17n, word(102));
+      const latestTx = { ...f.tx, hash: latestHash, nonce: 1 };
+      const latestReceipt = { ...f.receipt, hash: latestHash, logs: [{ address: selected.core,
+        ...eventAbi.encodeEventLog(eventAbi.getEvent('PoolSnapshotRefreshed')!, [8n, context, preparedPoolStoredEnvelopes(f.claim())]) }] };
+      if (fault === 'wrong-call') f.tx.data = currentPoolPositionAbi.encodeFunctionData('poolSnapshot', [9n]);
+      if (fault === 'wrong-id') f.receipt.logs = [{ address: selected.core,
+        ...eventAbi.encodeEventLog(eventAbi.getEvent('PoolSnapshotRefreshed')!, [9n, context, preparedPoolStoredEnvelopes(f.claim())]) }];
+      if (fault === 'duplicate-event') f.receipt.logs.push({ ...f.receipt.logs[0] });
+      if (fault === 'event-encoding') f.receipt.logs[0].data += '00';
+      if (fault === 'latest-envelope') f.put(selected.core, base + 17n, word(103));
+      const revision = ['position-revision', 'ownership-revision', 'lifecycle-revision', 'terms-revision'].indexOf(fault);
+      if (revision >= 0) f.put(selected.core, base + 4n + BigInt(revision), word(2));
+      if (fault === 'owner') f.put(nft, map(8n, 2n), word(999));
+      if (fault === 'closed') f.put(selected.core, base, word(4));
+      const read = f.provider.send.bind(f.provider); let latestHeads = 0;
+      f.provider.getTransaction = async hash => (hash === transactionHash ? f.tx : latestTx) as never;
+      f.provider.getTransactionReceipt = async hash => (fault === 'missing-latest' && hash === latestHash ? null : hash === transactionHash ? f.receipt : latestReceipt) as never;
+      f.provider.send = async (method, params) => {
+        if (!Array.isArray(params)) throw new Error('Expected RPC parameters.');
+        const latest = params[0] === latestHash, tx = latest ? latestTx : f.tx, receipt = latest ? latestReceipt : f.receipt;
+        if (method === 'eth_getTransactionByHash') return { ...tx, chainId: `0x${tx.chainId.toString(16)}`, value: '0x0', input: tx.data,
+          nonce: latest ? '0x1' : '0x0', gas: '0x5f5e100', blockNumber: '0x64', transactionIndex: fault === 'order' ? latest ? '0x0' : '0x1' : latest ? '0x1' : '0x0' };
+        if (method === 'eth_getTransactionReceipt') return { ...receipt, transactionHash: receipt.hash, status: '0x1', blockNumber: '0x64',
+          transactionIndex: fault === 'order' ? latest ? '0x0' : '0x1' : latest ? '0x1' : '0x0' };
+        if (method === 'eth_getBlockByNumber') {
+          if (params[0] === 'latest') {
+            latestHeads++;
+            if (fault === 'late-revision' && latestHeads === 2) f.put(selected.core, base + 4n, word(2));
+            return { number: '0x65', hash: current.hash, transactions: [] };
+          }
+          if (params[0] === '0x65') return { number: '0x65', hash: fault === 'reorg' ? word(999) : current.hash, transactions: [] };
+          return { number: '0x64', hash: block.hash, transactions: fault === 'order' ? [latestHash, transactionHash] : [transactionHash, latestHash] };
+        }
+        return read(method, params);
+      };
+      const recovery = f.reader.verifySupersededSnapshot(8n, transactionHash, fault === 'same-hash' ? transactionHash : latestHash);
+      if (fault === 'success') {
+        const result = await recovery;
+        expect(result).toMatchObject({ claimStatus: 1n, revisions: [1n, 1n, 1n, 1n], block: current });
+        expect(result).not.toHaveProperty('amounts'); expect(result).not.toHaveProperty('producer');
+        await expect(f.reader.issue(8n, 'snapshot', transactionHash)).rejects.toThrow('differs from stored owner envelopes');
+        await expect(f.reader.readSnapshot(8n, transactionHash)).rejects.toThrow('differs from stored owner envelopes');
+      } else await expect(recovery).rejects.toThrow();
+    });
+});
+
 describe('prepared Pool source-bound storage and authenticated producers', () => {
+  it.each([false, true])('exposes verified state after current checks (reuse issued %s)', async reuse => {
+    const f = fixture(), producer = await f.reader.issue(8n, 'snapshot', transactionHash);
+    const send = vi.spyOn(f.provider, 'send'), capture = vi.fn();
+    await expect(f.reader.current(producer, block, reuse, capture)).resolves.toBe(producer);
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0][0]).toMatchObject({ graph: candidate.graph, owner, positionId: 8n, block });
+    const storageReads = send.mock.calls.filter(([method]) => method === 'eth_getStorageAt').length;
+    expect(storageReads > 0).toBe(!reuse);
+  });
+  it.each(['owner', 'lease', 'reorg', 'block', 'brand', 'market'] as const)('does not expose verified state after %s failure', async fault => {
+    const f = fixture(), producer = await f.reader.issue(8n, 'snapshot', transactionHash), capture = vi.fn();
+    if (fault === 'owner') f.wrongOwner();
+    if (fault === 'lease') f.revoke();
+    if (fault === 'reorg') f.reorg();
+    const supplied = fault === 'brand' ? { ...producer } : producer;
+    const selectedBlock = fault === 'block' ? { ...block, hash: word(101) } : block;
+    const reader = fault === 'market' ? createPreparedOwnerPoolSnapshotReader({ signer: f.signer, owner, candidate,
+      marketId: candidate.pairs[1].marketId, readCapability: {} as DexV2ReadCapability, provider: f.provider,
+      guard: async () => {}, attest: async () => {} }) : f.reader;
+    await expect(reader.current(supplied, selectedBlock, true, capture)).rejects.toThrow();
+    expect(capture).not.toHaveBeenCalled();
+  });
+  it('keeps selected accounting reads fixed when unrelated positions are allocated', async () => {
+    const counts: number[] = [];
+    for (const allocated of [51,64,200] as const) {
+      const f=fixture(false,false,allocated===200?51:allocated),send=f.provider.send.bind(f.provider);let reads=0;
+      if(allocated===200)f.put(candidate.core,11n,word(200));
+      f.provider.send=async(method,params)=>{if(method==='eth_getStorageAt')reads++;return send(method,params);};
+      const s=await f.reader.selectedState(8n,block);
+      expect(Object.keys(s.markets)).toEqual([f.pair.marketId]);
+      expect(Object.keys(s.claims)).toHaveLength(8);expect(s.anchors).toHaveLength(7);
+      expect(Object.keys(s.nftOwners)).toEqual(['8']);counts.push(reads);
+    }
+    expect(counts).toEqual([810,810,810]);
+  });
+  it('checks complete selected creation accounting and protects every retained field', async () => {
+    const f=fixture(),id=49n,before=await f.reader.selectedState(id,block),base=preparedPoolPositionStorageBase(f.pair.marketId,id);
+    const claim=f.claim();claim.forEach((v,i)=>f.put(candidate.core,base+BigInt(i),v));
+    f.put(candidate.core,11n,word(id));f.put(candidate.core,map(id,18n),f.pair.marketId);
+    f.put(candidate.core,map(f.pair.marketId,124n,'bytes32'),word(1));
+    f.put(nft,map(id,2n),word(BigInt(owner)));f.put(nft,map(id,6n),word(1));f.put(nft,map(owner,3n,'address'),word(7));
+    for(const anchor of before.markets[f.pair.marketId].slice(18,25))f.put(candidate.core,preparedPoolPositionStorageBase(f.pair.marketId,BigInt(anchor))+4n,word(2));
+    const after=await f.reader.selectedState(id,block);
+    expect(()=>checkPreparedPoolFinancialTransition(before,after,'fund')).not.toThrow();
+    for(const fault of ['anchor','claim','nft','ledger','escrow','ever-funded','mapping','source','missing-anchor','extra-market']as const){
+      const bad=structuredClone(after),set=(words:readonly string[],i:number,value=word(99))=>(words as string[])[i]=value;
+      if(fault==='anchor')set(bad.anchors[6],13);
+      if(fault==='claim')set(bad.claim,54);
+      if(fault==='nft')(bad.nftOwners as Record<string,string>)[String(id)]=word(2);
+      if(fault==='ledger')set(bad.ledgers[candidate.tokens[0][0]],4);
+      if(fault==='escrow')set(bad.escrows[candidate.tokens[0][0]],0);
+      if(fault==='ever-funded')Object.assign(bad,{everPoolFunded:word(0)});
+      if(fault==='mapping')Object.assign(bad,{positionMarket:candidate.pairs[1].marketId});
+      if(fault==='source')Object.assign(bad,{sourceIdForPosition:word(1)});
+      if(fault==='missing-anchor')delete(bad.claims as Record<string,unknown>)[String(BigInt(after.markets[f.pair.marketId][18]))];
+      if(fault==='extra-market')(bad.markets as Record<string,readonly string[]>)[candidate.pairs[1].marketId]=before.markets[f.pair.marketId];
+      expect(()=>checkPreparedPoolFinancialTransition(before,bad,'fund'),fault).toThrow();
+    }
+    const incomplete=structuredClone(after);(incomplete.anchors as unknown[]).pop();
+    expect(()=>checkPreparedPoolSelectedScope(incomplete)).toThrow('scope');
+  });
+  it.each(['before-shared','before-disjoint','after-shared','after-disjoint'] as const)('attributes the actual own mint with an unrelated other-owner %s mint',async order=>{
+    const f=fixture(),baseline=await f.reader.selectedState(null,block),beforeOther=order.startsWith('before'),
+      otherPair=candidate.pairs.find(p=>p.marketId!==f.pair.marketId && p.tokens.filter(t=>f.pair.tokens.some(v=>v===t)).length===(order.endsWith('shared')?1:0))!,
+      ownId=beforeOther?50n:49n,otherId=beforeOther?49n:50n;
+    const unrelated=()=>{
+      f.put(candidate.core,11n,word(beforeOther?49n:50n));
+      f.put(candidate.core,map(otherId,18n),otherPair.marketId);f.put(nft,map(otherId,2n),word(2));f.put(nft,map(otherId,6n),word(1));
+      for(const token of otherPair.tokens){f.put(candidate.core,map(token,22n,'address')+9n,word(99));f.put(token,map(candidate.core,4n,'address'),word(99));}
+      for(const slot of [12n,13n,14n,16n,17n,58n,98n])f.put(candidate.core,slot,word(99));
+    };
+    if(beforeOther){unrelated();const fresh=await f.reader.selectedState(null,block);expect(fresh.positionId).toBe(50n);expect(()=>checkPreparedPoolFundingCurrent(baseline,fresh)).not.toThrow();}
+    const claim=f.claim();claim.forEach((v,i)=>f.put(candidate.core,preparedPoolPositionStorageBase(f.pair.marketId,ownId)+BigInt(i),v));
+    f.put(candidate.core,11n,word(ownId));f.put(candidate.core,map(ownId,18n),f.pair.marketId);
+    f.put(candidate.core,map(f.pair.marketId,124n,'bytes32'),word(1));f.put(nft,map(ownId,2n),word(BigInt(owner)));
+    f.put(nft,map(ownId,6n),word(1));f.put(nft,map(owner,3n,'address'),word(7));
+    for(const anchor of baseline.markets[f.pair.marketId].slice(18,25))f.put(candidate.core,preparedPoolPositionStorageBase(f.pair.marketId,BigInt(anchor))+4n,word(2));
+    if(!beforeOther)unrelated();
+    const after=await f.reader.selectedState(ownId,block);
+    expect(ownId===baseline.counter+1n && after.counter===ownId).toBe(false);
+    expect(after.counter).toBe(50n);expect(()=>checkPreparedPoolFinancialTransition(baseline,after,'fund')).not.toThrow();
+    for(const fault of ['reused-id','counter','config','monotonic','context','anchor']as const){
+      const bad=structuredClone(after);
+      if(fault==='reused-id')Object.assign(bad,{positionId:48n});
+      if(fault==='counter')Object.assign(bad,{counter:ownId-1n});
+      if(fault==='config')(bad.core as string[])[50]=word(99);
+      if(fault==='monotonic')(bad.core as string[])[12]=word(0);
+      if(fault==='context')(bad.anchors[0]as string[])[13]=word(99);
+      if(fault==='anchor')(bad.anchors[6]as string[])[4]=word(1);
+      expect(()=>checkPreparedPoolFinancialTransition(baseline,bad,'fund'),fault).toThrow();
+    }
+  });
+  it.each(['same-pool-after','incoming-nft'] as const)('attributes selected funding with %s interference',async interference=>{
+    const f=fixture(),before=await f.reader.selectedState(null,block),id=49n;
+    f.claim().forEach((v,i)=>f.put(candidate.core,preparedPoolPositionStorageBase(f.pair.marketId,id)+BigInt(i),v));
+    f.put(candidate.core,11n,word(id));f.put(candidate.core,map(id,18n),f.pair.marketId);
+    f.put(candidate.core,map(f.pair.marketId,124n,'bytes32'),word(1));
+    f.put(nft,map(id,2n),word(BigInt(owner)));f.put(nft,map(id,6n),word(1));
+    f.put(nft,map(owner,3n,'address'),word(interference==='incoming-nft'?8:7));
+    for(const anchor of before.markets[f.pair.marketId].slice(18,25)){
+      const base=preparedPoolPositionStorageBase(f.pair.marketId,BigInt(anchor));
+      f.put(candidate.core,base+4n,word(interference==='same-pool-after'?3:2));
+      if(interference==='same-pool-after')for(const slot of [8n,9n,10n,11n,14n,15n,18n,19n])f.put(candidate.core,base+slot,word(99));
+    }
+    if(interference==='same-pool-after'){
+      const market=map(f.pair.marketId,1n,'bytes32');
+      for(let i=25n;i<39n;i++)f.put(candidate.core,market+i,word(99));
+    }
+    const after=await f.reader.selectedState(id,block);
+    expect(()=>checkPreparedPoolFinancialTransition(before,after,'fund')).not.toThrow();
+    // These aggregates are still exact dependencies before signing.
+    const changed=structuredClone(before);(changed.anchors[0] as string[])[4]=word(2);
+    expect(()=>checkPreparedPoolFundingCurrent(before,changed)).toThrow();
+  });
+  it.each(['valid','envelope','event','calldata','canonical','order','duplicate','bound','revision','owner','market','context'] as const)(
+    'authenticates a later same-block owner snapshot after funding: %s',async fault=>{
+      const f=fixture(false,true),snapshotHash=word(78),base=preparedPoolPositionStorageBase(f.pair.marketId,f.selectedId);
+      // Refresh changes entitlement/total shares with no change to owned shares or public revisions.
+      f.put(candidate.core,base+17n,word(250));f.put(candidate.core,base+29n,word(150));
+      const event={address:candidate.core,...eventAbi.encodeEventLog(eventAbi.getEvent('PoolSnapshotRefreshed')!,
+        [f.selectedId,context,preparedPoolStoredEnvelopes(f.claim())])};
+      const snapshotTx={...f.tx,hash:snapshotHash,data:currentPoolPositionAbi.encodeFunctionData('poolSnapshot',[f.selectedId])};
+      const snapshotReceipt={...f.receipt,hash:snapshotHash,logs:[event]};
+      const discovered={...event,transactionHash:snapshotHash,blockHash:block.hash,blockNumber:Number(block.number),index:3,removed:false};
+      const send=f.provider.send.bind(f.provider),getTx=f.provider.getTransaction.bind(f.provider),getReceipt=f.provider.getTransactionReceipt.bind(f.provider);
+      const transactions=fault==='order'?[snapshotHash,transactionHash]:[transactionHash,snapshotHash];
+      f.provider.getTransaction=async hash=>hash===snapshotHash?snapshotTx as never:getTx(hash);
+      f.provider.getTransactionReceipt=async hash=>hash===snapshotHash?snapshotReceipt as never:getReceipt(hash);
+      f.provider.getLogs=async()=>Array.from({length:fault==='duplicate'?2:fault==='bound'?257:1},()=>discovered) as never;
+      f.provider.send=async(method,params)=>{
+        if(!Array.isArray(params))throw new Error('Expected positional RPC parameters.');
+        if(method==='eth_getBlockByNumber')return{...await send(method,params),transactions};
+        if(method==='eth_getTransactionByHash'&&params[0]===snapshotHash)return{...snapshotTx,chainId:toBeHex(snapshotTx.chainId).replace(/^0x0/,'0x'),
+          value:'0x0',input:snapshotTx.data,nonce:'0x0',gas:'0x5f5e100',blockNumber:'0x64',transactionIndex:toBeHex(BigInt(transactions.indexOf(snapshotHash))).replace(/^0x0/,'0x')};
+        if(method==='eth_getTransactionReceipt'&&params[0]===snapshotHash)return{...snapshotReceipt,transactionHash:snapshotHash,
+          status:fault==='canonical'?'0x0':'0x1',blockNumber:'0x64',transactionIndex:toBeHex(BigInt(transactions.indexOf(snapshotHash))).replace(/^0x0/,'0x')};
+        const value=await send(method,params);
+        if(['eth_getTransactionByHash','eth_getTransactionReceipt'].includes(method)&&params[0]===transactionHash)
+          return{...value as object,transactionIndex:toBeHex(BigInt(transactions.indexOf(transactionHash))).replace(/^0x0/,'0x')};
+        return value;
+      };
+      if(fault==='envelope')f.put(candidate.core,base+17n,word(999));
+      if(fault==='event')snapshotReceipt.logs=[{...event,data:event.data+'00'}];
+      if(fault==='calldata')snapshotTx.data=currentPoolPositionAbi.encodeFunctionData('poolSnapshot',[8n]);
+      if(fault==='revision')f.put(candidate.core,base+4n,word(2));
+      if(fault==='owner')f.put(nft,map(f.selectedId,2n),word(2));
+      if(fault==='market')f.put(candidate.core,map(f.selectedId,18n),candidate.pairs[1].marketId);
+      if(fault==='context')f.put(candidate.core,base+13n,word(999));
+      const result=f.reader.issue(f.selectedId,'fund',transactionHash,f.tx.data);
+      if(fault==='valid')await expect(result).resolves.toMatchObject({kind:'fund',transactionHash,amountsTransactionHash:snapshotHash,
+        amounts:{amount0:250n,shares:50n,totalShares:150n},readyToSign:false});
+      else await expect(result).rejects.toThrow();
+    });
+  it('counts the full funding baseline separately from the display-only owner snapshot', async () => {
+    const f = fixture(false, false, 51), send = f.provider.send.bind(f.provider);
+    const calls: Record<string, number> = {};
+    f.provider.send = async (method, params) => {
+      calls[method] = (calls[method] ?? 0) + 1;
+      return send(method, params);
+    };
+    const baseline = await f.reader.state(52n, block);
+    expect(Object.keys(baseline.markets)).toHaveLength(6);
+    expect(Object.keys(baseline.claims)).toHaveLength(51);
+    expect(Object.keys(baseline.fixedSources)).toEqual(['50', '51']);
+    expect(Object.keys(baseline.nftOwners)).toHaveLength(52);
+    expect(calls).toEqual({ eth_getStorageAt: 5093 });
+    const stateCalls = { ...calls };
+    for (const method of Object.keys(calls)) delete calls[method];
+    const snapshot = await f.reader.readSnapshot(8n, transactionHash);
+    expect(snapshot.amounts.shares).toBe(50n);
+    expect(calls.eth_getStorageAt).toBe(66);
+    console.info('Pool reader local fixture provider.send counts', JSON.stringify({ state: stateCalls, readSnapshot: calls }));
+  });
   it('reads an authenticated owner snapshot without scanning other positions or granting action authority',async()=>{
     const f=fixture(),send=f.provider.send.bind(f.provider);let storageReads=0;
     f.provider.send=async(method,params)=>{if(method==='eth_getStorageAt')storageReads++;return send(method,params);};
@@ -276,23 +505,32 @@ describe('prepared Pool source-bound storage and authenticated producers', () =>
     await expect(f.reader.issue(f.selectedId, 'fund', transactionHash, '0x')).rejects.toThrow('submitted');
     f.receipt.logs.push(f.receipt.logs[1]); await expect(f.reader.issue(f.selectedId, 'fund', transactionHash, f.tx.data)).rejects.toThrow('unique');
   });
+  it('keeps the exact funding preview context separate from the minted owner context',async()=>{
+    const f=fixture(false,true),abi=new Interface(['function createPoolPosition(bytes32 selectedMarket,bytes32 expectedPreview,bytes data) returns(uint256)']),
+      args=abi.decodeFunctionData('createPoolPosition',f.tx.data);
+    f.tx.data=abi.encodeFunctionData('createPoolPosition',[args[0],word(99),args[2]]);
+    const producer=await f.reader.issue(f.selectedId,'fund',transactionHash,f.tx.data);
+    expect(producer.context).toBe(context);expect(producer.context).not.toBe(word(99));
+  });
   for (const limitScope of [51, 64] as const) it(`preserves native common fixed sources50/51 in allocated scope${limitScope}`, async () => {
     const f = fixture(false, false, limitScope), baseline = await f.reader.state(BigInt(limitScope + 1), block);
     expect(baseline.fixedSources['50'].sourceId).toBe(43n); expect(baseline.fixedSources['51'].sourceId).toBe(44n);
     expect(baseline.fixedSources['50'].engine[16]).toBe(word(456)); expect(baseline.fixedSources['50'].core[13]).toBe(word(123));
     const producer = await f.reader.issue(8n, 'snapshot', transactionHash);
-    f.put(f.pair.engine, map(43n, 9n) + 16n, word(999)); await expect(f.reader.current(producer, block)).rejects.toThrow('stale');
+    f.put(f.pair.engine, map(43n, 9n) + 16n, word(999));
+    expect((await f.reader.state(BigInt(limitScope+1),block)).fixedSources['50'].engine[16]).toBe(word(999));
+    await expect(f.reader.current(producer, block)).resolves.toBe(producer);
   });
   it.each(['reorg', 'owner', 'lease', 'event', 'selector', 'market', 'counter', 'non-pool'] as const)('rejects %s mismatch', async fault => {
     const f = fixture();
     if (fault === 'reorg') f.reorg(); if (fault === 'owner') f.wrongOwner(); if (fault === 'lease') f.revoke();
     if (fault === 'event') f.receipt.logs[0].data += '00'; if (fault === 'selector') f.tx.data = '0x00000000';
     if (fault === 'market') f.put(candidate.core, map(8n, 18n), candidate.pairs[1].marketId);
-    if (fault === 'counter') f.put(candidate.core, 11n, word(129));
+    if (fault === 'counter') f.put(candidate.core, 11n, word(41));
     if (fault === 'non-pool') f.put(candidate.core, preparedPoolPositionStorageBase(f.pair.marketId, 8n) + 59n, zero);
     await expect(f.reader.issue(8n, 'snapshot', transactionHash)).rejects.toThrow();
   });
-  it.each(['anchor', 'other-market', 'other-claim', 'revision', 'custody', 'nft-owner', 'c1'] as const)('holds %s drift despite the same owner context', async fault => {
+  it.each(['anchor', 'other-market', 'other-claim', 'revision', 'custody', 'nft-owner', 'c1'] as const)('tracks %s drift within the declared accounting scope', async fault => {
     const f = fixture(), p = await f.reader.issue(8n, 'snapshot', transactionHash);
     if (fault === 'anchor') f.put(candidate.core, preparedPoolPositionStorageBase(f.pair.marketId, 1n) + 8n, word(2));
     if (fault === 'other-market') f.put(candidate.core, map(candidate.pairs[1].marketId, 1n, 'bytes32') + 11n, word(2));
@@ -301,7 +539,8 @@ describe('prepared Pool source-bound storage and authenticated producers', () =>
     if (fault === 'custody') f.put(candidate.tokens[0][0], map(candidate.core, 4n, 'address'), word(2));
     if (fault === 'nft-owner') f.put(nft, map(16n, 2n), word(2));
     if (fault === 'c1') f.put(candidate.core, 50n, word(2));
-    await expect(f.reader.current(p, block)).rejects.toThrow('stale');
+    if(['other-market','other-claim','nft-owner'].includes(fault))await expect(f.reader.current(p,block)).resolves.toBe(p);
+    else await expect(f.reader.current(p, block)).rejects.toThrow('stale');
   });
   it('reports the compiled shared-owner event gap before receipt or private reads', async () => {
     const f = fixture(); for (const action of ['top-up', 'close', 'withdraw'] as const)
@@ -379,6 +618,13 @@ describe('prepared bounded financial preservation', () => {
     if (fault === 'other-custody') after.custody[candidate.tokens.find(([token]) => ![after.market.token0, after.market.token1].includes(token))![0]][0] = word(2);
     if (fault === 'nft-owner') after.nftOwners['16'] = word(2);
     expect(() => checkPreparedPoolFinancialTransition(before, after, 'fund')).toThrow();
+  });
+  it.each([false,true])('preserves C1 configuration, lifecycle and accounting checks (closed=%s)', async closed => {
+    const f=fixture(closed),before=await f.reader.selectedState(8n,block);
+    for(let index=50;index<=98;index++){
+      const bad=structuredClone(before);(bad.core as string[])[index]=word(BigInt(before.core[index])+1n);
+      expect(()=>checkPreparedPoolSnapshotOnlyChange(before,bad)).toThrow('financial state');
+    }
   });
   it('allows only supported snapshot words and protects closed system ciphertexts', async () => {
     const f = fixture(true), before = await f.reader.state(8n, block), after = structuredClone(before) as unknown as MutableState;

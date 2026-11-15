@@ -1,5 +1,8 @@
+import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
+import { MAX_TOKEN_ALLOWANCE } from '../../../lib/tokenAllowance';
 import './CurrentDexOwnerViews.css';
 import { useEffect, useRef, useState } from 'react';
+import { logMobileWalletDiagnostic } from '../../../lib/mobileWalletDiagnostics';
 import { formatEther, parseUnits } from '@coti-io/coti-ethers';
 import {
   ArrowDownUp,
@@ -21,7 +24,7 @@ import CurrentSharedTestTokenControls from './CurrentSharedTestTokenControls';
 import type { CurrentTokenFundingResult } from '../../../lib/currentDexTokenFunding';
 import { CURRENT_APP_FURTHER_TRIAL } from '../../../lib/currentDexC1SwapPolicy';
 import { CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM } from '../../../lib/currentSharedDexTokenFunding';
-import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
+import { currentDexPendingStorage, readCurrentDexPendingAttempt, currentDexOwnerRecovery, type CurrentDexOwnerRecoveryView } from '../../../lib/currentDexPendingAttempt';
 import { CURRENT_DEX_DISPLAY_PAIR, parseCurrentDexTokenAmount, readCurrentDexDisplay, currentDexDisplayPair,
   parseDexCandidateTokenAmount, formatDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
 import type { TradingPair } from '../../../app/components/TradingProductSwitch';
@@ -44,6 +47,8 @@ import { currentDexPriceImpact, currentDexQuoteAveragePrice } from '../../../lib
 import { currentDexEstimatedReceive, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import CurrentSwapProgress from './CurrentSwapProgress';
+import CurrentSwapSteps, {type SwapInputProgress,type SwapTransactionStep,type SwapApprovalStep} from './CurrentSwapSteps';
+import { currentDexQuoteInputPlan } from '../../../lib/currentDexQuoteInputPlan';
 import { DexViewTabs, type DexView } from '../../trading/components/TradeDeskTabs';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
 import useCurrentTrialBalances from '../hooks/useCurrentTrialBalances';
@@ -98,17 +103,17 @@ export const restoreCurrentTrialQuote = async (
 };
 // Shared candidates use six-decimal contracts, not the historical two-token adapter.
 export const readCurrentSwapInputFunding = async (
-  sender: Pick<TrialSubmission, 'readSharedTokenFunding' | 'readCurrentTokenFunding'>,
-  candidateKey: CurrentCheapDexCandidateKey, owner: string, token: string, tokenIndex: 0 | 1
+  sender: Pick<TrialSubmission, 'readSharedSwapInputFunding' | 'readCurrentTokenFunding'>,
+  candidateKey: CurrentCheapDexCandidateKey, owner: string, token: string, tokenIndex: 0 | 1, outputToken: string
 ) => {
   if (candidateKey !== 'cheap-prepared' && candidateKey !== 'cheap-exit' && candidateKey !== 'cheap-history') return sender.readCurrentTokenFunding(tokenIndex);
-  const candidate = resolveCurrentCheapDexCandidate(candidateKey), funds = await sender.readSharedTokenFunding();
+  const candidate = resolveCurrentCheapDexCandidate(candidateKey), funds = await sender.readSharedSwapInputFunding(token, outputToken);
   const input = funds.tokens.find(value => value.address.toLowerCase() === token.toLowerCase());
   if (funds.owner.toLowerCase() !== owner.toLowerCase() || funds.core.toLowerCase() !== candidate.core.toLowerCase() ||
       funds.graph !== candidate.graph || funds.packageSha256 !== candidate.packageSha256 || funds.privateFundsVerified !== true ||
       funds.readyToSign !== false || !input || input.decimals !== 6 || typeof input.balance !== 'bigint' || input.balance < 0n ||
       typeof input.allowance !== 'bigint' || input.allowance < 0n) throw new Error('Shared swap input funding identity or private state changed.');
-  return { balance: input.balance, allowance: input.allowance, claimed: input.claimed, block: funds.head };
+  return { balance: input.balance, allowance: input.allowance, block: funds.head };
 };
 type TrialTiming = NonNullable<ReturnType<TrialSubmission['readCurrentCheapTiming']>>;
 export const reconcileCurrentTrialPending = async (
@@ -188,19 +193,17 @@ export function CurrentSwapWorkspace({
   priceDisplayInverted,
   selectedPair,
   marketReference,
-  referenceDisplayInverted,
   sharedWalletSession,
   onPriceDisplayInvertedChange,
-  onReferenceDisplayInvertedChange,
+  onInspect,
   candidateKey = 'cheap-current', visible = true
 }: {
   priceDisplayInverted: boolean;
   selectedPair: TradingPair;
   marketReference?: CurrentDexMarketReference;
-  referenceDisplayInverted?: boolean;
   sharedWalletSession?: SharedWalletSession;
   onPriceDisplayInvertedChange?: (inverted: boolean) => void;
-  onReferenceDisplayInvertedChange?: (inverted: boolean | undefined) => void;
+  onInspect?: (view: CurrentDexOwnerRecoveryView) => void;
   candidateKey?: CurrentCheapDexCandidateKey;
   visible?: boolean;
 }) {
@@ -257,13 +260,8 @@ export function CurrentSwapWorkspace({
   const quoteProtocol = currentCheapDexQuoteProtocol(candidate);
   const termsKey = [candidate.graph, candidate.core, candidate.packageSha256, ...selectedTokens, selectedPair.join('/'), profile, canonicalSide, priceDisplayInverted, maximumInput, minimumInput, minimumOutput, priceLimit, quoteProtocol, slippagePercent].join(':');
   const inputIndex = canonicalSide === 'buy' ? 1 : 0;
+  const [approvalMode, setApprovalMode, getApprovalMode] = useTokenApprovalMode(`${sharedWalletSession?.walletAddress}:${candidate.graph}:${selectedTokens[inputIndex]}`);
   const outputIndex = canonicalSide === 'buy' ? 0 : 1;
-  const referencePairKey = trialTokens.join('/');
-  useEffect(() => {
-    if (!onReferenceDisplayInvertedChange) return;
-    onReferenceDisplayInvertedChange(visible ? inputIndex === 1 : undefined);
-    return () => onReferenceDisplayInvertedChange(undefined);
-  }, [onReferenceDisplayInvertedChange, inputIndex, visible, candidateKey, referencePairKey]);
   const parseInput = (value: string, field: string, positive = false) => parseDexCandidateTokenAmount(candidate, selectedTokens[inputIndex], value, field, positive);
   const parseOutput = (value: string, field: string) => parseDexCandidateTokenAmount(candidate, selectedTokens[outputIndex], value, field);
   const formatInput = (amount: bigint) => formatDexCandidateTokenAmount(candidate, selectedTokens[inputIndex], amount);
@@ -286,6 +284,14 @@ export function CurrentSwapWorkspace({
   const reviewScope = useRef(reviewContext);
   if ((Object.keys(reviewContext) as (keyof typeof reviewContext)[]).some(key => reviewContext[key] !== reviewScope.current[key])) reviewScope.current = reviewContext;
   const currentReviewScope = reviewScope.current;
+  const [stepProgress,setStepProgress]=useState<{scope:object;inputs:SwapInputProgress;approval:SwapApprovalStep;quote:SwapTransactionStep;accept:SwapTransactionStep;cancelledBeforeQuote?:boolean}|null>(null);
+  const updateSteps=(patch:Partial<NonNullable<typeof stepProgress>>)=>{
+    if(reviewScope.current!==currentReviewScope)return;
+    setStepProgress(previous=>{
+      const prior:NonNullable<typeof stepProgress>=previous?.scope===currentReviewScope?previous:{scope:currentReviewScope,inputs:{completed:0,total:currentDexQuoteInputPlan(candidateKey).length,requesting:false},approval:'conditional',quote:'next',accept:'next'};
+      return{...prior,...patch,...(patch.approval==='not-needed'&&prior.approval==='verified'?{approval:'verified' as const}:{})};
+    });
+  };
   const { confirmation, requestConfirmation, resolveConfirmation } = useTradeActionConfirmationState(currentReviewScope);
   const activeJourney = journey.current?.scope === currentReviewScope ? journey.current : null;
   const timedConfirmation = (model: TradeActionConfirmModel, kind: string) => {
@@ -298,6 +304,7 @@ export function CurrentSwapWorkspace({
     return () => document.removeEventListener('visibilitychange', changedVisibility);
   }, []);
   const [verifiedScope, setVerifiedScope] = useState<typeof currentReviewScope | null>(null);
+  const [unusedApproval, setUnusedApproval] = useState<{ sender: TrialSubmission; quote: CurrentCheapDexPreparedQuote; scope: object; readyToContinue: boolean } | null>(null);
   const candidateReady = verifiedScope !== null && verifiedScope === currentReviewScope;
   const capturedWallet = useRef(wallet);
   const capturedCandidate = useRef(candidateKey);
@@ -313,8 +320,18 @@ export function CurrentSwapWorkspace({
   const canInspect = Boolean(sharedWalletSession?.walletAddress && sharedWalletSession.chainId === Number(trialChain) &&
     sharedWalletSession.actions?.getCurrentDexSubmissionCapability);
   const enabled = candidateReady && connected && !walletChanged && !candidateChanged;
+  const progressReady = canInspect && privacyReady && !walletChanged && !candidateChanged && verifiedScope !== null &&
+    verifiedScope.wallet === currentReviewScope.wallet && verifiedScope.terms === currentReviewScope.terms &&
+    verifiedScope.source === currentReviewScope.source && verifiedScope.walletId === currentReviewScope.walletId &&
+    verifiedScope.onboard?.[wallet.address ?? '']?.aesKey === currentReviewScope.onboard?.[wallet.address ?? '']?.aesKey;
   const busy = ['preparing', 'open-pending', 'accepting', 'release-pending'].includes(stage);
   const savedActionPending = typeof window !== 'undefined' && hasCurrentTrialSavedAction(currentDexPendingStorage());
+  const readOwnerRecovery = () => currentDexOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage()),
+    { chainId: String(candidate.chainId), owner: wallet.address ?? '', core: candidate.core, graph: `0x${candidate.graph}` });
+  let ownerRecovery: ReturnType<typeof readOwnerRecovery> = null;
+  let ownerRecoveryError = '';
+  try { if (typeof window !== 'undefined') ownerRecovery = readOwnerRecovery(); }
+  catch (cause) { ownerRecoveryError = cause instanceof Error ? cause.message : 'The saved action is unavailable. Do not resend.'; }
   const inputsLocked = connecting || busy || Boolean(issued) || Boolean(pending) || savedActionPending || fundingRecovery || candidateChanged;
   const unknownOrigin = stage.startsWith('observed-');
   const displayedSide = resolveDisplayedTradeActionSide(canonicalSide, priceDisplayInverted);
@@ -344,7 +361,6 @@ export function CurrentSwapWorkspace({
   const selectSide = (side: TradeActionSide) => {
     const nextSide = resolveCanonicalTradeActionSide(side, priceDisplayInverted);
     setCanonicalSide(nextSide);
-    onReferenceDisplayInvertedChange?.(nextSide === 'buy');
     setMaximumInput('');
     setMinimumOutput('0');
     setPriceLimit('');
@@ -389,7 +405,8 @@ export function CurrentSwapWorkspace({
     }
     return accepted;
   };
-  const showDelivery = async (current: CurrentCheapDexIssuedQuote, sender: TrialSubmission, terminalHash: string | null = null) => {
+  const showDelivery = async (current: CurrentCheapDexIssuedQuote, sender: TrialSubmission, terminalHash: string | null = null,
+    verifiedDelivery?: Awaited<ReturnType<TrialSubmission['readCurrentCheapDelivery']>>) => {
     if (currentCheapDexCandidateKey(current.intent.candidate) !== currentCheapDexCandidateKey(candidate) ||
         current.intent.inputToken.toLowerCase() !== selectedTokens[inputIndex] ||
         current.intent.outputToken.toLowerCase() !== selectedTokens[outputIndex]) {
@@ -397,15 +414,16 @@ export function CurrentSwapWorkspace({
     }
     if (!privacyReady) throw new Error('Unlock privacy before checking the private result.');
     if (reviewScope.current !== currentReviewScope) throw new Error('Privacy session changed. Check the private result again.');
-    const receipt = await sender.readCurrentCheapDelivery(current);
+    const receipt = verifiedDelivery ?? await sender.readCurrentCheapDelivery(current);
     if (currentWallet.current !== capturedWallet.current) throw new Error('Wallet changed during private result verification.');
     if (reviewScope.current !== currentReviewScope) throw new Error('Privacy session changed during private result verification. Check again.');
     const a = receipt.amounts;
     const unfundedCancellation = receipt.releaseAction === 'cancel';
+    const phase = verifiedDelivery ? verifiedDelivery.operation.phase : current.operation.phase;
     setResult({ scope: currentReviewScope, operationId: current.operationId.toString(), transactionHash: terminalHash || null,
       text: `Paid ${formatInput(a.actualInput)} ${trialTokens[inputIndex]}; received ${formatOutput(a.netOutput)} ${trialTokens[outputIndex]}; ${unfundedCancellation ? 'unused' : 'refunded'} ${formatInput(a.refund)} ${trialTokens[inputIndex]}.` });
-    setStage(current.operation.phase === 'released' ? 'released' : 'settled');
-    setMessage(unfundedCancellation ? 'Quote cancelled before funding.' : current.operation.phase === 'released' ? 'Released with a private refund receipt.' :
+    setStage(phase === 'released' ? 'released' : 'settled');
+    setMessage(unfundedCancellation ? 'Quote cancelled before funding.' : phase === 'released' ? 'Released with a private refund receipt.' :
       a.filled ? 'Settlement confirmed by the private receipt.' : 'No fill; check the private refund receipt.');
   };
   const checkFunding = async (sender: TrialSubmission) => {
@@ -423,7 +441,7 @@ export function CurrentSwapWorkspace({
         : await sender.recoverPendingSharedSwapApproval(existingTransactionHash);
       if (observed && !['observed-mined', 'observed-reverted'].includes(observed.status)) throw new Error('Shared approval needs chain reconciliation. Do not resend.');
     }
-    return readCurrentSwapInputFunding(sender, candidateKey, currentWallet.current.address!, selectedTokens[inputIndex], inputIndex as 0 | 1);
+    return readCurrentSwapInputFunding(sender, candidateKey, currentWallet.current.address!, selectedTokens[inputIndex], inputIndex as 0 | 1, selectedTokens[outputIndex]);
   };
   const ensureFunding = async (sender: TrialSubmission, amount: bigint, attemptWallet: typeof wallet, preparedQuote?: CurrentCheapDexPreparedQuote) => {
     const assertWallet = () => {
@@ -434,31 +452,33 @@ export function CurrentSwapWorkspace({
     if (preparedCandidate) {
       if (candidateKey !== 'cheap-exit' && candidateKey !== 'cheap-history') throw new Error('Prepared-candidate swap approval is not supported. Its App swap admission remains held.');
       if (amount <= 0n || amount > CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM) throw new Error('Shared swap input is outside the finite amount bound.');
-      let funds = await readCurrentSwapInputFunding(sender, candidateKey, attemptWallet.address!, selectedTokens[inputIndex], inputIndex as 0 | 1); assertWallet();
+      let funds = await readCurrentSwapInputFunding(sender, candidateKey, attemptWallet.address!, selectedTokens[inputIndex], inputIndex as 0 | 1, selectedTokens[outputIndex]); assertWallet();
       if (funds.balance < amount) throw new Error('Private input balance is insufficient. Claim test tokens separately before Get Quote.');
-      if (funds.allowance === amount) return funds;
-      if (funds.allowance !== 0n) throw new Error('The existing Core allowance differs from this exact swap amount. Do not replace it without reconciliation.');
-      const prepared = await sender.prepareSharedSwapApproval({ token: selectedTokens[inputIndex], amount, assertReviewCurrent: assertWallet, preparedQuote,
+      if (funds.allowance >= amount && (getApprovalMode() === 'exact' || funds.allowance === MAX_TOKEN_ALLOWANCE)) {updateSteps({approval:'not-needed'});return funds;}
+      updateSteps({approval:'needed'});
+      const prepared = await sender.prepareSharedSwapApproval({ token: selectedTokens[inputIndex], amount, approvalMode: getApprovalMode, assertReviewCurrent: assertWallet, preparedQuote,
         confirm: async review => {
-          assertWallet(); const yes = await timedConfirmation({ title: 'Approve exact swap input', primaryLabel: 'Continue', fundingMoves: [], stats: [],
-            summaryRows: [{ label: 'Input token', value: trialTokens[inputIndex] }, { label: 'Amount (tokens)', value: formatInput(review.amount) },
-              { label: 'Core spender', value: review.spender }], message: 'This finite approval binds the selected input token and current Core. It is not unlimited approval.'
+          assertWallet(); const yes = await timedConfirmation({ title: 'Approve swap token', primaryLabel: 'Continue', fundingMoves: [], stats: [],
+            summaryRows: [{ label: 'Input token', value: trialTokens[inputIndex] }, { label: 'Swap amount', value: formatInput(amount) },
+              { label: 'Core spender', value: review.spender }], message: 'Token approval is separate from the swap. Network gas applies.'
           }, 'Token setup review request to decision'); assertWallet(); return yes;
         } });
       assertWallet();
-      if (!prepared) { setStage(issued ? 'ready' : 'idle'); setMessage('Exact approval cancelled. No swap was sent.'); return null; }
+      if (!prepared) {updateSteps({cancelledBeforeQuote:!issued});setStage(issued ? 'ready' : 'idle'); setMessage('Token approval cancelled. No swap was sent.'); return null; }
       setFundingRecovery(true);
       const sent = await sender.submitSharedSwapApproval(prepared);
+      assertWallet();updateSteps({approval:'submitted'});
       sharedFundingPending.current = { recover: sent.recover, scope: currentReviewScope }; setTransactionHash(sent.transactionHash); assertWallet();
-      setMessage('Exact input approval submitted. Waiting for its private result.');
+      setMessage('Token approval submitted. Waiting for its private result.');
       if (!await sender.waitForCurrentCheapReceipt(sent.transactionHash)) {
         assertWallet(); setStage('error'); setMessage('Approval is pending. Check current state before another action; do not resend.'); return null;
       }
       const verified = await sent.recover(); assertWallet();
       sharedFundingPending.current = null; setFundingRecovery(false);
       if (verified.fundingOutcome === 'reverted') throw new Error('Approval reverted. Private state is unchanged.');
-      funds = await readCurrentSwapInputFunding(sender, candidateKey, attemptWallet.address!, selectedTokens[inputIndex], inputIndex as 0 | 1); assertWallet();
-      if (funds.balance < amount || funds.allowance !== amount) throw new Error('Exact shared input funds changed after approval.');
+      funds = await readCurrentSwapInputFunding(sender, candidateKey, attemptWallet.address!, selectedTokens[inputIndex], inputIndex as 0 | 1, selectedTokens[outputIndex]); assertWallet();
+      if (funds.balance < amount || funds.allowance < amount) throw new Error('Exact shared input funds changed after approval.');
+      updateSteps({approval:'verified'});
       return funds;
     }
     let funds = await sender.readCurrentTokenFunding(inputIndex as 0 | 1); assertWallet();
@@ -495,6 +515,42 @@ export function CurrentSwapWorkspace({
     const presentation = currentTrialAttemptPresentation(attempt);
     setStage(presentation.stage); setMessage(presentation.message);
   };
+  const clearUnusedApproval = async () => {
+    if (!unusedApproval || unusedApproval.scope !== currentReviewScope || !privacyReady || !connected ||
+        busy || checking || pending || issued || savedActionPending || fundingRecovery || walletChanged || candidateChanged) return;
+    const attemptWallet = currentWallet.current, context = unusedApproval;
+    const assertCurrent = () => {
+      if (currentWallet.current !== attemptWallet || reviewScope.current !== context.scope)
+        throw new Error('Wallet, terms or privacy session changed during approval cleanup.');
+    };
+    setChecking(true);
+    try {
+      const sender = context.sender;
+      const prepared = await sender.prepareSharedSwapAllowanceCleanup({ token: selectedTokens[inputIndex], preparedQuote: context.quote,
+        assertReviewCurrent: assertCurrent, confirm: async review => {
+          assertCurrent(); const yes = await timedConfirmation({ title: 'Clear unused approval', primaryLabel: 'Clear approval', fundingMoves: [], stats: [],
+            summaryRows: [{ label: 'Token', value: trialTokens[inputIndex] }, { label: 'New allowance', value: '0' },
+              { label: 'Core spender', value: review.spender }], message: 'This clears the previous token approval to 0 before a fresh exact approval. It does not cancel a funded swap. Network gas applies.'
+          }, 'Approval cleanup review request to decision'); assertCurrent(); return yes;
+        } });
+      assertCurrent();
+      if (!prepared) { setMessage('No approval cleanup was submitted.'); return; }
+      setSubmission(sender); setFundingRecovery(true);
+      const sent = await sender.submitSharedSwapApproval(prepared);
+      sharedFundingPending.current = { recover: sent.recover, scope: context.scope };
+      setTransactionHash(sent.transactionHash); assertCurrent();
+      setMessage('Approval cleanup submitted. Waiting for verification; do not resend.');
+      if (!await sender.waitForCurrentCheapReceipt(sent.transactionHash)) {
+        assertCurrent(); setStage('error'); setMessage('Approval cleanup is pending. Check current state; do not resend.'); return;
+      }
+      const verified = await sent.recover(); assertCurrent();
+      sharedFundingPending.current = null; setFundingRecovery(false);
+      if (verified.fundingOutcome === 'reverted') throw new Error('Approval cleanup reverted. Private state is unchanged.');
+      setUnusedApproval({ ...context, readyToContinue: true }); setStage('idle');
+      setMessage('Approval cleared. Continue swap.');
+    } catch (cause) { error(cause); }
+    finally { setChecking(false); }
+  };
   const refresh = async () => {
     if (!canInspect || walletChanged || candidateChanged || checking || (busy && !pending)) return;
     if (stage === 'idle') { capturedWallet.current = currentWallet.current; capturedCandidate.current = candidateKey; }
@@ -502,12 +558,31 @@ export function CurrentSwapWorkspace({
     let activeIssued = issued;
     let activeSender = submission;
     try {
+      const ownerAction = readOwnerRecovery();
+      if (ownerAction) { setStage('reconciling'); setMessage(ownerAction.message); return; }
       if (fundingRecovery) {
         const sender = submission ?? await getSubmission();
         const value = await checkFunding(sender);
         if (currentWallet.current !== capturedWallet.current) throw new Error('Wallet changed during input funding.');
         setFundingPending(null); sharedFundingPending.current = null; setFundingRecovery(false); setStage(issued ? 'ready' : 'idle');
+        if (unusedApproval?.scope === currentReviewScope && !('fundingOutcome' in value)) {
+          const ready = value.allowance === 0n || value.allowance >= unusedApproval.quote.intent.maximumInput;
+          setUnusedApproval({ ...unusedApproval, readyToContinue: ready });
+          setMessage(ready ? 'Approval cleared. Continue swap.' : 'Approval still differs from the swap amount. Update approval.'); return;
+        }
         setMessage('fundingOutcome' in value && value.fundingOutcome === 'reverted' ? 'Funding reverted. Private state is unchanged.' : 'Private input funds verified. Continue with Get Quote or Review and Accept.'); return;
+      }
+      if (unusedApproval?.scope === currentReviewScope && !issued) {
+        if (!privacyReady) throw new Error('Unlock privacy before checking approval.');
+        const context = unusedApproval;
+        setUnusedApproval({ ...context, readyToContinue: false });
+        await context.sender.assertCurrentCheapSwapAllowanceCleanupIdle(context.quote);
+        if (currentWallet.current !== capturedWallet.current || reviewScope.current !== context.scope) throw new Error('Wallet, terms or privacy session changed during approval check.');
+        const funds = await readCurrentSwapInputFunding(context.sender, candidateKey, currentWallet.current.address!, selectedTokens[inputIndex], inputIndex as 0 | 1, selectedTokens[outputIndex]);
+        if (currentWallet.current !== capturedWallet.current || reviewScope.current !== context.scope) throw new Error('Wallet, terms or privacy session changed during approval check.');
+        const ready = funds.allowance === 0n || funds.allowance >= context.quote.intent.maximumInput;
+        setUnusedApproval({ ...context, readyToContinue: ready }); setStage('idle');
+        setMessage(ready ? funds.allowance === 0n ? 'Approval is zero. Continue swap.' : 'Exact approval verified. Continue swap.' : 'Approval still differs from the swap amount. Update approval.'); return;
       }
       if (pending) {
         const outcome = await recoverOrReconcileCurrentTrial(pending,
@@ -604,6 +679,8 @@ export function CurrentSwapWorkspace({
     capturedCandidate.current = candidateKey;
     const clock = new CurrentSwapJourneyTiming(currentReviewScope, { candidate: candidateKey, core: candidate.core, graph: candidate.graph, profile });
     journey.current = clock; setTimings([]); updateTimingDisplay(value => value + 1);
+    const resume = unusedApproval?.scope === currentReviewScope && unusedApproval.readyToContinue ? unusedApproval : null;
+    if (!resume) setStepProgress(null);
     try {
       // Prepared App writes stay held before the legacy funding path can run.
       const maximum = parseInput(maximumInput, 'You send', true);
@@ -634,13 +711,17 @@ export function CurrentSwapWorkspace({
       if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during the pending-action check.');
       if (outstanding) { setSubmission(sender); showAttempt(outstanding); return; }
       const funds = preparedCandidate
-        ? await readCurrentSwapInputFunding(sender,candidateKey,attemptWallet.address!,selectedTokens[inputIndex],inputIndex as 0|1)
+        ? await readCurrentSwapInputFunding(sender,candidateKey,attemptWallet.address!,selectedTokens[inputIndex],inputIndex as 0|1,selectedTokens[outputIndex])
         : await clock.observeWait('Quote input setup, including checks and any review or wallet wait', () => ensureFunding(sender, maximum, attemptWallet));
       if (!funds) return;
-      const quoteCapability = await sharedWalletSession!.actions!.getCurrentDexQuoteCapability!(trialChain);
+      if(preparedCandidate&&'allowance' in funds)updateSteps({approval:funds.allowance>=maximum?'not-needed':'needed'});
+      if (resume && funds.block.timestamp >= resume.quote.intent.deadline) {
+        setUnusedApproval(null); setStage('idle'); setMessage('Quote expired. Get a fresh quote.'); return;
+      }
+      const quoteCapability = resume ? null : await sharedWalletSession!.actions!.getCurrentDexQuoteCapability!(trialChain);
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during Quote preparation.');
       if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during Quote preparation.');
-      const quote = await quoteCapability.prepareCurrentQuote({ profile,
+      const quote = resume?.quote ?? await quoteCapability!.prepareCurrentQuote({ profile,
         graph: { candidate: candidateKey, expectedGraph: candidate.graph,
           expectedPackageSha256: candidate.packageSha256,
           blockNumber: funds.block.number, blockHash: funds.block.hash },
@@ -651,32 +732,40 @@ export function CurrentSwapWorkspace({
             : BigInt(Math.floor(Date.now()/1000))+600n,
           maximumInput: maximum, minimumInput: minimum, minimumOutput: output,
           rateNumerator: numerator, rateDenominator: denominator, ...(quoteProtocol ? { toleranceBps } : {}) },
+        progress:event=>{
+          if(currentWallet.current!==attemptWallet||reviewScope.current!==currentReviewScope)return;
+          updateSteps({inputs:{completed:event.completed,total:event.total,requesting:event.phase==='requesting'}});
+        },
         confirmPrivateInputs: review => confirm('Confirm private Quote inputs', [
+          {label:'Quote private-input signatures',value:`${currentDexQuoteInputPlan(candidateKey).length} message signatures · no network gas`},
           { label: 'Maximum input', value: `${formatInput(review.maximumInput)} ${trialTokens[inputIndex]}` },
           { label: 'Fill policy', value: review.minimumInput === 0n ? 'Any positive partial fill (0% minimum)' : `${minimumInput}% minimum · ${formatInput(review.minimumInput)} ${trialTokens[inputIndex]}` },
           { label: 'Minimum net output', value: `${formatOutput(review.minimumOutput)} ${trialTokens[outputIndex]}` },
           ...(quoteProtocol ? [{ label: 'Slippage', value: `${slippagePercent}% of the Quote net rate` }] : []),
           { label: displayedSide === 'buy' ? 'Maximum buy price' : 'Minimum sell price',
-            value: quoteProtocol && !priceLimit.trim() ? 'No optional hard price limit' : `${priceLimit} ${trialTokens[1 - displayedBaseIndex]} per ${trialTokens[displayedBaseIndex]} · net of fees` }
+            value: quoteProtocol && !priceLimit.trim() ? 'No optional hard price limit' : `${priceLimit} ${trialTokens[1 - displayedBaseIndex]}/${trialTokens[displayedBaseIndex]} · net of fees` }
         ])
       });
-      if (!quote) { setStage('idle'); return; }
+      if (!quote) {updateSteps({cancelledBeforeQuote:true});setStage('idle');setMessage('Private input review cancelled. No Quote was sent.');return;}
       if(preparedCandidate&&!await clock.observeWait('Exact branded Quote approval',()=>ensureFunding(sender,maximum,attemptWallet,quote)))return;
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during Quote preparation.');
       if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during Quote preparation.');
-      setSubmission(sender); setCapturedTerms(termsKey);
+      setUnusedApproval(null); setSubmission(sender); setCapturedTerms(termsKey);
       const sent = await sender.submitCurrentCheapQuote(quote, {
         walletRequested: () => {
           if (currentWallet.current !== attemptWallet || reviewScope.current !== currentReviewScope) return;
           setStage('open-pending'); setMessage('Complete Quote in your wallet.');
+          updateSteps({quote:'wallet'});
         },
         transactionHashReturned: hash => {
           if (currentWallet.current !== attemptWallet || reviewScope.current !== currentReviewScope) return;
           clock.quoteSubmitted(hash); setTransactionHash(hash); captureTiming(sender, hash);
+          updateSteps({quote:'submitted'});
           setMessage('Quote submitted. Checking its transaction.');
         }
       });
       clock.quoteSubmitted(sent.transactionHash);
+      updateSteps({quote:'submitted'});
       captureTiming(sender, sent.transactionHash);
       setPending({ recover: sent.recover, phase: 'quote' }); setTransactionHash(sent.transactionHash);
       setStage('open-pending'); setMessage('Open submitted. Waiting for the confirmed Quote; the trade review will open when ready.');
@@ -688,6 +777,7 @@ export function CurrentSwapWorkspace({
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed while waiting for the Quote.');
       captureTiming(sender, sent.transactionHash);
       setPending(null); setIssued(confirmed);
+      updateSteps({quote:'verified'});
       clock.bindOperation(confirmed.operationId.toString());
       setStage(confirmed.operation.ready ? 'ready' : 'preparing-quote');
       setChecking(false);
@@ -719,7 +809,9 @@ export function CurrentSwapWorkspace({
           const reviewedModel = { ...originalModel, summaryRows: [
             ...originalModel.summaryRows.map(row => row.label === 'Average price' ? { ...row,
               value: currentDexQuoteAveragePrice({ model: originalModel, pair: trialTokens, inputIndex: inputIndex as 0 | 1,
-                priceDisplayInverted: referenceDisplayInverted ?? priceDisplayInverted }) } : row),
+                priceDisplayInverted: priceDisplayInverted }) } : row),
+            { label: 'Slippage protection', value: quote.intent.toleranceBps === undefined ? 'Fixed price limit' : `${quote.intent.toleranceBps / 100}% of the Quote net rate` },
+            { label: 'Quote expires', value: new Date(Number(quote.intent.deadline) * 1000).toLocaleString() },
             { label: 'Price impact (net)', value: currentDexPriceImpact({ model: originalModel, reference: currentMarketReference.current,
               pair: trialTokens, inputIndex: inputIndex as 0 | 1, now: BigInt(Math.floor(Date.now() / 1000)) }) }
           ] };
@@ -734,16 +826,19 @@ export function CurrentSwapWorkspace({
           walletRequested: () => {
             if (currentWallet.current !== attemptWallet || reviewScope.current !== currentReviewScope) return;
             setMessage('Complete Accept in your wallet before the Quote expires.');
+            updateSteps({accept:'wallet'});
           },
           transactionHashReturned: hash => {
             if (currentWallet.current !== attemptWallet || reviewScope.current !== currentReviewScope) return;
             if (timingAttempt) clock?.acceptSubmitted(timingAttempt, hash);
             setTransactionHash(hash); captureTiming(sender, hash);
+            updateSteps({accept:'submitted'});
             setMessage('Accept submitted. Checking its transaction.');
           }
         } });
       if (!sent) { setStage('ready'); setMessage('Quote ready. Review and Accept when you are ready.'); return; }
       if (timingAttempt) clock?.acceptSubmitted(timingAttempt, sent.transactionHash);
+      updateSteps({accept:'submitted'});
       captureTiming(sender, sent.transactionHash);
       setPending({ recover: sent.recover, phase: 'accept' }); setTransactionHash(sent.transactionHash);
       setStage('accepting'); setMessage('Accept submitted. Waiting for the confirmed private result.'); setChecking(true);
@@ -753,12 +848,13 @@ export function CurrentSwapWorkspace({
       const observed = await sent.recover();
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed while waiting for Accept.');
       captureTiming(sender, sent.transactionHash); setPending(null);
+      updateSteps({accept:'verified'});
       if (observed.status !== 'settled') {
         setStage('settlement-pending'); setMessage('Accept is mined; settlement remains pending.'); return;
       }
-      const current = await quote.readCurrent();
+      const current = observed.delivery ? quote : await quote.readCurrent();
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during private result verification.');
-      await showDelivery(current, sender, sent.transactionHash);
+      await showDelivery(current, sender, sent.transactionHash, observed.delivery);
     } catch (cause) {
       error(cause);
       if (cause instanceof CurrentDexQuoteProtectionError && currentWallet.current === attemptWallet) {
@@ -807,9 +903,9 @@ export function CurrentSwapWorkspace({
   const progressCheck = useRef(refresh);
   useEffect(() => { progressCheck.current = refresh; });
   useEffect(() => {
-    if (issued?.intent.profile !== 'cheap-async' || !enabled || checking || pending || fundingRecovery || changed ||
+    if (issued?.intent.profile !== 'cheap-async' || !progressReady || checking || pending || fundingRecovery || changed ||
         !['preparing-quote', 'settlement-pending'].includes(stage)) return;
-    // Read-only progress. The keeper advances work; only an explicit wallet action can Accept.
+    // Session metadata can invalidate signing review without stopping reads of this same private operation.
     let stopped = false;
     let timer: number;
     const check = async () => {
@@ -818,7 +914,7 @@ export function CurrentSwapWorkspace({
     };
     timer = window.setTimeout(() => { void check(); }, 5000);
     return () => { stopped = true; window.clearTimeout(timer); };
-  }, [issued, enabled, checking, pending, fundingRecovery, changed, stage]);
+  }, [issued, progressReady, checking, pending, fundingRecovery, changed, stage]);
   const visibleQuote = quoteReview && quoteReview.scope === currentReviewScope ? quoteReview.model : null;
   const quoteOutput = visibleQuote?.summaryRows.find(row => row.label === 'You receive')?.value;
   const estimatedOutput = quoteOutput ? null : currentDexEstimatedReceive({reference:marketReference,pair:trialTokens,
@@ -838,7 +934,7 @@ export function CurrentSwapWorkspace({
   const swapStatus = candidateChanged ? 'This operation belongs to the previous contract candidate. Return to its original view to check it.'
     : walletChanged ? 'Wallet or network changed. Reconnect and reconcile the pending action.'
       : changed ? 'Terms changed. This Quote cannot be accepted; inspect or cancel it.'
-        : message || (wallet.address && (!connected || stage !== 'idle')
+        : ownerRecoveryError || ownerRecovery?.message || message || (wallet.address && (!connected || stage !== 'idle')
           ? wallet.chainId !== Number(trialChain) ? 'Switch your wallet to COTI Testnet to continue.'
             : !connected ? 'The wallet cannot use the current DEX. Check Transaction details.' : stage
           : null);
@@ -847,8 +943,10 @@ export function CurrentSwapWorkspace({
   const newQuoteEligible = (['settled', 'released', 'observed-expired'].includes(stage) ||
     (stage === 'expired' && issued?.intent.profile === 'fast-pool') || (stage === 'reverted' && !issued)) && !pending;
   const startNewQuote = () => {
+    setUnusedApproval(null);
     setIssued(null); setSubmission(null); setCapturedTerms(''); setTransactionHash(''); setResult(null); setQuoteReview(null);
     setPublicAttempt(null); setExistingTransactionHash(''); setTimings([]);
+    setStepProgress(null);
     journey.current = null; updateTimingDisplay(value => value + 1);
     setMessage(''); setStage('idle'); capturedWallet.current = wallet; capturedCandidate.current = candidateKey;
   };
@@ -889,7 +987,7 @@ export function CurrentSwapWorkspace({
         ? `${issued.intent.rateDenominator} / ${issued.intent.rateNumerator}`
         : `${issued.intent.rateNumerator} / ${issued.intent.rateDenominator}`
       : priceLimit} onChange={event => setPriceLimit(event.target.value)} disabled={inputsLocked} />
-    <small>{trialTokens[1 - displayedBaseIndex]} per {trialTokens[displayedBaseIndex]}</small>
+    <small>{trialTokens[1 - displayedBaseIndex]}/{trialTokens[displayedBaseIndex]}</small>
   </label>;
   return <section ref={workspaceElement} className="dex-v2-swap-card dex-v2-current-swap" aria-label="Private Swap">
     <header className="dex-v2-current-swap-heading sr-only">
@@ -960,9 +1058,21 @@ export function CurrentSwapWorkspace({
       </div>
       <span>{displayedProfile === 'fast-pool' ? 'Pools only' : 'Pools and Limits · asynchronous'}</span>
     </div>
-    {unlockRequired ? <p className="dex-v2-current-unlock-note">Unlock to view balances and request a quote.</p> : null}
+    <CurrentSwapSteps profile={displayedProfile} stage={stage} privacyReady={privacyReady} restored={restoredQuote}
+      cancelledBeforeQuote={stepProgress?.scope===currentReviewScope&&stepProgress.cancelledBeforeQuote}
+      inputs={stepProgress?.scope===currentReviewScope?stepProgress.inputs:{completed:0,total:currentDexQuoteInputPlan(candidateKey,restoredQuote).length,requesting:false}}
+      approval={stepProgress?.scope===currentReviewScope?stepProgress.approval:'conditional'}
+      quote={issued?'verified':stepProgress?.scope===currentReviewScope?stepProgress.quote:'next'}
+      accept={stepProgress?.scope===currentReviewScope?stepProgress.accept:'next'}
+      reviewReady={Boolean(issued?.operation.ready)&&stage==='ready'||Boolean(quoteReview?.scope===currentReviewScope)}
+      work={displayedProfile==='cheap-async'?{total:currentCheapDexStages(candidate).workCalls,
+        ...(issued&&(issued.operation.ready||['settling','settled','consumed-unverified'].includes(issued.operation.phase))?{completed:currentCheapDexStages(candidate).workCalls}:issued?.operation.phase==='preparing-quote'?{completed:Math.max(0,Math.min(currentCheapDexStages(candidate).workCalls,Number(issued.operation.stage)-1))}:{})}:undefined}
+      delivered={Boolean(result&&result.scope===currentReviewScope&&!walletChanged)} scopeChanged={walletChanged||candidateChanged||changed||Boolean(stepProgress||issued)&&!progressReady}/>
     <div className="dex-v2-current-actions">
-      {!wallet.address && sharedWalletSession?.actions?.connectBrowserWallet ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking} onClick={() => { void connectWallet(); }}>{connecting ? 'Connecting…' : 'Connect wallet'}</button> : unlockRequired ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking || walletChanged} onClick={() => { void unlockPrivacy(); }}>{connecting ? 'Unlocking…' : 'Unlock privacy'}</button> : newQuoteEligible ? <button className="dex-v2-review-button" type="button" disabled={checking || savedActionPending} onClick={startNewQuote}><span>New Quote</span><ArrowRight size={20} aria-hidden="true" /></button> : !issued ? <button className="dex-v2-review-button" type="button" disabled={!connected || walletChanged || busy || checking || Boolean(pending) || savedActionPending || unknownOrigin} onClick={() => { void getQuote(); }}><span>{fundingRecovery ? 'Check funding and continue' : 'Get Quote'}</span><ArrowRight size={20} aria-hidden="true" /></button> :
+      {unusedApproval?.scope === currentReviewScope && !unusedApproval.readyToContinue && !issued ? <button className="dex-v2-review-button" type="button"
+        disabled={!privacyReady || !connected || busy || checking || Boolean(pending) || savedActionPending || fundingRecovery || walletChanged || candidateChanged}
+        onClick={() => { void clearUnusedApproval(); }}>Update approval</button> : null}
+      {!wallet.address && sharedWalletSession?.actions?.connectBrowserWallet ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking} onClick={() => { void connectWallet(); }}>{connecting ? 'Connecting…' : 'Connect wallet'}</button> : unlockRequired ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking || walletChanged} onClick={() => { void unlockPrivacy(); }}>{connecting ? 'Unlocking…' : 'Unlock privacy'}</button> : newQuoteEligible ? <button className="dex-v2-review-button" type="button" disabled={checking || savedActionPending} onClick={startNewQuote}><span>New Quote</span><ArrowRight size={20} aria-hidden="true" /></button> : !issued ? <button className="dex-v2-review-button" type="button" disabled={!connected || walletChanged || busy || checking || Boolean(pending) || savedActionPending || unknownOrigin || unusedApproval?.scope === currentReviewScope && !unusedApproval.readyToContinue && !fundingRecovery} onClick={() => { void getQuote(); }}><span>{fundingRecovery ? 'Check funding and continue' : unusedApproval?.scope === currentReviewScope && unusedApproval.readyToContinue ? 'Continue swap' : 'Get Quote'}</span><ArrowRight size={20} aria-hidden="true" /></button> :
       <button className="dex-v2-review-button" type="button" disabled={!enabled || checking || savedActionPending || changed || stage !== 'ready' ||
         BigInt(Math.floor(Date.now() / 1000)) >= (issued?.intent.deadline ?? 0n)}
       onClick={() => { void accept(); }}><span>Review and Accept</span><ArrowRight size={20} aria-hidden="true" /></button>}
@@ -974,6 +1084,10 @@ export function CurrentSwapWorkspace({
         : !walletChanged && !candidateChanged && publicAttempt?.status === 'observed-mined'
           ? { id: publicAttempt.operationId.toString(), publicState: publicAttempt.operation.phase, privateAccountingUnverified: true } : null}>
     <div className="dex-v2-progress-actions">
+    {ownerRecovery && onInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || busy}
+      onClick={() => { try { const target = readOwnerRecovery(); if (target) onInspect(target.view); } catch (cause) { error(cause); } }}>{ownerRecovery.label}</button> : null}
+    {ownerRecovery?.alternateView && onInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || busy}
+      onClick={() => { try { const target = readOwnerRecovery(); if (target?.alternateView) onInspect(target.alternateView); } catch (cause) { error(cause); } }}>Open top-up recovery</button> : null}
     {canInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button> : null}
     {issued?.intent.profile === 'fast-pool' && issued.operation.ready && !newQuoteEligible && !pending && !savedActionPending && !fundingRecovery &&
       ['ready', 'expired', 'error'].includes(stage) ? <button type="button" disabled={!enabled || busy || checking}
@@ -985,7 +1099,7 @@ export function CurrentSwapWorkspace({
       !['settled', 'released'].includes(stage) ? <button type="button" disabled={!enabled || busy || checking}
       onClick={() => { void ownerAction('recover'); }}>Recover swap</button> : null}
     </div>
-    {(['error', 'reconciling'].includes(stage) || (!issued && publicAttempt?.status === 'observed-mined')) && !fundingRecovery ? <details className="dex-v2-recovery-details"><summary>DEX recovery details</summary><div className="dex-v2-current-fields" style={{ gridTemplateColumns: '1fr' }}><label>
+    {(['error', 'reconciling'].includes(stage) || (!issued && publicAttempt?.status === 'observed-mined')) && !fundingRecovery && !ownerRecovery && !ownerRecoveryError ? <details className="dex-v2-recovery-details"><summary>DEX recovery details</summary><div className="dex-v2-current-fields" style={{ gridTemplateColumns: '1fr' }}><label>
       Transaction hash (optional)
       <input aria-label="Existing DEX transaction hash" placeholder="0x…" value={existingTransactionHash}
         disabled={checking || walletChanged} onChange={event => setExistingTransactionHash(event.target.value)} />
@@ -994,7 +1108,7 @@ export function CurrentSwapWorkspace({
     {transactionHash ? <a className="dex-v2-progress-transaction" href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${transactionHash}`} target="_blank" rel="noreferrer">View transaction</a> : null}
     </CurrentSwapProgress>
     {preparedCandidate ? <details className="dex-v2-token-funding" open={fundingRecovery || undefined}><summary>Get test tokens</summary>
-      <CurrentSharedTestTokenControls candidateKey={preparedScope!.key} sharedWalletSession={sharedWalletSession} disabled={busy || checking || walletChanged || Boolean(pending)} />
+      <CurrentSharedTestTokenControls candidateKey={preparedScope!.key} sharedWalletSession={sharedWalletSession} onInspect={onInspect} disabled={busy || checking || walletChanged || Boolean(pending)} />
     </details> : null}
     {(!preparedCandidate || wallet.address || fundingRecovery || activeJourney) ? <details className="dex-v2-setup" open={fundingRecovery || undefined}><summary>Transaction details</summary><div>
       <p>Gas applies even when no trade fills.</p>
@@ -1025,7 +1139,8 @@ export function CurrentSwapWorkspace({
     </details> : null}
     </div></details> : null}
     <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)}
-      details={confirmation?.summaryRows.some(row => row.label === 'You pay') ? <details className="trade-action-confirm-details">
+      details={confirmation?.title === 'Approve swap token' ? <TokenApprovalChoice token={trialTokens[inputIndex]} spender={candidate.core}
+        value={approvalMode} onChange={setApprovalMode}/> : confirmation?.summaryRows.some(row => row.label === 'You pay') ? <details className="trade-action-confirm-details">
         <summary>Price and slippage</summary>
         <p>Price impact includes spread and fees and uses the Pool reference captured for this review. The live header can change. Slippage protects the Quote net rate.</p>
       </details> : null} />
@@ -1064,7 +1179,6 @@ const DEFAULT_DEX_PAIR: TradingPair = ['BCN', 'HBR'];
 export default function DexV2Page({
   priceDisplayInverted = false, selectedPair = DEFAULT_DEX_PAIR, sharedWalletSession,
   onPriceDisplayInvertedChange, onOpenAgent, onNavigateMode, dailyPriceConfig, dailyPriceProvider, marketReference,
-  referenceDisplayInverted, onReferenceDisplayInvertedChange,
   swapCandidate = 'cheap-current'
 }: {
   priceDisplayInverted?: boolean; selectedPair?: TradingPair; sharedWalletSession?: SharedWalletSession;
@@ -1072,12 +1186,17 @@ export default function DexV2Page({
   onNavigateMode?: (mode: DexMode) => void; dailyPriceConfig?: CurrentDexDailyPriceConfig;
   dailyPriceProvider?: Pick<Eip1193Provider, 'request'>;
   marketReference?: CurrentDexMarketReference;
-  referenceDisplayInverted?: boolean;
-  onReferenceDisplayInvertedChange?: (inverted: boolean | undefined) => void;
   swapCandidate?: CurrentCheapDexCandidateKey;
 } = {}) {
   const [activeMode, setActiveMode] = useState<DexMode>(() => typeof window === 'undefined' ? 'swap' : resolveDexModeFromPath(window.location.pathname));
   const [activityView, setActivityView] = useState<'orders' | 'history'>('orders');
+  useEffect(() => {
+    logMobileWalletDiagnostic('dex-mounted');
+    return () => logMobileWalletDiagnostic('dex-unmounted');
+  }, []);
+  useEffect(() => {
+    logMobileWalletDiagnostic('dex-view', { mode: activeMode, activityView });
+  }, [activeMode, activityView]);
   const dailyHistory = useCurrentDexDailyPrice({ pair: selectedPair, config: dailyPriceConfig, provider: dailyPriceProvider });
   const mobileKeyboardOpen = useVisualViewportKeyboardOpen();
   useEffect(() => {
@@ -1093,37 +1212,39 @@ export default function DexV2Page({
     ? selectedPair : CURRENT_DEX_DISPLAY_PAIR;
   const selectMode = (mode: DexMode) => { setActiveMode(mode); onNavigateMode?.(mode); };
   const inspect = (mode: DexMode) => { if (mode === 'activity') setActivityView('orders'); selectMode(mode); };
-  return <main className={`dex-v2-page${mobileKeyboardOpen ? ' dex-v2-keyboard-open' : ''}`}>
+  const managementTabs = (className: string) => <nav className={`dex-v2-section-tabs ${className}`} aria-label="Manage views">
+    <button type="button" aria-current={activeMode === 'activity' && activityView === 'orders' ? 'page' : undefined} onClick={() => { setActivityView('orders'); selectMode('activity'); }}>Orders</button>
+    <button type="button" aria-current={activeMode === 'positions' ? 'page' : undefined} onClick={() => selectMode('positions')}>Positions</button>
+    <button type="button" aria-current={activeMode === 'activity' && activityView === 'history' ? 'page' : undefined} onClick={() => { setActivityView('history'); selectMode('activity'); }}>History</button>
+  </nav>;
+  return <main className={`dex-v2-page${management ? ' dex-v2-manage' : ''}${mobileKeyboardOpen ? ' dex-v2-keyboard-open' : ''}`}>
     <ModeNavigation activeMode={activeMode} onOpenAgent={onOpenAgent} onSelect={selectMode} />
     <section className="dex-v2-main">
       <div className="dex-v2-content-grid">
-        <div className="dex-market-chart-host">
+        <details className="dex-market-chart-host" open={!management || undefined}>
+          <summary hidden={!management}>Market chart · {chartPair.join(' / ')}</summary>
           <DexMarketChart baseSymbol={chartPair[0]} quoteSymbol={chartPair[1]} history={dailyHistory.view}
-            onHistoryRefresh={dailyHistory.refresh} illustrative
+            onHistoryRefresh={dailyHistory.refresh} marketReference={marketReference}
             priceDisplayInverted={priceDisplayInverted} />
-        </div>
+        </details>
         <div className="dex-v2-form-column">
-          {trade ? <nav className="dex-v2-section-tabs" aria-label="Trade type">
-            {(['swap', 'limit'] as const).map(mode => <button type="button" key={mode} aria-current={activeMode === mode ? 'page' : undefined} onClick={() => selectMode(mode)}>{mode === 'swap' ? 'Swap' : 'Limit'}</button>)}
-          </nav> : null}
-          {management ? <nav className="dex-v2-section-tabs" aria-label="Manage views">
-            <button type="button" aria-current={activeMode === 'activity' && activityView === 'orders' ? 'page' : undefined} onClick={() => { setActivityView('orders'); selectMode('activity'); }}>Orders</button>
-            <button type="button" aria-current={activeMode === 'positions' ? 'page' : undefined} onClick={() => selectMode('positions')}>Positions</button>
-            <button type="button" aria-current={activeMode === 'activity' && activityView === 'history' ? 'page' : undefined} onClick={() => { setActivityView('history'); selectMode('activity'); }}>History</button>
-          </nav> : null}
+          <div className={management ? 'dex-mobile-management-navigation-host' : undefined} hidden={!trade && !management}>
+            {trade ? <nav className="dex-v2-section-tabs" aria-label="Trade type">
+              {(['swap', 'limit'] as const).map(mode => <button type="button" key={mode} aria-current={activeMode === mode ? 'page' : undefined} onClick={() => selectMode(mode)}>{mode === 'swap' ? 'Swap' : 'Limit'}</button>)}
+            </nav> : management ? managementTabs('dex-mobile-management-navigation') : null}
+          </div>
           {/* Keep transaction origins and private result scopes alive when users change views. */}
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'swap'}>
-            <CurrentSwapWorkspace onPriceDisplayInvertedChange={onPriceDisplayInvertedChange} priceDisplayInverted={priceDisplayInverted}
-            referenceDisplayInverted={referenceDisplayInverted} onReferenceDisplayInvertedChange={onReferenceDisplayInvertedChange}
+            <CurrentSwapWorkspace onPriceDisplayInvertedChange={onPriceDisplayInvertedChange} priceDisplayInverted={priceDisplayInverted} onInspect={inspect}
               selectedPair={selectedPair} sharedWalletSession={sharedWalletSession} marketReference={marketReference} candidateKey={swapCandidate} visible={activeMode === 'swap'} />
           </div>
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'limit' && !(activeMode === 'activity' && activityView === 'orders')}>
-            <CurrentLimitWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted} candidateKey={swapCandidate} selectedPair={selectedPair} view={activeMode === 'activity' ? 'manage' : 'create'} visible={activeMode === 'limit' || activeMode === 'activity' && activityView === 'orders'} />
+            <CurrentLimitWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted} candidateKey={swapCandidate} selectedPair={selectedPair} managementNavigation={managementTabs('dex-desktop-management-navigation')} view={activeMode === 'activity' ? 'manage' : 'create'} visible={activeMode === 'limit' || activeMode === 'activity' && activityView === 'orders'} />
           </div>
           <div className="dex-v2-workspace-panel" hidden={!liquidity || activeMode === 'positions'}><CurrentPoolWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted}
             candidateKey={swapCandidate} selectedPair={selectedPair} /></div>
-          <div className="dex-v2-workspace-panel" hidden={activeMode !== 'positions'}><CurrentPoolPositionsWorkspace sharedWalletSession={sharedWalletSession} candidateKey={swapCandidate} visible={activeMode === 'positions'} /></div>
-          <div className="dex-v2-workspace-panel" hidden={activeMode !== 'activity' || activityView !== 'history'}><CurrentDexActivity sharedWalletSession={sharedWalletSession} candidateKey={swapCandidate} visible={activeMode === 'activity' && activityView === 'history'} onInspect={inspect} /></div>
+          <div className="dex-v2-workspace-panel" hidden={activeMode !== 'positions'}><CurrentPoolPositionsWorkspace selectedPair={selectedPair} priceDisplayInverted={priceDisplayInverted} sharedWalletSession={sharedWalletSession} candidateKey={swapCandidate} managementNavigation={managementTabs('dex-desktop-management-navigation')} visible={activeMode === 'positions'} /></div>
+          <div className="dex-v2-workspace-panel" hidden={activeMode !== 'activity' || activityView !== 'history'}><CurrentDexActivity sharedWalletSession={sharedWalletSession} candidateKey={swapCandidate} managementNavigation={managementTabs('dex-desktop-management-navigation')} visible={activeMode === 'activity' && activityView === 'history'} priceDisplayInverted={priceDisplayInverted} onInspect={inspect} /></div>
         </div>
       </div>
     </section>

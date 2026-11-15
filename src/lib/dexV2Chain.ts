@@ -1,3 +1,4 @@
+import { isFixedCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import {
   Interface,
   getAddress,
@@ -153,6 +154,8 @@ export type AttestedDexV2Deployment = Readonly<{
 
 const CAPABILITIES = new WeakMap<object, Binding>();
 const ATTESTED = new WeakSet<object>();
+const SHARED_QUALIFICATIONS = new WeakMap<Binding, Readonly<{ identity: string; number: bigint; hash: string;
+  registryImmutableProof?: true; lastBlock?: Readonly<{ number: bigint; hash: string; timestamp: bigint }> }>>();
 
 const quantity = (value: unknown, label: string, maximum = UINT256_MAX): bigint => {
   if (typeof value !== 'string' || !/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)) {
@@ -615,111 +618,177 @@ export const readCurrentSharedPoolDexGraph = async ({ capability, blockNumber, b
   capability: DexV2ReadCapability; blockNumber: bigint; blockHash: string;
   candidate?: 'shared-pool' | CurrentCheapDexCandidateKey;
 }) => {
-  const binding = bindingFor(capability), m = candidate === 'shared-pool' ? CURRENT_SHARED_POOL_CANDIDATE : resolveCurrentCheapDexCandidate(candidate);
-  if (binding.chainId !== BigInt(m.chainId) || typeof blockNumber !== 'bigint' || blockNumber < 0n || blockNumber > UINT64_MAX) {
-    throw new Error('Shared-Pool DEX read identity is invalid.');
-  }
-  const canonicalHash = hash(blockHash, 'Shared-Pool DEX block');
-  const readAnchor = async () => {
-    await assertChain(binding);
-    if ((await readBlock(binding, 0n, 'Shared-Pool DEX genesis')).hash !== m.genesisHash) {
-      throw new Error('Shared-Pool DEX genesis differs.');
+  const binding = bindingFor(capability);
+  try {
+    const m = candidate === 'shared-pool' ? CURRENT_SHARED_POOL_CANDIDATE : resolveCurrentCheapDexCandidate(candidate);
+    if (binding.chainId !== BigInt(m.chainId) || typeof blockNumber !== 'bigint' || blockNumber < 0n || blockNumber > UINT64_MAX) {
+      throw new Error('Shared-Pool DEX read identity is invalid.');
     }
-    if ('attestationBlock' in m && (blockNumber < BigInt(m.attestationBlock.number) ||
-        (await readBlock(binding, BigInt(m.attestationBlock.number), 'Current DEX deployment origin')).hash !== m.attestationBlock.hash)) {
-      throw new Error('Current DEX deployment origin changed or is after the read block.');
+    const canonicalHash = hash(blockHash, 'Shared-Pool DEX block');
+    const readCanonicalHead = async () => {
+      const current = await rpc(binding, 'eth_getBlockByNumber', [hexQuantity(blockNumber), false]);
+      if (!current || typeof current !== 'object' || Array.isArray(current)) {
+        throw new Error('Shared-Pool DEX block is unavailable.');
+      }
+      const record = current as Record<string, unknown>;
+      if (quantity(record.number, 'Shared-Pool DEX block number', UINT64_MAX) !== blockNumber ||
+          hash(record.hash, 'Shared-Pool DEX block hash') !== canonicalHash) {
+        throw new Error('Shared-Pool DEX block changed.');
+      }
+      return quantity(record.timestamp, 'Shared-Pool DEX block timestamp');
+    };
+    const readAnchor = async () => {
+      await assertChain(binding);
+      if ((await readBlock(binding, 0n, 'Shared-Pool DEX genesis')).hash !== m.genesisHash) throw new Error('Shared-Pool DEX genesis differs.');
+      if ('attestationBlock' in m && (blockNumber < BigInt(m.attestationBlock.number) ||
+          (await readBlock(binding, BigInt(m.attestationBlock.number), 'Current DEX deployment origin')).hash !== m.attestationBlock.hash)) {
+        throw new Error('Current DEX deployment origin changed or is after the read block.');
+      }
+      return readCanonicalHead();
+    };
+    const identity = candidate === 'cheap-history' ? JSON.stringify(m) : null;
+    const currentGraph = candidate === 'cheap-history' && isFixedCurrentDexCandidate(m);
+    let qualified = identity ? SHARED_QUALIFICATIONS.get(binding) : undefined;
+    if (SHARED_QUALIFICATIONS.get(binding)?.identity !== identity || currentGraph && qualified?.lastBlock && blockNumber < qualified.lastBlock.number) {
+      SHARED_QUALIFICATIONS.delete(binding); qualified = undefined;
     }
-    const current = await rpc(binding, 'eth_getBlockByNumber', [hexQuantity(blockNumber), false]);
-    if (!current || typeof current !== 'object' || Array.isArray(current)) {
-      throw new Error('Shared-Pool DEX block is unavailable.');
+    const reuse = qualified?.identity === identity;
+    const coreRuntime = m.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2];
+    const graphAt = (timestamp: bigint) => Object.freeze({ graph: m.graph, packageSha256: m.packageSha256, chainId: binding.chainId,
+      ...('attestationBlock' in m ? { attestationSha256: m.attestationSha256, deploymentOrigin: m.attestationBlock } : {}),
+      genesisHash: m.genesisHash, core: m.core, inputToken: m.tokens[0][0], outputToken: m.tokens[1][0], maxWorkLifetime: BigInt(m.maxWorkLifetime),
+      block: Object.freeze({ number: blockNumber, hash: canonicalHash, timestamp }),
+      operationReadIdentity: Object.freeze({ chainId: binding.chainId, core: m.core, runtimeHash: coreRuntime,
+        releaseId: m.releaseId, blockNumber, blockHash: canonicalHash }),
+      runtimeCount: m.runtimes.length + m.tokens.length + ('companions' in m ? m.companions.length : 3), readyToSign: false as const });
+    const checkPrimaryMarket = async () => {
+      if (!currentGraph) return;
+      const primary = resolvePreparedDexScope('cheap-history').candidate.pairs.find(p => p.marketId === m.marketId);
+      if (!primary) throw new Error('Current DEX primary market is unavailable.');
+      const raw = bytes(await rpc(binding, 'eth_call', [{ to: m.core, data: PREPARED_MARKET_REGISTRY.encodeFunctionData('marketForTokens', primary.tokens) }, blockSelector(canonicalHash)]), 'Current DEX market admission');
+      const row = PREPARED_MARKET_REGISTRY.decodeFunctionResult('marketForTokens', raw);
+      if (PREPARED_MARKET_REGISTRY.encodeFunctionResult('marketForTokens', row).toLowerCase() !== raw ||
+          row[0] !== primary.marketId || row[1] !== BigInt(primary.canonicalId) || row[2] === 0n || row[3] === 0n || row[4] !== true ||
+          address(row[5], 'Current DEX Engine') !== primary.engine || address(row[6], 'Current DEX PoolTerms') !== primary.poolTerms) throw new Error('Current DEX primary market admission changed.');
+    };
+    const rememberBlock = (timestamp: bigint) => {
+      if (!identity) return;
+      const current = SHARED_QUALIFICATIONS.get(binding);
+      if (current !== qualified) {
+        if (!current || current.identity !== identity || current.lastBlock?.number === blockNumber && current.lastBlock.hash !== canonicalHash) {
+          throw new Error('Current DEX qualification changed during read.');
+        }
+        return; // Another checked observation owns the cache; an older completion cannot replace it.
+      }
+      SHARED_QUALIFICATIONS.set(binding, Object.freeze({ identity, number: qualified?.number ?? blockNumber, hash: qualified?.hash ?? canonicalHash,
+        ...(qualified?.registryImmutableProof ? { registryImmutableProof: true as const } : {}),
+        ...(currentGraph ? { lastBlock: Object.freeze({ number: blockNumber, hash: canonicalHash, timestamp }) } : {}) }));
+    };
+    if (currentGraph && reuse && qualified?.lastBlock?.number === blockNumber) {
+      if (qualified.lastBlock.hash !== canonicalHash) throw new Error('Current DEX observed block changed.');
+      await assertChain(binding);
+      const timestamp = await readCanonicalHead();
+      if (timestamp !== qualified.lastBlock.timestamp) throw new Error('Current DEX observed timestamp changed.');
+      await binding.assertCurrent();
+      return graphAt(timestamp);
     }
-    const record = current as Record<string, unknown>;
-    if (quantity(record.number, 'Shared-Pool DEX block number', UINT64_MAX) !== blockNumber ||
-        hash(record.hash, 'Shared-Pool DEX block hash') !== canonicalHash) {
-      throw new Error('Shared-Pool DEX block changed.');
+    await readAnchor();
+    if (reuse && qualified) {
+      if (qualified.number > blockNumber || (qualified.number !== blockNumber &&
+        (await readBlock(binding, qualified.number, 'DEX qualification block')).hash !== qualified.hash)) {
+        throw new Error('DEX qualification block changed.');
+      }
+      if (qualified.number === blockNumber && qualified.hash !== canonicalHash) throw new Error('DEX qualification block changed.');
     }
-    return quantity(record.timestamp, 'Shared-Pool DEX block timestamp');
-  };
-  await readAnchor();
-  for (const [role, at, runtimeHash] of m.runtimes) {
-    await requireRuntime(binding, at, runtimeHash, canonicalHash, `Shared-Pool DEX ${role}`);
-  }
-  for (const [at, runtimeHash] of m.tokens) {
-    await requireRuntime(binding, at, runtimeHash, canonicalHash, 'Shared-Pool DEX token');
-  }
-  if ('companions' in m) {
-    for (const [role, at, runtimeHash] of m.companions) {
-      await requireRuntime(binding, at, runtimeHash, canonicalHash, `Current DEX ${role}`);
+    if (currentGraph && reuse && qualified) {
+      // Exact reviewed constructor/one-time fields stay fixed; current code and primary admission remain fresh.
+      for (const [at, runtimeHash] of [[m.core, coreRuntime], ...m.tokens]) await requireRuntime(binding, at, runtimeHash, canonicalHash, 'Current DEX admitted runtime');
+      await checkPrimaryMarket();
+      const timestamp = await readAnchor();
+      await binding.assertCurrent();
+      rememberBlock(timestamp);
+      return graphAt(timestamp);
     }
-  }
-  const core = m.core;
-  const equal = async (at: string, abi: Interface, getter: string, expected: string | number) => {
-    const actual = await scalar(binding, at, abi, getter, [], canonicalHash);
-    const value = typeof expected === 'number' ? Number(actual) :
-      expected.length === 42 ? address(actual, getter) : hash(actual, getter);
-    if (value !== expected) throw new Error(`Shared-Pool DEX ${getter} differs from the reviewed candidate.`);
-  };
-  for (const [getter, expected] of [
-    ['releaseId', m.releaseId], ['marketId', m.marketId], ['feePpm', m.feePpm],
-    ['maxWorkLifetime', m.maxWorkLifetime], ['tokenAdmissionCommitment', m.reviewedTokenSet],
-    ['inputToken', m.tokens[0][0]], ['outputToken', m.tokens[1][0]],
-    ['inputRuntimeHash', m.tokens[0][1]], ['outputRuntimeHash', m.tokens[1][1]]
-  ] as const) await equal(core, SHARED_CORE, getter, expected);
-  const companion = async (getter: string, runtimeGetter: string, role: string) => {
-    const at = address(await scalar(binding, core, SHARED_CORE, getter, [], canonicalHash), getter);
-    const runtimeHash = hash(await scalar(binding, core, SHARED_CORE, runtimeGetter, [], canonicalHash), runtimeGetter);
+    // The exact current graph has fixed code and constructor bindings; Core state is still read below.
+    if (!reuse) {
+      for (const [role, at, runtimeHash] of m.runtimes) {
+        await requireRuntime(binding, at, runtimeHash, canonicalHash, `Shared-Pool DEX ${role}`);
+      }
+      for (const [at, runtimeHash] of m.tokens) {
+        await requireRuntime(binding, at, runtimeHash, canonicalHash, 'Shared-Pool DEX token');
+      }
+      if ('companions' in m) {
+        for (const [role, at, runtimeHash] of m.companions) {
+          await requireRuntime(binding, at, runtimeHash, canonicalHash, `Current DEX ${role}`);
+        }
+      }
+    }
+    const core = m.core;
+    const equal = async (at: string, abi: Interface, getter: string, expected: string | number) => {
+      const actual = await scalar(binding, at, abi, getter, [], canonicalHash);
+      const value = typeof expected === 'number' ? Number(actual) :
+        expected.length === 42 ? address(actual, getter) : hash(actual, getter);
+      if (value !== expected) throw new Error(`Shared-Pool DEX ${getter} differs from the reviewed candidate.`);
+    };
+    for (const [getter, expected] of [
+      ['releaseId', m.releaseId], ['marketId', m.marketId], ['feePpm', m.feePpm],
+      ['maxWorkLifetime', m.maxWorkLifetime], ['tokenAdmissionCommitment', m.reviewedTokenSet],
+      ['inputToken', m.tokens[0][0]], ['outputToken', m.tokens[1][0]],
+      ['inputRuntimeHash', m.tokens[0][1]], ['outputRuntimeHash', m.tokens[1][1]]
+    ] as const) await equal(core, SHARED_CORE, getter, expected);
+    const companion = async (getter: string, runtimeGetter: string, role: string) => {
+      const at = address(await scalar(binding, core, SHARED_CORE, getter, [], canonicalHash), getter);
+      const runtimeHash = hash(await scalar(binding, core, SHARED_CORE, runtimeGetter, [], canonicalHash), runtimeGetter);
+      if ('companions' in m) {
+        const pinned = m.companions.find(([name]) => name === role);
+        if (!pinned || at !== pinned[1] || runtimeHash !== pinned[2]) throw new Error(`Current DEX ${getter} companion differs from the attestation.`);
+      } else await requireRuntime(binding, at, runtimeHash, canonicalHash, `Shared-Pool DEX ${getter}`);
+      return at;
+    };
+    const engine = await companion('fixedEngine', 'fixedEngineRuntimeHash', 'ChainWhisperFixedEngine');
+    const evaluator = await companion('terminalEvaluator', 'terminalEvaluatorRuntimeHash', 'ChainWhisperDexWideTerminalGT');
+    const nft = await companion('positionNFT', 'positionNFTRuntimeHash', 'ChainWhisperDexPositionNFT');
+    if (!reuse) await equal(nft, SHARED_NFT, 'core', core);
+    const evaluatorBinding = hash(await scalar(binding, core, SHARED_CORE, 'terminalEvaluatorBindingCommitment', [], canonicalHash), 'terminalEvaluatorBindingCommitment');
+    if ('evaluatorBinding' in m && evaluatorBinding !== m.evaluatorBinding) throw new Error('Current DEX terminal binding differs from the frozen constructor.');
+    if (!reuse) await equal(evaluator, SHARED_EVALUATOR, 'bindingCommitment', evaluatorBinding);
+    const selector = m.runtimes.find(([role]) => role === 'ChainWhisperFixedBoundedSelector')!;
+    if (!reuse) for (const [getter, expected] of [
+      ['core', core], ['releaseId', m.releaseId], ['marketId', m.marketId],
+      ['positionNFT', nft], ['inputToken', m.tokens[0][0]], ['outputToken', m.tokens[1][0]],
+      ['feePpm', m.feePpm], ['maxWorkLifetime', m.maxWorkLifetime],
+      ['selector', selector[1]], ['selectorRuntimeHash', selector[2]]
+    ] as const) await equal(engine, SHARED_ENGINE, getter, expected);
+    const factory = m.runtimes.find(([role]) => role === 'ChainWhisperFixedEngineFactory')![1];
+    if (!reuse) for (const [getter, role] of [
+      ['snapshotOwner', 'ChainWhisperFixedOwner'],
+      ['recurringOwner', 'ChainWhisperRecurringOwnerControls'],
+      ['ownerLifecycle', 'ChainWhisperOrderOwnerLifecycle'],
+      ['orderWork', 'ChainWhisperOrderWork'],
+      ['workLifecycle', 'ChainWhisperFixedWorkLifecycle'],
+      ['rangeOwner', 'ChainWhisperRangeOwner'],
+      ['rangeWork', 'ChainWhisperRangeWork']
+    ] as const) await equal(factory, SHARED_FACTORY, getter, m.runtimes.find(([name]) => name === role)![1]);
     if ('companions' in m) {
-      const pinned = m.companions.find(([name]) => name === role);
-      if (!pinned || at !== pinned[1] || runtimeHash !== pinned[2]) throw new Error(`Current DEX ${getter} companion differs from the attestation.`);
-    } else await requireRuntime(binding, at, runtimeHash, canonicalHash, `Shared-Pool DEX ${getter}`);
-    return at;
-  };
-  const engine = await companion('fixedEngine', 'fixedEngineRuntimeHash', 'ChainWhisperFixedEngine');
-  const evaluator = await companion('terminalEvaluator', 'terminalEvaluatorRuntimeHash', 'ChainWhisperDexWideTerminalGT');
-  const nft = await companion('positionNFT', 'positionNFTRuntimeHash', 'ChainWhisperDexPositionNFT');
-  await equal(nft, SHARED_NFT, 'core', core);
-  const evaluatorBinding = hash(await scalar(binding, core, SHARED_CORE, 'terminalEvaluatorBindingCommitment', [], canonicalHash), 'terminalEvaluatorBindingCommitment');
-  if ('evaluatorBinding' in m && evaluatorBinding !== m.evaluatorBinding) throw new Error('Current DEX terminal binding differs from the frozen constructor.');
-  await equal(evaluator, SHARED_EVALUATOR, 'bindingCommitment', evaluatorBinding);
-  const selector = m.runtimes.find(([role]) => role === 'ChainWhisperFixedBoundedSelector')!;
-  for (const [getter, expected] of [
-    ['core', core], ['releaseId', m.releaseId], ['marketId', m.marketId],
-    ['positionNFT', nft], ['inputToken', m.tokens[0][0]], ['outputToken', m.tokens[1][0]],
-    ['feePpm', m.feePpm], ['maxWorkLifetime', m.maxWorkLifetime],
-    ['selector', selector[1]], ['selectorRuntimeHash', selector[2]]
-  ] as const) await equal(engine, SHARED_ENGINE, getter, expected);
-  const factory = m.runtimes.find(([role]) => role === 'ChainWhisperFixedEngineFactory')![1];
-  for (const [getter, role] of [
-    ['snapshotOwner', 'ChainWhisperFixedOwner'],
-    ['recurringOwner', 'ChainWhisperRecurringOwnerControls'],
-    ['ownerLifecycle', 'ChainWhisperOrderOwnerLifecycle'],
-    ['orderWork', 'ChainWhisperOrderWork'],
-    ['workLifecycle', 'ChainWhisperFixedWorkLifecycle'],
-    ['rangeOwner', 'ChainWhisperRangeOwner'],
-    ['rangeWork', 'ChainWhisperRangeWork']
-  ] as const) await equal(factory, SHARED_FACTORY, getter, m.runtimes.find(([name]) => name === role)![1]);
-  if ('companions' in m) {
-    const fastQuote = m.companions.find(([role]) => role === 'ChainWhisperDexFastPoolQuote')![1];
-    await equal(core, SHARED_CORE, 'fastPoolQuote', fastQuote);
-    await equal(fastQuote, SHARED_NFT, 'core', core);
-    await equal(core, SHARED_CORE, 'poolTerms', m.poolTerms);
-    await equal(factory, SHARED_FACTORY, 'matchWork', m.runtimes.find(([role]) => role === 'ChainWhisperFixedMatchWork')![1]);
-    for (const [slot, expectedWord] of m.factoryStorage) {
-      const word = bytes(await rpc(binding, 'eth_getStorageAt', [factory, hexQuantity(BigInt(slot)), blockSelector(canonicalHash)]), 'Current DEX Factory storage');
-      if (word !== expectedWord) throw new Error(`Current DEX Factory slot ${slot} differs from the frozen constructor.`);
+      const fastQuote = m.companions.find(([role]) => role === 'ChainWhisperDexFastPoolQuote')![1];
+      await equal(core, SHARED_CORE, 'fastPoolQuote', fastQuote);
+      if (!reuse) await equal(fastQuote, SHARED_NFT, 'core', core);
+      await equal(core, SHARED_CORE, 'poolTerms', m.poolTerms);
+      if (!reuse) await equal(factory, SHARED_FACTORY, 'matchWork', m.runtimes.find(([role]) => role === 'ChainWhisperFixedMatchWork')![1]);
+      if (!reuse) for (const [slot, expectedWord] of m.factoryStorage) {
+        const word = bytes(await rpc(binding, 'eth_getStorageAt', [factory, hexQuantity(BigInt(slot)), blockSelector(canonicalHash)]), 'Current DEX Factory storage');
+        if (word !== expectedWord) throw new Error(`Current DEX Factory slot ${slot} differs from the frozen constructor.`);
+      }
     }
+    await checkPrimaryMarket();
+    const timestamp = await readAnchor();
+    await binding.assertCurrent();
+    if (!reuse) rememberBlock(timestamp);
+    return graphAt(timestamp);
+  } catch (error) {
+    SHARED_QUALIFICATIONS.delete(binding);
+    throw error;
   }
-  const timestamp = await readAnchor();
-  await binding.assertCurrent();
-  const coreRuntime = m.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2];
-  return Object.freeze({ graph: m.graph, packageSha256: m.packageSha256, chainId: binding.chainId,
-    ...('attestationBlock' in m ? { attestationSha256: m.attestationSha256, deploymentOrigin: m.attestationBlock } : {}),
-    genesisHash: m.genesisHash, core, inputToken: m.tokens[0][0], outputToken: m.tokens[1][0],
-    maxWorkLifetime: BigInt(m.maxWorkLifetime),
-    block: Object.freeze({ number: blockNumber, hash: canonicalHash, timestamp }),
-    operationReadIdentity: Object.freeze({ chainId: binding.chainId, core, runtimeHash: coreRuntime,
-      releaseId: m.releaseId, blockNumber, blockHash: canonicalHash }),
-    runtimeCount: m.runtimes.length + m.tokens.length + ('companions' in m ? m.companions.length : 3), readyToSign: false as const });
 };
 
 export type PreparedDexMarket = Readonly<{
@@ -734,6 +803,10 @@ export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, b
 }) => {
   const binding = bindingFor(capability), scope = resolvePreparedDexScope(candidate), m = scope.candidate;
   const graph = await readCurrentSharedPoolDexGraph({ capability, blockNumber, blockHash, candidate: scope.key });
+  const identity = scope.key === 'cheap-history' && isFixedCurrentDexCandidate(m) ? JSON.stringify(m) : null;
+  const qualified = SHARED_QUALIFICATIONS.get(binding);
+  const reuseImmutable = identity !== null && qualified?.identity === identity && qualified.registryImmutableProof === true;
+  try {
   const canonicalHash = graph.block.hash;
   const call = async (at: string, abi: Interface, method: string, args: readonly unknown[] = []) => {
     const raw = bytes(await rpc(binding, 'eth_call', [{ to: at, data: abi.encodeFunctionData(method, [...args]) },
@@ -763,6 +836,8 @@ export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, b
       await requireRuntime(binding, at, runtimeHash, canonicalHash, `Prepared market ${role}`);
       companions.push(Object.freeze({ role, address: at, runtimeHash }));
     }
+    // These getters are compiler-proven immutables; their current runtime hashes remain checked above.
+    if (!reuseImmutable) {
     for (const [at, abi] of [[expected.engine, SHARED_ENGINE], [expected.poolTerms, PREPARED_POOL_TERMS]] as const) {
       for (const [method, value] of [['core', m.core], ['releaseId', m.releaseId], ['marketId', expected.marketId]] as const) {
         const actual = (await call(at, abi, method))[0];
@@ -774,6 +849,7 @@ export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, b
       if (address((await call(expected.poolTerms, PREPARED_POOL_TERMS, method))[0], method) !== value) throw new Error(`Prepared market ${method} binding changed.`);
     }
     if (address((await call(math, SHARED_NFT, 'core'))[0], 'Prepared math Core') !== m.core) throw new Error('Prepared market math Core changed.');
+    }
     markets.push(Object.freeze({ marketId: expected.marketId, canonicalId: BigInt(expected.canonicalId), registryRevision, marketRevision,
       enabled: true, token0, token1, engine: expected.engine, poolTerms: expected.poolTerms, companions: Object.freeze(companions) }));
   }
@@ -782,10 +858,17 @@ export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, b
       (await readBlock(binding, BigInt(m.attestationBlock.number), 'Prepared registry origin')).hash !== m.attestationBlock.hash ||
       (await readBlock(binding, blockNumber, 'Prepared registry block')).hash !== canonicalHash) throw new Error('Prepared registry anchor changed.');
   await binding.assertCurrent();
+  if (!reuseImmutable && identity !== null && qualified?.identity === identity && SHARED_QUALIFICATIONS.get(binding) === qualified) {
+    SHARED_QUALIFICATIONS.set(binding, Object.freeze({ ...qualified, registryImmutableProof: true }));
+  }
   return Object.freeze({ graph: m.graph, packageSha256: m.packageSha256, chainId: graph.chainId, core: m.core, releaseId: m.releaseId,
     attestationSha256: m.attestationSha256, block: graph.block, registryRevision: markets[0].registryRevision,
     markets: Object.freeze(markets), tokens: Object.freeze(m.tokenMetadata.map((token, index) =>
       Object.freeze({ ...token, runtimeHash: m.tokens[index][1] }))), readyToSign: false as const });
+  } catch (error) {
+    SHARED_QUALIFICATIONS.delete(binding);
+    throw error;
+  }
 };
 
 type CurrentDexReadArgs = {
@@ -799,6 +882,9 @@ type CurrentDexSnapshot<T> = Readonly<{ candidate?: CurrentCheapDexIdentity; cha
   operationId: bigint; block: Readonly<{ number: bigint; hash: string; timestamp: bigint }>; operation: T }>;
 type HistoricalProfile = 'legacy' | 'shared-pool';
 type CurrentDexProfile = HistoricalProfile | CurrentCheapDexProfile;
+const CURRENT_OPERATION_OBSERVATIONS = new WeakMap<Binding, { value?: {
+  key: string; block: Readonly<{ number: bigint; hash: string; timestamp: bigint }>;
+} }>();
 /** Public snapshot only; not deployment admission or write authority. */
 export function readCurrentDexOperation(args: CurrentDexReadArgs & { profile: CurrentCheapDexProfile }): Promise<CurrentDexSnapshot<ReturnType<typeof decodeCurrentCheapDexOperation>>>;
 export function readCurrentDexOperation(args: CurrentDexReadArgs & { profile?: HistoricalProfile }): Promise<CurrentDexSnapshot<ReturnType<typeof decodeCurrentDexOperation>>>;
@@ -806,6 +892,7 @@ export async function readCurrentDexOperation({ capability, expected, operationI
   if (!['legacy', 'shared-pool', 'fast-pool', 'cheap-async'].includes(profile)) throw new Error('Unknown current quote profile.');
   const cheapProfile = profile === 'fast-pool' || profile === 'cheap-async' ? profile : undefined;
   const binding = bindingFor(capability);
+  try {
   const core = address(expected.core, 'Current DEX Core');
   const runtimeHash = hash(expected.runtimeHash, 'Current DEX runtime');
   const releaseId = hash(expected.releaseId, 'Current DEX release');
@@ -820,6 +907,11 @@ export async function readCurrentDexOperation({ capability, expected, operationI
   if ((expected.blockNumber === undefined) !== (expected.blockHash === undefined) ||
       (expected.originBlockNumber === undefined) !== (expected.originBlockHash === undefined)) {
     throw new Error('Current DEX read identity is invalid.');
+  }
+  let observation = isFixedCurrentDexCandidate(selected)
+    ? CURRENT_OPERATION_OBSERVATIONS.get(binding) : undefined;
+  if (isFixedCurrentDexCandidate(selected) && !observation) {
+    observation = {}; CURRENT_OPERATION_OBSERVATIONS.set(binding, observation);
   }
   await assertChain(binding);
   const head = expected.blockNumber === undefined ? await rpc(binding, 'eth_getBlockByNumber', ['latest', false]) : null;
@@ -845,6 +937,10 @@ export async function readCurrentDexOperation({ capability, expected, operationI
     throw new Error('Current DEX block changed.');
   }
   const timestamp = quantity(record.timestamp, 'Current DEX block timestamp');
+  const observationKey = JSON.stringify([selected, core, runtimeHash, releaseId]);
+  const previous = observation?.value;
+  const sameObservation = previous?.key === observationKey && previous.block.number === blockNumber && previous.block.hash === blockHash;
+  if (sameObservation && previous.block.timestamp !== timestamp) throw new Error('Current DEX observed timestamp changed.');
   const checkCandidateAnchors = async () => {
     if (!selected) return;
     if ((await readBlock(binding, 0n, 'Current DEX candidate genesis')).hash !== selected.genesisHash ||
@@ -855,10 +951,12 @@ export async function readCurrentDexOperation({ capability, expected, operationI
   };
   // This operation snapshot binds Core and its canonical origins. The wallet performs
   // the complete same-block module graph check separately; do not duplicate that scan.
-  await checkCandidateAnchors();
-  await requireRuntime(binding, core, runtimeHash, blockHash, 'Current DEX Core');
-  if (hash(await scalar(binding, core, release, 'releaseId', [], blockHash), 'Current DEX release') !== releaseId) {
-    throw new Error('Current DEX release changed.');
+  if (!sameObservation) {
+    await checkCandidateAnchors();
+    await requireRuntime(binding, core, runtimeHash, blockHash, 'Current DEX Core');
+    if (hash(await scalar(binding, core, release, 'releaseId', [], blockHash), 'Current DEX release') !== releaseId) {
+      throw new Error('Current DEX release changed.');
+    }
   }
   const raw = bytes(await rpc(binding, 'eth_call', [{ to: core, data }, blockSelector(blockHash)]), 'Current DEX operation');
   const operation = cheapProfile ? decodeCurrentCheapDexOperation(raw, timestamp, cheapProfile, selected) :
@@ -870,10 +968,19 @@ export async function readCurrentDexOperation({ capability, expected, operationI
   if (originNumber !== undefined && (await readBlock(binding, originNumber, 'Rechecked DEX origin block')).hash !== originHash) {
     throw new Error('Current DEX origin block changed during read.');
   }
-  await checkCandidateAnchors();
+  // An unchanged canonical reviewed observation hash commits the candidate ancestry checked above.
+  if (!isFixedCurrentDexCandidate(selected)) await checkCandidateAnchors();
   await binding.assertCurrent();
+  if (observation && CURRENT_OPERATION_OBSERVATIONS.get(binding) === observation &&
+      (!observation.value || blockNumber >= observation.value.block.number)) {
+    observation.value = { key: observationKey, block: Object.freeze({ number: blockNumber, hash: blockHash, timestamp }) };
+  }
   return Object.freeze({ ...(selected ? { candidate: selected } : {}), chainId: binding.chainId, core, runtimeHash, releaseId, operationId,
     block: Object.freeze({ number: blockNumber, hash: blockHash, timestamp }), operation });
+  } catch (error) {
+    CURRENT_OPERATION_OBSERVATIONS.delete(binding);
+    throw error;
+  }
 }
 
 /** Recover the opening operation/context from the exact mined call and current canonical state. */

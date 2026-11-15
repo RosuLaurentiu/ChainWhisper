@@ -10,8 +10,7 @@ import {
   decryptUint256,
   encodeKey,
   encrypt,
-  type ctUint256,
-  type itUint256
+  type ctUint256
 } from '@coti-io/coti-sdk-typescript';
 import { logMobileWalletDiagnostic } from './mobileWalletDiagnostics';
 
@@ -42,9 +41,6 @@ const BLOCK_SIZE_BYTES = 16;
 const UINT256_SIZE_BYTES = 32;
 const MAX_UINT256 = (1n << 256n) - 1n;
 
-const bytesToHex = (bytes: Uint8Array): string =>
-  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-
 const packPrivateUint256ValidationMessage = (
   senderAddress: string,
   contractAddress: string,
@@ -57,14 +53,6 @@ const packPrivateUint256ValidationMessage = (
     ['bytes', 'bytes', 'bytes4', 'bytes'],
     [getBytes(senderAddress), getBytes(contractAddress), functionSelector, ciphertextBytes]
   ));
-
-const normalizePrivateUint256Input = (value: itUint256 | PrivateUint256Input): PrivateUint256Input => ({
-  ciphertext: {
-    ciphertextHigh: BigInt(value.ciphertext.ciphertextHigh),
-    ciphertextLow: BigInt(value.ciphertext.ciphertextLow)
-  },
-  signature: typeof value.signature === 'string' ? value.signature : bytesToHex(value.signature)
-});
 
 const uintToBytes = (value: bigint, byteLength: number): Uint8Array => {
   const bytes = new Uint8Array(byteLength);
@@ -231,22 +219,7 @@ export const encryptPrivateUint256Input = async (
   functionSelector: string
 ): Promise<PrivateUint256Input> => {
   const plaintext = normalizeAmount(plaintextValue);
-  const nativeEncryptValue256 = (signer as {
-    encryptValue256?: (
-      plaintextValue: bigint | number,
-      contractAddress: string,
-      functionSelector: string
-    ) => Promise<itUint256 | PrivateUint256Input>;
-  }).encryptValue256;
-  if (typeof nativeEncryptValue256 === 'function') {
-    logMobileWalletDiagnostic('private-amount-sign', {
-      source: 'native-encrypt'
-    });
-    return normalizePrivateUint256Input(
-      await nativeEncryptValue256.call(signer, plaintext, contractAddress, functionSelector)
-    );
-  }
-
+  // COTI ethers 1.0.6 encryptValue256 signs a digest; this contract requires the full domain.
   const aesKey = await ensureSignerAesKey(signer);
   logMobileWalletDiagnostic('private-amount-sign', {
     source: 'browser-signer'

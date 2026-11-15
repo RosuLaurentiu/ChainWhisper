@@ -1,5 +1,5 @@
 import { ChartNoAxesCombined, ChevronDown, ChevronRight, Link2, LockKeyhole, SlidersHorizontal } from 'lucide-react';
-import { useRef, type FormEventHandler, type KeyboardEventHandler } from 'react';
+import { useRef, type KeyboardEventHandler } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { TradeTokenPresetKey } from '../../../lib/appHelpers';
@@ -25,9 +25,8 @@ import {
 type OtcOffersPanelProps = {
   actionMode: OtcSwapInputMode;
   linkedActionModes: Record<OtcSwapInputMode, boolean>;
-  orderLinkInput: string;
-  orderLinkError: string;
   pinnedTradeKey: string;
+  onClearPinnedOrder: () => void;
   pinnedTrade: TradeSnapshot | null;
   sellTokenSelection: TradeTokenPresetKey;
   buyTokenSelection: TradeTokenPresetKey;
@@ -50,9 +49,7 @@ type OtcOffersPanelProps = {
   onTypeFilterChange: (value: string) => void;
   onClearFilters: () => void;
   onRetryOffers: () => void;
-  onSubmitOrderLink: FormEventHandler<HTMLFormElement>;
-  onOrderLinkInputChange: (value: string) => void;
-  onClearPinnedOrder: () => void;
+  onOpenTradeLink: () => void;
   onCreateLimitOrder: () => void;
   onOpenQuote: (quote: OtcSwapQuoteCandidate) => void;
   formatAvailability: (quote?: OtcSwapQuoteCandidate | null) => string;
@@ -84,9 +81,8 @@ const getQuoteRate = (
 export default function OtcOffersPanel({
   actionMode,
   linkedActionModes,
-  orderLinkInput,
-  orderLinkError,
   pinnedTradeKey,
+  onClearPinnedOrder,
   pinnedTrade,
   sellTokenSelection,
   buyTokenSelection,
@@ -109,10 +105,8 @@ export default function OtcOffersPanel({
   onTypeFilterChange,
   onClearFilters,
   onRetryOffers,
-  onSubmitOrderLink,
-  onOrderLinkInputChange,
-  onClearPinnedOrder,
   onCreateLimitOrder,
+  onOpenTradeLink,
   onOpenQuote,
   formatAvailability
 }: OtcOffersPanelProps) {
@@ -236,7 +230,7 @@ export default function OtcOffersPanel({
         </div>
 
         <div className="p2p-offers-list-head">
-          <span>Rate ({displayedQuoteSymbol})</span>
+          <span>Rate ({displayedQuoteSymbol}/{displayedBaseSymbol})</span>
           <span>{displayedActionMode === 'buy' ? 'You pay' : 'You receive'}</span>
           <span>Available</span>
           <span>Action</span>
@@ -334,15 +328,9 @@ export default function OtcOffersPanel({
           {visibleCandidates.length === resolvedMarketInsertIndex ? marketRow : null}
         </div>
 
-        <details className="p2p-offers-private-link-tool">
-          <summary><Link2 size={15} aria-hidden="true" /> Open a private trade link</summary>
-          <form className={`p2p-offers-link${pinnedTradeKey ? ' p2p-offers-link-active' : ''}`} onSubmit={onSubmitOrderLink}>
-            <input value={orderLinkInput} onChange={(event) => onOrderLinkInputChange(event.target.value)} placeholder="Paste a private trade link" aria-label="Private trade link" />
-            <button type="submit">Open</button>
-            {pinnedTradeKey ? <button type="button" onClick={onClearPinnedOrder}>Clear</button> : null}
-          </form>
-          {orderLinkError ? <p className="p2p-swap-link-error">{orderLinkError}</p> : null}
-        </details>
+        <div className="p2p-offers-private-link-tool">
+          <button type="button" onClick={onOpenTradeLink}><Link2 size={15} aria-hidden="true" /> Open a private trade link</button>
+        </div>
         {pinnedTrade ? <p className="p2p-offers-linked-note">Selected offer #{pinnedTrade.recurringOrder?.orderId ?? pinnedTrade.tradeId} is shown with its exact terms.</p> : null}
         <details ref={marketChartRef} className="p2p-offers-chart" onToggle={handleMarketChartToggle}>
           <summary>

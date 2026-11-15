@@ -1,3 +1,4 @@
+import TokenApprovalsDialog from './features/wallet/TokenApprovalsDialog';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
 import {
   DirectChatPanel,
@@ -202,12 +203,6 @@ const dexAppScope = resolveCurrentDexAppCandidate(import.meta.env.MODE, import.m
 export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const [networkSwitching, setNetworkSwitching] = useState(false);
   const [tradingPriceDisplayInverted, setTradingPriceDisplayInverted] = useState(false);
-  const [dexSwapReferenceInverted, setDexSwapReferenceInverted] = useState<boolean | undefined>();
-  const changeDexPriceDisplayInverted = useCallback((inverted: boolean) => {
-    if (inverted === tradingPriceDisplayInverted) return;
-    setTradingPriceDisplayInverted(inverted);
-    setDexSwapReferenceInverted(value => value === undefined ? undefined : !value);
-  }, [tradingPriceDisplayInverted]);
   const [selectedTradingPair, setSelectedTradingPair] = useState<TradingPair>(['BCN', 'HBR']);
   const [mobileTradingScrolled, setMobileTradingScrolled] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -4327,8 +4322,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     markDirectTradeNotificationRead,
     setChatWalletMenuOpen
   ]);
+  const [tokenApprovalsOpen, setTokenApprovalsOpen] = useState(false);
   const walletUtilityMenu = (
     <WalletUtilityMenu
+      onOpenApprovals={() => { setChatWalletMenuOpen(false); setTokenApprovalsOpen(true); }}
       activeNetworkId={COTI_NETWORK.id}
       networkSelectionLocked={CHAINWHISPER_NETWORK_SELECTION_LOCKED}
       walletChainId={chainId}
@@ -4951,6 +4948,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
                 onToggleMobileGroupOptions={() => setMobileGroupOptionsOpen((previous) => !previous)}
                 chatMessagesRef={setChatMessagesContainerRef}
                 activeGroupMessages={visibleActiveGroupMessages}
+                historyUnavailable={groupChatV2HistoryUnavailable}
                 hasOlderHistory={groupHasOlderHistory}
                 loadingOlderHistory={groupLoadingOlderHistory}
                 onLoadOlderHistory={() => { void loadOlderGroupHistory(); }}
@@ -5218,6 +5216,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           />
         </Suspense>
       ) : null}
+      {tokenApprovalsOpen ? <TokenApprovalsDialog session={sharedTradeWalletSession} onClose={() => setTokenApprovalsOpen(false)}/> : null}
       <TradeActionConfirmModal
         confirmation={inChatTradeConfirmation}
         onCancel={() => resolveInChatTradeConfirmation(false)}
@@ -5308,12 +5307,11 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           activeProduct="dex"
           dexCandidate={dexAppScope.key === 'cheap-history' ? dexAppScope.candidate : undefined}
           marketReference={currentMarketReference}
-          referenceDisplayInverted={dexSwapReferenceInverted}
           onNavigate={(product) => navigateToPage(product === 'dex' ? 'dex' : 'trades')}
           selectedPair={selectedTradingPair}
           onSelectedPairChange={setSelectedTradingPair}
           priceDisplayInverted={tradingPriceDisplayInverted}
-          onPriceDisplayInvertedChange={changeDexPriceDisplayInverted}
+          onPriceDisplayInvertedChange={setTradingPriceDisplayInverted}
         />
         <AppErrorBoundary onOpenHelp={openGenericErrorHelp}>
           <Suspense fallback={<RouteLoadingFallback shellClassName="dex-v2-loading-shell" label={showDexAgent ? 'Loading Trade Agent' : 'Loading Private DEX'} />}>
@@ -5335,10 +5333,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
               <DexV2Page
                 swapCandidate={dexAppScope.key}
                 marketReference={currentMarketReference}
-                referenceDisplayInverted={dexSwapReferenceInverted}
-                onReferenceDisplayInvertedChange={setDexSwapReferenceInverted}
                 dailyPriceConfig={currentNativeDexDailyPriceConfig(dexAppScope.candidate, dexAppPair)}
-                onPriceDisplayInvertedChange={changeDexPriceDisplayInverted}
+                onPriceDisplayInvertedChange={setTradingPriceDisplayInverted}
                 priceDisplayInverted={tradingPriceDisplayInverted}
                 selectedPair={dexAppPair}
                 sharedWalletSession={sharedTradeWalletSession}

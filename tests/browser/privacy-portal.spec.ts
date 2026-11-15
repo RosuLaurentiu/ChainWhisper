@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { installPortalOwner } from './fixtures/portal-owner';
 
 test.describe('Privacy Portal', () => {
-  test('keeps WISP in the unified selector and scopes legacy recovery to WISP', async ({ page }) => {
+  test('keeps current WISP controls in the unified selector without old-vault recovery', async ({ page }) => {
     await installPortalOwner(page);
     await page.setViewportSize({ width: 1536, height: 1024 });
     await page.goto('/portal');
@@ -29,10 +29,7 @@ test.describe('Privacy Portal', () => {
     await expect(page.locator('.privacy-wisp-card').getByRole('button', { name: 'Max' })).toBeDisabled();
 
     const legacyRecovery = page.locator('.privacy-legacy-recovery');
-    await expect(legacyRecovery).toBeVisible();
-    await expect(page.locator('.privacy-wisp-card .privacy-legacy-recovery')).toHaveCount(1);
-    await expect(page.locator('.swap-page-panel > .privacy-legacy-recovery')).toHaveCount(0);
-    await expect(legacyRecovery).not.toHaveAttribute('open', '');
+    await expect(legacyRecovery).toHaveCount(0);
 
     await rail.getByRole('button', { name: 'COTI / p.COTI', exact: true }).click();
     await expect(legacyRecovery).toHaveCount(0);

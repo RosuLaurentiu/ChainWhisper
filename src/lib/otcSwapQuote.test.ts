@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   RECURRING_OTC_CONTRACT_ADDRESS,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
   type TradeSnapshot
 } from './appShared';
+import { CURRENT_P2P_BINDING } from './currentP2PBinding';
 import { quoteBestSingleOtcSwap } from './otcSwapQuote';
 import { resolveOtcSwapPriceRatioDisplay } from './otcSwapUi';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MAKER_ADDRESS = '0xbf0100000000000000000000000000000000ed55';
 const ONE = 10n ** 18n;
+const TRADE_ESCROW_CONTRACT_ADDRESS = CURRENT_P2P_BINDING.deployments['standard-v2'].contractAddress;
 
 const asset = (symbol: string, tokenAddress: string, amount = ONE): TradeAssetPayload => ({
   kind: 'private-erc20',
@@ -31,6 +32,7 @@ const oneOffTrade = ({
 }): TradeSnapshot => ({
   tradeId: id,
   escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+  v2: { protocol: 'standard-v2', chainId: CURRENT_P2P_BINDING.chainId, contractAddress: TRADE_ESCROW_CONTRACT_ADDRESS },
   maker: MAKER_ADDRESS,
   taker: ZERO_ADDRESS,
   offer: asset('p.COTI', '0x00000000000000000000000000000000000000c1', offerAmount),

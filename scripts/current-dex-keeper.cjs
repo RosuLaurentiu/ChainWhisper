@@ -3,10 +3,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseEnv } = require('node:util');
+const pacing = require('./current-dex-rpc-pacing.cjs');
 const root = path.resolve(__dirname, '../..');
 const service = path.join(root, 'ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/app-async-service');
 const cli = require(path.join(service, 'runtime/app-host-cli.cjs'));
-const hostFile = path.join(service, 'app-host-23abde1d22019d52852d6845c9444326dde1d99e/HOST.json');
+const { loadPublicBinding, captureFile, GRAPH } = require(path.join(service, 'public-binding.cjs'));
+const hostFile = path.join(service, `app-host-${GRAPH.slice(0, 8)}-23abde1d22019d52852d6845c9444326dde1d99e/HOST.json`);
 const operatorField = 'CHAINWHISPER_TEST_DEX_MALLORY_PRIVATE_KEY';
 
 function readKey() {
@@ -18,24 +20,43 @@ function readKey() {
   return parseEnv(entries[0])[operatorField];
 }
 
+function hostConfiguration(requireSaved = false) {
+  if (!fs.existsSync(hostFile)) {
+    assert(!fs.existsSync(path.dirname(hostFile)), 'CURRENT_DEX_KEEPER_HOST_RECOVERY_REQUIRED');
+    if(requireSaved)return null;
+    loadPublicBinding();
+    const capture = JSON.parse(fs.readFileSync(captureFile, 'utf8'));
+    const head = capture.reads.find(row => row.method === 'eth_getBlockByNumber' && row.params[0] === 'latest')?.result;
+    assert(/^0x[0-9a-f]+$/i.test(head?.number) && /^0x[0-9a-f]{64}$/i.test(head?.hash), 'CURRENT_DEX_KEEPER_START_BLOCK');
+    return { operator: '0x23abde1d22019d52852d6845c9444326dde1d99e',
+      startBlock: { number: String(BigInt(head.number)), hash: head.hash } };
+  }
+  const stat = fs.lstatSync(hostFile);
+  assert(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 1048576,
+    'CURRENT_DEX_KEEPER_HOST_CONFIG');
+  return JSON.parse(fs.readFileSync(hostFile, 'utf8'));
+}
+
 async function main(args, onHost) {
   assert(Array.isArray(args) && args.length === 1 &&
     ['--check', '--start', '--once', '--reconcile'].includes(args[0]), 'CURRENT_DEX_KEEPER_USAGE');
   if (args[0] === '--check') return cli.runCli(args);
-  const stat = fs.lstatSync(hostFile);
-  assert(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 1048576,
-    'CURRENT_DEX_KEEPER_HOST_CONFIG');
-  const host = JSON.parse(fs.readFileSync(hostFile, 'utf8'));
+  const host = hostConfiguration();
   return cli.runCli([args[0], host.operator, host.startBlock.number, host.startBlock.hash],
     { readKey, ...(onHost ? { onHost } : {}) });
 }
 
-module.exports = { main };
+function stopResult(error) {
+  const first = String(error?.message ?? '').split(/\r?\n/, 1)[0];
+  const guard = /^(?:APP_HOST|NORMAL_KEEPER|CURRENT_DEX_KEEPER)_[A-Z0-9_]+$/.test(first)
+    ? first : 'CURRENT_DEX_KEEPER_REJECTED';
+  const traffic = pacing.stats();
+  return { status: 'CURRENT_DEX_KEEPER_STOP', guard, noAutomaticRetry: true,
+    ...(traffic?.lastFailure ? { rpcFailure: { service: traffic.service, ...traffic.lastFailure } } : {}) };
+}
+module.exports = { main, stopResult, hostConfiguration };
 if (require.main === module) main(process.argv.slice(2)).then(result => console.log(JSON.stringify(result)))
   .catch(error => {
-    const first = String(error?.message ?? '').split(/\r?\n/, 1)[0];
-    const guard = /^(?:APP_HOST|NORMAL_KEEPER|CURRENT_DEX_KEEPER)_[A-Z0-9_]+$/.test(first)
-      ? first : 'CURRENT_DEX_KEEPER_REJECTED';
-    console.error(JSON.stringify({ status: 'CURRENT_DEX_KEEPER_STOP', guard, noAutomaticRetry: true }));
+    console.error(JSON.stringify(stopResult(error)));
     process.exitCode = 1;
   });

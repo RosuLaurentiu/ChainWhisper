@@ -5,6 +5,50 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/tests/browser/fixtures/trade-review-harness.html');
 });
 
+test('approval switch stays in the existing confirmation and uses the selected mode', async ({ page }, info) => {
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({width,height:800});
+    await page.reload();
+    await expect(page.getByRole('switch')).toHaveCount(0);
+    await page.getByRole('button',{name:'Token approval',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'Approve swap token'});
+    const toggle=dialog.getByRole('switch',{name:'Unlimited HBR approval'});
+    await expect(toggle).toHaveAttribute('aria-checked','false');
+    await toggle.focus();await page.keyboard.press('Space');
+    await expect(toggle).toHaveAttribute('aria-checked','true');
+    await expect(dialog.getByText('Allows future spending until revoked. Use may be visible on-chain.')).toBeVisible();
+    await expect.poll(async()=>(await toggle.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:info.outputPath(`approval-switch-${width}.png`),animations:'disabled'});
+    await dialog.getByRole('button',{name:'Continue',exact:true}).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByText('unlimited approval selected. No transaction sent.',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Token approval',exact:true}).click();
+    await toggle.click();await expect(toggle).toHaveAttribute('aria-checked','false');
+    await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+    await expect(page.getByText('Review closed. No transaction sent.',{exact:true})).toBeVisible();
+  }
+});
+
+test('partial Activity exposes one keyboard-triggered bounded older-page action', async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 620 });
+  await page.goto('/tests/browser/fixtures/trade-review-harness.html?activity');
+  await expect(page.getByText('0 events loaded', { exact: true })).toBeVisible();
+  await expect(page.getByText('Older events are not loaded.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Older-page requests: 0', { exact: true })).toBeVisible();
+  const load = page.getByRole('button', { name: 'Load older history', exact: true });
+  const box = await load.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('partial-activity-mobile.png'), animations: 'disabled' });
+  await load.focus();
+  await page.keyboard.press('Enter');
+  await expect(load).toBeDisabled();
+  await expect(page.getByText('Older-page requests: 1', { exact: true })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('Older-page requests: 1', { exact: true })).toBeVisible();
+});
+
 test('long funding details remain readable on mobile', async ({ page }, info) => {
   await page.setViewportSize({ width: 390, height: 620 });
   await page.getByRole('button', { name: 'Funding review', exact: true }).click();

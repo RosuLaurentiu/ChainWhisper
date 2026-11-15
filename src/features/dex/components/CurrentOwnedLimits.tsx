@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import type { CurrentOwnedLimit } from '../../../lib/currentDexOwnedLimits';
 type Capability=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexLimitCapability']>>>;
 type Inventory=Awaited<ReturnType<Capability['readOwnedOrders']>>;
-export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',selectedPair,visible,disabled=false,refreshToken='',selectedId,onSelect}:{
-  session?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;selectedPair:readonly[string,string];visible:boolean;disabled?:boolean;refreshToken?:string;selectedId?:string;onSelect:(order:CurrentOwnedLimit)=>void;
+export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',selectedPair,visible,disabled=false,refreshToken='',selectedId,onSelect,managementNavigation}:{
+  session?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;selectedPair:readonly[string,string];visible:boolean;disabled?:boolean;refreshToken?:string;selectedId?:string;managementNavigation?:ReactNode;onSelect:(order:CurrentOwnedLimit)=>void;
 }){
   const candidate=resolveCurrentCheapDexCandidate(candidateKey),display=readCurrentDexDisplay(candidate);
   const privacy=session?resolveBrowserWalletPrivacyState({browserWalletAddress:session.walletAddress,sessionOnboardInfo:session.sessionOnboardInfo??{},walletAesHealthByAddress:session.walletAesHealthByAddress}):null;
@@ -28,9 +28,10 @@ export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',se
   },[scope,visible,connected,refresh,refreshToken]);
   const current=visible&&privacyReady&&view?.scope===scope?view:null;
   return<section className="dex-owner-list" aria-label="Owned Limit orders" aria-busy={current?.state==='loading'}>
-    <div className="dex-owner-list-toolbar"><span>{current?.inventory ? `${current.inventory.orders.length} orders` : null}</span>
+    <div className="dex-owner-list-toolbar">{managementNavigation?<div className="dex-owner-index-header"><h2>My trades</h2><p>Orders, positions and activity</p></div>:null}<span>{current?.inventory ? `${current.inventory.orders.length} orders` : null}</span>
     <button type="button" aria-label="Refresh owned Limit orders" disabled={!connected||!privacyReady||disabled||current?.state==='loading'} onClick={()=>setRefresh(v=>v+1)}>{current?.state==='loading'?'Loading…':'Refresh orders'}</button></div>
-    {!connected?<p>Connect your wallet on COTI Testnet to see your orders.</p>:!privacyReady?<p>Unlock privacy to see your orders.</p>:
+    {managementNavigation}
+    {!connected?<p>Connect your wallet on COTI Testnet to see your orders.</p>:!privacyReady?<p>Use “Unlock privacy with MetaMask” in the header to see your orders.</p>:
       current?.state==='loading'?<p role="status">Loading your orders…</p>:current?.state==='error'?<p role="alert">Could not load orders. Refresh to try again.</p>:null}
     <div className="dex-owner-list-items">{current?.inventory?.orders.map(order=><button type="button" className="dex-owner-item" key={order.positionId.toString()} aria-label={`Open Limit NFT ${order.positionId}`} aria-pressed={selectedId===order.positionId.toString()} disabled={disabled} onClick={()=>onSelect(order)}>
       <span className="dex-owner-item-title">{order.poolTokens.map(address=>display.tokens.find(t=>t.address===address)?.label??'Unknown token').join(' / ')}</span><span className="dex-owner-item-meta">Order #{order.positionId.toString()}</span><span className="dex-owner-status" data-state={order.closed?'closed':order.status===0n?'active':order.status===1n?'paused':'pending'}>{order.closed?'Closed':['Open','Paused','Needs privacy activation'][Number(order.status)]}</span>

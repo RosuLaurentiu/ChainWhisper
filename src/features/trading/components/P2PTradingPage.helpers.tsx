@@ -261,7 +261,7 @@ export const getRecurringFillSideForDisplayAction = (
       ? 'buy'
       : 'sell';
 
-export const OPEN_TERMINAL_LABEL = 'Open order';
+export const OPEN_TERMINAL_LABEL = 'Open trade';
 export const SHARE_LABEL = 'Share';
 export const UNLISTED_ORDER_LABEL = 'Unlisted';
 export const PRIVATE_LIQUIDITY_LABEL = 'Private tokens';

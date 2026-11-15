@@ -155,7 +155,8 @@ export default function TradeMyTradesSection({
   }, [walletAddress, privateTradesLocked, lifecycleView]);
   const loading = loadingMyTrades || additionalPending;
   const totalsUnavailable = privateTradesLocked || loading || additionalIncomplete || Boolean(myTradesError) ||
-    lifecycleView === 'history' && (historyHasMore || historyLoading || Boolean(historyError));
+    lifecycleView === 'history' && (historyHasMore || historyLoading || Boolean(historyError) ||
+      Boolean(onLoadOlderHistory && !historyComplete));
   const displayCount = (count: number) => totalsUnavailable ? '—' : count;
   const showConsolidatedActiveEmpty =
     lifecycleView === 'active' && activeFilter === 'all' && activeCount === 0 && !hasActiveDeskFilters && !totalsUnavailable;
@@ -350,7 +351,7 @@ export default function TradeMyTradesSection({
       ) : null}
       {!walletAddress ? <DisconnectedMyTradesState /> : null}
       {walletAddress && privateTradesLocked ? <p role="status">Private trades are locked. Unlock privacy in the header.</p> : null}
-      {myTradesError
+      {walletAddress && myTradesError
         ? renderP2PEmptyState(
             renderAdditionalTrades ? 'Some trades could not load' : 'My trades could not load',
             'Refresh to try again.',
@@ -432,7 +433,7 @@ export default function TradeMyTradesSection({
           <section className="p2p-wallet-trade-group" role="tabpanel" aria-label={`${lifecycleView === 'active' ? 'Active' : 'History'} trades`}>
             {lifecycleView === 'history' && onLoadOlderHistory && !privateTradesLocked ? <>
               <p role="status">{historyLoading ? 'Checking trade history…' : historyError ? 'History is incomplete. Verified trades remain available.' :
-                historyHasMore ? 'Recent history loaded. Older trades are not loaded.' : historyComplete ? 'Book and Direct history is complete.' : 'Book and Direct history is unavailable.'}</p>
+                historyHasMore ? 'Recent history loaded. Older trades are not loaded.' : historyComplete ? 'Book and Direct history is complete.' : 'History coverage has not been verified.'}</p>
               {historyError ? <p role="alert">{historyError}</p> : null}
             </> : null}
             {lifecycleView === 'history'

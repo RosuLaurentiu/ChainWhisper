@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs';
 import { AbiCoder, Interface, keccak256 } from '@coti-io/coti-ethers';
 import { decodeUint, encodeKey, encrypt } from '@coti-io/coti-sdk-typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CURRENT_SHARED_DEX_TOKENS as tokens, CURRENT_SHARED_TOKEN_DISTRIBUTION as p, readCurrentSharedDexTokenDistribution, resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
+import { CURRENT_SHARED_DEX_TOKENS as tokens, CURRENT_SHARED_TOKEN_DISTRIBUTION as p, readCurrentSharedDexTokenDistribution, resolveCurrentSharedTokenDistribution,
+  currentSharedDistributionCoreAbi, currentSharedDistributionTokenAbi } from './currentSharedDexTokenDistribution';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
-import { CURRENT_SHARED_TOKEN_FUNDS_LAYOUT as layout, currentSharedTokenFundsAbi as abi, readCurrentSharedDexTokenFunds } from './currentSharedDexTokenFunds';
+import { CURRENT_SHARED_TOKEN_FUNDS_LAYOUT as layout, currentSharedTokenFundsAbi as abi, readCurrentSharedDexTokenFunds, readCurrentSharedDexSwapFunds } from './currentSharedDexTokenFunds';
 import { decryptPrivateUint256Output } from './privateUint256';
 vi.mock('./currentSharedDexTokenDistribution', async original => ({ ...await original<typeof import('./currentSharedDexTokenDistribution')>(), readCurrentSharedDexTokenDistribution: vi.fn() }));
 const key = '000102030405060708090a0b0c0d0e0f', owner = '0x1111111111111111111111111111111111111111';
@@ -43,11 +44,85 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
       { ciphertext: { ciphertextHigh: 91n, ciphertextLow: 92n }, ownerCiphertext: approvals[index], spenderCiphertext: { ciphertextHigh: 93n, ciphertextLow: 94n } };
     return abi.encodeFunctionResult(parsed.name, [result]) + suffix;
   });
-  return { balances, allowances, viewer, approvals, rpc, decrypt, run: () => readCurrentSharedDexTokenFunds({ owner, head, rpc, decrypt, assertCurrent, candidate }),
+  return { balances, allowances, viewer, approvals, rpc, decrypt, assertCurrent, run: () => readCurrentSharedDexTokenFunds({ owner, head, rpc, decrypt, assertCurrent, candidate }),
     revoke: () => { active = false; }, contract: () => { code = '0x6000'; }, recipient: (s: string) => { recipient = s; },
     corrupt: () => { suffix = '00'; }, reorg: () => { lastHash = `0x${'55'.repeat(32)}`; }, badStorage: () => { storageWord = `0x${'01'.repeat(32)}`; } };
 }
 afterEach(() => vi.restoreAllMocks());
+describe('selected swap input funds', () => {
+  const captures = [
+    '../../reports/limit-directory-adoption-2026-11-04/public-binding/public-capture-1.json',
+    '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json'
+  ].map(file => JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8')));
+  function swapFixture(fault = '') {
+    const f = fixture('cheap-history'), policy = resolveCurrentSharedTokenDistribution('cheap-history');
+    const capture = captures.find(value => value.graph === policy.graph);
+    if (!capture) throw new Error('Missing selected swap-funds runtime fixture.');
+    const swapHead = { ...head, number: BigInt(policy.attestationBlock.number) + 5n };
+    let headReads = 0;
+    const rpc = vi.fn(async (method: string, params: unknown[]): Promise<unknown> => {
+      if (method === 'eth_chainId') return fault === 'chain' ? '0x1' : `0x${fault === 'quantity' ? '0' : ''}${policy.chainId.toString(16)}`;
+      if (method === 'eth_getBlockByNumber') {
+        if (params[0] === '0x0') return { number: '0x0', hash: fault === 'genesis' ? head.hash : policy.genesisHash };
+        if (params[0] === `0x${BigInt(policy.attestationBlock.number).toString(16)}`) return { number: params[0], hash: fault === 'origin' ? head.hash : policy.attestationBlock.hash };
+        headReads++;
+        return { number: `0x${swapHead.number.toString(16)}`, timestamp: `0x${swapHead.timestamp.toString(16)}`,
+          hash: fault === 'reorg' && headReads > 1 ? `0x${'55'.repeat(32)}` : swapHead.hash };
+      }
+      if (method === 'eth_getCode' && params[0] !== owner) {
+        if (fault === 'runtime') return '0x6000';
+        return capture.reads.find((r: { method: string; params: string[] }) => r.method === method && r.params[0].toLowerCase() === String(params[0]).toLowerCase()).result;
+      }
+      if (method === 'eth_call') {
+        const call = params[0] as { to: string; data: string };
+        const core = call.to.toLowerCase() === policy.core.toLowerCase();
+        const publicAbi = core ? currentSharedDistributionCoreAbi : currentSharedDistributionTokenAbi;
+        const parsed = publicAbi.parseTransaction({ data: call.data });
+        if (parsed) {
+          const value = parsed.name === 'releaseId' ? policy.releaseId : parsed.name === 'tokenAdmissionCommitment' ? policy.tokenAdmissionCommitment : parsed.name === 'decimals' ? 6n : false;
+          return publicAbi.encodeFunctionResult(parsed.name, [fault === 'policy' && parsed.name === 'publicAmountsEnabled' ? true : value]);
+        }
+      }
+      return f.rpc(method, params);
+    });
+    vi.mocked(readCurrentSharedDexTokenDistribution).mockClear();
+    return { ...f, rpc, run: (token = tokens[1].address) => readCurrentSharedDexSwapFunds({
+      owner, head: swapHead, tokens: [token, tokens[2].address], candidate: 'cheap-history', rpc, decrypt: f.decrypt,
+      assertCurrent: async () => { await f.assertCurrent(); if (fault === 'session') throw new Error('Scope revoked'); }
+    }) };
+  }
+  it('uses 21 logical reads for the current pair, without distribution or unrelated tokens', async () => {
+    const f = swapFixture(), result = await f.run();
+    expect(result.tokens).toHaveLength(2);
+    expect(result.tokens[0]).toMatchObject({ address: tokens[1].address, balance: f.balances[1], allowance: f.allowances[1] });
+    expect(result).toMatchObject({ privateFundsVerified: true, readyToSign: false });
+    expect(f.rpc).toHaveBeenCalledTimes(21);
+    expect(readCurrentSharedDexTokenDistribution).not.toHaveBeenCalled();
+    expect(f.decrypt).toHaveBeenCalledTimes(4);
+    expect(f.rpc.mock.calls.filter(([m]) => m === 'eth_call').map(([, a]) => (a[0] as { to: string }).to.toLowerCase()))
+      .not.toContain(tokens[0].address.toLowerCase());
+    expect(result.tokens[0]).not.toHaveProperty('claimed');
+  });
+  it.each(['chain', 'quantity', 'genesis', 'origin', 'runtime', 'policy', 'reorg', 'session'])('rejects changed %s', async fault => {
+    const f = swapFixture(fault);
+    await expect(f.run()).rejects.toThrow();
+    expect(readCurrentSharedDexTokenDistribution).not.toHaveBeenCalled();
+  });
+  it('keeps owner-envelope and canonical-empty checks on the selected token', async () => {
+    const f = swapFixture(); f.viewer[1] = empty(); f.badStorage();
+    await expect(f.run()).rejects.toThrow('no owner envelope');
+    const g = swapFixture(); g.recipient(p.vault.recovery);
+    await expect(g.run()).rejects.toThrow('another encryption recipient');
+  });
+  it('rejects an unadmitted token before any read', async () => {
+    const f = swapFixture(); await expect(f.run(owner)).rejects.toThrow('Invalid swap funding');
+    expect(f.rpc).not.toHaveBeenCalled();
+  });
+  it('rejects a privacy lock during decryption', async () => {
+    const f = swapFixture(); f.decrypt.mockImplementation(() => { f.revoke(); return 0n; });
+    await expect(f.run()).rejects.toThrow('Scope revoked');
+  });
+});
 describe('four-token owner private funds', () => {
   it('reads allowance for the current Core and refuses an earlier-Core distribution', async () => {
     const f = fixture('cheap-exit'), result = await f.run();

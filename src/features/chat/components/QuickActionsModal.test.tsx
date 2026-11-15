@@ -41,6 +41,7 @@ describe('QuickActionsModal private group title policy', () => {
     expect(markup).not.toContain('Sensitive project name');
     expect(markup).toContain('value="Private group"');
     expect(markup).toContain('aria-label="Private group public label"');
+    expect(markup).toContain('aria-label="Initial members"');
     expect(markup).toContain('disabled=""');
     expect(markup).toContain('Custom private titles are not stored on-chain.');
   });

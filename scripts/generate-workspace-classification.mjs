@@ -19,8 +19,6 @@ const GENERATED_EVIDENCE = /(?:^|\/)(?:deployments?|runtime)(?:\/|$)/iu;
 const APP_REDESIGN = new Set([
   'src/App.tsx',
   'src/features/trading/components/P2PTradingPage.tsx',
-  'src/features/chat/hooks/useDirectConversationSync.ts',
-  'src/features/groups/hooks/useGroupDataSync.ts',
   'src/features/wallet/hooks/useWalletOnboarding.ts',
   'src/lib/appChain.ts',
   'src/lib/appShared/contracts.ts',

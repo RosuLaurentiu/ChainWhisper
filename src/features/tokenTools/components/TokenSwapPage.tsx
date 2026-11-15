@@ -16,6 +16,7 @@ import {
   type SwapDirection
 } from '../../../lib/appShared';
 import { COTI_PRIVACY_PORTAL_URL } from '../../../lib/ecosystemLinks';
+import { COTI_MAINNET_NETWORK } from '../../../lib/chainWhisperNetworks';
 import {
   buildPrivacyPortalQuoteKey,
   parsePrivacyAmountInput,
@@ -317,10 +318,10 @@ function WispConversionCard({
   const privacyDescription = !walletAddress
     ? 'Connect from the header to use the ChainWhisper bridge.'
     : !onCotiNetwork
-      ? 'Switch to COTI Mainnet to convert WISP.'
+      ? `WISP conversion is available on ${COTI_NETWORK.shortName}. It is unavailable on the connected network.`
       : !hasAesReady
         ? 'Unlock privacy to view and use pWISP.'
-        : 'Private balances are available for the connected wallet.';
+        : 'Privacy is unlocked. Balance availability is shown in each field.';
   const readinessHelpReason: AppHelpReason | null = !walletAddress
     ? 'wallet-needed'
     : !onCotiNetwork
@@ -454,7 +455,7 @@ function WispConversionCard({
       </div>
 
       <div className="privacy-readiness" role="status" aria-live="polite">
-        <div className="privacy-readiness-bridge">
+        <div className={`privacy-readiness-bridge is-${bridgeState}`}>
           <span>
             <i className={`privacy-status-dot is-${bridgeState}`} aria-hidden="true" />
             <strong>ChainWhisper bridge · <em>{bridgeLabel}</em></strong>
@@ -607,24 +608,25 @@ export default function TokenSwapPage({
       : `${formatTokenAmount(minimumWei, selectedPair.publicToken.decimals, 8)} ${inputToken.symbol}`;
   const feeLabel = activeQuote ? `${formatCotiAmount(activeQuote.feeWei)} COTI` : '—';
   const bridgeState = getBridgeState(activeMetrics, privacyDirection, loading);
-  const bridgeUrl = `${COTI_NETWORK.blockExplorerUrl}/address/${selectedPair.bridgeAddress}#code`;
+  const bridgeUrl = `${COTI_MAINNET_NETWORK.blockExplorerUrl}/address/${selectedPair.bridgeAddress}#code`;
+  const onBridgeNetwork = onCotiNetwork && COTI_NETWORK.chainIdDecimal === selectedPair.chainId;
   const privacyTitle = !walletAddress
     ? 'Wallet not connected'
-    : !onCotiNetwork
-      ? 'Wrong network'
+    : !onBridgeNetwork
+      ? 'Bridge unavailable on this network'
       : !hasAesReady
         ? 'Privacy locked'
         : 'Privacy unlocked';
   const privacyDescription = !walletAddress
     ? 'Connect from the header to view balances and convert tokens.'
-    : !onCotiNetwork
-      ? 'Switch to COTI Mainnet to use the selected bridge.'
+    : !onBridgeNetwork
+      ? 'This official bridge supports COTI Mainnet. It is unavailable in this Testnet beta. Use DEX or P2P for Testnet trading.'
       : !hasAesReady
         ? 'Unlock privacy to view private balances.'
-        : 'Private balances are available for the connected wallet.';
+        : 'Privacy is unlocked. Balance availability is shown in each field.';
   const readinessHelpReason: AppHelpReason | null = !walletAddress
     ? 'wallet-needed'
-    : !onCotiNetwork
+    : !onBridgeNetwork
       ? 'wrong-network'
       : !hasAesReady
         ? 'privacy-locked'
@@ -904,7 +906,7 @@ export default function TokenSwapPage({
                       {inputBalanceLabel}
                     </span>{' '}
                     {inputBalanceLocked ? '' : inputToken.symbol}
-                    <button type="button" onClick={onMaxAmount} disabled={!walletAddress || inputBalanceLocked || loading}>
+                    <button type="button" onClick={onMaxAmount} disabled={!walletAddress || !onBridgeNetwork || inputBalanceLocked || loading}>
                       Max
                     </button>
                   </span>
@@ -1004,7 +1006,7 @@ export default function TokenSwapPage({
             </div>
 
             <div className="privacy-readiness" role="status" aria-live="polite">
-              <div className="privacy-readiness-bridge">
+              <div className={`privacy-readiness-bridge is-${bridgeState.tone}`}>
                 <span>
                   <i className={`privacy-status-dot is-${bridgeState.tone}`} aria-hidden="true" />
                   <strong>Official bridge · <em>{bridgeState.label}</em></strong>
@@ -1034,9 +1036,9 @@ export default function TokenSwapPage({
               className="connect-btn swap-action-btn"
               type="button"
               onClick={() => onConvert().catch(() => {})}
-              disabled={!canConvert}
+              disabled={!canConvert || !onBridgeNetwork}
             >
-              {buttonLabel}
+              {walletAddress && !onBridgeNetwork ? 'Unavailable on this network' : buttonLabel}
             </button>
 
             {actionStage ? (
@@ -1053,7 +1055,7 @@ export default function TokenSwapPage({
               </div>
             ) : null}
             {statusMessage ? <p className="swap-status-note">{statusMessage}</p> : null}
-            {walletAddress && error ? (
+            {walletAddress && onBridgeNetwork && error ? (
               <div className="swap-error-row">
                 <p className="error swap-error">{error}</p>
                 <button type="button" onClick={onRefresh} disabled={loading}>Retry</button>

@@ -8,6 +8,7 @@ import { CURRENT_SHARED_DEX_TOKENS as definitions, CURRENT_SHARED_TOKEN_DISTRIBU
 import { STAGED_PREPARED_DEX_CANDIDATE as prepared } from './currentDexPreparedCandidate';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './currentDexExitCandidate';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './selectedCurrentDexCandidate';
 
 const base = '../../../ChainWhisper Contracts V2/validation/candidates/';
 const json = (file: string) => JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8'));
@@ -17,9 +18,10 @@ const tokenAbi = new Interface(['function decimals() view returns(uint8)', 'func
   'function faucetAmount() view returns(uint256)', 'function faucetClaimed(address) view returns(bool)']);
 const coreAbi = new Interface(['function releaseId() view returns(bytes32)', 'function tokenAdmissionCommitment() view returns(bytes32)']);
 const runtimeFixture = json('../../reports/prepared-candidate-2026-10-07/funding-binding/runtime-fixture.json');
-const runtime = runtimeFixture.codes;
+const renewal = json('../../reports/refill-renewal-2026-11-06/app-binding/renewal-public-binding.json');
+const runtime = { ...runtimeFixture.codes, vault: { ...renewal.binding, code: renewal.vaultCode } };
 const owner = '0x1111111111111111111111111111111111111111';
-const head = { number: 9953486n, hash: `0x${'44'.repeat(32)}`, timestamp: 1791340000n };
+const head = { number: BigInt(renewal.head.number) + 1n, hash: `0x${'44'.repeat(32)}`, timestamp: BigInt(renewal.head.timestamp) + 1n };
 const hex = (x: bigint) => `0x${x.toString(16)}`;
 const lower = (x: string) => x.toLowerCase();
 function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
@@ -34,7 +36,7 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
   const vault: Record<string, unknown> = { CHAIN_ID: 7082400n, TOKEN_A: definitions[0].address, TOKEN_B: definitions[1].address,
     TOKEN_C: definitions[2].address, TOKEN_D: definitions[3].address, TOKEN_RUNTIME: policy.tokenRuntimeHash,
     CLAIM_AMOUNT: 1000_000000n, INITIAL_QUOTA: 1000000_000000n, COOLDOWN: 86400n,
-    expiresAt: 1793930246n, recovery: policy.vault.recovery };
+    expiresAt: policy.vault.expiresAt, recovery: policy.vault.recovery };
   const tokens = definitions.map(() => ({ decimals: 6n, publicAmountsEnabled: false, faucetAmount: 10000_000000n,
     faucetClaimed: true, remainingQuota: 999000_000000n, nextClaimAt: 0n }));
   const core: Record<string, unknown> = { releaseId: policy.releaseId, tokenAdmissionCommitment: policy.tokenAdmissionCommitment };
@@ -44,6 +46,18 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
     const capture = json('../../reports/exit-candidate-2026-10-07/public-capture-2.json');
     codes[lower(policy.core)] = capture.reads.find((r: { method: string; params: string[] }) =>
       r.method === 'eth_getCode' && lower(r.params[0]) === lower(policy.core)).result;
+  }
+  if (candidate === 'cheap-history') {
+    const source = [
+      { graph: '958eea2faf9aec536df3318d5b770acec1da36efa1665cfc11a0c788d97f8fdf', core: '0x74ace210762c91cea53e59edc232898f612f47a9', file: '../../reports/limit-directory-adoption-2026-11-04/public-binding/public-capture-1.json' },
+      { graph: '7c63020b4eead20603e63c580e3155af8974b4eb5cf0a2b2eb2ea8c796a10eb9', core: '0xa7a3d2564b4ae598bad316a5fddc8016ad889edf', file: '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json' }
+    ].find(row => row.graph === policy.graph && row.core === lower(policy.core));
+    if (!source) throw new Error('Current distribution fixture candidate changed.');
+    const capture = json(source.file);
+    expect(capture.graph).toBe(policy.graph); expect(capture.packageSha256).toBe(policy.packageSha256);
+    codes[lower(policy.core)] = capture.reads.find((row: { method: string; params: string[] }) =>
+      row.method === 'eth_getCode' && lower(row.params[0]) === lower(policy.core)).result;
+    expect(keccak256(codes[lower(policy.core)])).toBe(policy.coreRuntimeHash);
   }
   let chain = hex(policy.chainId), active = true, headReads = 0, suffix = '', reorg = false;
   let genesis: string = policy.genesisHash;
@@ -87,6 +101,19 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
 }
 
 describe('current shared DEX public token distribution', () => {
+  it('reads the renewed distributor with the selected current history Core', async () => {
+    const f = fixture('cheap-history'), selected = resolveCurrentSharedTokenDistribution('cheap-history');
+    const result = await readCurrentSharedDexTokenDistribution(f.args);
+    expect(result).toMatchObject({ core: selected.core, graph: history.graph, packageSha256: history.packageSha256,
+      vault: policy.vault, readyToSign: false });
+    expect(result.tokens).toHaveLength(4); expect(result.tokens.every(token => token.refillAvailability === 'ready')).toBe(true);
+  });
+  it('keeps the selected current history Core and uses the verified renewed distributor', () => {
+    const selected = resolveCurrentSharedTokenDistribution('cheap-history');
+    expect(selected.graph).toBe(history.graph); expect(selected.core.toLowerCase()).toBe(history.core);
+    expect(selected.packageSha256).toBe(history.packageSha256); expect(selected.vault).toBe(policy.vault);
+    expect(selected.vaultDeployment).toBe(policy.vaultDeployment);
+  });
   it('binds the exit Core while retaining the independently deployed distributor', async () => {
     const p = resolveCurrentSharedTokenDistribution('cheap-exit');
     expect(p.core.toLowerCase()).toBe(exit.core); expect(p.graph).toBe(exit.graph);
@@ -108,8 +135,16 @@ describe('current shared DEX public token distribution', () => {
     expect(rows.find(x => x.kind === 'verified' && x.index === 43)).toMatchObject({ runtimeHash: policy.coreRuntimeHash, packageSha256: policy.packageSha256 });
     expect(keccak256(runtime.core.code)).toBe(policy.coreRuntimeHash); expect(keccak256(runtime.vault.code)).toBe(policy.vault.runtimeHash);
     expect(keccak256(runtime.token.code)).toBe(policy.tokenRuntimeHash);
-    const native = json(`${base}shared-core-markets-2026-10-07/refill/NATIVE_READ_RESULT.json`);
-    expect(native.binding.address).toBe(policy.vault.address); expect(native.tokens).toEqual(definitions.map(t => t.address));
+    expect(renewal.status).toBe('FOUR_TOKEN_RENEWAL_PUBLIC_BINDING_VERIFIED');
+    expect(renewal.binding).toEqual({ ...policy.vault, expiresAt: String(policy.vault.expiresAt) });
+    expect(renewal.deployment).toEqual({ ...policy.vaultDeployment, blockNumber: String(policy.vaultDeployment.blockNumber),
+      transactionIndex: String(policy.vaultDeployment.transactionIndex), nonce: String(policy.vaultDeployment.nonce) });
+    expect(renewal.tokens.map((token: { address: string }) => token.address)).toEqual(definitions.map(t => t.address));
+    const native = json(`${base}shared-core-markets-2026-10-07/refill/native-manifest-2.result.json`);
+    expect(native.status).toBe('FOUR_TOKEN_RENEWAL_NATIVE_VERIFIED'); expect(native.verifiedActions).toBe(9); expect(native.noPending).toBe(true);
+    expect(native.vault).toBe(policy.vault.address); expect(native.vaultRuntimeHash).toBe(policy.vault.runtimeHash);
+    expect(createHash('sha256').update(readFileSync(new URL(`${base}shared-core-markets-2026-10-07/refill/native-manifest-2.result.json`, import.meta.url))).digest('hex')).toBe(renewal.evidence.nativeResult);
+    expect(createHash('sha256').update(readFileSync(new URL(`${base}shared-core-markets-2026-10-07/refill/native-manifest-2.public-binding.json`, import.meta.url))).digest('hex')).toBe(createHash('sha256').update(readFileSync(new URL('../../reports/refill-renewal-2026-11-06/app-binding/renewal-public-binding.json', import.meta.url))).digest('hex'));
   });
   it('derives the prepared policy and preserves the independent vault and four-token rules', () => {
     expect(policy.core.toLowerCase()).toBe(prepared.core);
@@ -120,7 +155,7 @@ describe('current shared DEX public token distribution', () => {
     expect(definitions.map(token => token.address.toLowerCase())).toEqual(prepared.tokens.map(([address]) => address));
     expect(prepared.tokens.every(([, hash]) => hash === policy.tokenRuntimeHash)).toBe(true);
     expect(policy).toMatchObject({ initialAmount: 10_000_000000n, refillAmount: 1_000_000000n, initialQuota: 1_000_000_000000n,
-      cooldown: 86_400n, vault: { address: '0xB509dCfaa8a0AB7b976B84f091875246e0FDD8Cf', expiresAt: 1793930246n } });
+      cooldown: 86_400n, vault: { address: '0x93569e6ae15d42F60A642B3F306e50c37Ca78FbF', expiresAt: 1796608723n } });
     const helper = createRequire(import.meta.url)('../../reports/prepared-candidate-2026-10-07/funding-binding/prepare-runtime-fixture.cjs');
     expect(helper.collect()).toEqual(runtimeFixture);
     expect(runtimeFixture.captureSha256).toBe(prepared.attestationSha256);

@@ -99,6 +99,9 @@ function WalletLifecycleHarness() {
       <output data-testid="wallet-address">{wallet.walletAddress}</output>
       <output data-testid="chain-id">{wallet.chainId ?? ''}</output>
       <output data-testid="status">{wallet.status}</output>
+      <output data-testid="connecting-method">{wallet.connectingMethod ?? ''}</output>
+      <output data-testid="connecting-label">{wallet.connectingWalletLabel}</output>
+      <output data-testid="session">{wallet.browserWalletSession ? 'connected' : ''}</output>
       <output data-testid="nickname">{nickname}</output>
       <output data-testid="owner-data-scope">{ownerDataScopeKey}</output>
       <output data-testid="owner-scoped-marker">{ownerScopedMarker}</output>

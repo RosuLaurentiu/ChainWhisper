@@ -28,7 +28,6 @@ type TradingProductSwitchProps = {
   priceDisplayInverted: boolean;
   onPriceDisplayInvertedChange: (inverted: boolean) => void;
   marketReference?: CurrentDexMarketReference;
-  referenceDisplayInverted?: boolean;
   dexCandidate?: CurrentCheapDexIdentity;
 } & ({ activeProduct: 'dex'; selectedPair: TradingPair; onSelectedPairChange: (pair: TradingPair) => void; p2pMarket?: never }
   | { activeProduct: 'p2p'; p2pMarket: P2PTradingHeaderContext; selectedPair?: never; onSelectedPairChange?: never });
@@ -41,7 +40,6 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
   priceDisplayInverted,
   onPriceDisplayInvertedChange,
   marketReference,
-  referenceDisplayInverted,
   dexCandidate
   } = props;
   const p2pMarket = props.activeProduct === 'p2p' ? props.p2pMarket : null;
@@ -56,14 +54,17 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
   const displayPair = activeProduct === 'dex' && !dexDisplay ? CURRENT_DEX_DISPLAY_PAIR : selectedPair;
   const baseSymbol = priceDisplayInverted ? displayPair[1] : displayPair[0];
   const quoteSymbol = priceDisplayInverted ? displayPair[0] : displayPair[1];
-  const rateInverted = activeProduct === 'dex' ? referenceDisplayInverted ?? priceDisplayInverted : priceDisplayInverted;
+  const rateInverted = priceDisplayInverted;
   const rateBaseSymbol = rateInverted ? displayPair[1] : displayPair[0];
   const rateQuoteSymbol = rateInverted ? displayPair[0] : displayPair[1];
-  const marketPrice = marketReference?.status === 'available' ? rateInverted ? 1/marketReference.price : marketReference.price : null;
-  const marketLabel = marketPrice !== null ? `${marketPrice.toLocaleString('en',{maximumSignificantDigits:6})} ${rateQuoteSymbol} per ${rateBaseSymbol}` :
+  const hasPrice = marketReference?.status === 'available' || marketReference?.status === 'last-known';
+  const marketPrice = hasPrice ? rateInverted ? 1/marketReference.price : marketReference.price : null;
+  const marketLabel = marketPrice !== null ? `${marketPrice.toLocaleString('en',{maximumSignificantDigits:6})} ${rateQuoteSymbol}/${rateBaseSymbol}` :
     marketReference?.status === 'loading' ? 'Checking price' : marketReference?.status === 'stale' ? 'Price stale' : 'Price unavailable';
-  const sampleAge = marketReference?.status === 'available'
-    ? Math.max(0, Math.floor(Date.now() / 1000) - Number(marketReference.sampledAt)) : null;
+  const lastKnown = marketReference?.status === 'last-known';
+  const sampleAge = hasPrice
+    ? Math.max(0, Math.floor(Date.now() / 1000) - Number(marketReference.status==='available'?marketReference.checkedAt??marketReference.sampledAt:marketReference.sampledAt)) : null;
+  const lastSampleTime = lastKnown ? new Date(Number(marketReference.sampledAt)*1000).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'}) : null;
   const p2pTokenSelect = (side: 'buy' | 'sell', label: string, selection: string, otherSelection: string) => p2pMarket ?
     <label className="trading-market-token-choice">{label}<select aria-label={label} value={selection} disabled={p2pMarket.disabled}
       onChange={event => {
@@ -123,16 +124,16 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
                 aria-live="polite"
                 aria-atomic="true"
               >
-                {rateQuoteSymbol} <small>per {rateBaseSymbol}</small>
+                {rateQuoteSymbol}/{rateBaseSymbol}
               </strong>
               <ArrowLeftRight size={15} strokeWidth={2.1} aria-hidden="true" />
             </button>
           </div>
         </div>
         <div className="trading-market-change" data-price-state={activeProduct === 'dex' ? marketReference?.status ?? 'unavailable' : p2pMarket?.reference ? 'available' : 'unavailable'}>
-          <span>{activeProduct === 'dex' ? 'COTI Testnet · Live Pool reference' : 'Market reference'}</span>
+          <span>{activeProduct === 'dex' ? lastKnown ? 'COTI Testnet · Last Pool price' : 'COTI Testnet · Live Pool reference' : 'Market reference'}</span>
           <strong title={activeProduct === 'dex' ? 'Rounded Pool reference · excludes Limits' : p2pMarket?.reference?.title}>{activeProduct === 'dex' ? marketLabel : p2pMarket?.reference?.label ?? 'Price unavailable'}</strong>
-          {activeProduct === 'dex' && sampleAge !== null ? <small aria-label="Market sample age" title="Expires after 120s">{sampleAge}s ago</small> : null}
+          {activeProduct === 'dex' && lastSampleTime ? <small title="Last recorded public Pool price. Current market price is not verified.">Recorded {lastSampleTime}</small> : activeProduct === 'dex' && sampleAge !== null ? <small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'} title={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}>{sampleAge}s ago</small> : null}
         </div>
         <div className="trading-product-switch">
           <button

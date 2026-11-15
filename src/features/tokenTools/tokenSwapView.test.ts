@@ -289,6 +289,17 @@ describe('TokenSwapPage', () => {
     expect(wispHtml).not.toContain('privacy-legacy-recovery');
     expect(wispHtml).toContain('Balance: 7 WISP');
     expect(wispHtml).not.toContain('Move between WISP and pWISP');
+    const unsupportedHtml = renderToStaticMarkup(createElement(TokenSwapPage, {
+      ...pageProps, walletAddress: '0x1111111111111111111111111111111111111111', onCotiNetwork: false, canConvert: true
+    }));
+    expect(unsupportedHtml).toContain('Bridge unavailable on this network');
+    expect(unsupportedHtml).toMatch(/disabled=""[^>]*>Unavailable on this network<\/button>/);
+    expect(unsupportedHtml).not.toContain('Switch to COTI Mainnet');
+    const failedHtml = renderToStaticMarkup(createElement(TokenSwapPage, {
+      ...pageProps, error: 'Bridge read unavailable.'
+    }));
+    expect(failedHtml).toContain('Bridge read unavailable.');
+    expect(failedHtml).toContain('>Retry</button>');
   });
 
   it('uses one connection-readiness state before rendering conversion controls', () => {

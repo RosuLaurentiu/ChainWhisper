@@ -2,7 +2,7 @@ import { describe,expect,it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { AbiCoder, Interface } from '@coti-io/coti-ethers';
-import { CURRENT_DEX_DAILY_PRICE_ARTIFACT } from './currentDexDailyPriceArtifact';
+import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT as CURRENT_DEX_DAILY_PRICE_ARTIFACT } from './packedInputDexDailyPriceArtifact';
 import { CURRENT_DEX_DAILY_PRICE_CONFIG,readCurrentDexDailyPrice,isVerifiedCurrentDexDailyPrice } from './currentDexDailyPrice';
 import { HISTORY_FIXTURE_DAY,makeHistoryFixture } from '../../tests/fixtures/history.fixture';
 
@@ -26,15 +26,15 @@ describe('Current DEX daily price source boundary',()=>{
   });
   it('issues an immutable current observation independently of the saved sample',async()=>{
     const f=makeHistoryFixture(),s=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
-    expect(s.currentObservation).toEqual({priceE18:'2000000000000000000',sampledAt:String(HISTORY_FIXTURE_DAY*86400n+90n),sampledBlock:'99',revision:'3'});
+    expect(s.currentObservation).toMatchObject({priceE18:'2000000000000000000',sampledAt:String(HISTORY_FIXTURE_DAY*86400n+90n),sampledBlock:'99',revision:'3'});
     expect(Object.isFrozen(s.currentObservation)).toBe(true);
     expect(s.slots.filter(v=>v.point).map(v=>v.point!.sourceRevision)).toEqual(['1','2']);
     f.setMode('stale');const stale=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
-    expect(stale.currentObservation).toBeUndefined();expect(stale.slots.filter(v=>v.point)).toHaveLength(2);
+    expect(stale.currentObservation).toMatchObject({priceE18:'2000000000000000000',checkedAt:String(HISTORY_FIXTURE_DAY*86400n+100n)});expect(stale.slots.filter(v=>v.point)).toHaveLength(2);
   });
   it('keeps production inactive and binds the exact accepted recorder artifact',()=>{
     expect(CURRENT_DEX_DAILY_PRICE_CONFIG.status).toBe('inactive');
-    const bytes=readFileSync('../ChainWhisper Contracts V2/validation/candidates/daily-price-history-2026-10-03/local-build-1/ChainWhisperDailyPoolPrice.json');
+    const bytes=readFileSync('../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/recorder-build/build-packed-inputs-1/ChainWhisperDailyPoolPrice.json');
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(CURRENT_DEX_DAILY_PRICE_ARTIFACT.artifactSha256);
     const a=JSON.parse(bytes.toString());expect(CURRENT_DEX_DAILY_PRICE_ARTIFACT.abi).toEqual(a.abi);expect(CURRENT_DEX_DAILY_PRICE_ARTIFACT.deployedBytecode).toBe(a.deployedBytecode);
   });
@@ -46,7 +46,7 @@ describe('Current DEX daily price source boundary',()=>{
     const point=s.slots[30].point!;expect(point.priceE18).toBe('2000000000000000000');expect(point.sampledAt).toBe(String((HISTORY_FIXTURE_DAY-1n)*86400n+7200n));expect(point.recordedAt).toBe(String(BigInt(point.sampledAt)+5n));expect(point.sampledBlock).toBe('90');expect(point.sourceBlockHash).toBe(f.header(90n).hash);
   });
   it.each(['empty','stale','suppressed','unobserved'] as const)('keeps %s current source separate from saved history',async mode=>{
-    const f=makeHistoryFixture(mode),s=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});expect(s.currentReference).toBe(mode==='suppressed'?'suppressed-or-changed':mode==='empty'?'available':mode);expect(s.slots.filter(v=>v.point)).toHaveLength(mode==='empty'?0:2);
+    const f=makeHistoryFixture(mode),s=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});expect(s.currentReference).toBe(mode==='suppressed'?'suppressed-or-changed':mode==='empty'||mode==='stale'?'available':mode);expect(s.slots.filter(v=>v.point)).toHaveLength(mode==='empty'?0:2);
   });
   it.each(['rpc','reorg','mismatch'] as const)('rejects %s without an accepted partial page',async mode=>{
     const f=makeHistoryFixture(mode);await expect(readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0})).rejects.toMatchObject({kind:mode});

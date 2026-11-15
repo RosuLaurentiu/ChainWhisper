@@ -1,18 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { AbiCoder,keccak256 } from '@coti-io/coti-ethers';
-import { describe,expect,it } from 'vitest';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate,STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './dexV2Deployment';
-import { CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT } from './currentDexHistoryDailyPriceArtifact';
+import { describe,expect,it, vi } from 'vitest';
+import { STAGED_GAP_DEX_CANDIDATE as candidate } from './currentDexGapCandidate';
+import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './dexV2Deployment';
+import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT } from './packedInputDexDailyPriceArtifact';
 import { readCurrentDexDisplay } from './currentDexDisplay';
-import { CURRENT_HISTORY_DEX_DAILY_PRICE_SOURCE,type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
+import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE,type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
 import { currentHistoryDexDailyPriceManifestMatches,currentHistoryDexDailyPriceConfig,HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS } from './currentDexHistoryDailyPriceTestnet';
 import { currentNativeDexDailyPriceConfig } from './currentDexNativeDailyPriceTestnet';
 
 // Synthetic deployment fields exercise scope matching only; this is not a live manifest.
 const fixture=(index:number):CurrentDexDailyPriceManifest=>{
   const display=readCurrentDexDisplay(candidate).pairs[index],[token0,token1]=display.tokens;
-  return {sourceGraph:candidate.graph,recorderArtifact:CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,chainId:candidate.chainId,genesisHash:candidate.genesisHash,
+  return {sourceGraph:candidate.graph,recorderArtifact:PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,chainId:candidate.chainId,genesisHash:candidate.genesisHash,
     address:'0x0000000000000000000000000000000000001234',runtimeHash:`0x${'11'.repeat(32)}`,deployer:'0x0000000000000000000000000000000000005678',deploymentBlock:'1',deploymentBlockHash:`0x${'22'.repeat(32)}`,deploymentTransactionHash:`0x${'33'.repeat(32)}`,
     source:candidate.core,sourceRuntimeHash:candidate.runtimes.find(([role])=>role==='ChainWhisperDexCore')![2],releaseId:candidate.releaseId,market:display.marketId,canonicalId:candidate.pairs[index].canonicalId,
     pair:keccak256(AbiCoder.defaultAbiCoder().encode(['uint256','address','address'],[candidate.chainId,token0.address,token1.address])),token0:token0.address,token1:token1.address,decimals0:6,decimals1:6,
@@ -25,11 +26,11 @@ describe('current history recorder admission boundary',()=>{
   it('admits the six canonical recorder exports through the existing dispatcher',()=>{
     expect(HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS).toHaveLength(6);
     expect(Object.isFrozen(HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS)).toBe(true);
-    const root='reports/packed-rate-adoption-2026-11-03/recorder-exports/';
+    const root='reports/c1-gap-adoption-2026-11-15/';
     for(let i=0;i<6;i++){
-      const exported=JSON.parse(readFileSync(root+(i+1)+'.json','utf8'));
+      const exported=JSON.parse(readFileSync(root+'recorder-deploy-'+(i+1)+'-1-export.json','utf8'));
       const m=HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS[i];
-      expect(m).toEqual(exported.manifest);expect(exported.status).toBe(i===3?'CURRENT_RECORDER_RECOVERED':'CURRENT_RECORDER_CANONICAL_EXPORT');
+      expect(m).toEqual(exported.manifest);expect(exported.status).toBe('CURRENT_RECORDER_CANONICAL_EXPORT');
       expect(currentHistoryDexDailyPriceConfig(candidate,m.symbols)).toMatchObject({status:'active',manifest:m});
       expect(currentNativeDexDailyPriceConfig(candidate,[m.symbols[1],m.symbols[0]])).toMatchObject({status:'active',manifest:m});
     }
@@ -43,9 +44,11 @@ describe('current history recorder admission boundary',()=>{
     for(const patch of [{source:exit.core},{sourceRuntimeHash:`0x${'44'.repeat(32)}`},{sourceGraph:exit.graph},{recorderArtifact:'00'.repeat(32)},{decimals0:18},{pair:`0x${'44'.repeat(32)}`},{symbols:['BCN','HBR'] as const}])expect(currentHistoryDexDailyPriceManifestMatches(candidate,m.symbols,{...m,...patch})).toBe(false);
   });
   it('binds the exact graph-only compiled recorder artifact',()=>{
-    const dir='../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/recorder-build/build-packed-1/';
+    const dir='../ChainWhisper Contracts V2/validation/candidates/c1-gap-aware-sizing-2026-11-15/adoption/recorder-build-1/';
     const raw=readFileSync(dir+'ChainWhisperDailyPoolPrice.json'),artifact=JSON.parse(raw.toString()),identity=JSON.parse(readFileSync(dir+'identity.json','utf8'));
-    expect(createHash('sha256').update(raw).digest('hex')).toBe(CURRENT_HISTORY_DEX_DAILY_PRICE_SOURCE.recorderArtifact);expect(identity.sourceGraphOnlyChange).toBe(true);
-    expect(CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT.abi).toEqual(artifact.abi);expect(CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT.deployedBytecode).toBe(artifact.deployedBytecode);
+    expect(createHash('sha256').update(raw).digest('hex')).toBe(PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.recorderArtifact);expect(identity.sourceGraphOnlyChange).toBe(true);
+    expect(PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT.abi).toEqual(artifact.abi);expect(PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT.deployedBytecode).toBe(artifact.deployedBytecode);
   });
 });
+
+vi.mock('./selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('./selectedCurrentDexCandidate')>();const current=await import('./currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});

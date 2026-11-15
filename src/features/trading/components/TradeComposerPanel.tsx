@@ -677,10 +677,8 @@ export default function TradeComposerPanel({
   const showRequestAmountError = shouldShowError('requestAmount', requestAmountError);
   const showExpiryError = shouldShowError('expiry', expiryError);
   const hardReadinessBlocked = privateBudgetChoiceRequired || !canSend && isHardSendReadinessBlock(validationMessage);
-  const sendButtonDisabled = submissionBlocked || hardReadinessBlocked || (validationAfterInteraction ? sending : !canSend);
-  const showSendDisabledStyle = validationAfterInteraction
-    ? submissionBlocked || hardReadinessBlocked || (submitAttempted && !canSend && !sending)
-    : hardReadinessBlocked || !canSend && !sending;
+  const sendButtonDisabled = submissionBlocked || hardReadinessBlocked || sending || !canSend;
+  const showSendDisabledStyle = sendButtonDisabled && !sending;
   const sendButtonClassName = [
     showSendDisabledStyle ? 'trade-compose-send trade-compose-send-disabled' : 'trade-compose-send',
     sending ? 'p2p-action-pending' : ''
@@ -1152,7 +1150,7 @@ export default function TradeComposerPanel({
           <div className="trade-compose-advanced-settings">
             <div className="trade-compose-fee-row trade-compose-fee-row-inline">
               <div className="trade-compose-fee-copy">
-                <span className="trade-compose-field-label">Fee</span>
+                <span className="trade-compose-field-label">Offer fee</span>
                 <strong className="trade-compose-fee-value">{compactFeeSummaryLabel || feeSummaryLabel}</strong>
                 <span className="trade-compose-fee-note">{FEE_VARIANCE_NOTE}</span>
               </div>
@@ -1238,7 +1236,7 @@ export default function TradeComposerPanel({
 
           <div className="trade-compose-footer">
             <div className="trade-compose-submit-context" aria-label="Offer summary">
-              <span>Fee <strong>{compactFeeSummaryLabel || feeSummaryLabel}</strong></span>
+              <span>Offer fee <strong>{compactFeeSummaryLabel || feeSummaryLabel}</strong> · Network gas is separate</span>
               <span>Duration <strong>{expiresNever ? 'Permanent' : `${expiresHoursInput || '—'}h`}</strong></span>
             </div>
             <div className="trade-compose-action-stack">

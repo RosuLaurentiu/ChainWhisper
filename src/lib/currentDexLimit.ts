@@ -11,6 +11,13 @@ export const isKnownCurrentLimitProofMismatch=(error:unknown)=>error instanceof 
 ].includes(error.message);
 
 const small='(uint256 ciphertext,bytes signature)',wide='((uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
+/** Plaintext codec only; signing and exact candidate admission remain in the owner capability. */
+export const packCurrentLimitTerms=(terms:readonly bigint[],sellToken0?:boolean)=>{
+  if(terms.length!==5||terms.some(v=>typeof v!=='bigint'||v<0n||v>=1n<<128n)||sellToken0!==undefined&&typeof sellToken0!=='boolean')throw new Error('Invalid packed Limit terms.');
+  const [n,d,minimum,u,v]=terms;
+  if(n===0n||d===0n||n*u-d*v!==1n)throw new Error('Invalid exact Limit price witness.');
+  return Object.freeze([(n<<128n)|d,(minimum<<128n)|u,(v<<128n)|(sellToken0?1n:0n)]);
+};
 export const currentLimitAbi=new Interface([
   `function createPrivateOrder(${wide} encryptedFunding,${small} encryptedSellToken0,${small} encryptedRangeKind,${small}[5] encryptedFixedTerms,${wide}[3] encryptedRangeTerms) returns(uint256 positionId)`,
   'function privateOrderSnapshot(uint256 id) returns(bytes32,(uint256 ciphertextHigh,uint256 ciphertextLow)[8])',
@@ -32,7 +39,15 @@ export const exitLimitAbi=new Interface([
   'event FixedPositionToppedUp(uint256 indexed positionId)',
   'event FixedPositionRepriced(uint256 indexed positionId,uint256 termsRevisionAfter)'
 ]);
-export const currentLimitAbiForCandidate=(key:CurrentCheapDexCandidateKey='cheap-current')=>key==='cheap-exit'||key==='cheap-history'?exitLimitAbi:key==='cheap-prepared'?preparedLimitAbi:currentLimitAbi;
+export const packedLimitAbi=new Interface([
+  ...exitLimitAbi.fragments.filter(f=>f.type!=='function'||!['createPrivateOrder','repricePrivateOrder'].includes(f.format('sighash').split('(')[0])).map(f=>f.format('full')),
+  `function createPrivateOrder(bytes32 selectedMarket,${wide} encryptedFunding,${wide}[3] encryptedTerms) returns(uint256 positionId)`,
+  `function repricePrivateOrder(uint256 id,uint256 expectedTermsRevision,${wide}[3] encryptedTerms)`
+]);
+export const PACKED_LIMIT_INPUT_GRAPH='9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e';
+// Encoding profile only; exact deployment and native signing admission are separate.
+export const usesPackedLimitInputs=(candidate:Readonly<{graph:string}>)=>candidate.graph===PACKED_LIMIT_INPUT_GRAPH;
+export const currentLimitAbiForCandidate=(key:CurrentCheapDexCandidateKey='cheap-current')=>key==='cheap-history'&&usesPackedLimitInputs(resolveCurrentCheapDexCandidate(key))?packedLimitAbi:key==='cheap-exit'||key==='cheap-history'?exitLimitAbi:key==='cheap-prepared'?preparedLimitAbi:currentLimitAbi;
 /** Public pair scope only. This does not grant signing or amount authority. */
 export const resolveCurrentLimitScope=(key:CurrentCheapDexCandidateKey='cheap-current',selectedPair?:readonly[string,string])=>{
   const c=resolveCurrentCheapDexCandidate(key);
@@ -60,7 +75,8 @@ const heldOwnerAdmission=Object.freeze({refresh:false,claim:false,pause:false,re
 // Evidence: reports/owned-limit-2026-10-13/{POSITIVE_REFUND_RESULT,EDIT_NATIVE_RESULT}.json.
 // Technical phase proof does not lift connected-wallet authority holds.
 const exitOwnerAdmission=Object.freeze({refresh:true,claim:true,pause:true,resume:true,close:true,topup:true,reprice:true});
-// 7b67: all 15 native controls and exact refund, reports/shared-history-controls-2026-10-13/RESULT.json.
+// 7b67 controls plus exact 7bed source reuse and native create/reprice/Close:
+// reports/limit-input-signatures-2026-11-12/app-admission/RESULT.md. Wallet holds are separate.
 export const currentLimitOwnerNativeAdmission=(key:CurrentCheapDexCandidateKey='cheap-current')=>key==='cheap-exit'||key==='cheap-history'?exitOwnerAdmission:key==='cheap-prepared'?heldOwnerAdmission:CURRENT_LIMIT_OWNER_NATIVE_ADMISSION;
 /** Technical phase proof only; the shared send boundary retains wallet holds. */
 export const assertCurrentLimitNativeAdmission=(key:CurrentCheapDexCandidateKey,phase:'limit-create'|'limit-snapshot'|'limit-owner',action?:CurrentLimitOwnerAction)=>{

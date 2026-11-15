@@ -1,5 +1,5 @@
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './currentDexHistoryCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 import type { CurrentCheapDexIdentity } from './dexV2Deployment';
 
 // Technical bounds for the accepted b2aa test-token cases. These bounds grant

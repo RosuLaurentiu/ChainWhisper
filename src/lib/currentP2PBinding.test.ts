@@ -26,6 +26,71 @@ const baselineBinding = { ...CURRENT_P2P_BINDING, repairQualification: undefined
   })) as typeof CURRENT_P2P_BINDING.deployments };
 const activeBinding = CURRENT_P2P_BINDING;
 
+const packedBinding = () => {
+  const prior = CURRENT_P2P_BINDING, old = prior.repairQualification!;
+  const deployments = Object.fromEntries(CURRENT_P2P_PROTOCOLS.map((protocol, index) => [protocol,
+    { ...prior.deployments[protocol], contractAddress: protocol === 'direct-v2' ? prior.deployments[protocol].contractAddress : `0x${String(90 + index).repeat(20)}` }
+  ])) as typeof prior.deployments;
+  const proofSha256 = 'aa'.repeat(32), candidateSha256 = 'bb'.repeat(32);
+  const changedActionProofs = ([['link-v2', '0x00e2493e'], ['link-v2', '0x97758e97'], ['counter-v2', '0x90928e68'],
+    ['counter-v2', '0xe774546f'], ['counter-v2', '0x8dfc858d']] as const).map(([protocol, selector]) =>
+    ({ ...deployments[protocol], selector, candidateSha256, proofSha256: 'cc'.repeat(32) }));
+  return { ...prior, deployments, repairQualification: { ...old, status: 'packed-input-actions-qualified' as const,
+    candidateSha256, proofSha256, previousSelectedBindingSha256: 'dd'.repeat(32), previousQualificationSha256: old.proofSha256,
+    deploymentProofSha256: prior.sourceRecordSha256, compatibilityProofSha256: 'ee'.repeat(32),
+    targets: Object.values(deployments), changedActionProofs,
+    reusedEvidence: [
+      { scope: 'book-budget' as const, protocol: 'private-v2' as const, producerAddress: prior.bookBudgetProof!.book,
+        producerRuntimeHash: prior.bookBudgetProof!.bookRuntimeHash, proofSha256: prior.bookBudgetProof!.proofSha256 },
+      ...prior.tradeBalanceProofs.filter(proof => proof.protocol !== 'direct-v2').map(proof => ({ scope: 'trade-balance' as const,
+        protocol: proof.protocol, producerAddress: proof.contractAddress, producerRuntimeHash: proof.runtimeBytecodeHash, proofSha256: proof.proofSha256 }))
+    ] }, retainedFinancialGraphs: prior.retainedFinancialGraphs.map(graph => ({ ...graph, proofSha256 })) };
+};
+
+describe('packed input qualification scope', () => {
+  it('requires all five current-target selectors, including child, without rewriting old native producer rows', () => {
+    const selected = packedBinding();
+    expect(isCurrentP2PFinancialScopeQualified(selected)).toBe(true);
+    expect(isCurrentP2PPrivateCounterAdmitted(selected)).toBe(true);
+    expect(isCurrentP2PPublicBookLinkAdmitted(selected)).toBe(true);
+    expect(selected.privateCounterProofs).toBe(CURRENT_P2P_BINDING.privateCounterProofs);
+    expect(selected.publicBookLinkProofs).toBe(CURRENT_P2P_BINDING.publicBookLinkProofs);
+    const q = selected.repairQualification, proofs = q.changedActionProofs;
+    for (const patch of [
+      { changedActionProofs: proofs.filter(proof => proof.selector !== '0xe774546f') },
+      { changedActionProofs: [...proofs.slice(1), proofs[1]] },
+      { changedActionProofs: proofs.map((proof, index) => index ? proof : { ...proof, candidateSha256: 'ff'.repeat(32) }) },
+      { changedActionProofs: proofs.map((proof, index) => index ? proof : { ...proof, contractAddress: CURRENT_P2P_BINDING.deployments['link-v2'].contractAddress }) },
+      { changedActionProofs: proofs.map((proof, index) => index ? proof : { ...proof, runtimeBytecodeHash: `0x${'ff'.repeat(32)}` }) },
+      { changedActionProofs: proofs.map((proof, index) => index ? proof : { ...proof, proofSha256: '' }) },
+      { deploymentProofSha256: 'ff'.repeat(32) }, { previousQualificationSha256: '' }, { compatibilityProofSha256: '' }
+    ]) expect(isCurrentP2PFinancialScopeQualified({ ...selected, repairQualification: { ...q, ...patch } })).toBe(false);
+  });
+
+  it('keeps reused budget and disclosure producers separate from the new targets', () => {
+    const selected = packedBinding(), q = selected.repairQualification;
+    expect(resolveCurrentP2PBookBudgetAdmission(selected)).toMatchObject({ mode: 'active', qualification: 'qualified-reuse',
+      contractAddress: selected.deployments['private-v2'].contractAddress, producer: { contractAddress: CURRENT_P2P_BINDING.bookBudgetProof!.book } });
+    for (const protocol of ['private-v2', 'link-v2', 'counter-v2'] as const) {
+      const producer = CURRENT_P2P_BINDING.tradeBalanceProofs.find(proof => proof.protocol === protocol)!;
+      expect(resolveCurrentP2PTradeBalanceAdmission(protocol, selected)).toMatchObject({ mode: 'active', qualification: 'qualified-reuse',
+        contractAddress: selected.deployments[protocol].contractAddress, producer: { contractAddress: producer.contractAddress, proofSha256: producer.proofSha256 } });
+    }
+    expect(resolveCurrentP2PTradeBalanceAdmission('direct-v2', selected)).toMatchObject({ mode: 'active', qualification: 'native-trade-balance-verified' });
+    for (const reusedEvidence of [[], [...q.reusedEvidence, ...q.reusedEvidence], q.reusedEvidence.map(proof => ({ ...proof, proofSha256: 'ff'.repeat(32) })),
+      q.reusedEvidence.map(proof => ({ ...proof, producerAddress: `0x${'ff'.repeat(20)}` }))]) {
+      const invalid = { ...selected, repairQualification: { ...q, reusedEvidence } };
+      expect(resolveCurrentP2PBookBudgetAdmission(invalid).mode).toBe('held');
+      expect(resolveCurrentP2PTradeBalanceAdmission('link-v2', invalid).mode).toBe('held');
+    }
+    const deployments = { ...selected.deployments, 'private-v2': { ...selected.deployments['private-v2'], runtimeBytecodeHash: `0x${'ff'.repeat(32)}` } };
+    const changedBook = { ...selected, deployments, repairQualification: { ...q, targets: Object.values(deployments) } };
+    expect(isCurrentP2PFinancialScopeQualified(changedBook)).toBe(true);
+    expect(resolveCurrentP2PBookBudgetAdmission(changedBook).mode).toBe('held');
+    expect(resolveCurrentP2PTradeBalanceAdmission('private-v2', changedBook).mode).toBe('held');
+  });
+});
+
 describe('registered P2P token metadata', () => {
   it('projects the exact six native-registered identities and holds incomplete or invalid metadata', () => {
     expect(CURRENT_P2P_BINDING.registeredTokens.map(token => token.symbol)).toEqual(['cwPTA', 'cwPTB', 'BCN', 'HBR', 'EMBR', 'ORBT']);
@@ -44,7 +109,7 @@ describe('registered P2P token metadata', () => {
 describe('contextual trade balance admission', () => {
   it('keeps the adopted repair scope and native/shared evidence labels distinct from old financial producers', () => {
     expect(isCurrentP2PFinancialScopeQualified()).toBe(true);
-    expect(CURRENT_P2P_BINDING.financialQualification).toBe('unchanged-core-reuse');
+    expect(CURRENT_P2P_BINDING.financialQualification).toBe('changed-inputs-and-reused-behavior');
     expect(CURRENT_P2P_BINDING.status).toBe('book-admitted');
     // Public projections retain producer identity; full native evidence stays in its producer workspace.
     expect(createHash('sha256').update(readFileSync(new URL('../../tests/fixtures/p2p-previousBinding.json', import.meta.url))).digest('hex'))
@@ -52,10 +117,47 @@ describe('contextual trade balance admission', () => {
     expect(CURRENT_P2P_BINDING.repairQualification?.previousBindingSha256).toBe(fixtureProvenance['p2p-previousBinding.json'].sourceSha256);
     expect(binding.privateCounterProofs).toEqual(previousBinding.privateCounterProofs);
     expect(binding.publicBookLinkProofs).toEqual(previousBinding.publicBookLinkProofs);
-    for (const protocol of ['private-v2', 'direct-v2'] as const)
-      expect(resolveCurrentP2PTradeBalanceAdmission(protocol)).toMatchObject({ mode: 'active', qualification: 'native-trade-balance-verified' });
-    for (const protocol of ['link-v2', 'counter-v2'] as const)
-      expect(resolveCurrentP2PTradeBalanceAdmission(protocol)).toMatchObject({ mode: 'active', qualification: 'shared-native-variant-qualified' });
+    expect(resolveCurrentP2PTradeBalanceAdmission('direct-v2')).toMatchObject({ mode: 'active', qualification: 'native-trade-balance-verified' });
+    for (const protocol of ['private-v2', 'link-v2', 'counter-v2'] as const) {
+      const producer = binding.tradeBalanceProofs.find(proof => proof.protocol === protocol)!;
+      expect(resolveCurrentP2PTradeBalanceAdmission(protocol)).toMatchObject({ mode: 'active', qualification: 'qualified-reuse',
+        producer: { contractAddress: producer.contractAddress, runtimeBytecodeHash: producer.runtimeBytecodeHash, proofSha256: producer.proofSha256 } });
+    }
+  });
+  it('binds the adopted packed graph to complete native producers and preserves original financial/disclosure records', () => {
+    const readProof = (ref: { path: string; sha256: string }) => {
+      const bytes = readFileSync(new URL('../../../' + ref.path, import.meta.url));
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(ref.sha256);
+      return JSON.parse(bytes.toString('utf8'));
+    };
+    const q = binding.repairQualification;
+    const qualification = readProof({ path: 'APP/reports/p2p-input-signatures-2026-11-12/QUALIFICATION.json', sha256: q.proofSha256 });
+    expect(qualification.status).toBe(q.status);
+    expect(qualification.targets).toEqual(q.targets);
+    expect(qualification.changedActionProofs).toEqual(q.changedActionProofs);
+    expect(qualification.reusedEvidence).toEqual(q.reusedEvidence);
+    readProof(qualification.candidate); readProof(qualification.sourceCompatibility); readProof(qualification.previousFinancialQualification);
+    const previous = readProof(qualification.previousSelectedBinding), native = readProof(qualification.deployment);
+    expect(q.previousSelectedBindingSha256).toBe(qualification.previousSelectedBinding.sha256);
+    expect(q.previousQualificationSha256).toBe(previous.repairQualification.proofSha256);
+    expect(q.compatibilityProofSha256).toBe(qualification.sourceCompatibility.sha256);
+    expect(q.deploymentProofSha256).toBe(binding.sourceRecordSha256);
+    expect(native.signingStarts).toBe(29);
+    expect(native.status).toBe('VERIFIED_DEPLOYED_CONFIGURED_NOT_APP_ADMITTED');
+    for (const component of native.components) expect(binding.components.find(item => item.contract === component.name)).toMatchObject({
+      address: component.address.toLowerCase(), runtimeBytecodeHash: component.runtimeHash,
+      deploymentBlock: String(component.blockNumber), deploymentBlockHash: component.blockHash });
+    for (const key of ['privateCounterProofs', 'publicBookLinkProofs', 'bookBudgetProof', 'tradeBalanceProofs', 'retainedBooks', 'retainedLinks', 'registeredTokens'] as const)
+      expect(binding[key]).toEqual(previous[key]);
+    expect(binding.components.find(item => item.protocol === 'direct-v2')).toEqual(previous.components.find((item: { protocol?: string }) => item.protocol === 'direct-v2'));
+    const producers = new Map(qualification.nativeProofs.map((ref: { path: string; sha256: string }) => [ref.sha256, readProof(ref)]));
+    for (const action of q.changedActionProofs) {
+      const proof = producers.get(action.proofSha256) as { candidateSha256: string; authorityClosed: boolean;
+        observed: { noPending: boolean }; measurements: { selector: string; privateInputPreparation: { count: number } }[] };
+      expect(proof.candidateSha256).toBe(q.candidateSha256);
+      expect(proof.authorityClosed && proof.observed.noPending).toBe(true);
+      expect(proof.measurements.find(item => item.selector === action.selector)?.privateInputPreparation.count).toBe(action.protocol === 'link-v2' ? 3 : 1);
+    }
   });
   it.each([['link-v2', 'stored-ct', 'private-v2'], ['counter-v2', 'caller-gt', 'direct-v2']] as const)('preserves shared native qualification for %s without claiming target execution', (protocol, nativeVariant, producerProtocol) => {
     const proof = { ...CURRENT_P2P_BINDING.deployments[protocol], protocol, genesisHash: CURRENT_P2P_BINDING.genesisHash,

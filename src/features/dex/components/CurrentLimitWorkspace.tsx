@@ -1,9 +1,10 @@
-import { useRef,useState } from 'react';
+import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
+import { useRef,useState, type ReactNode } from 'react';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import type { CurrentLimitCreationResult,CurrentLimitOwnerResult,issueCurrentDexLimitCapability } from '../../wallet/currentDexLimitCapability';
-import { currentLimitOwnerNativeAdmission,assertCurrentLimitNativeAdmission,type CurrentLimitOwnerAction } from '../../../lib/currentDexLimit';
+import { currentLimitOwnerNativeAdmission,assertCurrentLimitNativeAdmission,usesPackedLimitInputs,type CurrentLimitOwnerAction } from '../../../lib/currentDexLimit';
 import { assertCurrentAppLimitAuthority } from '../../../lib/currentDexC1SwapPolicy';
 import { parseCurrentTrialAtoms,parseCurrentTrialPriceLimit,currentPoolFractionWitness } from './CurrentPoolWorkspace';
 import { CURRENT_DEX_POOL_LABELS, formatCurrentDexTokenAmount, parseCurrentDexTokenAmount, hasCurrentDexPendingAction,
@@ -14,13 +15,15 @@ import TradeActionConfirmModal from '../../trading/components/TradeActionConfirm
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
 import './CurrentPoolPositionsWorkspace.css';
 import CurrentOwnedLimits from './CurrentOwnedLimits';
+import CurrentLimitFills from './CurrentLimitFills';
 import { currentDexPendingStorage,readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
+import { getProviderErrorMessage,isProviderActionRejected } from '../../../lib/appShared/core';
 export const currentLimitIntent=(sellToken0:boolean,amount:string,price:string,minimum:string)=>{
   const p=parseCurrentTrialPriceLimit(price),w=currentPoolFractionWitness(p.numerator,p.denominator),m=parseCurrentTrialAtoms(minimum);
   if(m>=1n<<128n)throw new Error('Maker minimum must fit uint128.');
   return{sellToken0,amount:parseCurrentTrialAtoms(amount,true),terms:[w[0],w[1],m,w[2],w[3]]as const};
 };
-export default function CurrentLimitWorkspace({sharedWalletSession,view='create',visible=true,priceDisplayInverted=false,candidateKey='cheap-current',selectedPair}:{sharedWalletSession?:SharedWalletSession;view?:'create'|'manage';visible?:boolean;priceDisplayInverted?:boolean;candidateKey?:CurrentCheapDexCandidateKey;selectedPair?:readonly[string,string]}){
+export default function CurrentLimitWorkspace({sharedWalletSession,view='create',visible=true,priceDisplayInverted=false,candidateKey='cheap-current',selectedPair,managementNavigation}:{sharedWalletSession?:SharedWalletSession;view?:'create'|'manage';visible?:boolean;priceDisplayInverted?:boolean;candidateKey?:CurrentCheapDexCandidateKey;selectedPair?:readonly[string,string];managementNavigation?:ReactNode}){
   const preparedScope=candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidateKey):null;
   const ownedDiscovery=candidateKey==='cheap-exit'||candidateKey==='cheap-history';
   const c=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),preparedCandidate=preparedScope!==null;
@@ -35,7 +38,8 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   const parse=(value:string,index:0|1,positive=false)=>pair?parseDexCandidateTokenAmount(c,pair.tokens[index].address,value,tokenLabels[index],positive):parseCurrentDexTokenAmount(value,tokenLabels[index],positive);
   const ownerAdmission=currentLimitOwnerNativeAdmission(candidateKey);
   const [sellToken0,setDirection]=useState(true),[amount,setAmount]=useState(''),[price,setPrice]=useState(''),[minimum,setMinimum]=useState('0');
-  const [busy,setBusy]=useState(false),[blocked,setBlocked]=useState(false),[message,setMessage]=useState<{text:string;scope:object}|null>(null),[hash,setHash]=useState('');
+  const [approvalMode, setApprovalMode, getApprovalMode] = useTokenApprovalMode(`${sharedWalletSession?.walletAddress}:${c.graph}:${pair?.tokens.map(token=>token.address).join(':')}:${sellToken0}`);
+  const [busy,setBusy]=useState(false),[blocked,setBlocked]=useState(false),[message,setMessage]=useState<{text:string;scope:object;view?:'create'}|null>(null),[hash,setHash]=useState('');
   const [creation,setCreation]=useState<{value:CurrentLimitCreationResult;scope:object}|null>(null),[verified,setVerified]=useState<{id:bigint;scope:object}|null>(null);
   const [ownerId,setOwnerId]=useState(''),[ownerResult,setOwnerResult]=useState<{value:CurrentLimitOwnerResult;capability:Awaited<ReturnType<typeof issueCurrentDexLimitCapability>>;scope:object}|null>(null);
   const [pending,setPending]=useState<{recover:()=>Promise<unknown>;phase:string;scope:object;ownerCapability?:Awaited<ReturnType<typeof issueCurrentDexLimitCapability>>}|null>(null);
@@ -45,6 +49,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   const [topUpRecovery,setTopUpRecovery]=useState<{positionId:bigint;transactionHash:string;scope:object}|null>(null),[recoveryAmount,setRecoveryAmount]=useState('');
   const ownedMarket=ownerPair&&preparedScope?.candidate.pairs.find(market=>market.tokens.every(address=>ownerPair.includes(address)));
   const managementPair=ownedMarket?currentDexDisplayPair(c,ownedMarket.tokens[0],ownedMarket.tokens[1]):pair;
+  const fillDisplayPair=pair&&pair.marketId===managementPair?.marketId?pair:managementPair;
   const ownerTokens=managementPair?managementPair.tokens.map(token=>token.label):tokenLabels;
   const formatOwner=(value:bigint,index:0|1=0)=>managementPair?formatDexCandidateTokenAmount(c,managementPair.tokens[index].address,value):format(value,index);
   const parseOwner=(value:string,index:0|1,positive=false)=>managementPair?parseDexCandidateTokenAmount(c,managementPair.tokens[index].address,value,ownerTokens[index],positive):parse(value,index,positive);
@@ -69,18 +74,21 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   const displayedBase=tokenLabels[baseIndex];
   const displayedQuote=tokenLabels[baseIndex===0?1:0];
   const assertScope=(captured:object)=>{if(captured!==scope.current)throw new Error('Limit terms or owner session changed. Review again.');};
-  const notice=(text:string)=>setMessage({text,scope:scope.current});
-  const fail=(error:unknown,captured:object)=>notice(captured!==scope.current
+  const notice=(text:string,view?:'create')=>setMessage({text,scope:scope.current,view});
+  const fail=(error:unknown,captured:object,view?:'create')=>notice(captured!==scope.current
     ?'Limit terms or owner session changed. Review again.'
-    :error instanceof Error?error.message:'Limit action failed. Reconcile before retrying.');
+    :isProviderActionRejected(error)?'The wallet request was rejected.':
+      getProviderErrorMessage(error,'Limit action failed. Check its status before another request.'),view);
   const sold=tokenLabels[sellToken0?0:1],received=tokenLabels[sellToken0?1:0];
   const confirm=(title:string,rows:{label:string;value:string}[])=>requestConfirmation({title,primaryLabel:'Continue',fundingMoves:[],summaryRows:rows,stats:[],
     message:'Post-only creation funds the resting order. It does not execute a swap. A separate owner snapshot transaction confirms its private result. Network gas applies.'});
   const create=async()=>{
     if(!connected||inFlight.current||busy||blocked||savedActionPending)return;const captured=scope.current;inFlight.current = true; setBusy(true);setCreation(null);setVerified(null);
+    let validating=true;
     try{const exactAmount=parse(amount,sellToken0?0:1,true);
-      if(preparedCandidate){assertCurrentLimitNativeAdmission(candidateKey,'limit-create');if(candidateKey!=='cheap-history')assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:'create',amount:exactAmount});}
       const raw=currentLimitIntent(sellToken0,exactAmount.toString(),price,parse(minimum,sellToken0?0:1).toString());
+      validating=false;
+      if(preparedCandidate){assertCurrentLimitNativeAdmission(candidateKey,'limit-create');if(candidateKey!=='cheap-history')assertCurrentAppLimitAuthority(c.graph,{owner:state.owner!,action:'create',amount:exactAmount});}
       // Fixed terms always store sorted token0/token1, for either sell direction.
       const w=currentPoolFractionWitness(raw.terms[priceTermsInverted?1:0],raw.terms[priceTermsInverted?0:1]);
       const intent={...raw,terms:[w[0],w[1],raw.terms[2],w[2],w[3]]as const};
@@ -92,10 +100,11 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       const prepared=await capability.prepareLimit({graph:{number:BigInt(head.number),hash:head.hash,expectedGraph:c.graph,expectedPackageSha256:c.packageSha256},intent,
         confirm:async review=>{assertScope(captured);const accepted=await confirm('Create private plain Limit',[
           {label:'You sell',value:sold},{label:'You receive',value:received},{label:'Offered budget',value:format(review.amount,sellToken0?0:1)},
-          {label:`Price (${displayedQuote} per ${displayedBase})`,value:`${review.terms[priceTermsInverted?1:0]}/${review.terms[priceTermsInverted?0:1]}`},{label:`Maker minimum (${sold})`,value:format(review.terms[2],sellToken0?0:1)}]);assertScope(captured);return accepted;}});
+          {label:'Private-input signatures',value:String(usesPackedLimitInputs(c)?4:11)},{label:'Transaction confirmations',value:'1 create + 1 owner snapshot; token approval is separate'},
+          {label:`Price (${displayedQuote}/${displayedBase})`,value:`${review.terms[priceTermsInverted?1:0]}/${review.terms[priceTermsInverted?0:1]}`},{label:`Maker minimum (${sold})`,value:format(review.terms[2],sellToken0?0:1)}]);assertScope(captured);return accepted;}});
       assertScope(captured);if(!prepared){notice('Limit creation cancelled.');return;}setBlocked(true);
       const sent=await sender.submitLimit(prepared);setPending({recover:sent.recover,phase:'limit-create',scope:captured});setHash(sent.transactionHash);notice('Limit creation submitted. Check its canonical result before another request.');
-    }catch(error){fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
+    }catch(error){fail(error,captured,validating?'create':undefined);}finally{inFlight.current = false; setBusy(false);}
   };
   const snapshot=async()=>{
     if(!creation||creation.scope!==scope.current||!connected||inFlight.current||busy||blocked||savedActionPending)return;const captured=scope.current;inFlight.current = true; setBusy(true);
@@ -107,6 +116,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
     }catch(error){fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
   };
   const currentOwner=ownerResult?.scope===scope.current&&ownerResult.value.positionId.toString()===ownerId&&privacyReady?ownerResult:null;
+  const [topUpApprovalMode, setTopUpApprovalMode, getTopUpApprovalMode] = useTokenApprovalMode(`${state.owner}:${c.graph}:${ownerPair?.join(':')}:${currentOwner?.value.amounts?.sellToken0}`);
   const loadClosed=async()=>{
     if(!selectedOrder?.closed||selectedOrder.id.toString()!==ownerId||!connected||!privacyReady||inFlight.current||busy||blocked||savedActionPending)return;
     const captured=scope.current;inFlight.current=true;setBusy(true);setOwnerResult(null);
@@ -131,14 +141,18 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       const capability=kind==='topup'?currentOwner!.capability:await getLimit!(BigInt(c.chainId),{candidate:candidateKey,selectedPair:pair!.tokens.map(token=>token.address)as[string,string]});assertReview();
       fundingPreparationStarted=true;const funding=await capability.prepareFundingReview(kind==='create'?{kind,sellToken0,amount:exact}:{kind,positionId:currentOwner!.value.positionId,snapshot:currentOwner!.value,expectedContext:currentOwner!.value.context,amount:exact});assertReview();
       const sender=await getSender!(BigInt(c.chainId),{candidate:candidateKey});assertReview();
-      const prepared=await sender.prepareSharedLimitApproval({funding,confirm:async review=>{
-        assertReview();const accepted=await requestConfirmation({title:'Approve exact Limit allowance',primaryLabel:'Approve',fundingMoves:[],stats:[],summaryRows:[
-          {label:'Token',value:review.token},{label:'Exact allowance',value:kind==='create'?format(review.amount,index):formatOwner(review.amount,index)},
+      const prepared=await sender.prepareSharedLimitApproval({funding,approvalMode:kind==='create'?getApprovalMode:getTopUpApprovalMode,confirm:async review=>{
+        assertReview();const accepted=await requestConfirmation({title:'Approve Limit token',primaryLabel:'Approve',fundingMoves:[],stats:[],summaryRows:[
+          {label:'Token',value:review.token},{label:kind==='create'?'Order amount':'Top-up amount',value:kind==='create'?format(exact,index):formatOwner(exact,index)},
           {label:'Previous allowance',value:kind==='create'?format(review.previousAllowance,index):formatOwner(review.previousAllowance,index)},{label:'Core spender',value:review.spender}],
-          message:'This separate transaction sets the exact private allowance. It does not create or top up an order. Check its result, then review the order again.'});assertReview();return accepted;
-      }});assertReview();if(!prepared){notice('Limit allowance cancelled.');return;}
+          message:'Approval does not create or fund the order. Network gas applies.'});assertReview();return accepted;
+      }});assertReview();if(!prepared){notice('No approval sent. The allowance is sufficient or the review was cancelled.');return;}
       setBlocked(true);const sent=await sender.submitSharedLimitApproval(prepared);setPending({recover:sent.recover,phase:'limit-approval',scope:captured});setHash(sent.transactionHash);notice('Limit allowance submitted. Check its exact result before reviewing the order.');
     }catch(error){if(kind==='topup'&&fundingPreparationStarted)setOwnerResult(null);fail(error,captured);}finally{inFlight.current=false;setBusy(false);}
+  };
+  const applyOwnerResult=(owner:CurrentLimitOwnerResult,capability:Awaited<ReturnType<typeof issueCurrentDexLimitCapability>>,captured:object)=>{
+    assertScope(captured);setOwnerResult({value:owner,capability,scope:captured});setPending(null);setBlocked(false);
+    notice(owner.closed?'Limit proceeds and unspent inventory verified; NFT burn and closed owner tombstone verified.':owner.refreshRequired?'Limit owner action verified. Private amount authority is cleared. Refresh again.':'Limit owner snapshot authenticated at its canonical receipt block.');
   };
   const ownerAction=async(action:CurrentLimitOwnerAction)=>{
     if(!connected||inFlight.current||busy||blocked||savedActionPending||!privacyReady||selectedOrder?.closed||currentOwner?.value.closed||(action==='resume'&&!ownerAdmission.resume))return;const captured=scope.current,capturedEdit=editInput.current;inFlight.current = true; setBusy(true);
@@ -158,10 +172,11 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       ownerPreparationStarted=true;const prepared=await capability.prepareOwnerAction({positionId:id,action,snapshot:action==='refresh'?undefined:currentOwner?.value,expectedContext:currentOwner?.value.context,
         ...(topUpAmount!==undefined?{topUpAmount}:{}),...(newTerms?{newTerms}:{}),
         confirm:async review=>{assertReview();const accepted=await requestConfirmation({title:action==='topup'?'Top up plain Limit':action==='reprice'?'Edit plain Limit price':action==='refresh'?'Refresh private Limit':action==='close'?'Close plain Limit':action==='claim'?'Claim Limit proceeds':action==='pause'?'Pause plain Limit':'Resume plain Limit',primaryLabel:'Continue',fundingMoves:[],stats:[],
-          summaryRows:[{label:'Position NFT',value:id.toString()},{label:'Action',value:action},...(topUpAmount!==undefined?[{label:`Top-up (${ownerTokens[offeredIndex]})`,value:formatOwner(topUpAmount,offeredIndex)}]:[]),...(newTerms?[{label:`New price (${ownerTokens[1]} per ${ownerTokens[0]})`,value:`${newTerms[1]}/${newTerms[0]}`},{label:`Maker minimum (${ownerTokens[offeredIndex]})`,value:formatOwner(newTerms[2],offeredIndex)}]:[]),...(review.snapshot?.amounts?[{label:'Unspent offered inventory',value:formatOwner(review.snapshot.amounts.unspent,review.snapshot.amounts.sellToken0?0:1)},{label:'Claimable received proceeds',value:formatOwner(review.snapshot.amounts.proceeds,review.snapshot.amounts.sellToken0?1:0)}]:[])],
+          summaryRows:[{label:'Position NFT',value:id.toString()},{label:'Action',value:action},...(['reprice','topup'].includes(action)?[{label:'Private-input signatures',value:String(action==='topup'?1:usesPackedLimitInputs(c)?3:8)},{label:'Transaction confirmations',value:'1 change + 1 owner refresh; token approval is separate'}]:[]),...(topUpAmount!==undefined?[{label:`Top-up (${ownerTokens[offeredIndex]})`,value:formatOwner(topUpAmount,offeredIndex)}]:[]),...(newTerms?[{label:`New price (${ownerTokens[1]}/${ownerTokens[0]})`,value:`${newTerms[1]}/${newTerms[0]}`},{label:`Maker minimum (${ownerTokens[offeredIndex]})`,value:formatOwner(newTerms[2],offeredIndex)}]:[]),...(review.snapshot?.amounts?[{label:'Unspent offered inventory',value:formatOwner(review.snapshot.amounts.unspent,review.snapshot.amounts.sellToken0?0:1)},{label:'Claimable received proceeds',value:formatOwner(review.snapshot.amounts.proceeds,review.snapshot.amounts.sellToken0?1:0)}]:[])],
           message:action==='refresh'?'This explicit owner snapshot transaction authenticates private amounts. It does not fund or trade.':action==='close'?'Close pays exact proceeds and unspent inventory, then burns only this Limit NFT.':action==='claim'?'Claim pays exact proceeds only. Unspent inventory remains in the resting order. Refresh again after the claim.':'This owner change requires a new private refresh afterward. Network gas applies.'});assertReview();return accepted;}});
       assertReview();if(!prepared){notice('Limit owner action cancelled.');return;}const sender=await (preparedCandidate?getSender!(BigInt(c.chainId),{candidate:candidateKey}):getSender!(BigInt(c.chainId)));assertReview();setBlocked(true);
       const sent=await sender.submitLimitOwner(prepared);setOwnerResult(null);setTopUp('');setEditPrice('');setEditMinimum('0');setPending({recover:sent.recover,phase:'limit-owner',scope:captured,ownerCapability:capability});setHash(sent.transactionHash);notice('Limit owner action submitted. Check its exact canonical result before another request.');
+      if(action==='refresh'){const result=await sent.recover()as CurrentLimitOwnerResult;applyOwnerResult(result,capability,captured);}
     }catch(error){if(ownerPreparationStarted||action!=='topup'&&action!=='reprice')setOwnerResult(null);fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
   };
   const refresh=async()=>{
@@ -174,8 +189,9 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
           if(!approval.privateAccountingVerified||!['verified','reverted'].includes(approval.fundingOutcome))throw new Error('Exact Limit allowance accounting is unavailable. Reconcile before retrying.');
           setPending(null);setBlocked(false);notice(approval.fundingOutcome==='reverted'?'Limit allowance reverted. Review a fresh allowance.':'Exact private Limit allowance verified. Review the order again with fresh funding checks.');return;
         }
-        const result=await pending.recover()as CurrentLimitCreationResult|CurrentLimitOwnerResult;assertScope(captured);setPending(null);setBlocked(false);
-        if(pending.phase==='limit-owner'){const owner=result as CurrentLimitOwnerResult;if(!pending.ownerCapability)throw new Error('Limit owner capability is unavailable.');setOwnerResult({value:owner,capability:pending.ownerCapability,scope:captured});notice(owner.closed?'Limit proceeds and unspent inventory verified; NFT burn and closed owner tombstone verified.':owner.refreshRequired?'Limit owner action verified. Private amount authority is cleared. Refresh again.':'Limit owner snapshot authenticated at its canonical receipt block.');return;}
+        const result=await pending.recover()as CurrentLimitCreationResult|CurrentLimitOwnerResult;assertScope(captured);
+        if(pending.phase==='limit-owner'){if(!pending.ownerCapability)throw new Error('Limit owner capability is unavailable.');applyOwnerResult(result as CurrentLimitOwnerResult,pending.ownerCapability,captured);return;}
+        setPending(null);setBlocked(false);
         if(pending.phase==='limit-create'){setCreation({value:result as CurrentLimitCreationResult,scope:captured});notice(`Limit NFT ${result.positionId} mint and offered debit verified. Refresh its private result.`);}
         else{setVerified({id:result.positionId,scope:captured});setCreation(null);notice(`Limit NFT ${result.positionId} private offered inventory, price, maker minimum and direction verified.`);}return;
       }catch(error){
@@ -215,15 +231,25 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       notice(proof.privateWalletDeltaVerified===false?'Existing top-up receipt debit and remaining allowance verified. Historical wallet delta is unverified. Refresh private amounts before continuing.':'Existing top-up debit and remaining allowance verified. Refresh private amounts to continue.');
     }catch(error){setBlocked(true);fail(error,captured);}finally{inFlight.current=false;setBusy(false);}
   };
+  const recovery=<>
+    {busy?<p className="dex-owner-progress" role="status">Checking your order… If MetaMask opens, complete its request there. Keep this attempt open.</p>:null}
+    {!busy?<p className="dex-owner-progress" role="status">{message?.scope===scope.current&&(!message.view||message.view===view)?(/another owner adapter/.test(message.text)?'Another DEX action needs a status check. Open History for its recovery.':message.text):''}</p>:null}
+    <details className="dex-owner-footer" open={blocked||savedActionPending||!!pending||undefined}><summary>Status and recovery</summary>
+    {savedActionPending ? <p role="alert">A saved action needs reconciliation. Check its status before a new request.</p> : null}
+    {connected ? <button type="button" disabled={!getSender||busy||state.chain!==Number(c.chainId)} onClick={()=>{void refresh();}}>Check Limit status</button> : null}
+    {recoveryTarget?<div className="dex-v2-panel-fields"><label>Expected top-up amount<input aria-label="Expected submitted Limit top-up amount" inputMode="decimal" value={recoveryAmount} disabled={busy} onChange={event=>setRecoveryAmount(event.target.value)}/></label><button type="button" disabled={!privacyReady||busy||!recoveryAmount} onClick={()=>{void reconcileTopUp();}}>Verify existing top-up</button></div>:null}
+    {message?.scope===scope.current&&/another owner adapter/.test(message.text)?<p>{message.text}</p>:null}
+    {hash&&message?.scope===scope.current?<p style={{overflowWrap:'anywhere'}}>Transaction {hash}</p>:null}
+    </details>    </>;
   return<section className="dex-v2-test-form dex-v2-current-pool-positions dex-v2-current-limit dex-owner-workspace" aria-busy={busy} aria-label={view==='create'?'Create limit order':'Manage limit orders'}>
     <div className="dex-v2-panel-fields" hidden={view!=='create'}>
-    <header><h2>{displayedSide==='buy'?'Buy':'Sell'} {displayedBase}</h2><p>Limit order · waits for a match at your private price</p></header>
+    <header className="sr-only"><h2>Limit order</h2></header>
     <div className="dex-v2-current-side-toggle" role="group" aria-label="Limit side">
-      {(['buy','sell']as const).map(side=><button key={side} type="button" aria-pressed={displayedSide===side} disabled={busy||blocked||savedActionPending} onClick={()=>setDirection(pair?(side==='sell'?baseIndex===0:baseIndex!==0):resolveCanonicalTradeActionSide(side,priceDisplayInverted)==='buy')}>{side==='buy'?'Buy':'Sell'}</button>)}
+      {(['buy','sell']as const).map(side=><button key={side} type="button" aria-pressed={displayedSide===side} disabled={busy||blocked||savedActionPending} onClick={()=>setDirection(pair?(side==='sell'?baseIndex===0:baseIndex!==0):resolveCanonicalTradeActionSide(side,priceDisplayInverted)==='buy')}>{side==='buy'?'Buy':'Sell'} {displayedBase}</button>)}
     </div>
-    <label>Amount ({sold})<input aria-label="Limit offered budget" inputMode="decimal" placeholder="0" value={amount} disabled={busy||blocked} onChange={e=>setAmount(e.target.value)}/></label>
-    <label>Limit price<input aria-label="Limit exact price" inputMode="decimal" value={price} disabled={busy||blocked} onChange={e=>setPrice(e.target.value)}/><small>{displayedQuote} per {displayedBase}</small></label>
-    <p>You receive {received} when the order fills.</p>
+    <label className="dex-v2-limit-amount-field"><span><strong>You send</strong><small>{sold}</small></span><input aria-label="Limit offered budget" inputMode="decimal" placeholder="0" value={amount} disabled={busy||blocked} onChange={e=>setAmount(e.target.value)}/></label>
+    <label className="dex-v2-limit-price-field"><span><strong>Limit price</strong><small>{displayedQuote}/{displayedBase}</small></span><input aria-label="Limit exact price" inputMode="decimal" placeholder="0.00" value={price} disabled={busy||blocked} onChange={e=>setPrice(e.target.value)}/></label>
+    <p className="dex-v2-limit-fill-note">Receive {received} when matched at your price.</p>
     <details className="dex-v2-setup"><summary>Advanced order settings</summary><div>
       <label>Minimum fill ({sold})<input aria-label="Limit maker minimum" inputMode="decimal" value={minimum} disabled={busy||blocked} onChange={e=>setMinimum(e.target.value)}/></label>
       <p>A smaller fill is allowed only if it uses all remaining inventory. Proceeds stay claimable; they do not fund a reverse order.</p>
@@ -232,39 +258,45 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
     {ownedDiscovery?<button type="button" disabled={!connected||!privacyReady||busy||blocked||savedActionPending} onClick={()=>{void approve('create');}}>Review exact order allowance</button>:null}
     {creation?.scope===scope.current?<><p>Minted NFT {creation.value.positionId.toString()}. Private terms verification is pending.</p><button type="button" disabled={busy||blocked} onClick={()=>{void snapshot();}}>Refresh private Limit result</button></>:null}
     {verified?.scope===scope.current?<p>Verified plain Limit NFT {verified.id.toString()}</p>:null}
+    {view==='create'?recovery:null}
     </div>
-    <div className="dex-v2-panel-fields" hidden={view!=='manage'}>
-    <header className="dex-owner-heading"><div><h2>My orders</h2></div></header>
-    {ownedDiscovery?<CurrentOwnedLimits session={sharedWalletSession} candidateKey={candidateKey} selectedPair={pair!.tokens.map(token=>token.address)as[string,string]} visible={visible&&view==='manage'} disabled={busy||blocked||savedActionPending}
+    <div className="dex-v2-panel-fields dex-owner-split" hidden={view!=='manage'}>
+    <section className="dex-owner-index" aria-label="Order list">
+    {!managementNavigation?<header className="dex-owner-heading"><h2>My orders</h2><p>Select an order to view and manage it.</p></header>:null}
+    {ownedDiscovery?<CurrentOwnedLimits managementNavigation={managementNavigation} session={sharedWalletSession} candidateKey={candidateKey} selectedPair={pair!.tokens.map(token=>token.address)as[string,string]} visible={visible&&view==='manage'} disabled={busy||blocked||savedActionPending}
       selectedId={ownerId} refreshToken={`${hash}:${ownerResult?.value.context??''}:${creation?.value.positionId??''}`} onSelect={order=>{setOwnerId(order.positionId.toString());setOwnerPair(order.poolTokens);setSelectedOrder({id:order.positionId,closed:order.closed,context:order.context});setOwnerResult(null);setMessage(null);setHash('');setTopUp('');setEditPrice('');setEditMinimum('0');}}/>:null}
     <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Manual order lookup</summary><label>Limit position NFT<input aria-label="Limit owner NFT ID" value={ownerId} disabled={busy||blocked} onChange={e=>{setOwnerId(e.target.value);setOwnerPair(null);setSelectedOrder(null);setOwnerResult(null);setTopUp('');setEditPrice('');setEditMinimum('0');}}/></label></details>
+    </section><section className="dex-owner-detail" aria-label="Order details">
+    <header className="dex-owner-heading"><h2>{managementNavigation&&ownerId?`Order #${ownerId}`:'Order details'}</h2></header>
+    {!ownerId?<p className="dex-owner-selection-empty">Select an order to see its details.</p>:null}
     {ownerId?<p>NFT {ownerId}{managementPair?` · ${ownerTokens.join('/')}`:''}{selectedOrder?.closed||currentOwner?.value.closed?' · Closed Limit':''}</p>:null}
     {(!ownedDiscovery||ownerId)?<button type="button" disabled={!connected||!privacyReady||busy||blocked||savedActionPending||!ownerId||currentOwner?.value.closed} onClick={()=>{void (selectedOrder?.closed?loadClosed():ownerAction('refresh'));}}>Load private order</button>:null}
-    {currentOwner?.value.amounts?<dl className="dex-v2-current-facts"><div><dt>Unspent {ownerTokens[currentOwner.value.amounts.sellToken0?0:1]}</dt><dd>{formatOwner(currentOwner.value.amounts.unspent,currentOwner.value.amounts.sellToken0?0:1)}</dd></div><div><dt>Claimable {ownerTokens[currentOwner.value.amounts.sellToken0?1:0]}</dt><dd>{formatOwner(currentOwner.value.amounts.proceeds,currentOwner.value.amounts.sellToken0?1:0)}</dd></div><div><dt>Private price ({ownerTokens[1]} per {ownerTokens[0]})</dt><dd>{currentOwner.value.amounts.priceDenominator.toString()}/{currentOwner.value.amounts.priceNumerator.toString()}</dd></div><div><dt>Maker minimum</dt><dd>{formatOwner(currentOwner.value.amounts.makerMinimum,currentOwner.value.amounts.sellToken0?0:1)}</dd></div></dl>:null}
+    {currentOwner?.value.amounts?<dl className="dex-v2-current-facts"><div><dt>Unspent {ownerTokens[currentOwner.value.amounts.sellToken0?0:1]}</dt><dd>{formatOwner(currentOwner.value.amounts.unspent,currentOwner.value.amounts.sellToken0?0:1)}</dd></div><div><dt>Claimable {ownerTokens[currentOwner.value.amounts.sellToken0?1:0]}</dt><dd>{formatOwner(currentOwner.value.amounts.proceeds,currentOwner.value.amounts.sellToken0?1:0)}</dd></div><div><dt>Private price ({ownerTokens[1]}/{ownerTokens[0]})</dt><dd>{currentOwner.value.amounts.priceDenominator.toString()}/{currentOwner.value.amounts.priceNumerator.toString()}</dd></div><div><dt>Maker minimum</dt><dd>{formatOwner(currentOwner.value.amounts.makerMinimum,currentOwner.value.amounts.sellToken0?0:1)}</dd></div></dl>:null}
+    {ownedDiscovery&&managementPair&&fillDisplayPair&&/^\d+$/.test(ownerId)&&BigInt(ownerId)>=8n&&BigInt(ownerId)<1n<<256n?<CurrentLimitFills session={sharedWalletSession} candidateKey={candidateKey}
+      selectedPair={managementPair.tokens.map(token=>token.address)as[string,string]} positionId={BigInt(ownerId)} visible={visible&&view==='manage'&&!busy&&!blocked&&!savedActionPending}
+      refreshToken={hash} baseToken={(priceDisplayInverted?fillDisplayPair.tokenOut:fillDisplayPair.tokenIn).address}/>:null}
     {currentOwner ? <fieldset className="dex-v2-panel-fields dex-owner-actions" disabled={busy||blocked||savedActionPending}>
+    <button className="dex-desktop-only dex-owner-claim-primary" type="button" disabled={!currentOwner||currentOwner.value.closed||currentOwner.value.refreshRequired||busy||blocked} onClick={()=>{void ownerAction('claim');}}>Claim proceeds</button>
     {ownedDiscovery&&currentOwner.value.amounts&&!currentOwner.value.closed&&!currentOwner.value.refreshRequired?<>
-      <details className="dex-owner-action" name="limit-owner-actions"><summary>Add funds</summary><div className="dex-v2-panel-fields"><label>Top-up amount ({ownerTokens[currentOwner.value.amounts.sellToken0?0:1]})<input aria-label="Limit top-up amount" inputMode="decimal" value={topUp} disabled={busy||blocked||savedActionPending} onChange={e=>setTopUp(e.target.value)}/></label>
+      <details className="dex-owner-action dex-owner-fund-action" name="limit-owner-actions"><summary>Add funds</summary><div className="dex-v2-panel-fields"><label>Top-up amount ({ownerTokens[currentOwner.value.amounts.sellToken0?0:1]})<input aria-label="Limit top-up amount" inputMode="decimal" value={topUp} disabled={busy||blocked||savedActionPending} onChange={e=>setTopUp(e.target.value)}/></label>
       <button type="button" disabled={busy||blocked||savedActionPending} onClick={()=>{void approve('topup');}}>Review exact top-up allowance</button>
       <button type="button" disabled={busy||blocked||savedActionPending} onClick={()=>{void ownerAction('topup');}}>Review top-up</button></div></details>
-      <details className="dex-owner-action" name="limit-owner-actions"><summary>Edit price</summary><div className="dex-v2-panel-fields"><label>New price ({ownerTokens[1]} per {ownerTokens[0]})<input aria-label="Limit new exact price" inputMode="decimal" value={editPrice} disabled={busy||blocked||savedActionPending} onChange={e=>setEditPrice(e.target.value)}/></label>
+      <details className="dex-owner-action dex-owner-edit-action" name="limit-owner-actions"><summary>Edit price</summary><div className="dex-v2-panel-fields"><label>New price ({ownerTokens[1]}/{ownerTokens[0]})<input aria-label="Limit new exact price" inputMode="decimal" value={editPrice} disabled={busy||blocked||savedActionPending} onChange={e=>setEditPrice(e.target.value)}/></label>
       <label>New minimum fill ({ownerTokens[currentOwner.value.amounts.sellToken0?0:1]})<input aria-label="Limit new maker minimum" inputMode="decimal" value={editMinimum} disabled={busy||blocked||savedActionPending} onChange={e=>setEditMinimum(e.target.value)}/></label>
       <button type="button" disabled={busy||blocked||savedActionPending} onClick={()=>{void ownerAction('reprice');}}>Review new price</button></div></details>
     </>:null}
-    <details className="dex-owner-action" name="limit-owner-actions"><summary>Claim proceeds and manage</summary><div className="dex-v2-panel-fields"><button type="button" disabled={!currentOwner||currentOwner.value.closed||currentOwner.value.refreshRequired||busy||blocked} onClick={()=>{void ownerAction('claim');}}>Claim Limit proceeds</button>
+    <details className="dex-owner-action" name="limit-owner-actions"><summary><span className="dex-desktop-only">More order controls</span><span className="dex-mobile-only">Claim proceeds and manage</span></summary><div className="dex-v2-panel-fields"><button className="dex-mobile-only" type="button" disabled={!currentOwner||currentOwner.value.closed||currentOwner.value.refreshRequired||busy||blocked} onClick={()=>{void ownerAction('claim');}}>Claim Limit proceeds</button>
     <button type="button" disabled={!currentOwner||currentOwner.value.closed||currentOwner.value.refreshRequired||currentOwner.value.status!==0n||busy||blocked} onClick={()=>{void ownerAction('pause');}}>Pause Limit</button>
     <button type="button" disabled={!ownerAdmission.resume||!currentOwner||currentOwner.value.closed||currentOwner.value.refreshRequired||currentOwner.value.status!==1n||busy||blocked} onClick={()=>{void ownerAction('resume');}}>Resume Limit</button>
     {!currentOwner.value.closed?<p>Refresh private amounts after each action.</p>:null}
-    </div></details><details className="dex-owner-action dex-owner-danger" name="limit-owner-actions"><summary>Close order</summary><div className="dex-v2-panel-fields"><button type="button" disabled={!currentOwner||currentOwner.value.closed||currentOwner.value.refreshRequired||busy||blocked} onClick={()=>{void ownerAction('close');}}>Close Limit and return funds</button></div></details>
+    </div></details><details className="dex-owner-action dex-owner-danger dex-owner-close-action" name="limit-owner-actions"><summary>Close order</summary><div className="dex-v2-panel-fields"><button type="button" disabled={!currentOwner||currentOwner.value.closed||currentOwner.value.refreshRequired||busy||blocked} onClick={()=>{void ownerAction('close');}}>Close Limit and return funds</button></div></details>
     </fieldset> : null}
-    </div>
-    {busy?<p className="dex-owner-progress" role="status">Checking your order… If MetaMask opens, complete its request there. Keep this attempt open.</p>:null}
-    {!busy?<p className="dex-owner-progress" role="status">{message?.scope===scope.current?(/another owner adapter/.test(message.text)?'Another DEX action needs a status check. Open History for its recovery.':message.text):''}</p>:null}
-    <details className="dex-owner-footer" open={blocked||savedActionPending||undefined}><summary>Status and recovery</summary>
-    {savedActionPending ? <p role="alert">A saved action needs reconciliation. Check its status before a new request.</p> : null}
-    {connected ? <button type="button" disabled={!getSender||busy||state.chain!==Number(c.chainId)} onClick={()=>{void refresh();}}>Check Limit status</button> : null}
-    {recoveryTarget?<div className="dex-v2-panel-fields"><label>Expected top-up amount<input aria-label="Expected submitted Limit top-up amount" inputMode="decimal" value={recoveryAmount} disabled={busy} onChange={event=>setRecoveryAmount(event.target.value)}/></label><button type="button" disabled={!privacyReady||busy||!recoveryAmount} onClick={()=>{void reconcileTopUp();}}>Verify existing top-up</button></div>:null}
-    {message?.scope===scope.current&&/another owner adapter/.test(message.text)?<p>{message.text}</p>:null}
-    {hash&&message?.scope===scope.current?<p style={{overflowWrap:'anywhere'}}>Transaction {hash}</p>:null}
-    </details><TradeActionConfirmModal confirmation={confirmation} onCancel={()=>resolveConfirmation(false)} onConfirm={()=>resolveConfirmation(true)}/>
+    {view==='manage'?recovery:null}
+    </section></div>
+    <TradeActionConfirmModal confirmation={confirmation} onCancel={()=>resolveConfirmation(false)} onConfirm={()=>resolveConfirmation(true)}
+      details={confirmation?.title==='Approve Limit token'?<TokenApprovalChoice
+        token={confirmation.summaryRows.some(row=>row.label==='Order amount')?sold:ownerTokens[currentOwner?.value.amounts?.sellToken0?0:1]} spender={c.core}
+        value={confirmation.summaryRows.some(row=>row.label==='Order amount')?approvalMode:topUpApprovalMode}
+        onChange={confirmation.summaryRows.some(row=>row.label==='Order amount')?setApprovalMode:setTopUpApprovalMode}/>:null}/>
   </section>;
 }

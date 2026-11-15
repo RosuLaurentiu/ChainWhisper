@@ -1,8 +1,9 @@
+import { remainingTokenAllowance } from '../../lib/tokenAllowance';
 import { CurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
 import { AbiCoder, Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { createDexV2ReadCapability, readCurrentSharedPoolDexGraph, readPreparedDexMarketRegistry } from '../../lib/dexV2Chain';
-import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, checkCurrentPoolFundingValues, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint,
+import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, checkCurrentPoolFundingValues, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, packPoolInputPair, usesPackedPoolInputs,
   encodeCurrentPoolCreation, encodeCurrentPoolFundingPreview, encodePreparedPoolCreation, encodePreparedPoolFundingPreview, encodePreparedPoolTopUp, type PoolFundingInput } from '../../lib/currentDexPoolFunding';
 import { decryptPrivateUint256Output, encryptPrivateUint128Input, encryptPrivateUint256Input, resignPrivateInput } from '../../lib/privateUint256';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
@@ -11,7 +12,7 @@ import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { createCurrentOwnerPoolSnapshotReader } from '../../lib/currentDexNativePoolSnapshotReader';
 import { currentNativePoolSession } from '../../lib/currentDexNativePoolPolicy';
 import { requireCurrentPoolProof, checkCurrentPoolFinancialTransition, checkCurrentPoolUnfundedCleanupState } from '../../lib/currentDexNativePoolSnapshot';
-import { createPreparedOwnerPoolSnapshotReader, checkPreparedPoolFinancialTransition } from '../../lib/currentDexPreparedPoolSnapshot';
+import { createPreparedOwnerPoolSnapshotReader, checkPreparedPoolFinancialTransition, checkPreparedPoolFundingCurrent } from '../../lib/currentDexPreparedPoolSnapshot';
 import { checkPreparedPoolManagementTransition, checkPreparedPoolManagementSnapshot } from '../../lib/currentDexPreparedPoolManagement';
 import { currentPoolPositionAbi } from '../../lib/currentDexPoolPosition';
 
@@ -37,6 +38,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
   ...args, capabilityLabel: 'current Pool funding preparation', requirePrivacy: true,
   bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, chainId, ownerAddress }) => {
     const candidate = resolveCurrentCheapDexCandidate(candidateKey);
+    const packed = usesPackedPoolInputs(candidate);
     const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
     const preparedCandidate = preparedScope !== null;
     const fundingAbi = preparedCandidate ? preparedAbi : abi;
@@ -105,7 +107,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
       const initial = await reader.current(producer, initialBlock);
       requireCurrentPoolProof(initial.status === 1n && same(initial.context, ownerContext) && initial.amounts.shares > 0n,
         'Pool top-up owner context, active status or private shares changed.');
-      const baseline = await reader.state(positionId, initialBlock), baselineWallets = await reader.wallets(initialBlock);
+      const baseline = await reader.selectedState(positionId, initialBlock), baselineWallets = await reader.wallets(initialBlock);
       requireCurrentPoolProof(baselineWallets.length === candidate.tokens.length && baselineWallets.every((wallet, i) => same(wallet.token, candidate.tokens[i][0])),
         'Pool top-up needs all four exact token wallets.');
       const latest = async () => {
@@ -121,13 +123,13 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
       if (await request.confirmPrivateInputs(review) !== true) { await guard(); return null; }
       await latest();
       const inputs: PoolFundingInput[] = [];
-      for (const [i, value] of [...intent.budgets, ...intent.tolerance].entries()) {
+      for (const [i, value] of [...intent.budgets, ...(packed ? [packPoolInputPair(...intent.tolerance)] : intent.tolerance)].entries()) {
         await guard();
-        const input = i < 2 ? await encryptPrivateUint256Input(signer, value, candidate.core, previewSelector) :
+        const input = packed || i < 2 ? await encryptPrivateUint256Input(signer, value, candidate.core, previewSelector) :
           await encryptPrivateUint128Input(signer, value, candidate.core, previewSelector);
         await guard(); inputs.push(Object.freeze({ ciphertext: typeof input.ciphertext === 'bigint' ? input.ciphertext : Object.freeze({ ...input.ciphertext }), signature: input.signature }));
       }
-      const data = encodePreparedPoolFundingPreview(selected!.marketId, positionId, inputs);
+      const data = encodePreparedPoolFundingPreview(selected!.marketId, positionId, inputs, packed);
       const canonical = async (transactionHash: string, expectedData: string, minimumBlock = initialBlock.number) => {
         await guard(); const observed = await reader.canonical(transactionHash); await guard();
         if (!observed) return null;
@@ -161,7 +163,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
           for (const input of inputs) {
             await guard(); resigned.push(await resignPrivateInput(signer, input.ciphertext, candidate.core, preparedAbi.getFunction('managePoolPosition')!.selector)); await guard();
           }
-          const fundingData = encodePreparedPoolTopUp(selected!.marketId, positionId, data, event.context, ownerContext, resigned);
+          const fundingData = encodePreparedPoolTopUp(selected!.marketId, positionId, data, event.context, ownerContext, resigned, packed);
           let abandoned = false;
           let admittedWallets: Awaited<ReturnType<typeof reader.wallets>> | null = null;
           const selectedIndex = (token: string) => poolTokens.findIndex(value => same(value, token));
@@ -171,7 +173,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
               'Pool top-up wallet scope changed.');
             requireCurrentPoolProof(wallets.every((wallet, i) => {
               const index = selectedIndex(wallet.token), allowance = index < 0 ? baselineWallets[i].allowance : debit(index);
-              return wallet.balance === baselineWallets[i].balance && (wallet.allowance === allowance || mode === 'cleanup' && index >= 0 && wallet.allowance === 0n);
+              return wallet.balance === baselineWallets[i].balance && (index < 0 ? wallet.allowance === allowance : mode === 'fund' ? wallet.allowance >= allowance : wallet.allowance >= 0n);
             }), 'Pool top-up wallet funds or exact selected allowances changed.');
           };
           const assertApprovalCurrent = async () => {
@@ -207,7 +209,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
               return decryptPrivateUint256Output(signer, debits[0].senderValue);
             });
             await guard();
-            const managed = await reader.state(positionId, managedProof.block), managedWallets = await reader.wallets(managedProof.block);
+            const managed = await reader.selectedState(positionId, managedProof.block), managedWallets = await reader.wallets(managedProof.block);
             const expectation = checkPreparedPoolManagementTransition({ candidate, owner: ownerAddress, request: { action: 'top-up', budgets: intent.budgets, preview: amounts },
               receiptStatus: 1, before: baseline, managed, beforeAmounts: initial.amounts, beforeWallets: admittedWallets!, managedWallets, tokenFlows });
             requireCurrentPoolProof(expectation.status === 'manage-verified-snapshot-required', 'Pool top-up management did not produce its required expectation.');
@@ -227,7 +229,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
               }
               const issued = await reader.issue(positionId, 'snapshot', snapshotHash);
               requireCurrentPoolProof(issued.block.number >= managedProof.block.number, 'Pool top-up snapshot precedes management.');
-              const snapshot = await reader.state(positionId, issued.block), snapshotWallets = await reader.wallets(issued.block);
+              const snapshot = await reader.selectedState(positionId, issued.block), snapshotWallets = await reader.wallets(issued.block);
               await reader.current(issued, await head());
               const result = checkPreparedPoolManagementSnapshot({ candidate, expected: expectation, managed, snapshot, observedAmounts: issued.amounts, managedWallets, snapshotWallets });
               requireCurrentPoolProof(exact(await canonical(fundingHash, fundingData, observed.block.number)) === exact(managedProof), 'Pool top-up management receipt changed before snapshot acceptance.');
@@ -235,8 +237,13 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
                 'Pool top-up snapshot receipt changed after accounting.');
               return Object.freeze({ ...result, producer: issued, producerHash: issued.transactionHash, positionId, block: issued.block, readyToSign: false as const });
             };
-            return Object.freeze({ transactionHash: fundingHash, positionId, amounts, expectation, status: expectation.status,
-              privateAccountingVerified: false as const, block: managedProof.block, readyToSign: false as const, verifySnapshot });
+            const result = Object.freeze({ chainId, from: ownerAddress, to: candidate.core, graph: candidate.graph, packageSha256: candidate.packageSha256,
+              transactionHash: fundingHash, positionId, amounts, expectation, status: expectation.status,
+              privateAccountingVerified: false as const, block: managedProof.block, readyToSign: false as const, assertCurrent: async () => {
+                await guard(); requireCurrentPoolProof(exact(await canonical(fundingHash, fundingData, observed.block.number)) === exact(managedProof),
+                  'Pool top-up management receipt changed before snapshot acceptance.');
+              }, verifySnapshot });
+            preparedSessions.set(result, signer); return result;
           };
           const funding = Object.freeze({ chainId, from: ownerAddress, to: candidate.core, value: 0n, data: fundingData, graph: candidate.graph,
             packageSha256: candidate.packageSha256, readyToSign: false as const, positionId, ownerContext, intent: review, amounts,
@@ -305,14 +312,15 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
       if (await request.confirmPrivateInputs(review) !== true) { await guard(); return null; }
       await guard();
       const inputs: PoolFundingInput[] = [];
-      for (const [index, value] of [intent.classId, ...intent.budgets, ...intent.terms].entries()) {
+      const terms = packed ? [0, 2, 4, 6, 8].map(i => packPoolInputPair(intent.terms[i], intent.terms[i + 1])) : intent.terms;
+      for (const [index, value] of [intent.classId, ...intent.budgets, ...terms].entries()) {
         await guard();
-        const input = index === 1 || index === 2 ? await encryptPrivateUint256Input(signer, value, graph.core, previewSelector) :
+        const input = (packed ? index !== 0 : index === 1 || index === 2) ? await encryptPrivateUint256Input(signer, value, graph.core, previewSelector) :
           await encryptPrivateUint128Input(signer, value, graph.core, previewSelector);
         await guard();
         inputs.push(Object.freeze({ ciphertext: typeof input.ciphertext === 'bigint' ? input.ciphertext : Object.freeze({ ...input.ciphertext }), signature: input.signature }));
       }
-      const data = preparedCandidate ? encodePreparedPoolFundingPreview(selectedMarket, 0n, inputs) : encodeCurrentPoolFundingPreview(0n, inputs);
+      const data = preparedCandidate ? encodePreparedPoolFundingPreview(selectedMarket, 0n, inputs, packed) : encodeCurrentPoolFundingPreview(0n, inputs);
       const attestedReceiptBlocks = new Set<string>();
       const readCanonicalCall = async (transactionHash: string, expectedData: string, minimumBlock = graph.block.number) => {
         if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash) || BigInt(transactionHash) === 0n) throw new Error('Invalid Pool preview transaction hash.');
@@ -372,7 +380,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
               resigned.push(await resignPrivateInput(signer, input.ciphertext, graph.core, fundingSelector));
               await guard();
             }
-            const fundingData = preparedCandidate ? encodePreparedPoolCreation(selectedMarket, data, event.context, resigned) :
+            const fundingData = preparedCandidate ? encodePreparedPoolCreation(selectedMarket, data, event.context, resigned, packed) :
               encodeCurrentPoolCreation(data, event.context, resigned);
             const baselineBlock = nativeReader || preparedReader ? await (async () => {
               const raw = await readProvider.send('eth_getBlockByNumber', ['latest', false]); await guard();
@@ -380,21 +388,24 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
               return Object.freeze({ number: BigInt(raw.number), hash: raw.hash as string });
             })() : null;
             const baselineWallets = baselineBlock && nativeReader && await nativeReader.wallets(baselineBlock);
-            const baselineCounter=baselineBlock&&BigInt(await readProvider.send('eth_getStorageAt',[candidate.core,'0xb',{blockHash:baselineBlock.hash,requireCanonical:true}]));
+            const baselineCounter=baselineBlock&&nativeReader&&BigInt(await readProvider.send('eth_getStorageAt',[candidate.core,'0xb',{blockHash:baselineBlock.hash,requireCanonical:true}]));
             const baselineState = baselineBlock && nativeReader && await nativeReader.state(baselineCounter!+1n, baselineBlock);
-            const preparedBaseline = baselineBlock && preparedReader && await preparedReader.state(baselineCounter! + 1n, baselineBlock);
+            const preparedBaseline = baselineBlock && preparedReader && await preparedReader.selectedState(null, baselineBlock);
             const preparedWallets = baselineBlock && preparedReader && await preparedReader.wallets(baselineBlock);
             if (preparedReader) requireCurrentPoolProof(!!preparedWallets && preparedWallets.length === candidate.tokens.length &&
               preparedWallets.every((wallet, i) => same(wallet.token, candidate.tokens[i][0])), 'Prepared Pool baseline needs all four exact token wallets.');
             let abandoned = false;
+            let preparedAdmission = preparedBaseline;
+            let admittedWallets: typeof preparedWallets = null;
             const financialState = (value: unknown) => JSON.stringify(value, (key, v) => key === 'block' ? null : typeof v === 'bigint' ? v.toString() : v);
             const latestPrepared = async () => {
               if (!preparedReader || !preparedBaseline || !preparedWallets) throw new CurrentPoolProofMismatch('Prepared Pool financial baseline is unavailable.');
               const raw = await readProvider.send('eth_getBlockByNumber', ['latest', false]); await guard();
               if (!raw || !/^0x[0-9a-fA-F]+$/.test(raw.number) || !/^0x[0-9a-fA-F]{64}$/.test(raw.hash)) throw new CurrentPoolProofMismatch('Prepared Pool current block is unavailable.');
               const currentBlock = { number: BigInt(raw.number), hash: raw.hash as string };
-              const state = await preparedReader.state(preparedBaseline.counter + 1n, currentBlock);
-              requireCurrentPoolProof(financialState(state) === financialState(preparedBaseline), 'Prepared Pool financial preview dependencies changed.');
+              const state = await preparedReader.selectedState(null, currentBlock);
+              checkPreparedPoolFundingCurrent(preparedBaseline,state);
+              preparedAdmission = state;
               const wallets = await preparedReader.wallets(currentBlock);
               requireCurrentPoolProof(wallets.length === preparedWallets.length && wallets.every((wallet, i) => same(wallet.token, preparedWallets[i].token)),
                 'Prepared Pool current wallet scope changed.');
@@ -415,12 +426,12 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
                       encoded.topics.some((topic, i) => topic.toLowerCase() !== log.topics[i].toLowerCase())) throw new CurrentPoolProofMismatch('Non-canonical Pool funding debit.');
                   return parsed.args;
                 }).filter(args => getAddress(args.from) === getAddress(ownerAddress) && getAddress(args.to) === getAddress(graph.core));
-                if (debits.length !== 1 || decryptPrivateUint256Output(signer, debits[0].senderValue) !== (index === 0 ? amounts.used0 : amounts.used1)) {
+                if (debits.length !== 1 || logs.length !== 1 || decryptPrivateUint256Output(signer, debits[0].senderValue) !== (index === 0 ? amounts.used0 : amounts.used1)) {
                   throw new CurrentPoolProofMismatch('Pool funding debit differs from its confirmed preview.');
                 }
                 await guard();
               }
-              let producer;
+              let producer, ownerAmountsTransactionHash: string | undefined;
               if (nativeReader) {
                 const session = currentNativePoolSession(signer);
                 requireCurrentPoolProof(!!session && session.funded?.data === fundingData && !session.unfundedFailed,
@@ -441,24 +452,27 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
                 session!.positionId = positionId; session!.producer = producer;
               }
               if (preparedReader && preparedBaseline && preparedWallets) {
+                requireCurrentPoolProof(!!admittedWallets, 'Prepared Pool funding has no admitted allowance baseline.');
                 const receiptBlock = { number: BigInt(receipt.blockNumber), hash: receipt.blockHash };
-                const after = await preparedReader.state(positionId, receiptBlock), wallets = await preparedReader.wallets(receiptBlock);
-                checkPreparedPoolFinancialTransition(preparedBaseline, after, 'fund');
+                const after = await preparedReader.selectedState(positionId, receiptBlock), wallets = await preparedReader.wallets(receiptBlock);
+                checkPreparedPoolFinancialTransition(preparedAdmission!, after, 'fund');
                 requireCurrentPoolProof(wallets.length === preparedWallets.length && wallets.every((wallet, i) => {
                   const selectedIndex = poolTokens.findIndex(token => same(token, wallet.token));
                   const debit = selectedIndex === 0 ? amounts.used0 : selectedIndex === 1 ? amounts.used1 : 0n;
                   return same(wallet.token, preparedWallets[i].token) && wallet.balance === preparedWallets[i].balance - debit &&
-                    wallet.allowance === (selectedIndex < 0 ? preparedWallets[i].allowance : 0n);
+                    wallet.allowance === remainingTokenAllowance(admittedWallets![i].allowance, debit);
                 }), 'Prepared Pool exact wallet debits, consumed allowances or other token funds differ.');
                 producer = await preparedReader.issue(positionId, 'fund', fundingHash, fundingData);
                 requireCurrentPoolProof(producer.amounts.shares === amounts.mintedShares && producer.amounts.classId === amounts.classId,
                   'Prepared Pool funded owner shares differ from preview.');
+                ownerAmountsTransactionHash = producer.amountsTransactionHash ?? producer.transactionHash;
               }
               // Recheck the receipt after private state and owner-envelope reads.
               const finalReceipt = await readCanonicalCall(fundingHash, fundingData, block.number);
               requireCurrentPoolProof(!!finalReceipt && financialState(finalReceipt) === financialState(receipt), 'Pool funding receipt changed after accounting.');
               return Object.freeze({ transactionHash: fundingHash, positionId, amounts, producerHash: producer?.transactionHash,
                 producer,
+                ...(preparedReader ? { aggregateState: 'not-attributed' as const, ownerAmountsTransactionHash } : {}),
                 block: Object.freeze({ number: BigInt(receipt.blockNumber), hash: receipt.blockHash }), readyToSign: false as const });
             };
             const assertFundingCurrent = async () => {
@@ -479,8 +493,9 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
                 requireCurrentPoolProof(wallets.every((wallet, i) => {
                   const index = poolTokens.findIndex(token => same(token, wallet.token));
                   return same(wallet.token, preparedWallets[i].token) && wallet.balance === preparedWallets[i].balance &&
-                    wallet.allowance === (index === 0 ? amounts.used0 : index === 1 ? amounts.used1 : preparedWallets[i].allowance);
+                    (index < 0 ? wallet.allowance === preparedWallets[i].allowance : wallet.allowance >= (index === 0 ? amounts.used0 : amounts.used1));
                 }), 'Prepared Pool funding needs unchanged private balances and exact selected-token allowances.');
+                admittedWallets = wallets;
               }
               if(nativeReader&&baselineState){const raw=await readProvider.send('eth_getBlockByNumber',['latest',false]);await guard();
                 const live=await nativeReader.state(baselineState.counter+1n,{number:BigInt(raw.number),hash:raw.hash as string});
@@ -494,9 +509,8 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
             const checkPreparedCleanupWallets = (wallets: Awaited<ReturnType<typeof latestPrepared>>) => {
                 requireCurrentPoolProof(!!preparedWallets && wallets.every((wallet, i) => {
                   const index = poolTokens.findIndex(token => same(token, wallet.token));
-                  const used = index === 0 ? amounts.used0 : amounts.used1;
                   return same(wallet.token, preparedWallets![i].token) && wallet.balance === preparedWallets![i].balance &&
-                    (index < 0 ? wallet.allowance === preparedWallets![i].allowance : wallet.allowance === 0n || wallet.allowance === used);
+                    (index < 0 ? wallet.allowance === preparedWallets![i].allowance : wallet.allowance >= 0n);
                 }), 'Prepared unfunded cleanup has changed funds or unknown allowances.');
             };
             const assertUnfundedCleanupCurrent = async () => {
@@ -552,4 +566,5 @@ export type CurrentPoolPreparedPreview = NonNullable<Awaited<ReturnType<Awaited<
 export type CurrentPoolPreparedFunding = NonNullable<Awaited<ReturnType<NonNullable<Awaited<ReturnType<CurrentPoolPreparedPreview['readPreview']>>>['prepareFunding']>>>;
 export type CurrentPoolPreparedTopUpPreview = NonNullable<Awaited<ReturnType<Awaited<ReturnType<typeof issueCurrentDexPoolFundingCapability>>['preparePoolTopUp']>>>;
 export type CurrentPoolPreparedTopUpFunding = NonNullable<Awaited<ReturnType<NonNullable<Awaited<ReturnType<CurrentPoolPreparedTopUpPreview['readPreview']>>>['prepareFunding']>>>;
+export type CurrentPoolTopUpResult = NonNullable<Awaited<ReturnType<CurrentPoolPreparedTopUpFunding['readFunding']>>>;
 

@@ -1,8 +1,9 @@
+import { remainingTokenAllowance } from './tokenAllowance';
 import type { CurrentCheapDexCandidate } from './dexV2Deployment';
 import { resolvePreparedDexScope, type PreparedDexCandidate } from './currentDexPreparedScope';
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { checkPreparedPoolPositionValues, checkPreparedPoolSnapshotOnlyChange,
-  type PreparedPoolStoredState } from './currentDexPreparedPoolSnapshot';
+  checkPreparedPoolSelectedScope, isPreparedPoolSelectedState, type PreparedPoolAccountingState } from './currentDexPreparedPoolSnapshot';
 import type { checkCurrentPoolFundingValues } from './currentDexPoolFunding';
 import { checkPoolExitPreviewValues, type PoolExitPreviewAmounts } from './currentDexPoolExitPreview';
 
@@ -22,12 +23,18 @@ const amounts = (v: Amounts) => {
   checkPreparedPoolPositionValues([v.amount0, v.amount1, v.shares, v.totalShares, 0n, 0n, 0n, 0n, 0n, v.classId]);
   [v.amount0, v.amount1, v.shares, v.totalShares].forEach(x => uint(x, 128));
 };
-const withoutBlock = (s: PreparedPoolStoredState) => ({ ...s, block: null });
+const withoutBlock = (s: PreparedPoolAccountingState) => ({ ...s, block: null });
 const anchorFields = [4, 8, 9, 10, 11, 14, 15, 18, 19];
 const marketFields = [11, 12, 13, 14, ...Array.from({ length: 14 }, (_, i) => 25 + i)];
 const address = (word: string) => `0x${word.slice(-40)}`;
 
-const scope = (s: PreparedPoolStoredState, candidate: PreparedDexCandidate, owner?: string) => {
+const scope = (s: PreparedPoolAccountingState, candidate: PreparedDexCandidate, owner?: string) => {
+  if (isPreparedPoolSelectedState(s)) {
+    checkPreparedPoolSelectedScope(s);
+    requireProof(s.graph === candidate.graph && s.coreAddress === candidate.core && s.packageSha256 === candidate.packageSha256 &&
+      (owner === undefined || s.owner === owner.toLowerCase()), 'Prepared management selected owner or candidate changed.');
+    return;
+  }
   const pair = candidate.pairs.find(p => p.marketId === s.marketId);
   requireProof(s.graph === candidate.graph && !!pair && s.market.marketId === s.marketId && s.market.token0 === pair!.tokens[0] &&
     s.market.token1 === pair!.tokens[1] && s.market.canonicalId === BigInt(pair!.canonicalId) && s.market.enabled === true &&
@@ -74,7 +81,7 @@ const wallets = (values: Wallets, candidate: PreparedDexCandidate) => {
 export const checkPreparedPoolOwnershipTransition = ({ action, owner, recipient, before, after, beforeWallets,
   afterWallets, candidate: supplied }: {
   action: 'transfer' | 'activate' | 'resume'; owner: string; recipient?: string;
-  before: PreparedPoolStoredState; after: PreparedPoolStoredState; beforeWallets: Wallets; afterWallets: Wallets;
+  before: PreparedPoolAccountingState; after: PreparedPoolAccountingState; beforeWallets: Wallets; afterWallets: Wallets;
   candidate?: CurrentCheapDexCandidate;
 }) => {
   const { candidate } = resolvePreparedDexScope(supplied);
@@ -93,7 +100,7 @@ export const checkPreparedPoolOwnershipTransition = ({ action, owner, recipient,
     'Pending recipient retains a previous owner envelope.');
   const allowed = transferring ? [0, 4, 5, 6, 13, ...userFields] : [0, 4, 6, ...Array.from({ length: 41 }, (_, i) => 13 + i)];
   const cleanWords = (words: readonly string[]) => words.map((v, i) => allowed.includes(i) ? 'ownership-write' : v);
-  const clean = (s: PreparedPoolStoredState) => ({ ...s, block: null, claim: cleanWords(s.claim),
+  const clean = (s: PreparedPoolAccountingState) => ({ ...s, block: null, claim: cleanWords(s.claim),
     claims: { ...s.claims, [id]: { ...s.claims[id], words: cleanWords(s.claims[id].words) } },
     nftOwners: transferring ? { ...s.nftOwners, [id]: 'recipient' } : s.nftOwners,
     ownerNftBalance: transferring ? 0n : s.ownerNftBalance });
@@ -126,7 +133,7 @@ export type PreparedPoolManagementExpectation = Readonly<{
 export const checkPreparedPoolManagementTransition = ({ owner, request, receiptStatus, before, managed, beforeAmounts,
   beforeWallets, managedWallets, tokenFlows, candidate: supplied }: {
   owner: string; request: PreparedPoolManagementRequest; receiptStatus: 0 | 1;
-  before: PreparedPoolStoredState; managed: PreparedPoolStoredState; beforeAmounts: Amounts;
+  before: PreparedPoolAccountingState; managed: PreparedPoolAccountingState; beforeAmounts: Amounts;
   beforeWallets: Wallets; managedWallets: Wallets; tokenFlows: readonly bigint[]; candidate?: CurrentCheapDexCandidate;
 }): PreparedPoolManagementExpectation | Readonly<{ status: 'reverted'; privateAccountingVerified: true }> => {
   const { candidate } = resolvePreparedDexScope(supplied);
@@ -182,12 +189,12 @@ export const checkPreparedPoolManagementTransition = ({ owner, request, receiptS
   beforeWallets.forEach((w, i) => {
     const index = pairTokens.indexOf(w.token), delta = index < 0 ? 0n : paid[index];
     const paying = closing || withdrawing;
-    const expectedBalance = w.balance + (paying ? delta : -delta), expectedAllowance = w.allowance - (paying ? 0n : delta);
-    requireProof((paying || index < 0 || w.allowance === delta) && expectedBalance >= 0n && expectedAllowance >= 0n && managedWallets[i].balance === expectedBalance &&
+    const expectedBalance = w.balance + (paying ? delta : -delta), expectedAllowance = remainingTokenAllowance(w.allowance, paying ? 0n : delta);
+    requireProof(expectedBalance >= 0n && managedWallets[i].balance === expectedBalance &&
       managedWallets[i].allowance === expectedAllowance, 'Prepared management changed exact wallet balances or allowances.');
   });
   const allowed = closing ? [0, 4, 6, 12, 13, 14, 15, 18, 19, 22, 23, 60, 61] : [4, 13, ...Array.from({ length: 40 }, (_, i) => i + 14), 60, 61];
-  const clean = (s: PreparedPoolStoredState) => ({ ...s, block: null, anchors: [],
+  const clean = (s: PreparedPoolAccountingState) => ({ ...s, block: null, anchors: s.anchors.map(raw => raw.map((v, i) => anchorFields.includes(i) ? 'anchor-write' : v)),
     claim: s.claim.map((v, i) => allowed.includes(i) ? 'claim-write' : v),
     claims: Object.fromEntries(Object.entries(s.claims).map(([id, value]) => [id, { ...value, words:
       id === String(s.positionId) ? value.words.map((v, i) => allowed.includes(i) ? 'claim-write' : v) :
@@ -219,7 +226,7 @@ export const checkPreparedPoolManagementTransition = ({ owner, request, receiptS
  * Canonical transaction/call/event and producer-session checks remain with issuer.
  */
 export const checkPreparedPoolManagementSnapshot = ({ expected, managed, snapshot, observedAmounts, managedWallets, snapshotWallets, candidate: supplied }: {
-  expected: PreparedPoolManagementExpectation; managed: PreparedPoolStoredState; snapshot: PreparedPoolStoredState;
+  expected: PreparedPoolManagementExpectation; managed: PreparedPoolAccountingState; snapshot: PreparedPoolAccountingState;
   observedAmounts: Amounts; managedWallets: Wallets; snapshotWallets: Wallets; candidate?: CurrentCheapDexCandidate;
 }) => {
   const { candidate } = resolvePreparedDexScope(supplied);

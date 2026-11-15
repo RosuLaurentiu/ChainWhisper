@@ -1,13 +1,15 @@
+import { remainingTokenAllowance, MAX_TOKEN_ALLOWANCE } from '../../lib/tokenAllowance';
 import { toBeHex, Interface } from '@coti-io/coti-ethers';
 import { type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { createDexV2ReadCapability, readCurrentSharedPoolDexGraph, readPreparedDexMarketRegistry } from '../../lib/dexV2Chain';
 import { sendCotiScopedRead } from '../../lib/appShared/core';
 import { createBrowserWalletRuntimeReadGuard } from '../../lib/browserWalletRuntimeScope';
-import { currentLimitAbiForCandidate,resolveCurrentLimitScope,readCurrentLimitPositionBinding,currentLimitBindingAbi,currentLimitNftAbi,currentLimitTokens,currentLimitMappingSlot as slot,CURRENT_LIMIT_LAYOUT as layout,currentLimitContext,decodeCurrentLimitMint,
+import { currentLimitAbiForCandidate,usesPackedLimitInputs,packCurrentLimitTerms,resolveCurrentLimitScope,readCurrentLimitPositionBinding,currentLimitBindingAbi,currentLimitNftAbi,currentLimitTokens,currentLimitMappingSlot as slot,CURRENT_LIMIT_LAYOUT as layout,currentLimitContext,decodeCurrentLimitMint,
   CurrentLimitProofMismatch,readCurrentLimitOwnerState,checkCurrentLimitOwnerTransition,checkCurrentLimitOwnerValues,currentLimitOwnerMethod,decodeCurrentLimitOwnerEvent,type CurrentLimitOwnerAction } from '../../lib/currentDexLimit';
 import { decodeCurrentPoolNftTransfer } from '../../lib/currentDexPoolPosition';
 import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from '../../lib/appShared/contracts';
-import { encryptPrivateUint128Input,encryptPrivateUint256Input,decryptPrivateUint256Output } from '../../lib/privateUint256';
+import { encryptPrivateUint128Input,encryptPrivateUint256Input,decryptPrivateUint256Output,decryptPrivateBoolOutput } from '../../lib/privateUint256';
+import { CURRENT_LIMIT_FILL_HISTORY_GRAPHS,readCurrentLimitFillHistoryPage } from '../../lib/currentDexLimitFillHistory';
 import { readCurrentSharedDexTokenFunds } from '../../lib/currentSharedDexTokenFunds';
 import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonicalInclusion';
 import { readCurrentDexOwnedLimits } from '../../lib/currentDexOwnedLimits';
@@ -77,12 +79,13 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
     };
     const ownerValues=(state:State)=>{const values=Array.from({length:8},(_,i)=>{const ciphertextHigh=state.snapshot[i*4+2],ciphertextLow=state.snapshot[i*4+3];if(ciphertextHigh===0n&&ciphertextLow===0n)throw new Error('Limit owner envelope is unavailable.');return decryptPrivateUint256Output(signer,{ciphertextHigh,ciphertextLow});});checkCurrentLimitOwnerValues(values);return Object.freeze(values);};
     const verifyTopUpTokenReceipt=(rows:readonly{topics:readonly string[];data:string}[],debit:bigint,remainingAllowance:bigint)=>{
-            // transferFrom emits an allowance update for both fixed-shape token legs.
+            // The token keeps max allowance unchanged and omits its Approval event.
             const debits=rows.filter(row=>same(row.topics[0],transfer.getEvent('Transfer')!.topicHash)),approvals=rows.filter(row=>same(row.topics[0],approvalEvent.getEvent('Approval')!.topicHash));
-            if(rows.length!==2||debits.length!==1||approvals.length!==1)throw new CurrentLimitProofMismatch('Limit top-up debit or approval is missing or duplicated.');
+            if(rows.length!==(remainingAllowance===MAX_TOKEN_ALLOWANCE?1:2)||debits.length!==1||approvals.length!==(remainingAllowance===MAX_TOKEN_ALLOWANCE?0:1))throw new CurrentLimitProofMismatch('Limit top-up debit or approval is missing or duplicated.');
             const row=debits[0],parsed=transfer.parseLog({topics:[...row.topics],data:row.data});if(!parsed||parsed.name!=='Transfer'||!same(parsed.args.from,ownerAddress)||!same(parsed.args.to,c.core))throw new CurrentLimitProofMismatch('Limit top-up debit has another sender or Core.');
             const encoded=transfer.encodeEventLog(parsed.fragment,parsed.args);
             if(!same(encoded.data,row.data)||encoded.topics.length!==row.topics.length||encoded.topics.some((v,i)=>!same(v,row.topics[i]))||decryptPrivateUint256Output(signer,parsed.args.senderValue)!==debit)throw new CurrentLimitProofMismatch('Limit top-up debit differs from exact offered inventory.');
+            if(remainingAllowance===MAX_TOKEN_ALLOWANCE)return;
             const approval=approvals[0],updated=approvalEvent.parseLog({topics:[...approval.topics],data:approval.data});
             if(!updated||updated.name!=='Approval'||!same(updated.args.owner,ownerAddress)||!same(updated.args.spender,c.core))throw new CurrentLimitProofMismatch('Limit top-up approval has another owner or Core.');
             const approvalEncoding=approvalEvent.encodeEventLog(updated.fragment,updated.args);
@@ -100,11 +103,11 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
           const rows=receipt.logs.filter(x=>same(x.address,address));const offered=scope.poolTokens[prior?.amounts?.sellToken0?0:1],received=scope.poolTokens[prior?.amounts?.sellToken0?1:0],selected=scope.poolTokens.some(token=>same(token,address)),amount=payout?(same(address,offered)?(closing?prior!.amounts!.unspent:0n):same(address,received)?prior!.amounts!.proceeds:0n):0n;
           if(payout&&selected){if(rows.length!==1)throw new CurrentLimitProofMismatch('Limit payout is missing or duplicated.');const parsed=transfer.parseLog({topics:[...rows[0].topics],data:rows[0].data});if(!parsed||parsed.name!=='Transfer'||!same(parsed.args.from,c.core)||!same(parsed.args.to,ownerAddress))throw new CurrentLimitProofMismatch('Limit payout has another sender or owner.');const encoded=transfer.encodeEventLog(parsed.fragment,parsed.args);if(!same(encoded.data,rows[0].data)||encoded.topics.length!==rows[0].topics.length||encoded.topics.some((v,i)=>!same(v,rows[0].topics[i]))||decryptPrivateUint256Output(signer,parsed.args.receiverValue)!==amount)throw new CurrentLimitProofMismatch('Limit payout differs from exact proceeds or unspent inventory.');}
           else if(action==='topup'&&selected){
-            verifyTopUpTokenReceipt(rows,same(address,fundingToken!)?topUpAmount!:0n,balances[index].allowance-(same(address,fundingToken!)?topUpAmount!:0n));
+            verifyTopUpTokenReceipt(rows,same(address,fundingToken!)?topUpAmount!:0n,remainingTokenAllowance(balances[index].allowance,same(address,fundingToken!)?topUpAmount!:0n));
           }
           else if(rows.length)throw new CurrentLimitProofMismatch('Unexpected Limit token movement.');
           const debit=action==='topup'&&same(address,fundingToken!)?topUpAmount!:0n;
-          if(nextWallet[index].balance!==balances[index].balance+amount-debit||nextWallet[index].allowance!==balances[index].allowance-debit)throw new CurrentLimitProofMismatch('Limit wallet credit or allowance differs from the exact payout.');
+          if(nextWallet[index].balance!==balances[index].balance+amount-debit||nextWallet[index].allowance!==remainingTokenAllowance(balances[index].allowance,debit))throw new CurrentLimitProofMismatch('Limit wallet credit or allowance differs from the exact payout.');
         }
         if(action!=='refresh'&&!closing&&!equal(before.snapshot,after.snapshot))throw new CurrentLimitProofMismatch('Limit action unexpectedly rewrote its owner snapshot.');
         // Claim/pause/resume do not refresh eight stored envelopes. Revoke amount authority.
@@ -135,7 +138,10 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       const wide=async(v:bigint)=>{await guard();const x=await encryptPrivateUint256Input(signer,v,c.core,selector);await guard();return x;};
       let params:unknown[]=action==='pause'||action==='resume'?[id,before.lifecycle,action==='pause'?0:1]:[id];
       if(action==='topup')params=[id,before.terms,before.lifecycle,await wide(topUpAmount!)];
-      if(action==='reprice'){const terms=[],range=[];for(const v of newTerms!)terms.push(await small(v));for(let i=0;i<3;i++)range.push(await wide(0n));params=[id,before.terms,terms,range];}
+      if(action==='reprice'){
+        if(usesPackedLimitInputs(c)){const terms=[];for(const v of packCurrentLimitTerms(newTerms!))terms.push(await wide(v));params=[id,before.terms,terms];}
+        else{const terms=[],range=[];for(const v of newTerms!)terms.push(await small(v));for(let i=0;i<3;i++)range.push(await wide(0n));params=[id,before.terms,terms,range];}
+      }
       const data=abi.encodeFunctionData(method,params);
       const assertAuthority=async(block:Block)=>{if(!equal(before,await ownerState(id,block))||!equal(balances,await wallet(block)))throw new Error('Limit source, private balance, allowance or lifecycle changed before signing.');};
       const readResult=ownerResultReader({id,action,origin,before,prior,balances,data,topUpAmount,fundingToken});
@@ -208,7 +214,25 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       await graph(block);await guard();
       return Object.freeze({...marketFields,positionId:id,sourceId:state.sourceId,owner:ownerAddress,context:state.context,status:state.status,closed:true,termsRevision:state.terms,ownershipRevision:state.ownership,lifecycleRevision:state.lifecycle,transactionHash:null,block,values,amounts,refreshRequired:false,readyToSign:false as const});
     };
-    return Object.freeze({prepareOwnerAction,verifyMinedTopUp,prepareFundingReview,readClosedOrder,readOwnedOrders:async(assertCallerCurrent:()=>void=()=>{})=>{
+    const readFills=async({positionId,before,assertCurrent:assertCallerCurrent=()=>{}}:{positionId:bigint;before?:bigint;assertCurrent?:()=>void})=>{
+      if(!scope.prepared||!CURRENT_LIMIT_FILL_HISTORY_GRAPHS.includes(c.graph))throw new Error('Individual Limit history is unavailable for this candidate.');
+      const readScope=createBrowserWalletRuntimeReadGuard(()=>{assertCallerCurrent();assertSnapshotCurrent();});
+      const check=async()=>{readScope.assertCurrent();await guard();readScope.assertCurrent();};
+      const rpc=async(method:string,params:unknown[])=>{await check();const value=await sendCotiScopedRead(readProvider,readScope,method,params);await check();return value;};
+      const capability=createDexV2ReadCapability({chainId,assertCurrent:check,provider:{request:({method,params})=>rpc(method,(params??[])as unknown[])}});
+      try{
+        const raw=await rpc('eth_getBlockByNumber',['latest',false])as{number:string;hash:string;timestamp:string}|null;
+        if(!raw||!/^0x[0-9a-fA-F]{64}$/.test(raw.hash)||!/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(raw.number)||!/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(raw.timestamp))throw new Error('Limit fill head is unavailable.');
+        const block=Object.freeze({number:BigInt(raw.number),hash:raw.hash,timestamp:BigInt(raw.timestamp)});
+        await graph(block,capability);await check();
+        await readCurrentLimitPositionBinding({candidate,selectedPair:scope.poolTokens,positionId,block,rpc,assertCurrent:check});
+        const page=await readCurrentLimitFillHistoryPage({graph:c.graph,owner:ownerAddress,engine:scope.engine,poolTokens:scope.poolTokens,head:block,rpc,assertCurrent:check,
+          attest:async head=>{await check();if(head.number!==block.number||!same(head.hash,block.hash)||head.timestamp!==block.timestamp)throw new Error('Limit fill head changed.');},
+          decrypt:cipher=>decryptPrivateUint256Output(signer,cipher),decryptBool:cipher=>decryptPrivateBoolOutput(signer,cipher),before,pageSize:32});
+        await check();return Object.freeze({...page,head:block,fills:Object.freeze(page.fills.filter(fill=>fill.positionId===positionId))});
+      }finally{readScope.close();}
+    };
+    return Object.freeze({prepareOwnerAction,verifyMinedTopUp,prepareFundingReview,readClosedOrder,readFills,readOwnedOrders:async(assertCallerCurrent:()=>void=()=>{})=>{
       if(candidate!=='cheap-exit'&&candidate!=='cheap-history')throw new Error('Order discovery requires a supported DEX deployment.');
       const readScope=createBrowserWalletRuntimeReadGuard(()=>{assertCallerCurrent();assertSnapshotCurrent();});
       const check=async()=>{readScope.assertCurrent();await guard();readScope.assertCurrent();};
@@ -234,15 +258,16 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       if(creationBalances){
         const offered=creationBalances[poolTokens.findIndex(([address])=>same(address,scope.poolTokens[intent.sellToken0?0:1]))];
         if(!offered||offered.balance<intent.amount)throw new Error('The offered token balance is insufficient for this Limit.');
-        if(offered.allowance!==intent.amount)throw new Error('Approve the exact offered-token allowance before creating this Limit.');
+        if(offered.allowance<intent.amount)throw new Error('Approve sufficient offered-token allowance before creating this Limit.');
       }
       if(await request.confirm(intent)!==true){await guard();return null;}await guard();await graph(origin);
       const selector=abi.getFunction('createPrivateOrder')!.selector;
       const small=async(v:bigint)=>{await guard();const x=await encryptPrivateUint128Input(signer,v,c.core,selector);await guard();return x;};
       const wide=async(v:bigint)=>{await guard();const x=await encryptPrivateUint256Input(signer,v,c.core,selector);await guard();return x;};
-      const funding=await wide(intent.amount),direction=await small(intent.sellToken0?1n:0n),mode=await small(0n),terms=[];
-      for(const value of intent.terms)terms.push(await small(value));const range=[];for(let i=0;i<3;i++)range.push(await wide(0n));
-      const data=abi.encodeFunctionData('createPrivateOrder',[...(scope.prepared?[scope.marketId]:[]),funding,direction,mode,terms,range]);
+      const funding=await wide(intent.amount),terms=[];let inputs:unknown[];
+      if(usesPackedLimitInputs(c)){for(const value of packCurrentLimitTerms(intent.terms,intent.sellToken0))terms.push(await wide(value));inputs=[funding,terms];}
+      else{const direction=await small(intent.sellToken0?1n:0n),mode=await small(0n);for(const value of intent.terms)terms.push(await small(value));const range=[];for(let i=0;i<3;i++)range.push(await wide(0n));inputs=[funding,direction,mode,terms,range];}
+      const data=abi.encodeFunctionData('createPrivateOrder',[...(scope.prepared?[scope.marketId]:[]),...inputs]);
       const assertAuthority=async(block:Block)=>{if(!equal(originMarket,await graph(block))||creationBalances&&!equal(creationBalances,await wallet(block)))throw new Error('Limit selected market or private funding changed before signing.');};
       const readResult=async(hash:string,snapshotId?:bigint)=>{
         await guard();const [tx,receipt]=await Promise.all([readProvider.getTransaction(hash),readProvider.getTransactionReceipt(hash)]);await guard();if(!tx||!receipt)return null;
@@ -278,7 +303,7 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
             const afterBalances=await wallet(block),offered=scope.poolTokens[intent.sellToken0?0:1];
             for(const [index,[address]]of poolTokens.entries()){
               const amount=same(address,offered)?intent.amount:0n;
-              if(afterBalances[index].balance!==creationBalances![index].balance-amount||afterBalances[index].allowance!==creationBalances![index].allowance-amount)throw new CurrentLimitProofMismatch('Limit creation wallet debit or allowance differs from its exact budget.');
+              if(afterBalances[index].balance!==creationBalances![index].balance-amount||afterBalances[index].allowance!==remainingTokenAllowance(creationBalances![index].allowance,amount))throw new CurrentLimitProofMismatch('Limit creation wallet debit or allowance differs from its exact budget.');
             }
           }
         }

@@ -5,8 +5,8 @@ const { test } = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
 const adapter = require('./prepare-current-dex-shared-history-candidate.cjs');
 const prepared = require('./prepare-current-dex-prepared-candidate.cjs');
-const report = path.resolve(__dirname, '../reports/shared-history-candidate-2026-10-13');
-const root = path.resolve(__dirname, '../../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13');
+const report = path.resolve(__dirname, '../reports/packed-rate-adoption-2026-11-03/public-binding');
+const root = path.resolve(__dirname, '../../ChainWhisper Contracts V2/validation/candidates/packed-rate-input-2026-11-03');
 
 test('shared-history adapter binds all44 constructor/source/package records and exact frozen Engine proof without network or credentials', async () => {
   const read = fs.readFileSync, oldFetch = global.fetch;
@@ -18,14 +18,14 @@ test('shared-history adapter binds all44 constructor/source/package records and 
     assert.equal(input.frozen.manifest.binding.graphSha256, input.embedded.graph);
     assert.equal(input.pkg.expectedCore, adapter.CORE); assert.equal(input.packageSha256, adapter.PACKAGE);
     assert.equal(input.runtimes.length, 44); assert.equal(input.protocol.stages.workCalls, 4);
-    assert.equal(input.minimumBlock, '10064595'); assert.equal(result.constructors, 44);
+    assert.equal(result.minimumBlock, input.minimumBlock); assert.equal(result.constructors, 44);
     assert.equal(result.noNetwork, true); assert.equal(result.readyToSign, false);
     assert.equal(result.fullFixtureAdmission, false); assert.equal(result.connectedAppWalletHeld, true);
   } finally { fs.readFileSync = read; global.fetch = oldFetch; }
 });
 
 test('saved constructor journal rejects missing/pending records, source/package drift, hash/nonce gaps and bad runtime metadata', () => {
-  const input = adapter.baseInputs(), rows = fs.readFileSync(path.join(root, 'native-deployment-1/journal.jsonl'), 'utf8').trim().split(/\r?\n/).map(JSON.parse), sources = require(path.join(root, 'native-deployment.cjs')).sourcePins();
+  const input = adapter.baseInputs(), rows = fs.readFileSync(path.join(root, 'native-deployment-1/journal.jsonl'), 'utf8').trim().split(/\r?\n/).map(JSON.parse), sources = require(path.join(root, 'deployment.cjs')).sourcePins();
   assert.equal(adapter.verifyJournal(rows, input.pkg, sources).length, 44);
   for (const mutate of [
     x => x.pop(), x => x[0].packageSha256 = 'wrong', x => x[0].graph = 'wrong',

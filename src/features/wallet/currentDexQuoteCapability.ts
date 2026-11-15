@@ -8,10 +8,13 @@ import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonica
 import { isCurrentDexBrowserSigner } from '../../lib/currentDexBrowserPolicy';
 import type { CurrentCheapDexPreparedQuote } from '../../lib/currentDexSubmission';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
+import { currentDexQuoteInputPlan } from '../../lib/currentDexQuoteInputPlan';
+export { currentDexQuoteInputPlan } from '../../lib/currentDexQuoteInputPlan';
 
 type IssueArgs = Omit<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>, 'bindCapability' | 'capabilityLabel' | 'requirePrivacy'>;
 type Terms = Readonly<{ inputToken: string; outputToken: string; destination: string; deadline: bigint; maximumInput: bigint; minimumInput: bigint; minimumOutput: bigint;
   rateNumerator: bigint; rateDenominator: bigint; toleranceBps?: number }>;
+export type CurrentDexQuoteInputProgress = Readonly<{phase:'planned'|'requesting'|'completed';completed:number;total:number}>;
 // Public discovery hint only. The keeper must independently verify canonical chain data.
 export type CurrentDexKeeperNomination = Readonly<{
   schema: 'CURRENT_DEX_APP_QUOTE_NOMINATION_V1';
@@ -219,6 +222,7 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
       graph: Omit<SharedPoolGraphRequest, 'candidate'> & { candidate: CurrentCheapDexCandidateKey };
       terms: Terms;
       confirmPrivateInputs: (review: Terms & Readonly<{ core: string; principal: string; chainId: bigint; profile: CurrentCheapDexProfile }>) => Promise<boolean>;
+      progress?: (event:CurrentDexQuoteInputProgress)=>void;
     }, restoredData?: string, restoredOriginTimestamp?: bigint) => {
       const candidate = resolveCurrentCheapDexCandidate(request.graph.candidate), profile = request.profile;
       const quoteProtocol = currentCheapDexQuoteProtocol(candidate);
@@ -258,6 +262,9 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
         if (!restoredData && (now < graph.block.timestamp || now >= terms.deadline)) throw new Error('Current quote preparation expired.');
       };
       await guard();
+      const inputPlan=currentDexQuoteInputPlan(graphRequest.candidate,Boolean(restoredData)),observe=request.progress;let completed=0;
+      const report=(phase:CurrentDexQuoteInputProgress['phase'])=>{observe?.(Object.freeze({phase,completed,total:inputPlan.length}));assertSnapshotCurrent();};
+      report('planned');
       if (!restoredData && await confirm(Object.freeze({ ...terms, core: graph.core, principal: ownerAddress, chainId, profile })) !== true) return null;
       const opening = new Interface(quoteProtocol ? CURRENT_SLIPPAGE_DEX_QUOTE_ABI : CURRENT_CHEAP_DEX_QUOTE_ABI);
       const method = profile === 'fast-pool' ? quoteProtocol ? 'quoteFastPool' : 'quoteFastPoolV1'
@@ -265,18 +272,20 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
       const selector = opening.getFunction(method)!.selector;
       const wide = async (value: bigint) => {
         await guard();
+        report('requesting');
         const input = await encryptPrivateUint256Input(signer, value, graph.core, selector);
         await guard();
         uint(input.ciphertext.ciphertextHigh, 256); uint(input.ciphertext.ciphertextLow, 256);
-        return Object.freeze({ ciphertext: Object.freeze({ ...input.ciphertext }), signature: inputSignature(input.signature) });
+        const result=Object.freeze({ ciphertext: Object.freeze({ ...input.ciphertext }), signature: inputSignature(input.signature) });completed++;report('completed');return result;
       };
       const rate = async (value: bigint) => {
         await guard();
+        report('requesting');
         const input = await signer.encryptValue(value, graph.core, selector);
         await guard();
         if (!input || typeof input.ciphertext !== 'bigint') throw new Error('Invalid private rate input.');
         uint(input.ciphertext, 256);
-        return Object.freeze({ ciphertext: input.ciphertext, signature: inputSignature(input.signature) });
+        const result=Object.freeze({ ciphertext: input.ciphertext, signature: inputSignature(input.signature) });completed++;report('completed');return result;
       };
       const data = restoredData ?? await (async () => {
         const maximum = await wide(terms.maximumInput), minimum = await wide(terms.minimumInput), output = await wide(terms.minimumOutput);

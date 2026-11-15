@@ -24,6 +24,7 @@ type GeneratedInviteCodeProps = SharedGroupInviteToolProps & {
 
 type GroupInviteMembersPanelProps = {
   canInviteToActiveGroup: boolean;
+  isActiveGroupAdmin: boolean;
   processingGroupAction: boolean;
   hasAesReady: boolean;
   groupInviteMembersInput: string;
@@ -123,6 +124,7 @@ function GeneratedInviteCode({
 
 function GroupInviteMembersPanel({
   canInviteToActiveGroup,
+  isActiveGroupAdmin,
   processingGroupAction,
   hasAesReady,
   groupInviteMembersInput,
@@ -140,28 +142,32 @@ function GroupInviteMembersPanel({
       }}
     >
       <div className="group-header-invite-row">
-        <input
+        <label className="group-header-invite-address-field">Wallet addresses<input
           value={groupInviteMembersInput}
           onChange={(event) => onGroupInviteMembersInputChange(event.target.value)}
           className="group-header-invite-address"
-          placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
-          aria-label="Invite members"
+          placeholder="0x…"
+          aria-label="Wallet addresses"
           disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-        />
-        <div className="group-header-invite-ttl-wrap">
+        /></label>
+        <label className="group-header-invite-ttl-field">Expires in (hours)
           <input
             value={groupInviteTtlInput}
             onChange={(event) => onGroupInviteTtlInputChange(event.target.value.replace(/[^\d]/g, ''))}
             className="group-header-invite-ttl"
             placeholder="8"
-            aria-label="Invite and join code timeout in hours"
+            aria-label="Expires in (hours)"
             disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
           />
-        </div>
+        </label>
         <button className="group-header-primary-btn" type="submit" disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}>
           {processingGroupAction ? 'Sending...' : 'Invite'}
         </button>
       </div>
+      <small>{!hasAesReady ? 'Unlock privacy to invite members.'
+        : canInviteToActiveGroup ? 'Separate wallet addresses with commas or spaces.'
+          : isActiveGroupAdmin ? 'Group membership is unavailable. Try again after group data loads.'
+            : 'Only the admin can invite members to this private group.'}</small>
     </form>
   );
 }
@@ -288,11 +294,11 @@ export function GroupInviteMenu({
 }: GroupInviteMenuProps) {
   const menuClassName = [
     mobile ? 'group-invite-menu group-invite-menu-mobile' : 'group-invite-menu',
-    canInviteToActiveGroup ? '' : 'locked'
+    canInviteToActiveGroup && hasAesReady ? '' : 'locked'
   ]
     .filter(Boolean)
     .join(' ');
-  const summaryLabel = canInviteToActiveGroup ? 'Invite' : 'Invite locked';
+  const summaryLabel = !hasAesReady ? 'Invite locked' : canInviteToActiveGroup ? 'Invite' : 'Invite unavailable';
 
   return (
     <details
@@ -327,6 +333,7 @@ export function GroupInviteMenu({
             {groupInviteMenuView === 'invite' ? (
               <GroupInviteMembersPanel
                 canInviteToActiveGroup={canInviteToActiveGroup}
+                isActiveGroupAdmin={isActiveGroupAdmin}
                 processingGroupAction={processingGroupAction}
                 hasAesReady={hasAesReady}
                 groupInviteMembersInput={groupInviteMembersInput}
@@ -357,6 +364,7 @@ export function GroupInviteMenu({
         ) : (
           <GroupInviteMembersPanel
             canInviteToActiveGroup={canInviteToActiveGroup}
+            isActiveGroupAdmin={isActiveGroupAdmin}
             processingGroupAction={processingGroupAction}
             hasAesReady={hasAesReady}
             groupInviteMembersInput={groupInviteMembersInput}

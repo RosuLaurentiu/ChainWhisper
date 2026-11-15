@@ -1,5 +1,7 @@
 import { Interface, keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { issueCurrentDexQuoteCapability, assertCurrentCheapDexPreparedQuote, assertCurrentCheapDexIssuedQuote, currentDexRestoredPlan, assertCurrentDexQuoteNotRestored } from './currentDexQuoteCapability';
 import { issueCurrentDexSubmissionCapability } from './currentDexSubmissionCapability';
@@ -29,7 +31,9 @@ const core = `0x${'11'.repeat(20)}`, owner = `0x${'22'.repeat(20)}`, hash = `0x$
 const opening = new Interface(CURRENT_DEX_OPEN_ABI), selector = opening.getFunction('openSinglePassSwapV2')!.selector;
 const signature = `0x${'44'.repeat(65)}`;
 const historicalCandidate = () => resolveCurrentCheapDexCandidate(mocks.slippage ? 'cheap-slippage' : 'cheap-archived');
-const native = createRequire(import.meta.url)('../../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/current-async-adverse/native-accept-boundary.cjs').frozen();
+const nativeCoreBytes = readFileSync(new URL('../../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/matching-boundary-build-1/snapshot/contracts/dex/ChainWhisperDexCore.sol/ChainWhisperDexCore.json', import.meta.url));
+if (createHash('sha256').update(nativeCoreBytes).digest('hex') !== 'df50771b95d66e6b017ae727b73dca2fe52783fe6ca04fdb14d07cb40eb0d70b') throw new Error('CURRENT_CORE_ARTIFACT_DRIFT');
+const nativeCore = JSON.parse(nativeCoreBytes.toString());
 const appQuoteReader = createRequire(import.meta.url)('../../../../ChainWhisper Contracts V2/validation/candidates/shared-core-exit-preview-native-2026-10-07/app-async-service/app-quote-reader.cjs');
 const savedPublicRuntime = createRequire(import.meta.url)('../../../../ChainWhisper Contracts V2/validation/candidates/shared-core-exit-preview-native-2026-10-07/app-async-service/root-verifier-v4/public-runtime-1/runtime.json');
 afterEach(() => { mocks.slippage = false; vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
@@ -43,6 +47,23 @@ const pendingStorage = () => {
 };
 
 describe('current DEX owner quote preparation', () => {
+  it.each(['fast-pool','cheap-async'] as const)('reports only actual completed %s private-input signatures for each selected plan',async profile=>{
+    for(const [key,total]of [['cheap-current',4],['cheap-archived',5]] as const){
+      const f=await cheapFixture(profile,key),events:unknown[]=[];
+      const request={...f.request,terms:{...f.request.terms,...(key==='cheap-current'?{toleranceBps:50}:{})},progress:(event:unknown)=>events.push(event)};
+      await f.capability.prepareCurrentQuote(request);
+      expect(events).toEqual([{phase:'planned',completed:0,total},...Array.from({length:total},(_,i)=>[{phase:'requesting',completed:i,total},{phase:'completed',completed:i+1,total}]).flat()]);
+    }
+  });
+  it.each(['cancel','reject','replaced'] as const)('does not count an uncompleted private-input signature after %s',async fault=>{
+    const f=await cheapFixture('fast-pool','cheap-current'),events:unknown[]=[];
+    if(fault==='cancel')f.request.confirmPrivateInputs.mockResolvedValue(false);
+    if(fault==='reject')mocks.wide.mockRejectedValueOnce(new Error('Wallet signature rejected'));
+    if(fault==='replaced')mocks.wide.mockImplementationOnce(async()=>{f.revoke();return{ciphertext:{ciphertextHigh:1n,ciphertextLow:2n},signature};});
+    const result=f.capability.prepareCurrentQuote({...f.request,terms:{...f.request.terms,toleranceBps:50},progress:(event:unknown)=>events.push(event)});
+    if(fault==='cancel')await expect(result).resolves.toBeNull();else await expect(result).rejects.toThrow();
+    expect(events).toEqual([{phase:'planned',completed:0,total:4},...(fault==='cancel'?[]:[{phase:'requesting',completed:0,total:4}])]);
+  });
   it('recovers the approved lost ledger only after eleven canonical calls and exact private Fast7 proof',async()=>{
     const f=await lostPartialLedgerFixture();
     expect(f.adapter.readCurrentCheapRestoreHint()).toEqual({quoteHash:ledgerRecovery.hashes[9]});
@@ -615,7 +636,7 @@ describe('current DEX owner quote preparation', () => {
     expect(args.outputToken.toLowerCase()).toBe(f.request.terms.outputToken);
     expect(args.deadline).toBe(100n);
     expect(abi.encodeFunctionData(method, decoded)).toBe(prepared.data);
-    expect(new Interface(native.artifacts.ChainWhisperDexCore.abi).encodeFunctionData(method, decoded)).toBe(prepared.data);
+    expect(new Interface(nativeCore.abi).encodeFunctionData(method, decoded)).toBe(prepared.data);
     for (const call of mocks.wide.mock.calls) expect(call.slice(2)).toEqual([historicalCandidate().core, selector]);
     for (const call of f.signer.encryptValue.mock.calls) expect(call.slice(1)).toEqual([historicalCandidate().core, selector]);
     expect(prepared).toMatchObject({ profile, readyToSign: false, graph: historicalCandidate().graph });

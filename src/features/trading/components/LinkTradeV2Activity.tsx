@@ -53,10 +53,10 @@ export const useLinkTradeV2Activity = ({ runtime, ownerAddress, enabled, ensureT
 };
 
 export default function LinkTradeV2Activity({ activity, runtime, lifecycle, activeFilter, tokenInfoByKey, ensureTokenInfo,
-  search, pairFilter, typeFilter, sortMode, confirmFunding, runWalletFlow, onBusyChange }: {
+  search, pairFilter, typeFilter, sortMode, confirmFunding, runWalletFlow, onBusyChange, onSelect, selectionVersion }: {
   activity: ReturnType<typeof useLinkTradeV2Activity>; runtime: Runtime; lifecycle: 'active' | 'history'; activeFilter: 'all' | 'received' | 'active';
   tokenInfoByKey: Readonly<Record<string, TradeCustomTokenInfo>>; ensureTokenInfo: EnsureToken;
-  search: string; pairFilter: string; typeFilter: string; sortMode: string;
+  search: string; pairFilter: string; typeFilter: string; sortMode: string; onSelect: () => void; selectionVersion: number;
   confirmFunding: (input: TradeFundingPreflightInput) => Promise<void>; runWalletFlow: <T>(operation: () => Promise<T>) => Promise<T>; onBusyChange: (busy: boolean) => void;
 }) {
   const olderSentinel = useRef<HTMLDivElement>(null);
@@ -68,8 +68,8 @@ export default function LinkTradeV2Activity({ activity, runtime, lifecycle, acti
     window.addEventListener('scroll', onScroll, true);
     return () => window.removeEventListener('scroll', onScroll, true);
   }, [activity.snapshot, activity.busy, activity.error, activity.loadOlder]);
-  const [selection, setSelection] = useState<{ runtime: Runtime; reference: LinkTradeV2Reference; lifecycle: 'active' | 'history' } | null>(null);
-  const selected = selection?.runtime === runtime && selection.lifecycle === lifecycle && activity.snapshot?.orders.some(row => row.reference.id === selection.reference.id && row.reference.escrow === selection.reference.escrow) ? selection.reference : null;
+  const [selection, setSelection] = useState<{ runtime: Runtime; reference: LinkTradeV2Reference; lifecycle: 'active' | 'history'; version: number } | null>(null);
+  const selected = selection && selection.version === selectionVersion && selection.runtime === runtime && selection.lifecycle === lifecycle && activity.snapshot?.orders.some(row => row.reference.id === selection.reference.id && row.reference.escrow === selection.reference.escrow) ? selection.reference : null;
   const meta = (row: { privatePair: boolean; offerToken: string; requestToken: string }) => {
     const kind = row.privatePair ? 'private-erc20' : 'erc20';
     const offer = tokenInfoByKey[buildTradeCustomTokenInfoKey(kind, row.offerToken)], request = tokenInfoByKey[buildTradeCustomTokenInfoKey(kind, row.requestToken)];
@@ -105,7 +105,7 @@ export default function LinkTradeV2Activity({ activity, runtime, lifecycle, acti
     {!activity.busy && !activity.error && activity.snapshot?.complete && (lifecycle === 'active' ? !orders.length : !history.length) ? <p>No shared trades in this view.</p> : null}
     {lifecycle === 'active' ? orders.map(row => <article key={`${row.reference.escrow}:${row.reference.id}`} className="p2p-management-group-block">
       <div><strong>{meta(row).pair}</strong><span> · {row.expiresAt !== '0' && BigInt(row.expiresAt) <= BigInt(Math.floor(Date.now() / 1000)) ? 'Expired · refund available' : row.enabled ? 'Open' : 'Link revoked'}</span></div>
-      <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => setSelection({ runtime, reference: row.reference, lifecycle })}>Manage trade {row.reference.id}</button>
+      <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => { onSelect(); setSelection({ runtime, reference: row.reference, lifecycle, version: selectionVersion }); }}>Manage trade {row.reference.id}</button>
     </article>) : history.map(row => <article key={row.key} className="p2p-management-group-block">
       <strong>{meta(row).pair}</strong><span> · {row.kind.replace(/-/g, ' ')}</span>
       {row.kind === 'filled' ? <p>{row.role === 'maker' ? 'Sold' : 'Received'} {amount(row.offer, meta(row).offer)} · {row.role === 'maker' ? 'Received' : 'Paid'} {amount(row.payment, meta(row).request)}
@@ -114,7 +114,7 @@ export default function LinkTradeV2Activity({ activity, runtime, lifecycle, acti
       <details><summary>Transaction</summary><p style={{ overflowWrap: 'anywhere' }}>{row.transactionHash}</p><p>Order {row.orderId} · Block {row.blockNumber}</p>
         {row.role === 'maker' ? <button type="button" className="standalone-trade-secondary-btn" disabled={activity.busy} onClick={() => {
           const order = activity.snapshot?.orders.find(order => order.reference.chainId === row.chainId && order.reference.escrow === row.escrow && order.reference.id === row.orderId);
-          if (order) setSelection({ runtime, reference: order.reference, lifecycle });
+          if (order) { onSelect(); setSelection({ runtime, reference: order.reference, lifecycle, version: selectionVersion }); }
         }}>Manage trade {row.orderId}</button> : null}
       </details>
     </article>)}

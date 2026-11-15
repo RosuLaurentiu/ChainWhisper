@@ -2,7 +2,8 @@ import { formatUnits } from '@coti-io/coti-ethers';
 import { currentDexDailyPricePairOrientation, isVerifiedCurrentDexDailyPrice, isVerifiedCurrentDexPublicReference,
   type CurrentDexDailyPriceView, type CurrentDexPublicReferenceView } from './currentDexDailyPrice';
 
-export type CurrentDexMarketReference = Readonly<{ status: 'available'; price: number; sampledAt: string; revision: string }> |
+export type CurrentDexMarketReference = Readonly<{ status: 'available'; price: number; sampledAt: string; checkedAt?: string; revision: string }> |
+  Readonly<{ status: 'last-known'; price: number; sampledAt: string; revision: string }> |
   Readonly<{ status: 'loading' | 'stale' | 'unavailable' }>;
 type VerifiedCurrentDexMarketReference = Extract<CurrentDexMarketReference, { status: 'available' }> &
   Readonly<{ pair: readonly [string,string]; rateNumerator: bigint; rateDenominator: bigint }>;
@@ -16,7 +17,7 @@ export function currentDexEstimatedReceive({reference,pair,inputIndex,input,inpu
 }):string|null{
   if(!reference||reference.status!=='available'||!isVerifiedCurrentDexMarketReference(reference)||
     reference.pair[0]!==pair[0]||reference.pair[1]!==pair[1]||input<=0n||input>=1n<<256n)return null;
-  const at=BigInt(reference.sampledAt);
+  const at=BigInt(reference.checkedAt??reference.sampledAt);
   if(now<at||now-at>120n)return null;
   const numerator=inputIndex===0?reference.rateNumerator:reference.rateDenominator;
   const denominator=inputIndex===0?reference.rateDenominator:reference.rateNumerator;
@@ -29,20 +30,21 @@ export function currentDexEstimatedReceive({reference,pair,inputIndex,input,inpu
 export const currentDexMarketReference = (view: CurrentDexDailyPriceView|CurrentDexPublicReferenceView, pair: readonly [string,string], now: bigint): CurrentDexMarketReference => {
   if (view.status === 'loading') return { status: 'loading' };
   if (view.status !== 'ready' && view.status !== 'empty' && view.status !== 'reference') return { status: 'unavailable' };
-  const s = view.snapshot, o = s.currentObservation;
+  const s = view.snapshot, o = s.currentObservation ?? s.lastObservation;
   if (view.status==='reference'?!isVerifiedCurrentDexPublicReference(s):!isVerifiedCurrentDexDailyPrice(s)) return { status: 'unavailable' };
   const symbols=view.status==='reference'?view.snapshot.symbols:view.snapshot.manifest.symbols;
   const direction = currentDexDailyPricePairOrientation(symbols,pair);
   if (!direction) return { status: 'unavailable' };
-  if (s.currentReference === 'stale') return { status: 'stale' };
-  if (s.currentReference !== 'available' || !o) return { status: 'unavailable' };
-  const at = BigInt(o.sampledAt);
-  if (now < at || now-at > 120n) return { status: 'stale' };
+  if (!o) return { status: s.currentReference === 'stale' ? 'stale' : 'unavailable' };
+  const at = BigInt(o.checkedAt??o.sampledAt);
+  if (now < at || now < BigInt(o.sampledAt)) return { status: 'stale' };
   const canonical = Number(o.priceE18)/1e18;
   const price = direction === 1 ? canonical : 1/canonical;
   if (!Number.isFinite(price) || price <= 0) return { status: 'unavailable' };
+  if (s.currentReference !== 'available' || now-at > 120n)
+    return Object.freeze({status:'last-known',price,sampledAt:o.sampledAt,revision:o.revision});
   const raw = BigInt(o.priceE18), scale = 10n ** 18n;
-  const reference: VerifiedCurrentDexMarketReference = Object.freeze({ status: 'available', price, sampledAt: o.sampledAt, revision: o.revision,
+  const reference: VerifiedCurrentDexMarketReference = Object.freeze({ status: 'available', price, sampledAt: o.sampledAt, ...(o.checkedAt?{checkedAt:o.checkedAt}:{}), revision: o.revision,
     pair: Object.freeze([pair[0], pair[1]]) as readonly [string,string],
     rateNumerator: direction === 1 ? raw : scale, rateDenominator: direction === 1 ? scale : raw });
   issuedReferences.add(reference);

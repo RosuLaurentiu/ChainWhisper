@@ -71,7 +71,7 @@ describe('d06 phase ceilings and separate authority', () => {
       [...partialRefundPrior,{phase:'quote'},{phase:'quote'}])).toThrow('reserved');
   });
   it('limits the approved top-up receipt repair to its exact owner, candidate, mined identity and amount',()=>{
-    const proof={graph:history.graph,owner:CURRENT_APP_SWAP_OWNER,core:history.core,hash:'0x99d43c33f95061f794fe6ead07e2eb2c2305653788974235398b70d797347a5f',nonce:205,blockNumber:10152730,blockHash:'0x8c96934c343ac7193f3cb35679e327bb858208b01b42ba7c573f4f445d7a89fa',positionId:55n,amount:250000n};
+    const proof={graph:'7b67bcbb7c5941a24471e62ba5a0d939c0800671b0bf121e81bad14cca737456',owner:CURRENT_APP_SWAP_OWNER,core:'0xab5374daddea783c3e58de19db497b54c79fd4cc',hash:'0x99d43c33f95061f794fe6ead07e2eb2c2305653788974235398b70d797347a5f',nonce:205,blockNumber:10152730,blockHash:'0x8c96934c343ac7193f3cb35679e327bb858208b01b42ba7c573f4f445d7a89fa',positionId:55n,amount:250000n};
     expect(isCurrentAppLimitTopUpRepair(proof)).toBe(true);
     for(const change of [{graph:current.graph},{owner:history.core},{core:CURRENT_APP_SWAP_OWNER},{hash:`0x${'99'.repeat(32)}`},{nonce:206},{blockNumber:10152729},{blockHash:`0x${'88'.repeat(32)}`},{positionId:54n},{amount:250001n}])expect(isCurrentAppLimitTopUpRepair({...proof,...change})).toBe(false);
   });

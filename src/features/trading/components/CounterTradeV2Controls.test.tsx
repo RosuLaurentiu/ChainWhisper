@@ -1,7 +1,7 @@
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import CounterTradeV2Controls from './CounterTradeV2Controls';
+import CounterTradeV2Controls, { counterProposalStatusLabel } from './CounterTradeV2Controls';
 
 const owner = `0x${'11'.repeat(20)}`, maker = `0x${'22'.repeat(20)}`;
 const render = (privatePair: boolean, privateOnly: boolean, recoveryOnly: boolean, publicOnly = false) => {
@@ -40,5 +40,12 @@ describe('Counter controls follow scoped candidate admission', () => {
   it('keeps the private form in qualified private scope and the public form in full admission', () => {
     expect(render(true, true, false)).toContain('Review counter-offer');
     expect(render(false, false, false)).toContain('Review counter-offer');
+  });
+});
+
+
+describe('Counter proposal status', () => {
+  it('labels the current effective status, including unavailable and unknown states', () => {
+    expect([1, 2, 3, 4, 5, 6, 99].map(counterProposalStatusLabel)).toEqual(['Open', 'Accepted', 'Cancelled', 'Declined', 'Expired', 'Invalidated', 'Unavailable']);
   });
 });

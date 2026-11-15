@@ -94,7 +94,7 @@ describe('selected candidate acceptance review metadata', () => {
     vi.clearAllMocks();
     const c = resolveCurrentCheapDexCandidate(key), owner = `0x${'22'.repeat(20)}`;
     const now = BigInt(Math.floor(Date.now() / 1000)), block = { number: 100n, hash: toBeHex(77n, 32), timestamp: now - 1n };
-    const signer = { sendTransaction: vi.fn(), estimateGas: vi.fn(), getNonce: vi.fn() }, send = vi.fn(), getLogs = vi.fn().mockResolvedValue([]);
+    const signer = { sendTransaction: vi.fn(), estimateGas: vi.fn(), getNonce: vi.fn(), getUserOnboardInfo: () => ({ aesKey: 'fixture' }) }, send = vi.fn(), getLogs = vi.fn().mockResolvedValue([]);
     const assertCurrent = vi.fn(), assertSnapshotCurrent = vi.fn();
     mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent, assertSnapshotCurrent,
       chainId: BigInt(c.chainId), ownerAddress: owner, readProvider: { send, getLogs }, signer }));
@@ -128,6 +128,53 @@ describe('selected candidate acceptance review metadata', () => {
       releaseId: intent.releaseId, originBlock: block };
     return { c, capability, options, issued, readCurrent, receipt, signer, send, getLogs, assertCurrent };
   };
+  it('reuses the exact cheap funding head graph and retains final chain and canonical checks', async () => {
+    const f = await fixture('cheap-history'), head = { ...f.receipt.block, gasLimit: 120_000_000n };
+    Object.assign(f.signer, { getUserOnboardInfo: () => ({ aesKey: 'fixture' }) });
+    const abi = new Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
+    mocks.decrypt.mockReturnValue(f.issued.intent.maximumInput);
+    f.send.mockImplementation(async (method, params) => {
+      if (method === 'eth_chainId') return '0x6c11a0';
+      if (method === 'eth_getBlockByNumber') return { number: toBeHex(head.number), hash: head.hash };
+      const parsed = abi.parseTransaction({ data: params[0].data })!;
+      const cipher = { ciphertextHigh: 1n, ciphertextLow: 2n };
+      return abi.encodeFunctionResult(parsed.fragment, [parsed.name === 'allowance' ? { ciphertext: cipher, ownerCiphertext: cipher, spenderCiphertext: cipher } : cipher]);
+    });
+    await f.options.attest(head);
+    await f.options.requireFunding({ intent: f.issued.intent } as never, head);
+    expect(mocks.graph).toHaveBeenCalledTimes(1);
+    expect(f.send.mock.calls.map(([method]) => method)).toEqual(['eth_call', 'eth_call', 'eth_chainId', 'eth_getBlockByNumber']);
+    await f.options.requireFunding({ intent: f.issued.intent } as never, head);
+    expect(mocks.graph).toHaveBeenCalledTimes(2); // Consumed head evidence cannot suppress another graph check.
+    await f.options.attest(head);
+    await f.options.requireFunding({ intent: f.issued.intent } as never, { ...head });
+    expect(mocks.graph).toHaveBeenCalledTimes(4); // Equal values do not authenticate another head object.
+  });
+  it.each(['chain', 'head', 'number', 'missing', 'session', 'privacy', 'allowance', 'balance'] as const)(
+    'rejects %s changes after the cheap funding head graph check', async fault => {
+      const f = await fixture('cheap-history'), head = { ...f.receipt.block, gasLimit: 120_000_000n };
+      let aesKey = 'fixture', current = true;
+      Object.assign(f.signer, { getUserOnboardInfo: () => ({ aesKey }) });
+      const abi = new Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
+      mocks.decrypt.mockReturnValue(f.issued.intent.maximumInput);
+      f.assertCurrent.mockImplementation(() => { if (!current) throw new Error('Session revoked'); });
+      f.send.mockImplementation(async (method, params) => {
+        if (method === 'eth_chainId') return fault === 'chain' ? '0x1' : '0x6c11a0';
+        if (method === 'eth_getBlockByNumber') {
+          if (fault === 'session') current = false;
+          if (fault === 'privacy') aesKey = '';
+          return fault === 'missing' ? null : { number: fault === 'number' ? '0x65' : '0x64', hash: fault === 'head' ? toBeHex(1n, 32) : head.hash };
+        }
+        const parsed = abi.parseTransaction({ data: params[0].data })!;
+        if (fault === 'allowance' && parsed.name === 'allowance' || fault === 'balance' && parsed.name === 'balanceOf') mocks.decrypt.mockReturnValueOnce(0n);
+        const cipher = { ciphertextHigh: 1n, ciphertextLow: 2n };
+        return abi.encodeFunctionResult(parsed.fragment, [parsed.name === 'allowance' ? { ciphertext: cipher, ownerCiphertext: cipher, spenderCiphertext: cipher } : cipher]);
+      });
+      await f.options.attest(head);
+      await expect(f.options.requireFunding({ intent: f.issued.intent } as never, head)).rejects.toThrow();
+      expect(mocks.graph).toHaveBeenCalledTimes(1);
+      expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+    });
   it.each(['head timeout', 'receipt timeout', 'HTTP 503', 'privacy', 'unknown', 'changed network', 'HTTP 403'] as const)(
     'classifies Activity %s without advancing a failed page or signing', async fault => {
       const f = await fixture('cheap-history');
@@ -530,6 +577,30 @@ describe('selected candidate acceptance review metadata', () => {
     await expect(f.options.reviewAcceptance!(f.issued as never, confirm)).rejects.toThrow('Lease revoked');
     expect(f.signer.sendTransaction).not.toHaveBeenCalled();
   });
+  it.each(['none', 'changed', 'session', 'privacy', 'other-issued', 'copied', 'consumed'] as const)(
+    'consumes only its own initial private Quote receipt and retains %s review checks', async fault => {
+      const f = await fixture('cheap-history');
+      const initial = await f.options.readReceipt(f.issued as never);
+      f.readCurrent.mockClear();
+      const confirm = vi.fn(async () => {
+        if (fault === 'changed') f.readCurrent.mockResolvedValue({ ...f.receipt, amounts: { ...f.receipt.amounts, actualInput: 1_234_568n, refund: 765_432n } });
+        if (fault === 'session') f.assertCurrent.mockRejectedValue(new Error('Lease revoked'));
+        if (fault === 'privacy') f.signer.getUserOnboardInfo = () => ({ aesKey: '' });
+        return true;
+      });
+      if (fault === 'consumed') await f.options.reviewAcceptance(f.issued as never, async () => false, initial);
+      const pending = f.options.reviewAcceptance(fault === 'other-issued' ? { ...f.issued } as never : f.issued as never,
+        confirm, fault === 'copied' ? { ...initial } : initial);
+      if (fault === 'none') {
+        await expect(pending).resolves.toMatchObject({ readyToSign: false });
+        expect(f.readCurrent).toHaveBeenCalledTimes(1);
+      } else {
+        await expect(pending).rejects.toThrow();
+        if (['other-issued', 'copied', 'consumed'].includes(fault)) expect(confirm).not.toHaveBeenCalled();
+        if (['session', 'privacy'].includes(fault)) expect(f.readCurrent).not.toHaveBeenCalled();
+      }
+      expect(f.signer.sendTransaction).not.toHaveBeenCalled();
+    });
   it.each(['cheap-exit','cheap-history']as const)('requires the exact selected-Core swap allowance for %s',async candidate=>{
     const f=await fixture(candidate,2,3),abi=new Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI),amount=f.issued.intent.maximumInput,head={...f.receipt.block,gasLimit:120_000_000n};
     Object.assign(f.signer,{getUserOnboardInfo:()=>({aesKey:'test-only'})});let allowance=amount;

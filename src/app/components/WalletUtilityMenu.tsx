@@ -21,6 +21,7 @@ type WalletUtilityMenuProps = {
   onMarkAllRead: () => void;
   onClearNotifications: () => void;
   onOpenHelp: () => void;
+  onOpenApprovals?: () => void;
 };
 
 const shortAddress = (address: string): string => `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -38,7 +39,8 @@ export default function WalletUtilityMenu({
   onOpenNotification,
   onMarkAllRead,
   onClearNotifications,
-  onOpenHelp
+  onOpenHelp,
+  onOpenApprovals
 }: WalletUtilityMenuProps) {
   const [networkOpen, setNetworkOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -109,7 +111,7 @@ export default function WalletUtilityMenu({
               aria-label={soundEnabled ? 'Turn notification sound off' : 'Turn notification sound on'}
               onClick={onToggleSound}
             >
-              <i aria-hidden="true" />
+              <span className="wallet-utility-sound-track" aria-hidden="true"><i /></span>
             </button>
           </label>
         </div>
@@ -129,6 +131,10 @@ export default function WalletUtilityMenu({
         ) : null}
       </section>
 
+      {onOpenApprovals ? <button type="button" className="wallet-utility-row" onClick={onOpenApprovals} role="menuitem">
+        <span><strong>Token approvals</strong><small>View and revoke spending permission</small></span>
+        <ChevronRight size={16} aria-hidden="true" />
+      </button> : null}
       <button type="button" className="wallet-utility-row wallet-utility-help" onClick={onOpenHelp} role="menuitem">
         <CircleHelp size={17} aria-hidden="true" />
         <span><strong>Help</strong></span>

@@ -356,7 +356,7 @@ const capabilityBinding = (capability: TradeHistoryV2ReadCapability): Capability
   return binding;
 };
 
-const rpcFailureDetail = (cause: unknown): string => {
+const rpcFailureDetail = (cause: unknown, method: string): string => {
   // Do not copy provider messages, request data or response bodies into the UI.
   if (cause instanceof Error) {
     if (cause.message === 'COTI RPC read expired in queue.') return describeCotiRpcQueueExpiry(cause) ?? 'request expired in queue';
@@ -366,6 +366,21 @@ const rpcFailureDetail = (cause: unknown): string => {
   if (cause && typeof cause === 'object' && 'code' in cause) {
     if (cause.code === 'TIMEOUT') return 'request timed out';
     if (cause.code === 'NETWORK_ERROR') return 'network error';
+  }
+  if (cause && typeof cause === 'object') {
+    const error = cause as { code?: unknown; data?: unknown; error?: { code?: unknown; data?: unknown };
+      info?: { error?: { code?: unknown; data?: unknown } };
+      rpcFailure?: { kind?: unknown; status?: unknown; rpcCode?: unknown; revertSelector?: unknown } };
+    const status = error.rpcFailure?.status;
+    if (error.rpcFailure?.kind === 'http' && typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599) {
+      return `HTTP ${status}`;
+    }
+    const code = [error.code, error.error?.code, error.info?.error?.code, error.rpcFailure?.rpcCode]
+      .find(value => typeof value === 'number' && Number.isSafeInteger(value));
+    const revert = method === 'eth_call' ? [error.data, error.error?.data, error.info?.error?.data, error.rpcFailure?.revertSelector]
+      .find(value => typeof value === 'string' && /^0x[0-9a-f]{8}$/i.test(value)) : undefined;
+    return [code === undefined ? '' : `RPC code ${code}`, typeof revert === 'string' ? `revert ${revert.toLowerCase()}` : '']
+      .filter(Boolean).join('; ');
   }
   return '';
 };
@@ -383,7 +398,10 @@ const rpc = async (
     result = await binding.request({ method, params: [...params] });
   } catch (cause) {
     binding.observeRead?.('rpc', method, 'failed', 'request');
-    const detail = rpcFailureDetail(cause);
+    const call = method === 'eth_call' ? params[0] as { data?: unknown } | undefined : undefined;
+    const selector = typeof call?.data === 'string' && /^0x[0-9a-f]{8}(?:[0-9a-f]{2})*$/i.test(call.data)
+      ? `call ${call.data.slice(0, 10).toLowerCase()}` : '';
+    const detail = [selector, rpcFailureDetail(cause, method)].filter(Boolean).join('; ');
     throw new Error(`Trade-history RPC ${method} failed${detail ? ` (${detail})` : ''}.`);
   }
   binding.observeRead?.('rpc', method, 'pending', 'guard-after');

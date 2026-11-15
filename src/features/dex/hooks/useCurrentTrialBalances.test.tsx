@@ -50,7 +50,8 @@ const deferred = <T,>() => {
 };
 function fixture() {
   const read = vi.fn(async (_assertCurrent?: () => void) => snapshot());
-  const getFunds = vi.fn(async () => ({ read }));
+  const readSwap = vi.fn(async (_tokens: readonly [string, string], assertCurrent?: () => void) => read(assertCurrent));
+  const getFunds = vi.fn(async () => ({ readSwap }));
   const legacyRead = vi.fn(async (index: number) => ({ balance: BigInt(index + 1) }));
   const getSender = vi.fn(async () => ({ readCurrentTokenFunding: legacyRead }));
   const session = { walletAddress: owner, chainId: 7082400, browserProvider: { request: vi.fn() },
@@ -67,7 +68,7 @@ function fixture() {
     return view;
   };
   const settle = async () => { await vi.waitFor(() => expect(Render().loading).toBe(false)); return Render(); };
-  return { session, read, getFunds, getSender, legacyRead, render: Render, settle,
+  return { session, read, readSwap, getFunds, getSender, legacyRead, render: Render, settle,
     setVisible: (value: boolean) => { visible = value; },
     select: (value: CurrentTrialBalanceSelection | undefined) => { selection = value; } };
 }
@@ -95,6 +96,7 @@ describe('selected DEX private balance display', () => {
     f.render();
     expect((await f.settle()).labels).toEqual([input,output].map(index=>index===0?'0.000001':'9007199254740993.000001'));
     expect(f.getFunds).toHaveBeenCalledWith(7082400n,{candidate:'cheap-history'});
+    expect(f.readSwap).toHaveBeenCalledWith([history.tokens[input][0], history.tokens[output][0]], expect.any(Function));
     expect(f.getSender).not.toHaveBeenCalled(); expect(f.legacyRead).not.toHaveBeenCalled();
   });
   it('selects current Core allowances and rejects an earlier candidate result', async () => {
@@ -177,10 +179,10 @@ describe('selected DEX private balance display', () => {
     });
 
   it('does not start the read after capability issuance when scope changed', async () => {
-    const f = fixture(), issued = deferred<{ read: typeof f.read }>();
+    const f = fixture(), issued = deferred<{ readSwap: typeof f.readSwap }>();
     f.getFunds.mockImplementationOnce(() => issued.promise); f.render();
     f.session.browserProvider = { request: vi.fn() }; f.render(false);
-    issued.resolve({ read: f.read }); await Promise.resolve(); await Promise.resolve();
+    issued.resolve({ readSwap: f.readSwap }); await Promise.resolve(); await Promise.resolve();
     expect(f.read).not.toHaveBeenCalled();
   });
 

@@ -85,7 +85,7 @@ describe('retained native Pool recovery session cache', () => {
     expect(f.next.recoverPendingPoolAttempt).toHaveBeenCalledTimes(phase === 'pool-preview' ? 1 : 0);
     expect(f.next.recoverPendingCurrentTokenFunding).toHaveBeenCalledTimes(phase === 'token-approve' ? 1 : 0);
     expect(f.records.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(before); expect(f.writes).not.toHaveBeenCalled();
-    expect(f.button('Review deposit').props.disabled).toBe(true); expect(f.button('Check Pool status').props.disabled).toBe(false);
+    expect(f.button('Preview deposit').props.disabled).toBe(true); expect(f.button('Check Pool status').props.disabled).toBe(false);
   });
   it('keeps current-session private pending recovery ahead of metadata', async () => {
     const f = fixture(), recover = vi.fn(async () => ({ positionId: 19n }));

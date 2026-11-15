@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   RECURRING_OTC_CONTRACT_ADDRESS,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
   type TradeSnapshot
 } from './appShared';
+import { CURRENT_P2P_BINDING } from './currentP2PBinding';
 import {
   getNormalizedOfferAssetKey,
   listNormalizedOffersForPair,
@@ -19,6 +17,9 @@ import {
   type OtcSwapInputMode
 } from './otcSwapQuote';
 import { ZERO_TRADE_TAKER_ADDRESS } from './tradePerspective';
+const TRADE_ESCROW_CONTRACT_ADDRESS = CURRENT_P2P_BINDING.deployments['standard-v2'].contractAddress;
+const PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS = CURRENT_P2P_BINDING.deployments['private-v2'].contractAddress;
+const DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS = CURRENT_P2P_BINDING.deployments['direct-v2'].contractAddress;
 
 const asset = (
   symbol: string,
@@ -37,6 +38,9 @@ const trade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot =>
   ({
     tradeId: 7,
     escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+    v2: { protocol: overrides.escrowContract === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS ? 'private-v2'
+      : overrides.escrowContract === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS ? 'direct-v2' : 'standard-v2',
+      chainId: CURRENT_P2P_BINDING.chainId, contractAddress: overrides.escrowContract ?? TRADE_ESCROW_CONTRACT_ADDRESS },
     maker: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     taker: ZERO_TRADE_TAKER_ADDRESS,
     offer: asset('WISP', '100000000'),

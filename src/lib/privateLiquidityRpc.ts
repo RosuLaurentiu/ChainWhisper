@@ -3,7 +3,7 @@ import { COTI_NETWORK, loadCotiHttpProvider } from './appShared/core';
 
 const READ_ONLY_RPC_METHODS = new Set([
   'eth_blockNumber', 'eth_call', 'eth_chainId', 'eth_getBlockByNumber',
-  'eth_getCode', 'eth_getLogs', 'eth_getTransactionReceipt'
+  'eth_getCode', 'eth_getLogs', 'eth_getTransactionReceipt', 'eth_getProof'
 ]);
 
 export type PrivateLiquidityHttpProvider = Pick<Eip1193Provider, 'request'>;

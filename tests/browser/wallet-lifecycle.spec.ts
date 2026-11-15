@@ -12,6 +12,7 @@ type WalletHarnessControl = {
   clearTrace: () => void;
   emit: (eventName: string) => void;
   gateNextAccounts: () => void;
+  markCipherTradeWalletConnect: () => void;
   releaseAccounts: () => void;
   setAccount: (account: string) => void;
   setChainId: (chainId: string) => void;
@@ -115,6 +116,9 @@ const installWalletHarnessProvider = async (page: Page) => {
         for (const handler of listeners.get(eventName) ?? []) handler();
       },
       gateNextAccounts: () => { gateAccounts = true; },
+      markCipherTradeWalletConnect: () => {
+        Object.assign(provider, { isMetaMask: false, __chainWhisperCipherTradeWalletConnect: true });
+      },
       releaseAccounts: () => {
         const release = releaseAccounts;
         releaseAccounts = null;
@@ -139,6 +143,7 @@ const control = (
     | 'clear-trace'
     | 'emit'
     | 'gate-next-accounts'
+    | 'mark-ciphertrade-walletconnect'
     | 'release-accounts'
     | 'set-account'
     | 'set-chain-id'
@@ -153,6 +158,7 @@ const control = (
   else if (selected === 'clear-trace') harness.clearTrace();
   else if (selected === 'emit') harness.emit(argument);
   else if (selected === 'gate-next-accounts') harness.gateNextAccounts();
+  else if (selected === 'mark-ciphertrade-walletconnect') harness.markCipherTradeWalletConnect();
   else if (selected === 'release-accounts') harness.releaseAccounts();
   else if (selected === 'set-account') harness.setAccount(argument);
   else if (selected === 'set-chain-id') harness.setChainId(argument);
@@ -169,7 +175,45 @@ const connectAndCapture = async (page: Page) => {
 };
 
 test.describe('mounted owner-wallet lifecycle', () => {
-  test.beforeEach(async ({ page }) => installWalletHarnessProvider(page));
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/*', (route) => {
+      const url = new URL(route.request().url());
+      return url.hostname === '127.0.0.1' || url.hostname === 'localhost'
+        ? route.continue() : route.abort();
+    });
+    await installWalletHarnessProvider(page);
+  });
+
+  test('clears a pending activation and revokes its lease on destructive disconnect', async ({ page }) => {
+    await connectAndCapture(page);
+    await control(page, 'mark-ciphertrade-walletconnect');
+    await control(page, 'clear-trace');
+    await control(page, 'gate-next-accounts');
+    await page.getByRole('button', { name: 'Activate same wallet' }).click();
+    await expect.poll(() => page.evaluate(() =>
+      (window as unknown as { __walletHarnessControl: WalletHarnessControl })
+        .__walletHarnessControl.trace.includes('eth_accounts:gated')
+    )).toBe(true);
+    await expect(page.getByTestId('connecting-method')).toHaveText('metamask');
+    await expect(page.getByTestId('connecting-label')).not.toHaveText('');
+
+    await control(page, 'emit', 'disconnect');
+    await expect(page.getByTestId('connecting-method')).toHaveText('');
+    await expect(page.getByTestId('connecting-label')).toHaveText('');
+    await expect(page.getByTestId('wallet-address')).toHaveText('');
+    await expect(page.getByTestId('session')).toHaveText('');
+    await expect(page.getByTestId('status')).toHaveText('Disconnected');
+    await control(page, 'release-accounts');
+    await expect(page.getByTestId('action')).toHaveText('activate:ok');
+    await expect(page.getByTestId('wallet-address')).toHaveText('');
+    await expect(page.getByTestId('session')).toHaveText('');
+    await page.getByRole('button', { name: 'Guarded send' }).click();
+    await expect(page.getByTestId('action')).toHaveText('send:failed');
+    expect(await page.evaluate(() =>
+      (window as unknown as { __walletHarnessControl: WalletHarnessControl })
+        .__walletHarnessControl.trace.filter((entry) => entry === 'eth_sendTransaction')
+    )).toEqual([]);
+  });
 
   test('retires an old lease after explicitly selecting a distinct provider and admits only a fresh lease', async ({ page }) => {
     await connectAndCapture(page);

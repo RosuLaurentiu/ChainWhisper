@@ -146,19 +146,21 @@ export default function QuickActionsModal({
               onCreateGroup().catch(() => {});
             }}
           >
-            <input
+            <label className="quick-actions-field">{newGroupIsPrivate ? 'Public label' : 'Group title'}<input
               value={newGroupIsPrivate ? GROUP_PRIVATE_TITLE_LABEL : newGroupTitle}
               onChange={(event) => onNewGroupTitleChange(event.target.value)}
               placeholder={newGroupIsPrivate ? GROUP_PRIVATE_TITLE_LABEL : 'Group title'}
               aria-label={newGroupIsPrivate ? 'Private group public label' : 'Group title'}
               disabled={newGroupIsPrivate}
-            />
-            <input
+            /></label>
+            <label className="quick-actions-field">Initial members<input
               value={newGroupMembersInput}
               onChange={(event) => onNewGroupMembersInputChange(event.target.value)}
-              placeholder="Initial members (comma/space separated)"
-              aria-label="Initial group members"
-            />
+              placeholder="0x…"
+              aria-label="Initial members"
+              aria-describedby="initial-group-members-help"
+            /></label>
+            <small id="initial-group-members-help">Separate wallet addresses with commas or spaces.</small>
             <label className="quick-actions-checkbox-row">
               <input
                 type="checkbox"

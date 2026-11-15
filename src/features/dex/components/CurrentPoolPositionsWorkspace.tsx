@@ -1,4 +1,7 @@
-import { useRef, useState } from 'react';
+import { formatCurrentDexAveragePrice } from '../../../lib/currentDexPriceImpact';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { logMobileWalletDiagnostic } from '../../../lib/mobileWalletDiagnostics';
+import { getProviderErrorMessage, isProviderActionRejected } from '../../../lib/appShared/core';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
 import { resolveCurrentCheapDexCandidate, STAGED_NATIVE_DEX_CANDIDATE, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
@@ -7,6 +10,7 @@ import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
 import type { issueCurrentDexPoolPositionCapability } from '../../wallet/currentDexPoolPositionCapability';
 import type { CurrentPoolOwnerAction } from '../../../lib/currentDexPoolPosition';
 import { assertCurrentPoolPositionNativeAdmission } from '../../../lib/currentDexPoolPositionSubmission';
+import { usesPackedPoolInputs } from '../../../lib/currentDexPoolFunding';
 import { assertCurrentAppPoolAuthority } from '../../../lib/currentDexC1SwapPolicy';
 import { parseCurrentTrialAtoms, parseCurrentTrialPriceLimit, CURRENT_POOL_SPREADS } from './CurrentPoolWorkspace';
 import { CURRENT_DEX_POOL_LABELS, formatCurrentDexTokenAmount, parseCurrentDexTokenAmount, hasCurrentDexPendingAction, readCurrentDexDisplay, formatDexCandidateTokenAmount, parseDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
@@ -15,6 +19,9 @@ import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionC
 import './CurrentPoolPositionsWorkspace.css';
 import CurrentPreparedPoolTopUpWorkspace from './CurrentPreparedPoolTopUpWorkspace';
 import CurrentOwnedPoolPositions from './CurrentOwnedPoolPositions';
+import { currentPoolVerificationMessage } from '../../../lib/currentDexPoolProofError';
+import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../../lib/currentDexLimitInputCandidate';
+import { currentDexPendingStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 type Capability=Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
 type Sender=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexSubmissionCapability']>>>;
 type PositionResult=Awaited<ReturnType<Awaited<ReturnType<Sender['submitPoolPositionAction']>>['recover']>>;
@@ -28,7 +35,7 @@ export const currentPoolWithdrawalFraction=(percentage:string):readonly [bigint,
   while(b!==0n)[a,b]=[b,a%b];n/=a;d/=a;
   if(d>=1n<<128n)throw new Error('Withdrawal percentage is outside the supported range.');return[n,d];
 };
-export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candidateKey='cheap-current',visible=true}:{sharedWalletSession?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;visible?:boolean}){
+export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candidateKey='cheap-current',visible=true,managementNavigation,selectedPair,priceDisplayInverted=false}:{selectedPair?:readonly[string,string];priceDisplayInverted?:boolean;sharedWalletSession?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;visible?:boolean;managementNavigation?:ReactNode}){
   const preparedScope=candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidateKey):null;
   const candidate=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),nativeTrial=candidate.graph===STAGED_NATIVE_DEX_CANDIDATE.graph;
   const preparedCandidate=preparedScope!==null,signedSnapshot=nativeTrial||preparedCandidate;
@@ -38,7 +45,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const [busy,setBusy]=useState(false),[blocked,setBlocked]=useState(false),[message,setStoredMessage]=useState('');
   const messageScope=useRef<object|null>(null);
   const [snapshot,setSnapshot]=useState<{value:Snapshot;scope:object}|null>(null);
-  const [pending,setPending]=useState<{recover:()=>Promise<PositionResult>;scope:object}|null>(null);
+  const [pending,setPending]=useState<{recover:()=>Promise<PositionResult>;scope:object;snapshot?:boolean}|null>(null);
   const [transactionHash,setTransactionHash]=useState('');
   const [producerHash,setProducerHash]=useState('');
   const [topUpManagement,setTopUpManagement]=useState<{scope:object;id:string;managed:boolean}|null>(null);
@@ -52,20 +59,37 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     privacyReady,onboard:sharedWalletSession?.sessionOnboardInfo,health:sharedWalletSession?.walletAesHealthByAddress};
   const scope=useRef(context);
   const inFlight=useRef(false);
-  if((Object.keys(context)as(keyof typeof context)[]).some(key=>context[key]!==scope.current[key]))scope.current=context;
+  const changedScopeFields=(Object.keys(context)as(keyof typeof context)[]).filter(key=>context[key]!==scope.current[key]);
+  if(changedScopeFields.length){
+    logMobileWalletDiagnostic('pool-position-scope-invalidated',{phase:'render',fields:changedScopeFields,selected:Boolean(id)});
+    scope.current=context;
+  }
+  useEffect(()=>{
+    logMobileWalletDiagnostic('pool-positions-mounted');
+    return()=>logMobileWalletDiagnostic('pool-positions-unmounted');
+  },[]);
+  useEffect(()=>{logMobileWalletDiagnostic('pool-position-selection',{selected:Boolean(id)});},[id]);
   const {confirmation,requestConfirmation,resolveConfirmation}=useTradeActionConfirmationState(scope.current);
   const setMessage=(text:string)=>{messageScope.current=scope.current;setStoredMessage(text);};
   const current=snapshot?.scope===scope.current&&snapshot.value.positionId.toString()===id;
   const connected=Boolean(context.owner&&context.chain===Number(candidate.chainId)&&getPositions&&getSender&&context.provider);
   const savedActionPending=hasCurrentDexPendingAction();
   const topUpOpen=topUpManagement?.scope===scope.current&&topUpManagement.id===id;
+  const independentRefresh=(()=>{try{
+    const storage=currentDexPendingStorage();
+    return candidateKey==='cheap-history'&&current&&snapshot.value.status===1n&&
+      storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null&&
+      heldPoolSnapshotRefreshEligible(readCurrentDexPendingAttempt(storage),{chainId:String(candidate.chainId),owner:context.owner??'',core:candidate.core,
+        graph:`0x${candidate.graph}`});
+  }catch{return false;}})();
   const assertScope=(captured:object)=>{if(captured!==scope.current)throw new Error('Position owner or wallet session changed. Refresh this position.');};
   const actionTerms=useRef('');actionTerms.current=[id,percentage,minimum0,minimum1,recipient,producerHash].join(':');
   const fail=(error:unknown,captured:object)=>setMessage(captured!==scope.current
     ?'Position owner or wallet session changed. Refresh this position.'
-    :error instanceof Error?error.message:'Position action failed. Check its status before another request.');
+    :isProviderActionRejected(error)?'The wallet request was rejected.'
+    :getProviderErrorMessage(error,'Position action failed. Check its status before another request.'));
   const read=async(selectedId?:bigint)=>{
-    if(!connected||inFlight.current||busy||blocked||topUpOpen)return;inFlight.current = true; setBusy(true);setSnapshot(null);const captured=scope.current;
+    if(!connected||inFlight.current||busy||topUpOpen)return;inFlight.current = true; setBusy(true);setSnapshot(null);const captured=scope.current;
     try{
       const capability=preparedCandidate?await getPositions!(BigInt(candidate.chainId),{candidate:preparedScope!.key}):await getPositions!(BigInt(candidate.chainId));assertScope(captured);
       const value=await capability.readPosition(selectedId??parseCurrentTrialAtoms(id,true),selectedId?undefined:
@@ -76,7 +100,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     }catch(error){fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
   };
   const produceSnapshot=async()=>{
-    if(!signedSnapshot||!connected||inFlight.current||busy||blocked||savedActionPending||topUpOpen)return;
+    if(!signedSnapshot||!connected||inFlight.current||busy||(blocked||savedActionPending)&&!independentRefresh||topUpOpen)return;
     const captured=scope.current,terms=actionTerms.current;inFlight.current = true; setBusy(true);
     try{
       if(preparedCandidate){assertCurrentPoolPositionNativeAdmission(candidate,'snapshot',snapshot?.value.status===4n);
@@ -87,16 +111,34 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
         const accepted=await requestConfirmation({title:review.closed?'Verify closed liquidity claim':'Refresh private liquidity claim',primaryLabel:'Continue',fundingMoves:[],
           summaryRows:[{label:'Position NFT',value:review.positionId.toString()},{label:'Maximum network fee',value:`${formatCurrentDexTokenAmount(review.gasCap*50_000_000n)} Test COTI`}],
           stats:[],message:review.closed?'This paid snapshot verifies the exact payouts and zero remaining shares. It does not close or pay the claim again.':
-            'This paid snapshot updates your private claim. It does not move token funds.'});
+            independentRefresh?'This is a new paid refresh. The old failed check and its saved record stay unchanged. Spending actions remain locked. It does not move token funds.':'This paid snapshot updates your private claim. It does not move token funds.'});
         assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed during review.');return accepted;
       }});
       assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed.');
       if(!prepared){setMessage('Private snapshot cancelled.');return;}
       const sender=await getSender!(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE});assertScope(captured);setBlocked(true);
-      const sent=await sender.submitPoolPositionAction(prepared);
-      setPending({recover:sent.recover,scope:captured});setTransactionHash(sent.transactionHash);
-      setMessage('Private snapshot submitted. Check its authenticated result.');
+      const sent=independentRefresh?await sender.submitPoolPositionAction(prepared,undefined,{refreshHeldSnapshot:true}):await sender.submitPoolPositionAction(prepared);assertScope(captured);
+      setPending({recover:sent.recover,scope:captured,snapshot:true});setTransactionHash(sent.transactionHash);
+      assertScope(captured);setMessage('Private snapshot submitted. Checking its authenticated result.');
+      const confirmed=await sender.waitForCurrentCheapReceipt(sent.transactionHash);assertScope(captured);
+      if(!confirmed){setMessage('Private snapshot confirmation is pending. Check position status before another action.');return;}
+      const result=await sent.recover();assertScope(captured);
+      if(!result)throw new Error('Private snapshot result is not available yet. Check position status before another action.');
+      acceptPrivateResult(result,captured);
+      if(independentRefresh)setMessage('Fresh private claim verified. The old verification hold remains; spending actions stay locked.');
     }catch(error){fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
+  };
+  const restoreWithdrawal=async()=>{
+    if(!exitCandidate||!connected||inFlight.current||busy||blocked||savedActionPending||!current||!snapshot||topUpOpen)return;
+    const captured=scope.current,terms=actionTerms.current,before=snapshot.value;inFlight.current=true;setBusy(true);setExitPreview(null);
+    try{
+      const fraction=currentPoolWithdrawalFraction(percentage);
+      const capability=await getPositions!(BigInt(candidate.chainId),{candidate:preparedScope!.key});assertScope(captured);
+      const result=await capability.restoreExitPreview({positionId:before.positionId,expectedContext:before.context,fraction,
+        ...(producerHash.trim()?{producerHash:producerHash.trim()}:{} )});
+      assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed. Restore the preview again.');
+      if(!acceptPrivateResult(result,captured))setMessage('No completed withdrawal preview was found for this position.');
+    }catch(error){fail(error,captured);}finally{inFlight.current=false;setBusy(false);}
   };
   const previewWithdrawal=async()=>{
     if(!exitCandidate||!connected||inFlight.current||busy||blocked||savedActionPending||!current||!snapshot||topUpOpen)return;
@@ -112,9 +154,12 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
           const accepted=await requestConfirmation({title:'Preview partial liquidity withdrawal',primaryLabel:'Continue',fundingMoves:[],
             summaryRows:[{label:'Position NFT',value:before.positionId.toString()},
               {label:'Share fraction',value:`${review.fraction[0]}/${review.fraction[1]}`},
+              {label:'Private-input signatures for preview',value:String(usesPackedPoolInputs(candidate)?1:2)},
               {label:'Maximum network fee',value:`${formatCurrentDexTokenAmount(review.gasCap*50_000_000n)} Test COTI`}],stats:[],
             message:'This paid preview gives your private payouts and remaining shares. It does not withdraw tokens. Review withdrawal separately after checking its result.'});
-          assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed during review.');return accepted;
+          assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed during review.');
+          if(accepted)setMessage(`Complete ${usesPackedPoolInputs(candidate)?1:2} private-input signatures for this preview. The transaction request follows separately.`);
+          return accepted;
         }});
       assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed.');
       if(!prepared){setMessage('Private withdrawal preview cancelled.');return;}
@@ -149,7 +194,9 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
             summaryRows:[{label:'Position NFT',value:before.positionId.toString()},{label:'Action',value:action},
               ...(review.recipient?[{label:'Recipient',value:review.recipient}]:[]),
               ...(review.fraction?[{label:'Share fraction',value:`${review.fraction[0]}/${review.fraction[1]}`}]:[]),
-              ...(review.minimums?[{label:`${labels[0]} minimum payout`,value:format(review.minimums[0],0)},{label:`${labels[1]} minimum payout`,value:format(review.minimums[1],1)}]:[])],
+              ...(review.minimums?[{label:`${labels[0]} minimum payout`,value:format(review.minimums[0],0)},{label:`${labels[1]} minimum payout`,value:format(review.minimums[1],1)}]:[]),
+              ...(exitCandidate&&action==='withdraw'?[{label:'Private-input signatures for withdrawal',value:'2; the previewed fraction is reused'},
+                {label:'Withdrawal and remaining-share snapshot',value:'2 transactions; network fees apply'}]:[])],
             stats:[],message:action==='transfer'?'The recipient receives this claim, not a token payout. The recipient must activate privacy.':
               action==='close'?`Close returns only this claim and burns its NFT. Both minimum payouts apply.${preparedCandidate?' A separate paid snapshot verifies the final private claim.':''}`:
                 exitCandidate&&action==='withdraw'?'Withdraw the exact previewed share fraction. Both minimum payouts apply. A separate paid snapshot verifies remaining shares.':'This is one owner transaction. Network gas can apply.'});
@@ -180,6 +227,9 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     }
     if(result.action==='snapshot'){
       setProducerHash(result.producerHash);
+      if(readCurrentDexPendingAttempt(currentDexPendingStorage())?.verificationBlocked){
+        setMessage('Fresh private claim verified. The old verification hold remains; spending actions stay locked.');return true;
+      }
       setMessage(result.status==='closed-proof-verified'?'Close complete: exact private payouts and zero remaining shares verified.':
         result.status==='closed-snapshot-verified'?'Closed owner snapshot verified. This session has no independent verification of the original payout.':
         exitCandidate&&'privateAccountingVerified' in result&&result.privateAccountingVerified?'Withdrawal complete: exact private payouts and remaining shares verified.':
@@ -198,17 +248,39 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const refresh=async()=>{
     if(!getSender||inFlight.current||busy||topUpOpen||context.chain!==Number(candidate.chainId))return;inFlight.current = true; setBusy(true);const captured=scope.current;
     try{
-      if(pending&&pending.scope===scope.current){
-        try{const result=await pending.recover();
-          if(!result)throw new Error('Private position result is not available yet.');
-          acceptPrivateResult(result,pending.scope);return;
-        }catch{/* Canonical public recovery grants no private result or action authority. */}
+      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage());
+      if(saved?.txHash)setTransactionHash(saved.txHash);
+      const snapshotHeld=saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&currentDexPendingStorage()?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null;
+      if(!snapshotHeld&&pending&&pending.scope===scope.current){
+        const result=await pending.recover();
+        if(!result)throw new Error('Private position result is not available yet.');
+        acceptPrivateResult(result,pending.scope);return;
       }
       const sender=await getSender(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:nativeTrial?{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE}:undefined);assertScope(captured);
-      if(preparedCandidate){const result=await sender.recoverCurrentPreparedPoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
-      if(nativeTrial){const result=await sender.recoverCurrentNativePoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
-      const observed=await sender.recoverPendingPoolPositionAttempt();assertScope(captured);
+      if(!snapshotHeld&&preparedCandidate){const result=await sender.recoverCurrentPreparedPoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
+      if(!snapshotHeld&&nativeTrial){const result=await sender.recoverCurrentNativePoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
+      const verifySnapshot=privacyReady&&getPositions&&candidate.graph===STAGED_LIMIT_INPUT_DEX_CANDIDATE.graph?
+        async(positionId:bigint,hash:string)=>{assertScope(captured);setTransactionHash(hash);
+          const capability=await getPositions(BigInt(candidate.chainId),{candidate:candidateKey});assertScope(captured);
+          const latestHash=current&&snapshot.value.positionId===positionId?producerHash.trim():'';
+          const result=latestHash&&latestHash.toLowerCase()!==hash.toLowerCase()
+            ?await capability.verifySupersededPlainSnapshot(positionId,hash,latestHash):await capability.verifyPlainSnapshot(positionId,hash);
+          assertScope(captured);return result;}:undefined;
+      const observed=await sender.recoverPendingPoolPositionAttempt(verifySnapshot);assertScope(captured);
+      if(observed?.status==='superseded-snapshot-recovery-only'){
+        setTransactionHash(observed.transactionHash);setPending(null);setSnapshot(null);setExitPreview(null);setProducerHash(observed.latestSnapshotHash);
+        const held=hasCurrentDexPendingAction();setBlocked(held);
+        setMessage(held?'Saved snapshot verified for recovery only. Another saved hold remains. No prior amounts or accounting were reconstructed.':
+          'Saved snapshot hold cleared with the later verified snapshot. No prior amounts or accounting were reconstructed. Load the position before another action.');return;
+      }
+      if(observed&&'action'in observed){if(acceptPrivateResult(observed,captured))return;}
       if(!observed){setBlocked(false);setMessage('No pending position attempt was found.');return;}
+      if('transactionHash' in observed&&observed.transactionHash)setTransactionHash(observed.transactionHash);
+      if(observed.status==='observed-mined-verification-held'||observed.status==='observed-reverted-verification-held'){
+        setBlocked(true);
+        if(observed.independentRefresh){setMessage('The new refresh needs private verification. Both saved records remain. Do not resend or request another refresh.');return;}
+setMessage(`Position transaction ${observed.status==='observed-mined-verification-held'?'mined':'reverted'}, but verification remains on hold. ${observed.poolTopUpHash&&!observed.verificationFailure?'Final top-up accounting has not completed.':currentPoolVerificationMessage(observed.verificationFailure)} Keep the saved record. Do not resend.`);return;
+      }
       if(observed.status==='observed-mined'||observed.status==='observed-reverted'){
         setBlocked(false);setPending(null);setSnapshot(null);setMessage(observed.status==='observed-reverted'?'Position transaction reverted. Refresh before another action.':
           'Position transaction mined. No private payout is confirmed in this session. Refresh the owner claim.');
@@ -222,27 +294,42 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const tokens=preparedCandidate&&value&&'poolTokens'in value?value.poolTokens as readonly string[]:null;
   const labels=tokens?tokens.map(token=>readCurrentDexDisplay(candidate).tokens.find(item=>item.address===token)?.label??'Unknown token'):CURRENT_DEX_POOL_LABELS;
   const format=(amount:bigint,index:number)=>tokens?formatDexCandidateTokenAmount(candidate,tokens[index],amount):formatCurrentDexTokenAmount(amount);
+  const token0=tokens&&readCurrentDexDisplay(candidate).tokens.find(item=>item.address===tokens[0]);
+  const token1=tokens&&readCurrentDexDisplay(candidate).tokens.find(item=>item.address===tokens[1]);
+  const baseLabel=selectedPair&&selectedPair.every(label=>labels.includes(label))?selectedPair[priceDisplayInverted?1:0]:labels[priceDisplayInverted?1:0];
+  const baseIndex=labels.indexOf(baseLabel)===1?1:0;
+  const rate=value?.amounts&&tokens&&token0&&token1&&value.status!==4n&&value.amounts.shares>0n&&value.amounts.amount0>0n&&value.amounts.amount1>0n?
+    formatCurrentDexAveragePrice({baseAmount:(baseIndex===0?value.amounts.amount0:value.amounts.amount1)*10n**BigInt(baseIndex===0?token1.decimals:token0.decimals),
+      quoteAmount:(baseIndex===0?value.amounts.amount1:value.amounts.amount0)*10n**BigInt(baseIndex===0?token0.decimals:token1.decimals),baseToken:labels[baseIndex],quoteToken:labels[1-baseIndex]}):null;
   return <section className="dex-v2-test-form dex-v2-current-pool-positions dex-owner-workspace" aria-busy={busy} aria-label="Current liquidity NFT positions">
-    <header className="dex-owner-heading"><div><h2>Your positions</h2></div>{!ownedDiscovery?<p>Load a position by NFT ID.</p>:null}</header>
+    <div className="dex-owner-split"><section className="dex-owner-index" aria-label="Position list">
+    {!managementNavigation?<header className="dex-owner-heading"><h2>Your positions</h2><p>Select a position to view and manage it.</p></header>:null}
     {!connected&&!ownedDiscovery?<p>Connect the owner wallet on COTI Testnet to see your positions.</p>:null}
-    {ownedDiscovery?<CurrentOwnedPoolPositions session={sharedWalletSession} candidateKey={candidateKey} visible={visible} refreshToken={ownedRefresh} selectedId={id} disabled={busy||blocked||topUpOpen||savedActionPending}
+    {ownedDiscovery?<CurrentOwnedPoolPositions managementNavigation={managementNavigation} session={sharedWalletSession} candidateKey={candidateKey} visible={visible} refreshToken={ownedRefresh} selectedId={id} disabled={busy||topUpOpen}
       onSelect={positionId=>{setId(positionId.toString());setProducerHash('');setSnapshot(null);setExitPreview(null);void read(positionId);}}/>:null}
-    <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Manual position lookup</summary><label>Position NFT ID<input aria-label="Liquidity NFT ID" inputMode="numeric" value={id} disabled={busy||blocked||topUpOpen} onChange={event=>setId(event.target.value)}/></label>
-      {signedSnapshot?<label>Verified funding or snapshot transaction (optional)<input aria-label="Liquidity snapshot transaction" value={producerHash} disabled={busy||blocked||topUpOpen} onChange={event=>setProducerHash(event.target.value)}/></label>:null}
-      <button type="button" disabled={!connected||busy||blocked||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
+    <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Manual position lookup</summary><label>Position NFT ID<input aria-label="Liquidity NFT ID" inputMode="numeric" value={id} disabled={busy||topUpOpen} onChange={event=>setId(event.target.value)}/></label>
+      {signedSnapshot?<label>Verified funding or snapshot transaction (optional)<input aria-label="Liquidity snapshot transaction" value={producerHash} disabled={busy||topUpOpen} onChange={event=>setProducerHash(event.target.value)}/></label>:null}
+      <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
+    </section><section className="dex-owner-detail" aria-label="Position details">
+    <header className="dex-owner-heading"><h2>{managementNavigation&&id?`Position #${id}`:'Position details'}</h2></header>
+    {blocked||savedActionPending?<p role="note">{independentRefresh?'The old verification hold remains. You may review a new paid private refresh; spending actions stay locked. The old transaction will not be resent.':'A transaction is pending or needs verification. Viewing does not complete transaction verification. Actions remain locked. Do not resend.'}</p>:null}
+    {!id?<p className="dex-owner-selection-empty">Select a position to see its details.</p>:null}
     {signedSnapshot&&(!ownedDiscovery||id)?<>{!ownedDiscovery?<p>{preparedCandidate?'Use an owned claim NFT and its confirmed funding or snapshot transaction. Private reads require its current owner proof.':'Use the new NFT ID from Add liquidity. Only that admitted claim can refresh or exit in this trial.'}</p>:null}
-      <button type="button" disabled={!connected||busy||blocked||savedActionPending||topUpOpen||!id||(current&&(snapshot?.value.status===3n||snapshot?.value.status===4n&&!!snapshot.value.amounts))} onClick={()=>{void produceSnapshot();}}>
-        {current&&snapshot?.value.status===4n?'Review closed-claim verification':exitCandidate&&current&&snapshot?.value.status===1n&&!snapshot.value.amounts?'Review remaining-share verification':'Review paid private refresh'}</button></>:null}
+      <button type="button" disabled={!connected||busy||(blocked||savedActionPending)&&!independentRefresh||topUpOpen||!id||(current&&(snapshot?.value.status===3n||snapshot?.value.status===4n&&!!snapshot.value.amounts))} onClick={()=>{void produceSnapshot();}}>
+        {current&&snapshot?.value.status===4n?'Review closed-claim verification':exitCandidate&&current&&snapshot?.value.status===1n&&!snapshot.value.amounts?'Review private amount verification':'Review paid private refresh'}</button></>:null}
     {value&&!topUpOpen?<aside className="dex-v2-strategy-preview dex-owner-summary" aria-label="Owner private liquidity claim"><header><h2>Position #{value.positionId.toString()}</h2></header>
-      <dl><div><dt>Status</dt><dd>{['None','Active','Paused','Awaiting privacy activation','Closed'][Number(value.status)]}</dd></div>
+      <dl>{tokens?<div><dt>Token pair</dt><dd>{labels[0]} / {labels[1]}</dd></div>:null}
+        <div><dt>Status</dt><dd>{['None','Active','Paused','Awaiting privacy activation','Closed'][Number(value.status)]}</dd></div>
         {value.amounts?<><div><dt>Pool spread</dt><dd>{CURRENT_POOL_SPREADS[Number(value.amounts.classId)]}%</dd></div>
+          <div><dt>Private shares</dt><dd>{value.amounts.shares.toString()}</dd></div>
           <div><dt>{labels[0]} {value.status===4n?'paid out':'entitlement'}</dt><dd>{format(value.amounts.amount0,0)}</dd></div><div><dt>{labels[1]} {value.status===4n?'paid out':'entitlement'}</dt><dd>{format(value.amounts.amount1,1)}</dd></div>
-          </>:null}</dl>{value.amounts?<details className="dex-owner-footer"><summary>Position details</summary><p>Private shares: {value.amounts.shares.toString()}</p></details>:null}</aside>:null}
+          {rate!==null?<div><dt>Approximate Pool rate (snapshot)</dt><dd>{rate}</dd></div>:null}
+          </>:null}</dl>{rate!==null?<p>Derived from your private entitlements at the last verified snapshot. Integer rounding can affect this rate. It excludes spread, fees and price impact and is not a live quote.</p>:null}{!value.amounts?<p>Private amounts are unavailable. {pending?.scope===scope.current&&pending.snapshot?'The submitted snapshot is pending verification. Do not request another.':value.status===3n?'Activate claim privacy to continue.':'Review a paid private refresh to verify them.'}</p>:null}</aside>:null}
     {value&&preparedCandidate&&!exitCandidate?<p>{
       'Partial withdrawal and transfer integration is incomplete.'} Close and top-up require exact accounting checks and a separate paid snapshot.</p>:null}
     {value&&preparedCandidate&&value.status===1n&&value.amounts&&producerHash&&value.poolTokens&&sharedWalletSession?<details className="dex-owner-action" name="pool-owner-actions" open={topUpOpen||undefined}><summary>Add liquidity</summary><CurrentPreparedPoolTopUpWorkspace
       session={sharedWalletSession} candidateKey={preparedScope!.key} position={{positionId:value.positionId,context:value.context,producerHash,poolTokens:value.poolTokens,block:value.block}}
-      disabled={busy||blocked||savedActionPending}
+      disabled={busy||blocked||savedActionPending&&!topUpOpen}
       onBegin={()=>setTopUpManagement({scope:scope.current,id,managed:false})}
       onReleased={()=>setTopUpManagement(null)}
       onManaged={()=>setTopUpManagement({scope:scope.current,id,managed:true})}
@@ -260,7 +347,9 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       <label>{labels[1]}<input aria-label={preparedCandidate?`${labels[1]} minimum payout`:'Test token 0 minimum payout'} inputMode="decimal" value={minimum1} disabled={busy||blocked} onChange={event=>setMinimum1(event.target.value)}/></label>
     </div></details>
     <p>Minimum payouts protect both tokens. A 100% withdrawal uses Close. Changing spread requires Close and a new deposit.</p>
-    {exitCandidate?<><button type="button" disabled={!connected||busy||blocked||value.status!==1n||!value.amounts||value.amounts.shares===0n} onClick={()=>{void previewWithdrawal();}}>Review private withdrawal preview</button>
+    {exitCandidate?<><button type="button" disabled={!connected||busy||blocked||value.status!==1n||!value.amounts||value.amounts.shares===0n} onClick={()=>{void restoreWithdrawal();}}>Restore completed withdrawal preview</button>
+      <p>Restore checks the latest completed preview for the selected percentage. It needs no signature or transaction.</p>
+      <button type="button" disabled={!connected||busy||blocked||value.status!==1n||!value.amounts||value.amounts.shares===0n} onClick={()=>{void previewWithdrawal();}}>Review private withdrawal preview</button>
       {validExitPreview&&exitPreview?<aside aria-label="Private withdrawal preview"><dl>
         <div><dt>{labels[0]} payout</dt><dd>{format(exitPreview.value.preview.amount0,0)}</dd></div>
         <div><dt>{labels[1]} payout</dt><dd>{format(exitPreview.value.preview.amount1,1)}</dd></div>
@@ -279,12 +368,13 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     {value?.status===2n?<button type="button" disabled={!connected||busy||blocked} onClick={()=>{void action('resume');}}>Resume liquidity claim</button>:null}</>:
       <p>Partial withdrawal, NFT transfer and activation are awaiting current-candidate validation.</p>}
     </fieldset> : null}
-    {busy?<p role="status" className="dex-owner-progress">Checking your position… If MetaMask opens, complete its request there. Keep this attempt open.</p>:null}
+    {busy?<p role="status" className="dex-owner-progress">{pending?'Checking the submitted position transaction and private result. No new request is being sent.':'Checking your position… If MetaMask opens, complete its request there. Keep this attempt open.'}</p>:null}
     {!busy?<p role="status" className="dex-owner-progress">{message&&messageScope.current===scope.current?(/another owner or adapter/.test(message)?'Another DEX action needs a status check. Open History for its recovery.':message):''}</p>:null}
-    <details className="dex-owner-footer" open={blocked||undefined}><summary>Status and recovery</summary>
+    <details className="dex-owner-footer" open={blocked||savedActionPending||!!pending||undefined}><summary>Status and recovery</summary>
     {connected ? <button type="button" disabled={!getSender||busy||topUpOpen||context.chain!==Number(candidate.chainId)} onClick={()=>{void refresh();}}>Check position status</button> : null}
     {message&&messageScope.current===scope.current&&/another owner or adapter/.test(message)?<p>{message}</p>:null}
     {transactionHash?<p style={{overflowWrap:'anywhere'}}>Transaction {transactionHash}</p>:null}
-    </details><TradeActionConfirmModal confirmation={confirmation} onCancel={()=>resolveConfirmation(false)} onConfirm={()=>resolveConfirmation(true)}/>
+    </details>    </section></div>
+    <TradeActionConfirmModal confirmation={confirmation} onCancel={()=>resolveConfirmation(false)} onConfirm={()=>resolveConfirmation(true)}/>
   </section>;
 }

@@ -150,6 +150,7 @@ export default function useOtcTradeHistoryV2Data(
       setVerifiedScopeKey('');
       setRows(EMPTY_ROWS);
       setLifecycleEvents(EMPTY_LIFECYCLE_EVENTS);
+      setError('');
       setHasMore(false);
     }
     if (!runtime || !runtime.isCurrent()) {
@@ -233,15 +234,19 @@ export default function useOtcTradeHistoryV2Data(
     activeScopeKey: normalizedDataScopeKey,
     verifiedScopeKey
   });
+  // A selected contract changes scope before the effect can start its read.
+  const scopeChanged = activeScopeKeyRef.current !== normalizedDataScopeKey;
+  const scopeReadPending = Boolean(normalizedDataScopeKey && scopeChanged && runtime?.isCurrent());
+  const historyLoading = loading || scopeReadPending;
 
   return {
     otcTradeHistoryV2Rows: displayVerifiedRows ? rows : EMPTY_ROWS,
     otcTradeHistoryV2LifecycleEvents: displayVerifiedRows
       ? lifecycleEvents
       : EMPTY_LIFECYCLE_EVENTS,
-    otcTradeHistoryV2Error: error,
-    loadingOtcTradeHistoryV2: loading,
-    initialOtcTradeHistoryV2Pending: enabled && loading && !displayVerifiedRows,
+    otcTradeHistoryV2Error: scopeChanged ? '' : error,
+    loadingOtcTradeHistoryV2: historyLoading,
+    initialOtcTradeHistoryV2Pending: enabled && historyLoading && !displayVerifiedRows,
     hasMoreOtcTradeHistoryV2: displayVerifiedRows && Boolean(runtime?.isCurrent()) && hasMore,
     completeOtcTradeHistoryV2: displayVerifiedRows && Boolean(runtime?.isCurrent()) && !hasMore && !loading && !error,
     loadOlderOtcTradeHistoryV2: loadOlder,

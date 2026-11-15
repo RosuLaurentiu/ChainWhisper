@@ -1,10 +1,14 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AbiCoder, Interface, toBeHex } from '@coti-io/coti-ethers';
 import { describe, expect, it } from 'vitest';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE as CURRENT_CHEAP_DEX_CANDIDATE } from './dexV2Deployment';
 import { CURRENT_POOL_FUNDING_ABI, checkCurrentPoolFundingValues, decodeCurrentPoolFundingEvent,
   encodeCurrentPoolCreation, encodeCurrentPoolFundingPreview, PREPARED_POOL_FUNDING_ABI,
-  encodePreparedPoolFundingPreview, encodePreparedPoolCreation, encodePreparedPoolTopUp, type PoolFundingInput } from './currentDexPoolFunding';
+  encodePreparedPoolFundingPreview, encodePreparedPoolCreation, encodePreparedPoolTopUp, packPoolInputPair, usesPackedPoolInputs, type PoolFundingInput } from './currentDexPoolFunding';
 
 const core = CURRENT_CHEAP_DEX_CANDIDATE.core, context = toBeHex(123n, 32);
 const abi = new Interface(CURRENT_POOL_FUNDING_ABI), signature = `0x${'11'.repeat(65)}`;
@@ -13,15 +17,56 @@ const wide = (n: bigint): PoolFundingInput => ({ ciphertext: { ciphertextHigh: n
 const inputs = [narrow(1n), wide(2n), wide(4n), ...Array.from({ length: 10 }, (_, i) => narrow(BigInt(i + 6)))];
 const expected = { budgets: [120n, 50n] as const, tolerance: [0n, 1n] as const, classId: 1n };
 const values = [1n, 100n, 50n, 20n, 0n, 100n, 100n, 0n, 1n, 1n];
+describe('packed Pool candidate funding codec', () => {
+  it('packs full uint128 lanes and selects only the exact packed graph', () => {
+    const max = (1n << 128n) - 1n;
+    for (const [high, low] of [[0n, max], [max, 0n], [max, max], [17n, 29n]]) {
+      const packed = packPoolInputPair(high, low);
+      expect(packed >> 128n).toBe(high); expect(packed & max).toBe(low);
+    }
+    expect(() => packPoolInputPair(max + 1n, 0n)).toThrow();
+    expect(() => packPoolInputPair(0n, -1n)).toThrow();
+    expect(usesPackedPoolInputs({ graph: 'd4564ccf9f449b00f25c980e26250163c3c27d4114cc8cedca7234d447603d59' })).toBe(true);
+    expect(usesPackedPoolInputs({ graph: 'cc7eb662c644c10bef875d2a72524095848a236155005a32377b10a7c0c13e44' })).toBe(false);
+  });
+  const market = toBeHex(77n, 32);
+  const packed = [narrow(1n), ...Array.from({ length: 7 }, (_, i) => wide(BigInt(2 + i * 2)))];
+  it('retains eight ordered ciphertexts through create preview and selector re-signing', () => {
+    const preview = encodePreparedPoolFundingPreview(market, 0n, packed, true);
+    const resigned = packed.map(input => ({ ...input, signature: `0x${'33'.repeat(65)}` }));
+    const created = encodePreparedPoolCreation(market, preview, context, resigned, true);
+    const current = new Interface(PREPARED_POOL_FUNDING_ABI);
+    expect(current.decodeFunctionData('createPoolPosition', created)[2]).toBe(
+      current.decodeFunctionData('previewPoolFunding', encodePreparedPoolFundingPreview(market, 0n, resigned, true))[2]);
+    expect(() => encodePreparedPoolCreation(market, preview, context, [packed[0], packed[2], packed[1], ...packed.slice(3)], true)).toThrow(/ciphertext/);
+    expect(() => encodePreparedPoolFundingPreview(market, 0n, packed)).toThrow(/count/);
+  });
+  it('retains two full-width budgets and one packed tolerance through top-up', () => {
+    const fields = [wide(1n), wide(3n), wide(5n)];
+    const preview = encodePreparedPoolFundingPreview(market, 27n, fields, true);
+    expect(encodePreparedPoolTopUp(market, 27n, preview, context, context, fields, true)).toMatch(/^0x/);
+    expect(() => encodePreparedPoolFundingPreview(market, 27n, [fields[0], fields[1], narrow(5n)], true)).toThrow(/limbs/);
+  });
+});
 const event = (id = 0n) => ({ address: core, ...abi.encodeEventLog(abi.getEvent('PoolFundingPreviewed')!,
   [id, context, Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]) });
 
 describe('current shared Pool owner funding codec', () => {
   it('matches the frozen deployed candidate Core and event ABI, not the old successor API', () => {
-    const frozen = createRequire(import.meta.url)('../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/current-pool-case.cjs').frozen();
-    expect(frozen.candidate.graphSha256).toBe(CURRENT_CHEAP_DEX_CANDIDATE.graph);
-    const actualCore = new Interface(frozen.candidate.compiled('ChainWhisperDexCore').abi);
-    const actualEvents = new Interface(frozen.candidate.artifact('ChainWhisperDexPositionCommands').abi);
+    // This ABI check needs frozen bytes, not the old runner's mutable production-artifact prerequisite.
+    const root = fileURLToPath(new URL('../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/matching-boundary-build-1/', import.meta.url));
+    const manifest = JSON.parse(readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+    const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+    expect(hash(JSON.stringify(manifest.graph))).toBe(CURRENT_CHEAP_DEX_CANDIDATE.graph);
+    const frozenAbi = (name: string) => {
+      const rows = manifest.graph.filter((row: { path: string }) => row.path.replace(/\\/g, '/').endsWith(`/${name}.json`));
+      expect(rows).toHaveLength(1);
+      const bytes = readFileSync(path.join(root, 'snapshot', rows[0].path));
+      expect(hash(bytes)).toBe(rows[0].sha256);
+      return JSON.parse(bytes.toString()).abi;
+    };
+    const actualCore = new Interface(frozenAbi('ChainWhisperDexCore'));
+    const actualEvents = new Interface(frozenAbi('ChainWhisperDexPositionCommands'));
     for (const name of ['previewPoolFunding', 'createPoolPosition']) {
       expect(abi.getFunction(name)!.format('sighash')).toBe(actualCore.getFunction(name)!.format('sighash'));
       expect(abi.getFunction(name)!.selector).toBe(actualCore.getFunction(name)!.selector);

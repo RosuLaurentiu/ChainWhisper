@@ -91,7 +91,7 @@ export default function LinkedTradeContextPanel({
           </button>
         ) : null}
         <button type="button" onClick={() => onOpenTerminal(context.terminalPath)}>
-          Open order
+          Open trade
         </button>
         {context.shareUrl ? (
           <button type="button" onClick={() => onCopyShareLink(context.shareUrl as string)} aria-live="polite">

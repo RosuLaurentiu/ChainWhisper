@@ -14,7 +14,7 @@ const DIAGNOSTIC_METHODS = new Set(['eth_chainId', 'eth_blockNumber', 'eth_getBl
 
 type RpcFailure = Readonly<{
   at: number;
-  kind: 'http' | 'timeout' | 'rpc';
+  kind: 'http' | 'timeout' | 'rpc' | 'transport';
   method: string;
   callSelector?: string;
   rpcCode?: number;
@@ -259,6 +259,8 @@ export function createPacedCotiRpc(
       try {
         response = await Promise.race([transport(), deadline]);
       } catch (error) {
+        // An intentional caller cancellation must not stop unrelated readers.
+        try { signal?.checkSignal(); } catch { throw stopped ?? error; }
         // The SDK can report its own TIMEOUT before our deadline timer fires.
         if (error && typeof error === 'object' && 'code' in error && error.code === 'TIMEOUT') {
           requestTimeout ??= Object.freeze({ queuedMs: Math.round(admittedAt - entered.now), budgetMs: request.timeout,
@@ -267,7 +269,9 @@ export function createPacedCotiRpc(
           stopped ??= Object.assign(new Error('COTI RPC reads stopped after request timeout. No automatic retry.'), { code: 'TIMEOUT', rpcFailure: failure });
           throw stopped;
         }
-        throw error;
+        recordFailure('transport', admittedAt);
+        stopped ??= Object.assign(new Error('COTI RPC reads stopped after transport failure. No automatic retry.'), { rpcFailure: failure });
+        throw stopped;
       } finally {
         transportMs += performance.now() - transportStartedAt;
         transportStartedAt = null;

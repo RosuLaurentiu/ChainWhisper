@@ -113,6 +113,19 @@ const panelProps = (archived: boolean, isMobileNav = false): ComponentProps<type
 };
 
 describe('archived Group view', () => {
+  it('shows unavailable history instead of a false empty conversation', () => {
+    const html = renderToStaticMarkup(<GroupChatPanel {...panelProps(false)} activeGroupMessages={[]} historyUnavailable />);
+    expect(html).toContain('Group history unavailable');
+    expect(html).not.toContain('No group messages yet');
+    expect(html).not.toContain('Send the first message');
+  });
+
+  it('retains verified messages when the history read fails', () => {
+    const html = renderToStaticMarkup(<GroupChatPanel {...panelProps(false)} historyUnavailable />);
+    expect(html).toContain('Group history unavailable');
+    expect(html).toContain('Preserved group history');
+  });
+
   it('keeps older history available without claiming that an empty recent page is a new group', () => {
     const props = { ...panelProps(false), activeGroupMessages: [], hasOlderHistory: true,
       onLoadOlderHistory: vi.fn() };

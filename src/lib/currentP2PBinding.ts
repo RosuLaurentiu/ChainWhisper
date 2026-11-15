@@ -51,11 +51,18 @@ type TradeBalanceProof = Readonly<{ protocol: TradeBalanceDisclosureProtocol; ch
   nativeStatus: 'native-trade-balance-verified' | 'shared-native-variant-qualified';
   nativeVariant?: 'stored-ct' | 'caller-gt'; producerProtocol?: 'private-v2' | 'direct-v2';
   appState: 'held' | 'active'; variants: readonly TradeBalanceNativeVariant[] }>;
+type P2PQualificationTarget = Readonly<{ protocol: CurrentP2PProtocol; contractAddress: string; runtimeBytecodeHash: string }>;
 export type P2PRepairQualification = Readonly<{
-  status: 'unchanged-financial-core-qualified'; appState: 'held' | 'active'; chainId: string; genesisHash: string;
+  appState: 'held' | 'active'; chainId: string; genesisHash: string;
   candidateSha256: string; proofSha256: string; previousBindingSha256: string;
-  targets: readonly Readonly<{ protocol: CurrentP2PProtocol; contractAddress: string; runtimeBytecodeHash: string }>[];
-}>;
+  targets: readonly P2PQualificationTarget[];
+} & ({ status: 'unchanged-financial-core-qualified' } | {
+  status: 'packed-input-actions-qualified'; previousSelectedBindingSha256: string; previousQualificationSha256: string;
+  deploymentProofSha256: string; compatibilityProofSha256: string;
+  changedActionProofs: readonly (P2PQualificationTarget & Readonly<{ selector: string; candidateSha256: string; proofSha256: string }>)[];
+  reusedEvidence: readonly Readonly<{ scope: 'book-budget' | 'trade-balance'; protocol: CurrentP2PProtocol;
+    producerAddress: string; producerRuntimeHash: string; proofSha256: string }>[];
+})>;
 export type RetainedP2PFinancialGraph = Readonly<{ previousBindingSha256: string; proofSha256: string;
   deployments: readonly (TradeHistoryV2ManifestInput<CurrentP2PProtocol> & { protocol: CurrentP2PProtocol; chainId: string;
     contractAddress: string; runtimeBytecodeHash: string; deploymentBlock: string })[] }>;
@@ -103,7 +110,8 @@ export const CURRENT_P2P_BINDING = Object.freeze({
   bookBudgetAppState: bookBudgetBinding.bookBudgetAppState ?? 'held',
   tradeBalanceProofs: Object.freeze((tradeBalanceBinding.tradeBalanceProofs ?? []).map(proof => Object.freeze({ ...proof, variants: Object.freeze([...proof.variants]) }))),
   repairQualification: repairBinding.repairQualification,
-  financialQualification: repairBinding.repairQualification ? 'unchanged-core-reuse' as const : 'prior-target-native' as const,
+  financialQualification: repairBinding.repairQualification?.status === 'packed-input-actions-qualified' ? 'changed-inputs-and-reused-behavior' as const
+    : repairBinding.repairQualification ? 'unchanged-core-reuse' as const : 'prior-target-native' as const,
   registeredTokens: normalizeCurrentP2PRegisteredTokens(tokenBinding.registeredTokens),
   retainedFinancialGraphs: Object.freeze((repairBinding.retainedFinancialGraphs ?? []).map(graph => Object.freeze({ ...graph,
     deployments: Object.freeze(graph.deployments.map(manifest => Object.freeze({ ...manifest }))) }))),
@@ -127,11 +135,11 @@ export const CURRENT_P2P_BINDING = Object.freeze({
   })
 });
 
-/** The existing financial fields retain their old-target scope. This descriptor admits only its unchanged core on exact new targets. */
+/** Financial producer rows retain their original targets; changed inputs require separate current-target proof. */
 export const isCurrentP2PFinancialScopeQualified = (selected: typeof CURRENT_P2P_BINDING = CURRENT_P2P_BINDING): boolean => {
   const qualification = selected.repairQualification;
   if (!qualification) return true;
-  return qualification.status === 'unchanged-financial-core-qualified' && qualification.appState === 'active' &&
+  const common = qualification.appState === 'active' &&
     qualification.chainId === selected.chainId && qualification.genesisHash.toLowerCase() === selected.genesisHash.toLowerCase() &&
     [qualification.candidateSha256, qualification.proofSha256, qualification.previousBindingSha256].every(proofRecorded) &&
     selected.retainedFinancialGraphs.filter(graph => graph.previousBindingSha256 === qualification.previousBindingSha256 && graph.proofSha256 === qualification.proofSha256 &&
@@ -142,10 +150,38 @@ export const isCurrentP2PFinancialScopeQualified = (selected: typeof CURRENT_P2P
       return matches.length === 1 && matches[0].contractAddress.toLowerCase() === deployment.contractAddress.toLowerCase() &&
         matches[0].runtimeBytecodeHash.toLowerCase() === deployment.runtimeBytecodeHash.toLowerCase();
     });
+  if (!common) return false;
+  if (qualification.status === 'unchanged-financial-core-qualified') return true;
+  if (qualification.status !== 'packed-input-actions-qualified' ||
+      ![qualification.previousSelectedBindingSha256, qualification.previousQualificationSha256,
+        qualification.deploymentProofSha256, qualification.compatibilityProofSha256].every(proofRecorded) ||
+      qualification.deploymentProofSha256 !== selected.sourceRecordSha256 || !Array.isArray(qualification.changedActionProofs) ||
+      !Array.isArray(qualification.reusedEvidence)) return false;
+  const required = [['link-v2', '0x00e2493e'], ['link-v2', '0x97758e97'], ['counter-v2', '0x90928e68'],
+    ['counter-v2', '0xe774546f'], ['counter-v2', '0x8dfc858d']] as const;
+  return qualification.changedActionProofs.length === required.length && required.every(([protocol, selector]) => {
+    const proofs = qualification.changedActionProofs.filter(proof => proof.protocol === protocol && proof.selector === selector);
+    const proof = proofs[0], target = selected.deployments[protocol];
+    return proofs.length === 1 && proofRecorded(proof.proofSha256) && proof.candidateSha256 === qualification.candidateSha256 &&
+      proof.contractAddress.toLowerCase() === target.contractAddress.toLowerCase() &&
+      proof.runtimeBytecodeHash.toLowerCase() === target.runtimeBytecodeHash.toLowerCase();
+  });
 };
 const financialProofDeployment = (selected: typeof CURRENT_P2P_BINDING, protocol: CurrentP2PProtocol) => selected.repairQualification
   ? selected.retainedFinancialGraphs.find(graph => graph.previousBindingSha256 === selected.repairQualification?.previousBindingSha256)?.deployments.find(item => item.protocol === protocol)
   : selected.deployments[protocol];
+
+const qualifiedEvidenceReuse = (selected: typeof CURRENT_P2P_BINDING, scope: 'book-budget' | 'trade-balance',
+  protocol: CurrentP2PProtocol, producerAddress: string, producerRuntimeHash: string, proofSha256: string): boolean => {
+  const qualification = selected.repairQualification;
+  if (qualification?.status !== 'packed-input-actions-qualified' || !isCurrentP2PFinancialScopeQualified(selected)) return false;
+  if ((scope === 'book-budget' || protocol === 'private-v2' || protocol === 'direct-v2') &&
+      producerRuntimeHash.toLowerCase() !== selected.deployments[protocol].runtimeBytecodeHash.toLowerCase()) return false;
+  const matches = qualification.reusedEvidence.filter(proof => proof.scope === scope && proof.protocol === protocol);
+  return matches.length === 1 && proofRecorded(proofSha256) && matches[0].proofSha256 === proofSha256 &&
+    matches[0].producerAddress.toLowerCase() === producerAddress.toLowerCase() &&
+    matches[0].producerRuntimeHash.toLowerCase() === producerRuntimeHash.toLowerCase();
+};
 
 /** Partial Counter admission never enables public funding or the rest of the graph. */
 const privateCounterQualified = (selected: typeof CURRENT_P2P_BINDING): boolean => {
@@ -189,7 +225,8 @@ export const isCurrentP2PPublicBookLinkRecoveryAdmitted = (selected: typeof CURR
 export type CurrentP2PTradeBalanceAdmission = Readonly<{
   protocol: TradeBalanceDisclosureProtocol; chainId: string; contractAddress: string; runtimeBytecodeHash: string;
   mode: 'held' | 'active'; variants: readonly TradeBalanceNativeVariant[]; proofSha256?: string;
-  qualification?: TradeBalanceProof['nativeStatus']; nativeVariant?: TradeBalanceProof['nativeVariant']; producerProtocol?: TradeBalanceProof['producerProtocol'];
+  qualification?: TradeBalanceProof['nativeStatus'] | 'qualified-reuse'; nativeVariant?: TradeBalanceProof['nativeVariant']; producerProtocol?: TradeBalanceProof['producerProtocol'];
+  producer?: Readonly<{ contractAddress: string; runtimeBytecodeHash: string; proofSha256: string }>;
 }>;
 export const resolveCurrentP2PTradeBalanceAdmission = (protocol: TradeBalanceDisclosureProtocol, selected: typeof CURRENT_P2P_BINDING = CURRENT_P2P_BINDING): CurrentP2PTradeBalanceAdmission => {
   const deployment = selected.deployments[protocol], proofs = selected.tradeBalanceProofs.filter(proof => proof.protocol === protocol), proof = proofs[0];
@@ -198,12 +235,14 @@ export const resolveCurrentP2PTradeBalanceAdmission = (protocol: TradeBalanceDis
   const qualified = proof?.nativeStatus === 'native-trade-balance-verified' && proof.nativeVariant === undefined && proof.producerProtocol === undefined ||
     proof?.nativeStatus === 'shared-native-variant-qualified' && (protocol === 'link-v2' && proof.nativeVariant === 'stored-ct' && proof.producerProtocol === 'private-v2' ||
       protocol === 'counter-v2' && proof.nativeVariant === 'caller-gt' && proof.producerProtocol === 'direct-v2');
+  const reused = proof && qualifiedEvidenceReuse(selected, 'trade-balance', protocol, proof.contractAddress, proof.runtimeBytecodeHash, proof.proofSha256);
   const admitted = selected.status !== 'prepared' && proofs.length === 1 && qualified && proof.appState === 'active' &&
     proofRecorded(proof.proofSha256) && proof.chainId === selected.chainId && deployment.chainId === selected.chainId && same(proof.genesisHash, selected.genesisHash) &&
-    same(proof.contractAddress, deployment.contractAddress) && same(proof.runtimeBytecodeHash, deployment.runtimeBytecodeHash) &&
+    (same(proof.contractAddress, deployment.contractAddress) && same(proof.runtimeBytecodeHash, deployment.runtimeBytecodeHash) || reused) &&
     proof.variants.length > 0 && new Set(proof.variants).size === proof.variants.length && proof.variants.every(variant => supported.includes(variant));
   return Object.freeze({ ...deployment, protocol, mode: admitted ? 'active' : 'held', variants: Object.freeze(admitted ? [...proof.variants] : []),
-    ...(admitted ? { proofSha256: proof.proofSha256, qualification: proof.nativeStatus,
+    ...(admitted ? { proofSha256: proof.proofSha256, qualification: reused ? 'qualified-reuse' as const : proof.nativeStatus,
+      ...(reused ? { producer: { contractAddress: proof.contractAddress, runtimeBytecodeHash: proof.runtimeBytecodeHash, proofSha256: proof.proofSha256 } } : {}),
       ...(proof.nativeVariant ? { nativeVariant: proof.nativeVariant, producerProtocol: proof.producerProtocol } : {}) } : {}) });
 };
 export const assertCurrentP2PTradeBalanceAdmission = (
@@ -217,15 +256,19 @@ export const assertCurrentP2PTradeBalanceAdmission = (
 
 export type CurrentP2PBookBudgetAdmission = Readonly<{
   chainId: string; contractAddress: string; runtimeBytecodeHash: string; mode: 'held' | 'active'; proofSha256?: string;
+  qualification?: 'qualified-reuse'; producer?: Readonly<{ contractAddress: string; runtimeBytecodeHash: string; proofSha256: string }>;
 }>;
 export const resolveCurrentP2PBookBudgetAdmission = (selected: typeof CURRENT_P2P_BINDING = CURRENT_P2P_BINDING): CurrentP2PBookBudgetAdmission => {
   const book = selected.deployments['private-v2'], proof = selected.bookBudgetProof;
   const same = (value: string | undefined, expected: string) => typeof value === 'string' && value.toLowerCase() === expected.toLowerCase();
+  const reused = proof && qualifiedEvidenceReuse(selected, 'book-budget', 'private-v2', proof.book, proof.bookRuntimeHash, proof.proofSha256);
   const admitted = selected.status !== 'prepared' && selected.bookBudgetAppState === 'active' &&
     selected.bookBudgetNativeStatus === 'native-book-budget-verified' && proof && proofRecorded(proof.proofSha256) &&
     book.chainId === selected.chainId && proof.chainId === selected.chainId && same(proof.genesisHash, selected.genesisHash) &&
-    same(proof.book, book.contractAddress) && same(proof.bookRuntimeHash, book.runtimeBytecodeHash);
-  return Object.freeze({ ...book, mode: admitted ? 'active' : 'held', ...(proofRecorded(proof?.proofSha256) ? { proofSha256: proof!.proofSha256 } : {}) });
+    (same(proof.book, book.contractAddress) && same(proof.bookRuntimeHash, book.runtimeBytecodeHash) || reused);
+  return Object.freeze({ ...book, mode: admitted ? 'active' : 'held', ...(proofRecorded(proof?.proofSha256) ? { proofSha256: proof!.proofSha256 } : {}),
+    ...(admitted && reused ? { qualification: 'qualified-reuse' as const,
+      producer: { contractAddress: proof!.book, runtimeBytecodeHash: proof!.bookRuntimeHash, proofSha256: proof!.proofSha256 } } : {}) });
 };
 export const isCurrentP2PBookBudgetAdmitted = (
   deployment: Readonly<{ chainId: string; contractAddress: string; runtimeBytecodeHash: string }>,

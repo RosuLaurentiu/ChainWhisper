@@ -132,7 +132,7 @@ describe('current DEX quote review', () => {
     expect(review.summaryRows).toEqual([
       { label: 'You pay', value: '0.0004 IN' },
       { label: 'You receive', value: '0.0000000000000003 OUT' },
-      { label: 'Average price', value: '0.0 OUT per IN (rounded down)' }
+      { label: 'Average price', value: '0.0 OUT/IN (rounded down)' }
     ]);
     expect(review.stats).toEqual([]);
     expect(review.fundingMoves).toEqual([]);

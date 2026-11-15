@@ -34,19 +34,24 @@ jobs:
       - name: Build the reviewed Testnet App
         run: npm run build:pages
 
+      - name: Preserve immutable assets used by open tabs
+        run: |
+          git fetch --no-tags origin whisper:refs/remotes/origin/whisper
+          node scripts/prepare-pages-static-site.cjs --build dist --output pages-site --graph cc7eb662c644c10bef875d2a72524095848a236155005a32377b10a7c0c13e44 --previous-ref origin/whisper
+
       - name: Preserve custom domain
         run: |
           test "$(cat CNAME)" = "chainwhisper.app"
-          cp CNAME dist/CNAME
-          printf '{"commit":"%s","network":"coti-testnet"}\n' "$GITHUB_SHA" > dist/release.json
+          cp CNAME pages-site/CNAME
+          printf '{"commit":"%s","network":"coti-testnet"}\n' "$GITHUB_SHA" > pages-site/release.json
 
       - name: Disable Jekyll processing
-        run: touch dist/.nojekyll
+        run: touch pages-site/.nojekyll
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
+          path: ./pages-site
 
   deploy:
     environment:

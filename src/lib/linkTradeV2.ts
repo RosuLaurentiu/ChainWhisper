@@ -16,8 +16,10 @@ import {
   getOwnerTradeV2CapabilityBinding, type OwnerTradeV2MetaMaskCapability
 } from './ownerTradeV2Capability';
 import { encryptPrivateUint256Input } from './privateUint256';
+import { packPrivateTradeV2Pair } from './privateTradeV2Packing';
 
 const ABI = new Interface(LINK_TRADE_V2_ABI);
+export class LinkTradeV2UnavailableError extends Error {}
 export type LinkTradeV2Deployment = AttestedTradeHistoryV2Deployment<'link-v2'>;
 declare const REVIEW: unique symbol;
 export type LinkTradeV2Review = Readonly<{
@@ -66,7 +68,7 @@ export const readLinkTradeV2Review = async (input: ReviewInput): Promise<LinkTra
     throw new Error('Link review is stale.');
   }
   if (order.status !== 1n || view.effectiveStatus !== 1n || !order.linkEnabled) {
-    throw new Error('Link order is closed, expired or revoked.');
+    throw new LinkTradeV2UnavailableError('Link order is closed, expired or revoked.');
   }
   const context: LinkTradeV2Context = Object.freeze({ chainId: reference.chainId, escrow: reference.escrow,
     maker: order.maker.toLowerCase(), makerNonce: order.makerNonce, credentialEpoch: reference.credentialEpoch });
@@ -165,8 +167,7 @@ export const prepareLinkTradeV2Fill = async ({ review, capability, maximumPaymen
   };
   const credential = await encrypt(await deriveLinkTradeV2Credential(state.context, state.secret));
   const args = review.terms.privatePair
-    ? [review.reference, credential, await encrypt(maximum), await encrypt(BigInt(review.terms.priceOffer)),
-      await encrypt(BigInt(review.terms.priceRequest))]
+    ? [review.reference, credential, await encrypt(maximum), await encrypt(packPrivateTradeV2Pair(review.terms.priceOffer, review.terms.priceRequest))]
     : [review.reference, credential, maximum, [review.terms.priceOffer, review.terms.priceRequest]];
   await recheck();
   await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);
@@ -264,8 +265,7 @@ const prepareCreation = async (input: CreateInput, recovery?: LinkTradeV2Creatio
     expiresAt: terms.expiresAt, makerNonce: context.makerNonce };
   const credential = await deriveLinkTradeV2Credential(context, secret);
   const args = terms.privatePair
-    ? [config, await encrypt(BigInt(offerBudget)), await encrypt(BigInt(terms.priceOffer)),
-      await encrypt(BigInt(terms.priceRequest)), await encrypt(credential), sealedTerms]
+    ? [config, await encrypt(BigInt(offerBudget)), await encrypt(packPrivateTradeV2Pair(terms.priceOffer, terms.priceRequest)), await encrypt(credential), sealedTerms]
     : [config, BigInt(offerBudget), [terms.priceOffer, terms.priceRequest], await encrypt(credential), sealedTerms];
   await nonceUnused();
   await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);

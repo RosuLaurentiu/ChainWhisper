@@ -55,7 +55,7 @@ async function fixture(pairIndex = 0) {
   const proofs = new Map([[sourceHash, { block: before.block, data: abi.encodeFunctionData('poolSnapshot', [id]), logs: [] as typeof logs }],
     [closeHash, { block: managed.block, get data() { return closeData; }, logs }],
     [snapshotHash, { block: snapshot.block, data: abi.encodeFunctionData('poolSnapshot', [id]), logs: [] as typeof logs }]]);
-  const reader = { state: vi.fn(async () => structuredClone(state)), wallets: vi.fn(async () => structuredClone(state === before ? wallets : paidWallets)),
+  const reader = { state: vi.fn(async () => structuredClone(state)), selectedState: vi.fn(async () => structuredClone(state)), wallets: vi.fn(async () => structuredClone(state === before ? wallets : paidWallets)),
     canonical: vi.fn(async (hash: string) => { const value = proofs.get(hash); return value ? structuredClone(value) : null; }),
     issue: vi.fn(async (_id: bigint, kind: string, hash: string) => ({ kind, positionId: id, marketId: pair.marketId,
       block: state.block, transactionHash: hash, status: BigInt(state.claim[0]), context: state.claim[13], revisions: state.claim.slice(4, 8).map(BigInt),

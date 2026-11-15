@@ -1,9 +1,29 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildTradeCustomTokenInfoKey, type TradeCustomTokenInfo } from '../../../lib/appHelpers';
 import type { LinkTradeV2Review } from '../../../lib/linkTradeV2';
 import LinkTradeV2Terminal, { LinkTradeV2ReviewDetails } from './LinkTradeV2Terminal';
+import { LinkTradeV2UnavailableError } from '../../../lib/linkTradeV2';
+
+const hooks = vi.hoisted(() => ({ enabled: false, index: 0, slots: [] as unknown[], memo: null as unknown,
+  effect: undefined as (() => unknown) | undefined, read: vi.fn() }));
+vi.mock('react', async original => {
+  const actual = await original<typeof import('react')>();
+  return { ...actual,
+    useMemo: (read: () => unknown, deps: unknown[]) => hooks.enabled ? hooks.memo ??= read() : actual.useMemo(read, deps),
+    useEffect: (run: () => void, deps: unknown[]) => { if (hooks.enabled) hooks.effect = run; else actual.useEffect(run, deps); },
+    useState: (initial: unknown) => {
+      if (!hooks.enabled) return actual.useState(initial);
+      const index = hooks.index++;
+      if (!(index in hooks.slots)) hooks.slots[index] = initial;
+      return [hooks.slots[index], (next: unknown) => { hooks.slots[index] = typeof next === 'function' ? next(hooks.slots[index]) : next; }];
+    }
+  };
+});
+vi.mock('../../../lib/linkTradeV2', async original => ({ ...await original<typeof import('../../../lib/linkTradeV2')>(),
+  readLinkTradeV2CurrentReview: hooks.read }));
+afterEach(() => { hooks.enabled = false; hooks.index = 0; hooks.slots = []; hooks.memo = null; hooks.effect = undefined; hooks.read.mockReset(); });
 
 const reference = { chainId: '7082400', escrow: `0x${'11'.repeat(20)}`,
   id: ((1n << 256n) - 1n).toString(), revision: '2', credentialEpoch: '1' };
@@ -17,6 +37,27 @@ const tokens = { [buildTradeCustomTokenInfoKey('private-erc20', a)]: token(a, 'H
   [buildTradeCustomTokenInfoKey('private-erc20', b)]: token(b, 'BCN') };
 
 describe('Link trade review presentation', () => {
+  it.each([true, false])('distinguishes canonical unavailability from a failed read (unavailable=%s)', async unavailable => {
+    hooks.enabled = true;
+    hooks.read.mockRejectedValue(unavailable ? new LinkTradeV2UnavailableError('Link order is closed, expired or revoked.') : new Error('Read failed'));
+    const renderFill = vi.fn(), renderCounter = vi.fn();
+    const render = () => {
+      hooks.index = 0;
+      return renderToStaticMarkup(createElement(LinkTradeV2Terminal, { reference, secret, tokenInfoByKey: {},
+        readContext: {} as never, renderFill, renderCounter }));
+    };
+    expect(render()).toContain('Loading shared trade');
+    hooks.effect?.();
+    await vi.waitFor(() => expect(hooks.slots[1]).not.toBeNull());
+    const html = render();
+    if (unavailable) {
+      expect(html).toContain('This shared trade is closed or unavailable.');
+      expect(html).not.toContain('Retry');
+      expect(html).not.toContain('Could not load');
+    } else { expect(html).toContain('Could not load'); expect(html).toContain('Retry'); }
+    expect(renderFill).not.toHaveBeenCalled(); expect(renderCounter).not.toHaveBeenCalled();
+    expect(hooks.read).toHaveBeenCalledOnce(); expect(html).not.toContain(secret);
+  });
   it('reports missing credentials or deployment honestly without showing a legacy ID prompt', () => {
     const missing = renderToStaticMarkup(createElement(LinkTradeV2Terminal, { reference, secret: '', tokenInfoByKey: {} }));
     expect(missing).toContain('full Share link');

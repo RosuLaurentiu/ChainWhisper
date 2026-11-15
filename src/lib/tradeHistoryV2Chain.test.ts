@@ -68,6 +68,12 @@ describe('trade-history safe RPC failure labels', () => {
     { label: 'queue expiry', cause: new Error('COTI RPC read expired in queue.'), detail: 'request expired in queue' },
     { label: '403 stop', cause: new Error('COTI RPC reads stopped after HTTP 403. No automatic retry.'), detail: 'HTTP 403; reads stopped' },
     { label: '429 stop', cause: new Error('COTI RPC reads stopped after HTTP 429. No automatic retry.'), detail: 'HTTP 429; reads stopped' },
+    { label: 'numeric RPC code', cause: Object.assign(new Error('private-request-value'), { code: -32603 }), detail: 'RPC code -32603' },
+    { label: 'wrapped RPC code', cause: Object.assign(new Error('private-request-value'), { code: 'UNKNOWN_ERROR', info: { error: { code: -32000, message: 'private-response-value', data: 'private-request-value' } } }), detail: 'RPC code -32000' },
+    { label: 'managed HTTP failure', cause: Object.assign(new Error('private-request-value'), { rpcFailure: { kind: 'http', status: 502 } }), detail: 'HTTP 502' },
+    { label: 'non-call four-byte error data', cause: { code: 3, data: '0x26abae6e' }, detail: 'RPC code 3' },
+    { label: 'revert with private arguments', cause: { code: 3, data: '0x26abae6e' + '11'.repeat(32) }, detail: 'RPC code 3' },
+    { label: 'invalid code', cause: { code: 'private-request-value', info: { error: { code: 'private-response-value' } } }, detail: '' },
     { label: 'unknown private error', cause: new Error('private-request-value'), detail: '' }
   ])('keeps the safe $label category without exposing request data or retrying', async ({ cause, detail }) => {
     const request = vi.fn().mockRejectedValue(Object.assign(cause, {
@@ -196,6 +202,24 @@ const attest = async (provider = new ScriptedProvider()): Promise<{
   });
   return { provider, capability, deployment };
 };
+
+it.each([
+  { cause: { code: -32603 }, detail: 'RPC code -32603' },
+  { cause: { code: 3, data: '0x26abae6e' }, detail: 'RPC code 3; revert 0x26abae6e' },
+  { cause: { code: 3, data: '0x26abae6e' + '11'.repeat(32) }, detail: 'RPC code 3' }
+])('identifies only the failed public function selector and safe call error without retrying ($detail)', async ({ cause, detail }) => {
+  const provider = new ScriptedProvider(), original = provider.request.bind(provider);
+  let failedCalls = 0;
+  provider.request = async input => {
+    if (input.method === 'eth_call') {
+      failedCalls++;
+      throw Object.assign(new Error('private-response-value'), cause);
+    }
+    return original(input);
+  };
+  await expect(attest(provider)).rejects.toThrow(`Trade-history RPC eth_call failed (call 0xa0a8e460; ${detail}).`);
+  expect(failedCalls).toBe(1);
+});
 
 describe('P2P startup attestation', () => {
   const setup = (deploymentBlocks?: readonly bigint[]) => {

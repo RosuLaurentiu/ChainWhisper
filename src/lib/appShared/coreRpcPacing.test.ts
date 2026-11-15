@@ -68,6 +68,22 @@ async function start() {
 }
 
 describe('shared browser HTTP RPC pacing', () => {
+  it.each([200,403,429])('price storage batches reach the real read adapter with canonical parameters and keep HTTP %s refusal',async code=>{
+    await start();
+    const {getCurrentDexPriceReadProvider}=await import('../currentDexDailyPrice');
+    const adapter=getCurrentDexPriceReadProvider(CONFIGURED_COTI_NETWORK.rpcUrl),params=[`0x${'11'.repeat(20)}`,['0x0','0x1'],{blockHash:`0x${'22'.repeat(32)}`,requireCanonical:true}];
+    const result={address:params[0],codeHash:`0x${'33'.repeat(32)}`,storageProof:[{key:'0x0',value:'0x1'},{key:'0x1',value:'0x2'}]};
+    rpcReply=input=>({jsonrpc:'2.0',id:input.id,result:input.method==='eth_getProof'?result:input.method==='eth_chainId'?`0x${reportedChainId.toString(16)}`:'0x123'});
+    status=code;const attempt=adapter.request({method:'eth_getProof',params}).catch(error=>error);await vi.runAllTimersAsync();
+    const value=await attempt;
+    expect(rpcInputs.filter(input=>input.method==='eth_getProof')).toEqual([expect.objectContaining({params})]);
+    if(code===200)expect(value).toEqual(result);
+    else{
+      expect(String(value)).toContain(`HTTP ${code}`);const starts=calls.length;
+      const again=adapter.request({method:'eth_getProof',params}).catch(error=>error);await vi.runAllTimersAsync();expect(String(await again)).toContain(`HTTP ${code}`);expect(calls).toHaveLength(starts);
+    }
+    expect(maximumInFlight).toBe(1);
+  });
   it.each([0, 334, 500])('starts the %dms comparison on the selected view without a P2P detour', async interval => {
     vi.stubEnv('MODE', 'coti-testnet-candidate'); vi.stubEnv('VITE_RPC_COMPARISON', String(interval));
     vi.stubGlobal('location', { hostname: 'localhost' });
@@ -752,6 +768,50 @@ describe('shared browser HTTP RPC pacing', () => {
     expect(transport).toHaveBeenCalledOnce();
   });
 
+  it.each(['fetch', 'sdk-network'])('stops queued reads and keeps safe context after a %s transport rejection', async kind => {
+    const snapshots: unknown[] = [];
+    const transport = vi.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      throw kind === 'fetch' ? new TypeError('Failed to fetch private-error') :
+        Object.assign(new Error('private-error'), { code: 'NETWORK_ERROR' });
+    });
+    const paced = createPacedCotiRpc(transport, snapshot => snapshots.push(snapshot));
+    const request = new FetchRequest('https://provider.invalid/private-path?key=private-key');
+    request.body = { method: 'eth_getStorageAt', params: ['private-address', 'private-slot'], id: 99 };
+    const failed = Promise.allSettled([paced.foreground(request), paced(request.clone()), paced.foreground(request.clone())]);
+    await vi.runAllTimersAsync();
+    const results = await failed;
+    expect(results.every(result => result.status === 'rejected')).toBe(true);
+    const failure = results[0].status === 'rejected' ? results[0].reason : null;
+    expect(failure?.rpcFailure).toMatchObject({ kind: 'transport', method: 'eth_getStorageAt',
+      category: 'foreground', provider: 'provider.invalid', physicalMs: 1, headers: {} });
+    expect(failure?.rpcFailure).not.toHaveProperty('status');
+    expect(snapshots[snapshots.length - 1]).toMatchObject({ stopped: true, started: 1, completed: 1, inFlight: false });
+    expect(JSON.stringify(snapshots)).not.toMatch(/private-|params|NETWORK_ERROR/);
+    await expect(paced(request.clone())).rejects.toBe(failure);
+    expect(transport).toHaveBeenCalledOnce();
+  });
+
+  it.each(['CANCELLED', 'TIMEOUT'])('does not stop other readers after an intentional in-flight cancellation reported as %s', async code => {
+    const cancelled = Object.assign(new Error('cancelled'), { code });
+    let aborted = false;
+    const signal = { addListener: vi.fn(), checkSignal: () => { if (aborted) throw cancelled; } };
+    const transport = vi.fn().mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      aborted = true; throw cancelled;
+    }).mockResolvedValue({ statusCode: 200, statusMessage: 'OK', headers: {}, body: new Uint8Array() });
+    const snapshots: unknown[] = [];
+    const paced = createPacedCotiRpc(transport, snapshot => snapshots.push(snapshot));
+    const request = new FetchRequest('https://provider.invalid');
+    const failed = paced(request, signal as never).catch(error => error);
+    const next = paced(request.clone()).then(value => ({ value }), error => ({ error }));
+    await vi.runAllTimersAsync();
+    expect(await failed).toBe(cancelled);
+    await expect(next).resolves.toMatchObject({ value: { statusCode: 200 } });
+    expect(snapshots[snapshots.length - 1]).toMatchObject({ stopped: false, started: 2, completed: 2 });
+    expect(snapshots[snapshots.length - 1]).not.toHaveProperty('failure');
+  });
+
   it('does not report a timed-out underlying transport as completed before it settles', async () => {
     const snapshots: Array<{ inFlight: boolean; completed: number; stopped: boolean; transportMs: number }> = [];
     let settle!: (response: Awaited<ReturnType<FetchGetUrlFunc>>) => void;
@@ -971,9 +1031,10 @@ describe('shared browser HTTP RPC pacing', () => {
     expect(methods.filter(method => method === 'eth_chainId')).toHaveLength(acquireNetwork ? 4 : 0);
   });
 
-  it.each([403, 429])('stops queued and future reads after HTTP %s without SDK retries', async (code) => {
+  it.each([403, 429, 'transport'] as const)('stops queued and future installed-SDK reads after %s without physical retries', async (code) => {
     await start();
-    status = code;
+    if (code === 'transport') transportHold = new Promise((_, reject) => setTimeout(() => reject(new TypeError('Failed to fetch')), 1));
+    else status = code;
     const before = calls.length;
     const failed = Promise.allSettled(['eth_blockNumber', 'eth_gasPrice'].map((method) => provider!.send(method, [])));
     await vi.runAllTimersAsync();
@@ -981,7 +1042,7 @@ describe('shared browser HTTP RPC pacing', () => {
     expect(calls.length - before).toBe(1);
     const later = provider!.send('eth_blockNumber', []).catch((error: Error) => error.message);
     await vi.runAllTimersAsync();
-    expect(await later).toContain(`HTTP ${code}`);
+    expect(await later).toContain(code === 'transport' ? 'transport failure' : `HTTP ${code}`);
     expect(calls.length - before).toBe(1);
   });
 

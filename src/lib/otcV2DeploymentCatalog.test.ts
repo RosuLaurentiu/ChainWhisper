@@ -16,6 +16,23 @@ const privateOnlyBinding = { ...CURRENT_P2P_BINDING, directPublicAppActivated: f
 
 
 describe('public Book and Link catalog admission', () => {
+  it('binds packed qualification and deployment proof changes, and rejects incomplete action evidence', () => {
+    const old = CURRENT_P2P_BINDING.repairQualification!;
+    const qualification = { ...old, status: 'packed-input-actions-qualified' as const,
+      previousSelectedBindingSha256: 'ab'.repeat(32), previousQualificationSha256: old.proofSha256,
+      deploymentProofSha256: CURRENT_P2P_BINDING.sourceRecordSha256, compatibilityProofSha256: 'cd'.repeat(32), reusedEvidence: [],
+      changedActionProofs: ([['link-v2', '0x00e2493e'], ['link-v2', '0x97758e97'], ['counter-v2', '0x90928e68'],
+        ['counter-v2', '0xe774546f'], ['counter-v2', '0x8dfc858d']] as const).map(([protocol, selector]) => ({
+          ...CURRENT_P2P_BINDING.deployments[protocol], selector, candidateSha256: old.candidateSha256, proofSha256: 'ef'.repeat(32) })) };
+    const packed = { ...CURRENT_P2P_BINDING, repairQualification: qualification };
+    const before = resolveOtcV2DeploymentCatalog(activeCandidate()), after = resolveOtcV2DeploymentCatalog(activeCandidate(), packed);
+    const next = resolveOtcV2DeploymentCatalog(activeCandidate(), { ...packed, sourceRecordSha256: '12'.repeat(32),
+      repairQualification: { ...qualification, deploymentProofSha256: '12'.repeat(32) } });
+    if (before.status !== 'active' || after.status !== 'active' || next.status !== 'active') throw new Error('expected qualified catalogs');
+    expect(new Set([before.fingerprint, after.fingerprint, next.fingerprint]).size).toBe(3);
+    expect(resolveOtcV2DeploymentCatalog(activeCandidate(), { ...packed,
+      repairQualification: { ...qualification, changedActionProofs: qualification.changedActionProofs.slice(1) } }).status).toBe('invalid');
+  });
   it('keeps current Book identity while separating public action admission', () => {
     const held = resolveOtcV2DeploymentCatalog(activeCandidate(), { ...CURRENT_P2P_BINDING, publicBookLinkAppState: 'held' });
     const active = resolveOtcV2DeploymentCatalog(activeCandidate(), { ...CURRENT_P2P_BINDING, publicBookLinkAppState: 'active' });

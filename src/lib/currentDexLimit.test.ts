@@ -147,3 +147,41 @@ describe('current Limit top-up and reprice boundaries',()=>{
     expect(()=>decodeCurrentLimitOwnerEvent([row],'reprice',9n,c,1n)).not.toThrow();expect(()=>decodeCurrentLimitOwnerEvent([row],'reprice',9n,c,2n)).toThrow();expect(()=>decodeCurrentLimitOwnerEvent([{...row,data:row.data+'00'}],'reprice',9n,c,1n)).toThrow();
   });
 });
+import { packCurrentLimitTerms, packedLimitAbi, PACKED_LIMIT_INPUT_GRAPH, usesPackedLimitInputs } from './currentDexLimit';
+import { usesPackedPoolInputs } from './currentDexPoolFunding';
+
+describe('packed plain Limit terms',()=>{
+  const mask=(1n<<128n)-1n;
+  it('binds the two new selectors to the exact frozen derivative and no other graph',()=>{
+    const f=native('./candidates/limit-input-signatures-2026-11-12/candidate.cjs').frozen(),compiled=new Interface(f.artifacts.ChainWhisperDexCore.abi);
+    expect(f.manifest.binding.graphSha256).toBe(PACKED_LIMIT_INPUT_GRAPH);
+    expect(usesPackedLimitInputs({graph:PACKED_LIMIT_INPUT_GRAPH})).toBe(true);
+    expect(usesPackedPoolInputs({graph:PACKED_LIMIT_INPUT_GRAPH})).toBe(true);
+    expect(usesPackedLimitInputs({graph:STAGED_EXIT_PREVIEW_DEX_CANDIDATE.graph})).toBe(false);
+    for(const row of packedLimitAbi.fragments){const name=(row as unknown as {name:string}).name,actual=row.type==='function'?compiled.getFunction(name):compiled.getEvent(name);expect(row.format('sighash')).toBe(actual!.format('sighash'));}
+    expect(packedLimitAbi.getFunction('createPrivateOrder')!.selector).toBe('0x10f95a7c');
+    expect(packedLimitAbi.getFunction('repricePrivateOrder')!.selector).toBe('0xf0927f97');
+  });
+  it('encodes full funding and binds distinct create/reprice selectors with four/three signed inputs',()=>{
+    const wide=(n:bigint)=>({ciphertext:{ciphertextHigh:1n,ciphertextLow:n},signature:`0x${'44'.repeat(65)}`});
+    const funding=(1n<<256n)-1n,market=`0x${'11'.repeat(32)}`,pairs=packCurrentLimitTerms([3n,1n,0n,1n,2n],true).map(wide);
+    const created=packedLimitAbi.decodeFunctionData('createPrivateOrder',packedLimitAbi.encodeFunctionData('createPrivateOrder',[market,wide(funding),pairs]));
+    expect(created).toHaveLength(3);expect(created[1].ciphertext.ciphertextLow).toBe(funding);expect(created[2]).toHaveLength(3);
+    const repriced=packedLimitAbi.decodeFunctionData('repricePrivateOrder',packedLimitAbi.encodeFunctionData('repricePrivateOrder',[9n,2n,packCurrentLimitTerms([3n,1n,0n,1n,2n]).map(wide)]));
+    expect(repriced).toHaveLength(3);expect(repriced[2]).toHaveLength(3);expect(repriced[2][2].ciphertext.ciphertextLow&mask).toBe(0n);
+    for(const name of ['createPrivateOrder','repricePrivateOrder'])expect(packedLimitAbi.getFunction(name)!.selector).not.toBe(exitLimitAbi.getFunction(name)!.selector);
+  });
+  it('keeps five full-width terms and a Boolean lane in their exact order',()=>{
+    const terms=[mask,mask-1n,mask,1n,1n] as const;
+    expect(packCurrentLimitTerms(terms,true)).toEqual([(mask<<128n)|(mask-1n),(mask<<128n)|1n,(1n<<128n)|1n]);
+    expect(packCurrentLimitTerms(terms,false)[2]).toBe(1n<<128n);
+    expect(packCurrentLimitTerms(terms)[2]).toBe(1n<<128n);
+  });
+  it('rejects invalid widths, witnesses, lengths and direction before signing',()=>{
+    const valid=[3n,1n,0n,1n,2n] as const;
+    for(const terms of [[0n,1n,0n,1n,0n],[3n,1n,0n,1n,1n],[3n,1n,-1n,1n,2n],[3n,1n,1n<<128n,1n,2n],[3n,1n,0n,1n]])
+      expect(()=>packCurrentLimitTerms(terms)).toThrow();
+    expect(()=>packCurrentLimitTerms(valid,2 as never)).toThrow();
+    expect(()=>packCurrentLimitTerms(valid,1n as never)).toThrow();
+  });
+});

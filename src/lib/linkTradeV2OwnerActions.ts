@@ -121,6 +121,7 @@ const execute = async (input: ActionInput, action: LinkTradeV2OwnerAction, creat
     }
     let result: LinkTradeV2OwnerResult | undefined;
     await sendLinkTradeV2Transaction({ binding, step: action.kind, to, data, onPending: input.journal.onPending,
+      finalityLagBlocks: action.kind === 'cancel' ? BigInt(input.deployment.finalityLagBlocks) : 0n,
       admit: async () => {
         await tokenCurrent(binding, action);
         if (action.kind === 'cancel') {

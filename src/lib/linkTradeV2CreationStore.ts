@@ -54,7 +54,8 @@ export const createIndexedDbLinkTradeV2CreationStore = (factory: IDBFactory = in
         };
       }
       tx.oncomplete = () => resolve();
-      tx.onerror = tx.onabort = () => reject(new Error(conflict ? 'Link creation changed in another tab.' :
+      // A bubbling request error precedes abort and can still be handled.
+      tx.onabort = () => reject(new Error(conflict ? 'Link creation changed in another tab.' :
         tx.error?.name === 'ConstraintError' ? 'A Link creation is already pending.' : 'Link recovery storage could not commit.'));
     });
   };

@@ -23,6 +23,9 @@ export type PackedPrivateTradeV2Fill = Readonly<{
 }>;
 
 const amount = (value: bigint | number | string, label: string): bigint => {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) {
+    throw new Error(`${label} must use bigint or a string for large integers.`);
+  }
   let parsed: bigint;
   try {
     parsed = BigInt(value);
@@ -34,6 +37,11 @@ const amount = (value: bigint | number | string, label: string): bigint => {
   }
   return parsed;
 };
+
+export const packPrivateTradeV2Pair = (
+  offer: bigint | number | string,
+  request: bigint | number | string
+): bigint => amount(offer, 'Private offer') * PACK_BASE + amount(request, 'Private request');
 
 const modeFor = (
   offerAssetType: PrivateTradeV2AssetType,
@@ -122,6 +130,9 @@ export const packPrivateTradeV2FillTerms = (input:
 export const unpackPrivateTradeV2Pair = (
   packed: bigint | number | string
 ): Readonly<{ high: bigint; low: bigint }> => {
+  if (typeof packed === 'number' && !Number.isSafeInteger(packed)) {
+    throw new Error('Packed Private OTC value must use bigint or a string for large integers.');
+  }
   let value: bigint;
   try {
     value = BigInt(packed);

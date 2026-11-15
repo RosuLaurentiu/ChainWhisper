@@ -2,10 +2,26 @@ import { describe, expect, it } from 'vitest';
 import {
   packPrivateTradeV2CreateTerms,
   packPrivateTradeV2FillTerms,
+  packPrivateTradeV2Pair,
   unpackPrivateTradeV2Pair
 } from './privateTradeV2Packing';
 
 describe('privateTradeV2Packing', () => {
+  it('preserves the full positive uint128 pair and rejects overflow before encryption', () => {
+    const maximum = (1n << 128n) - 1n;
+    for (const [offer, request] of [[1n, maximum], [maximum, 1n], [maximum, maximum]]) {
+      expect(unpackPrivateTradeV2Pair(packPrivateTradeV2Pair(offer, request)))
+        .toEqual({ high: offer, low: request });
+    }
+    expect(packPrivateTradeV2Pair(maximum, maximum)).toBe((1n << 256n) - 1n);
+    expect(packPrivateTradeV2Pair(1n, 2n)).not.toBe(packPrivateTradeV2Pair(2n, 1n));
+    for (const value of [0n, -1n, 1n << 128n, '1.5', 'invalid', Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => packPrivateTradeV2Pair(value, 1n)).toThrow();
+      expect(() => packPrivateTradeV2Pair(1n, value)).toThrow();
+    }
+    expect(() => unpackPrivateTradeV2Pair(Number.MAX_SAFE_INTEGER + 1)).toThrow(/bigint or a string/);
+    expect(packPrivateTradeV2Pair(Number.MAX_SAFE_INTEGER, 1)).toBe(BigInt(Number.MAX_SAFE_INTEGER) * (1n << 128n) + 1n);
+  });
   it('packs fully-private create and fill values into one high/low input each', () => {
     const create = packPrivateTradeV2CreateTerms({
       offerAssetType: 'private-erc20', offerAmount: 10n,

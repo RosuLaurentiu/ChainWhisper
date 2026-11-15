@@ -90,6 +90,79 @@
 .app-shell-dex-v2 .dex-v2-activity-card h2 { font-size: 1rem; color: #eee8f6; }
 .app-shell-dex-v2 .dex-history-toolbar button { min-height: 36px; padding: 6px 10px; font-size: .8rem; }
 .app-shell-dex-v2 .dex-v2-activity-card .dex-owner-heading p { margin-block: 3px 0; font-size: .78rem; }
+
+/* The management index and selected item follow the P2P My trades layout. */
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-form-column { padding: 0; }
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-owner-workspace { width: 100%; max-width: none; margin: 0; }
+:root body .app-shell-dex-v2 :is(.dex-desktop-only, .dex-desktop-management-navigation) { display: none; }
+:root body .app-shell-dex-v2 .dex-owner-split {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start;
+}
+:root body .app-shell-dex-v2 :is(.dex-owner-index, .dex-owner-detail) {
+  min-width: 0; display: flex; flex-direction: column; gap: 16px;
+  border: 1px solid var(--border-subtle); border-radius: 4px; padding: 20px;
+}
+:root body .app-shell-dex-v2 .dex-owner-index { min-height: clamp(400px, calc(100dvh - 320px), 720px); }
+:root body .app-shell-dex-v2 .dex-owner-detail { min-height: 400px; }
+:root body .app-shell-dex-v2 :is(.dex-owner-index, .dex-owner-detail) > .dex-owner-heading {
+  padding: 0 0 16px; border: 0; border-bottom: 1px solid var(--border-subtle); background: transparent;
+}
+:root body .app-shell-dex-v2 :is(.dex-owner-index, .dex-owner-detail) > .dex-owner-heading h2 { font-size: 1.1rem; }
+:root body .app-shell-dex-v2 .dex-owner-index > .dex-owner-list { border: 0; padding: 0; gap: 16px; }
+:root body .app-shell-dex-v2 .dex-owner-index > .dex-owner-footer { margin-top: auto; }
+:root body .app-shell-dex-v2 .dex-owner-index .dex-owner-item { padding: 16px 12px; min-height: 72px; border: 1px solid transparent; border-bottom-color: var(--border-subtle); }
+:root body .app-shell-dex-v2 .dex-owner-index .dex-owner-item[aria-pressed="true"] {
+  background: var(--surface-interactive); border-color: var(--brand-strong); box-shadow: inset 0 0 0 1px var(--brand-strong); border-radius: 4px;
+}
+:root body .app-shell-dex-v2 .dex-owner-detail > .dex-owner-summary { border: 0; padding: 0; }
+:root body .app-shell-dex-v2 .dex-owner-selection-empty {
+  flex: 1; display: grid; align-content: center; min-height: 240px; margin: 0;
+  text-align: center; color: var(--text-secondary); font-size: .9rem; line-height: 1.6;
+}
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-activity-card {
+  max-width: none; border: 1px solid var(--border-subtle); border-radius: 4px; padding: 20px;
+}
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-activity-card > .dex-owner-heading {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle); padding-bottom: 16px;
+}
+@media (min-width: 921px) {
+  :root body .app-shell-dex-v2 .dex-v2-manage { --dex-workspace-columns: var(--trading-workspace-columns); --dex-workspace-column-gap: var(--trading-workspace-gap); }
+  :root body .app-shell-dex-v2 .dex-v2-manage .dex-owner-split { grid-template-columns: var(--dex-workspace-columns); align-items: stretch; }
+  :root body .app-shell-dex-v2 .dex-v2-manage .dex-market-chart-host,
+  :root body .app-shell-dex-v2 :is(.dex-mobile-management-navigation-host, .dex-mobile-only) { display: none; }
+  :root body .app-shell-dex-v2 .dex-desktop-only { display: inline; }
+  :root body .app-shell-dex-v2 .dex-desktop-management-navigation { display: flex; gap: 0; margin: 0; border-bottom: 1px solid var(--border-subtle); }
+  :root body .app-shell-dex-v2 .dex-v2-page.dex-v2-manage .dex-desktop-management-navigation.dex-v2-section-tabs button {
+    flex: 1; min-width: 0; min-height: 44px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-page.dex-v2-manage .dex-desktop-management-navigation.dex-v2-section-tabs button[aria-current="page"] { border-bottom-color: var(--brand-strong); color: var(--text-primary); box-shadow: none; }
+  :root body .app-shell-dex-v2 .dex-owner-list-toolbar:has(.dex-owner-index-header) { align-items: center; gap: 8px 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-subtle); }
+  :root body .app-shell-dex-v2 .dex-owner-index-header { flex: 1; }
+  :root body .app-shell-dex-v2 .dex-owner-index-header h2 { margin: 0; color: var(--text-primary); font-size: 1.1rem; }
+  :root body .app-shell-dex-v2 .dex-owner-index-header p { margin: 4px 0 0; color: var(--text-secondary); font-size: .8rem; }
+  :root body .app-shell-dex-v2 .dex-v2-current-limit .dex-owner-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  :root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-current-limit.dex-owner-workspace .dex-owner-claim-primary {
+    display: flex; justify-content: center; grid-column: 1 / -1; background: var(--brand-strong); border-color: var(--brand-strong); color: #fff; font-weight: 650;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-current-limit .dex-owner-actions > .dex-owner-action { width: auto; min-width: 0; }
+  :root body .app-shell-dex-v2 :is(.dex-owner-fund-action, .dex-owner-edit-action) { border: 0; padding: 0; }
+  :root body .app-shell-dex-v2 :is(.dex-owner-fund-action, .dex-owner-edit-action) > summary { justify-content: center; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: 4px; }
+  :root body .app-shell-dex-v2 :is(.dex-owner-fund-action, .dex-owner-edit-action) > summary::before { content: none; }
+  :root body .app-shell-dex-v2 :is(.dex-owner-fund-action, .dex-owner-edit-action)[open] { grid-column: 1 / -1; }
+  :root body .app-shell-dex-v2 :is(.dex-owner-fund-action, .dex-owner-edit-action)[open] > div { padding-top: 12px; }
+  :root body .app-shell-dex-v2 .dex-v2-current-limit .dex-owner-actions > .dex-owner-action:not(.dex-owner-fund-action):not(.dex-owner-edit-action) { grid-column: 1 / -1; }
+  :root body .app-shell-dex-v2 .dex-owner-workspace .dex-owner-close-action { border: 0; border-top: 1px solid var(--border-subtle); background: transparent; }
+  :root body .app-shell-dex-v2 .dex-v2-manage .dex-owner-workspace .dex-owner-close-action > summary { justify-content: flex-end; color: #ffa0af; }
+  :root body .app-shell-dex-v2 .dex-owner-close-action > summary::before { content: none; }
+  :root body .app-shell-dex-v2 .dex-owner-detail > .dex-owner-footer { border-top: 0; margin-top: auto; }
+  :root body .app-shell-dex-v2 .dex-owner-detail > .dex-owner-footer[open] { border-top: 1px solid var(--border-subtle); }
+}
+@media (max-width: 920px) {
+  :root body .app-shell-dex-v2 .dex-owner-split { grid-template-columns: minmax(0, 1fr); }
+  :root body .app-shell-dex-v2 :is(.dex-owner-index, .dex-owner-detail) { min-height: 0; padding: 16px; }
+  :root body .app-shell-dex-v2 .dex-owner-selection-empty { min-height: 120px; }
+}
 @media (max-width: 680px) {
   .app-shell-dex-v2 .dex-v2-management-grid > .dex-v2-form-column { padding: 16px 12px; }
   .app-shell-dex-v2 .dex-owner-workspace { gap: 10px; }
@@ -102,3 +175,21 @@
   .app-shell-dex-v2 .dex-owner-actions { padding-inline: 0; }
   .app-shell-dex-v2 .dex-history-toolbar button { min-height: 44px; }
 }
+
+.dex-v2-approval-policy { display: grid; gap: 2px; margin-block: 12px; }
+.dex-v2-approval-policy > button {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; min-height: 44px; padding: 0; border: 0; background: transparent;
+  color: var(--text-primary); text-align: left; font: inherit;
+}
+.dex-v2-approval-switch-track {
+  position: relative; flex: 0 0 32px; height: 18px; border: 1px solid var(--approved-border);
+  border-radius: 999px; background: rgba(93, 87, 108, .52);
+}
+.dex-v2-approval-switch-track > i {
+  position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--text-primary);
+}
+.dex-v2-approval-policy > button[aria-checked='true'] .dex-v2-approval-switch-track { background: #7540c9; border-color: #8f52e8; }
+.dex-v2-approval-policy > button[aria-checked='true'] i { transform: translateX(14px); }
+.dex-v2-approval-policy small { color: var(--text-secondary); font-size: .8125rem; font-weight: normal; }

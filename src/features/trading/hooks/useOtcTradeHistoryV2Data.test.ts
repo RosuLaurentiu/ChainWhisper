@@ -72,13 +72,56 @@ describe('candidate canonical History coverage marker', () => {
     return { attributes, setAttribute, removeAttribute, sync, rows, isCurrent, current, marker };
   };
   const RenderCoverage = (current: OtcTradeHistoryV2Runtime | null, enabled = true,
-    scope = 'candidate:owner-session-secret') => {
+    scope = 'candidate:owner-session-secret', addresses: readonly string[] = contracts) => {
     hooks.enabled = true;
     hooks.index = 0;
-    const result = useOtcTradeHistoryV2Data(current, scope, contracts, true, enabled);
+    const result = useOtcTradeHistoryV2Data(current, scope, addresses, true, enabled);
     hooks.effects.splice(0).forEach(effect => effect());
     return result;
   };
+
+  it('reports a selected-contract scope change as loading before its effect starts', async () => {
+    const source = fixture();
+    source.sync.mockResolvedValueOnce({ hasMore: true });
+    RenderCoverage(source.current);
+    await vi.waitFor(() => expect(source.marker()?.state).toBe('partial'));
+    expect(RenderCoverage(source.current).hasMoreOtcTradeHistoryV2).toBe(true);
+    source.sync.mockImplementationOnce(() => new Promise(() => {}));
+    const selected = RenderCoverage(source.current, true, undefined, [contracts[2]]);
+    expect(selected.loadingOtcTradeHistoryV2).toBe(true);
+    expect(selected.initialOtcTradeHistoryV2Pending).toBe(true);
+    expect(selected.completeOtcTradeHistoryV2).toBe(false);
+    expect(selected.otcTradeHistoryV2Rows).toEqual([]);
+    expect(source.sync).toHaveBeenCalledTimes(2);
+    expect(source.sync.mock.calls[1]).toEqual([[contracts[2]], 'latest']);
+  });
+
+  it('does not publish the previous scope error while the selected contract starts', async () => {
+    const source = fixture();
+    source.sync.mockRejectedValueOnce(new Error('Previous scope unavailable'));
+    RenderCoverage(source.current);
+    await vi.waitFor(() => expect(source.marker()?.state).toBe('error'));
+    expect(RenderCoverage(source.current).otcTradeHistoryV2Error).toContain('Previous scope unavailable');
+    source.sync.mockImplementationOnce(() => new Promise(() => {}));
+    const selected = RenderCoverage(source.current, true, undefined, [contracts[2]]);
+    expect(selected.otcTradeHistoryV2Error).toBe('');
+    expect(selected.loadingOtcTradeHistoryV2).toBe(true);
+    expect(source.sync).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears a previous scope error when the replacement runtime is unavailable', async () => {
+    const source = fixture();
+    source.sync.mockRejectedValueOnce(new Error('Previous scope unavailable'));
+    RenderCoverage(source.current);
+    await vi.waitFor(() => expect(source.marker()?.state).toBe('error'));
+    expect(RenderCoverage(source.current).otcTradeHistoryV2Error).toContain('Previous scope unavailable');
+    expect(RenderCoverage(null, true, 'replacement-owner').otcTradeHistoryV2Error).toBe('');
+    const unavailable = RenderCoverage(null, true, 'replacement-owner');
+    expect(unavailable.otcTradeHistoryV2Error).toBe('');
+    expect(unavailable.loadingOtcTradeHistoryV2).toBe(false);
+    expect(source.marker()?.state).toBe('unavailable');
+    expect(source.sync).toHaveBeenCalledOnce();
+  });
 
   it('distinguishes committed partial pages from guarded complete coverage without private payload', async () => {
     const source = fixture();

@@ -19,7 +19,7 @@ export function currentDexPriceImpact({ model, reference, pair, inputIndex, now 
 }): string {
   if (!model || !reference || reference.status !== 'available' || !isVerifiedCurrentDexMarketReference(reference) ||
       reference.pair[0] !== pair[0] || reference.pair[1] !== pair[1]) return 'Unavailable';
-  const at = BigInt(reference.sampledAt);
+  const at = BigInt(reference.checkedAt??reference.sampledAt);
   if (now < at || now - at > 120n) return 'Unavailable';
   try {
     const input = exactTokenUnits(model, 'You pay', pair[inputIndex]), output = exactTokenUnits(model, 'You receive', pair[1 - inputIndex]);
@@ -34,6 +34,15 @@ export function currentDexPriceImpact({ model, reference, pair, inputIndex, now 
   } catch { return 'Unavailable'; }
 }
 
+// Display only. Amounts must use the same decimal scale; no protection or send authority.
+export function formatCurrentDexAveragePrice({ baseAmount, quoteAmount, baseToken, quoteToken }: {
+  baseAmount: bigint; quoteAmount: bigint; baseToken: string; quoteToken: string;
+}): string {
+  if (typeof baseAmount !== 'bigint' || typeof quoteAmount !== 'bigint' || baseAmount <= 0n || quoteAmount <= 0n) return 'Unavailable';
+  const scaled = quoteAmount * 10n ** 8n / baseAmount;
+  return `${scaled === 0n ? '<0.00000001' : formatUnits(scaled, 8)} ${quoteToken}/${baseToken} (rounded down)`;
+}
+
 // Display only. This uses reviewed Quote rows and has no protection or send authority.
 export function currentDexQuoteAveragePrice({ model, pair, inputIndex, priceDisplayInverted }: {
   model: TradeActionConfirmModel | null; pair: readonly [string, string]; inputIndex: 0 | 1; priceDisplayInverted: boolean;
@@ -45,6 +54,6 @@ export function currentDexQuoteAveragePrice({ model, pair, inputIndex, priceDisp
     const baseIndex = priceDisplayInverted ? 1 : 0;
     const base = baseIndex === inputIndex ? paid : received;
     const quote = baseIndex === inputIndex ? received : paid;
-    return `${formatUnits(quote * 10n ** 8n / base, 8)} ${pair[1 - baseIndex]} per ${pair[baseIndex]} (rounded down)`;
+    return formatCurrentDexAveragePrice({ baseAmount: base, quoteAmount: quote, baseToken: pair[baseIndex], quoteToken: pair[1 - baseIndex] });
   } catch { return 'Unavailable'; }
 }
