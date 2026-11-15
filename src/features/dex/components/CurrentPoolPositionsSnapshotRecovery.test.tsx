@@ -5,7 +5,7 @@ import type { SharedWalletSession } from '../../../lib/walletSession';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from '../../../lib/dexV2Deployment';
 import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../../lib/currentDexLimitInputCandidate';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
-// The App selects the gap graph; this file keeps the checks of the 7bed-only branch.
+// The App selects the gap graph; this file keeps the same checks for the earlier admitted graph 7bed.
 // Evidence: APP/reports/pool-snapshot-verification-2026-11-14.
 vi.mock('../../../lib/selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('../../../lib/selectedCurrentDexCandidate')>();
   const current=await import('../../../lib/currentDexLimitInputCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_LIMIT_INPUT_DEX_CANDIDATE};});

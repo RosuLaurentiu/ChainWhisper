@@ -22,7 +22,7 @@ import './CurrentPoolPositionsWorkspace.css';
 import CurrentPreparedPoolTopUpWorkspace from './CurrentPreparedPoolTopUpWorkspace';
 import CurrentOwnedPoolPositions from './CurrentOwnedPoolPositions';
 import { currentPoolVerificationMessage } from '../../../lib/currentDexPoolProofError';
-import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../../lib/currentDexLimitInputCandidate';
+import { usesTransactionScopedPoolSnapshots } from '../../../lib/currentDexSnapshotAdmission';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 type Capability=Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
 type Sender=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexSubmissionCapability']>>>;
@@ -263,7 +263,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       const sender=await getSender(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:nativeTrial?{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE}:undefined);assertScope(captured);
       if(!snapshotHeld&&preparedCandidate){const result=await sender.recoverCurrentPreparedPoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
       if(!snapshotHeld&&nativeTrial){const result=await sender.recoverCurrentNativePoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
-      const verifySnapshot=privacyReady&&getPositions&&candidate.graph===STAGED_LIMIT_INPUT_DEX_CANDIDATE.graph?
+      const verifySnapshot=privacyReady&&getPositions&&usesTransactionScopedPoolSnapshots(candidate)?
         async(positionId:bigint,hash:string)=>{assertScope(captured);setTransactionHash(hash);
           const capability=await getPositions(BigInt(candidate.chainId),{candidate:candidateKey});assertScope(captured);
           const latestHash=current&&snapshot.value.positionId===positionId?producerHash.trim():'';

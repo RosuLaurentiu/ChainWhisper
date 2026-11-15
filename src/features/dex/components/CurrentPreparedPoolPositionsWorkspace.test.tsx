@@ -9,7 +9,7 @@ import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 import { keccak256 } from '@coti-io/coti-ethers';
 import { currentNativePoolSnapshotAbi } from '../../../lib/currentDexNativePoolSnapshot';
-import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../../lib/currentDexLimitInputCandidate';
+import { usesTransactionScopedPoolSnapshots } from '../../../lib/currentDexSnapshotAdmission';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import type { issueCurrentDexPoolPositionCapability } from '../../wallet/currentDexPoolPositionCapability';
 
@@ -65,7 +65,7 @@ function fixture(pairIndex=0){
 afterEach(()=>{hooks.states=[];hooks.refs=[];hooks.allowNative=false;vi.clearAllMocks();vi.unstubAllGlobals();});
 
 describe('prepared Positions owner snapshot view',()=>{
-  if(key==='cheap-history'&&candidate.graph===STAGED_LIMIT_INPUT_DEX_CANDIDATE.graph)it.each(['success','owner-change'] as const)('recovers the saved initial-claim refresh without another wallet action: %s',async outcome=>{
+  if(key==='cheap-history'&&usesTransactionScopedPoolSnapshots(candidate))it.each(['success','owner-change'] as const)('recovers the saved initial-claim refresh without another wallet action: %s',async outcome=>{
     const f=fixture();hooks.allowNative=true;
     Object.assign(f.props.sharedWalletSession!,{sessionOnboardInfo:{[owner]:{aesKey:'fixture-only'}},walletAesHealthByAddress:{}});
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,

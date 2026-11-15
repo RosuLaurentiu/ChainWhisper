@@ -9,7 +9,7 @@ import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_POOL_REFRESH_ATTEMPT_KEY } fro
 import { issueCurrentDexPoolPositionCapability, assertCurrentPoolPositionPrepared, assertVerifiedCurrentPoolSnapshot, assertVerifiedSupersededPoolSnapshot } from './currentDexPoolPositionCapability';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi } from '../../lib/currentDexPoolPosition';
-import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../lib/currentDexLimitInputCandidate';
+import { usesTransactionScopedPoolSnapshots } from '../../lib/currentDexSnapshotAdmission';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE as c, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 const ARCHIVED_CHEAP_POOL_TOKENS=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1);
 const mocks=vi.hoisted(()=>({issue:vi.fn(),graph:vi.fn(),decrypt:vi.fn(),small:vi.fn(),wide:vi.fn(),reader:vi.fn()}));
@@ -21,7 +21,7 @@ const owner=`0x${'22'.repeat(20)}`,recipient=`0x${'33'.repeat(20)}`,hash=toBeHex
 const transfer=new Interface(['event Transfer(address indexed from,address indexed to,(uint256 ciphertextHigh,uint256 ciphertextLow) senderValue,(uint256 ciphertextHigh,uint256 ciphertextLow) receiverValue)']);
 const previewAbi = new Interface(POOL_EXIT_PREVIEW_ABI);
 const word = (n: bigint | number) => toBeHex(n, 32), empty = (n: number) => Array.from({ length: n }, () => word(0));
-const transactionScopedSnapshots = resolveCurrentCheapDexCandidate('cheap-history').graph === STAGED_LIMIT_INPUT_DEX_CANDIDATE.graph;
+const transactionScopedSnapshots = usesTransactionScopedPoolSnapshots(resolveCurrentCheapDexCandidate('cheap-history'));
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends readonly (infer V)[] ? Mutable<V>[] : T[K] extends object ? Mutable<T[K]> : T[K] };
 // Exact six-market/four-token synthetic scope. The financial and codec checks are real.
 async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-exit'|'cheap-history'='cheap-exit',id=43n,selectedOwner=owner,

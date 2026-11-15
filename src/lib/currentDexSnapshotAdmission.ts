@@ -1,0 +1,15 @@
+import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from './currentDexLimitInputCandidate';
+import { STAGED_GAP_DEX_CANDIDATE } from './currentDexGapCandidate';
+
+// A plain snapshot of an active Pool claim is verified from its own transaction: the exact call, the unique event,
+// the owner, and the stored owner envelopes. It is not compared with a financial baseline from before the wallet
+// request, because that interval contains unrelated swaps and C1 activity. This is correct only for a graph whose
+// snapshot call writes snapshot output and context only and moves no token.
+// Evidence for graph 7bed: reports/pool-snapshot-verification-2026-11-14 (CW-009.03.03).
+// Evidence for graph 9c2c: reports/pool-snapshot-gap-graph-2026-11-16 (CW-089). PositionCommands, SharedPoolClaims,
+// PoolOwner and SharedPoolMath have the same source and the same runtime bytecode as on 7bed; the Core differs in two
+// constructor values only (factory runtime hash and library commitments). A new graph needs its own evidence.
+const ADMITTED = [STAGED_LIMIT_INPUT_DEX_CANDIDATE, STAGED_GAP_DEX_CANDIDATE] as const;
+
+export const usesTransactionScopedPoolSnapshots = (candidate: Readonly<{ graph: string; packageSha256: string }>): boolean =>
+  ADMITTED.some(admitted => candidate.graph === admitted.graph && candidate.packageSha256 === admitted.packageSha256);

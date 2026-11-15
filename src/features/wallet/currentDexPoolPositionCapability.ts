@@ -20,7 +20,7 @@ import { POOL_EXIT_PREVIEW_ABI, encodePoolExitPreview, encodePreviewedPoolWithdr
 import { readCurrentDexOwnedPositionIds } from '../../lib/currentDexOwnedPositions';
 import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonicalInclusion';
 import { CurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
-import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../lib/currentDexLimitInputCandidate';
+import { usesTransactionScopedPoolSnapshots } from '../../lib/currentDexSnapshotAdmission';
 
 type IssueArgs = Omit<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>, 'bindCapability' | 'capabilityLabel' | 'requirePrivacy'> & Readonly<{ candidate?: CurrentCheapDexCandidateKey }>;
 
@@ -235,14 +235,13 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       return readAt(id,await head(), !!nativeReader && !!currentNativePoolSession(signer)?.closedPayouts);
     };
     const readPosition = (id: bigint, options?: {producerHash?:string;metadataOnly?:true}) => readPositionWithState(id, options);
-    const transactionScopedSnapshots = candidateKey === 'cheap-history' && candidate.graph === STAGED_LIMIT_INPUT_DEX_CANDIDATE.graph &&
-      candidate.packageSha256 === STAGED_LIMIT_INPUT_DEX_CANDIDATE.packageSha256;
+    const transactionScopedSnapshots = candidateKey === 'cheap-history' && usesTransactionScopedPoolSnapshots(candidate);
     const verifyPlainSnapshot = async (id: bigint, hash: string, notBefore = 0n) => {
       requireCurrentPoolProof(transactionScopedSnapshots && !preparedCloses.get(signer)?.has(id), 'This snapshot needs its original financial verifier.');
       const block = await head(), { reader } = await preparedFor(id, block);
       const data = abi.encodeFunctionData('poolSnapshot', [id]), proof = await reader.canonical(hash);
       requireCurrentPoolProof(!!proof && same(proof.data, data) && proof.block.number >= notBefore, 'Prepared snapshot call changed.');
-      // The pinned 7bed snapshot call only writes owner snapshot output/context; intervening market activity is independent.
+      // The snapshot call of an admitted graph only writes owner snapshot output/context; intervening market activity is independent.
       const producer = await reader.issue(id, 'snapshot', hash, data);
       requireCurrentPoolProof(producer.status === 1n, 'Plain snapshot requires an active Pool claim.');
       const snapshot = await readPreparedAt(id, producer.block, producer);
