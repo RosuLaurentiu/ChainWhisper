@@ -37,7 +37,7 @@ jobs:
       - name: Preserve immutable assets used by open tabs
         run: |
           git fetch --no-tags origin whisper:refs/remotes/origin/whisper
-          node scripts/prepare-pages-static-site.cjs --build dist --output pages-site --graph cc7eb662c644c10bef875d2a72524095848a236155005a32377b10a7c0c13e44 --previous-ref origin/whisper
+          node scripts/prepare-pages-static-site.cjs --build dist --output pages-site --graph 9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e --previous-ref origin/whisper
 
       - name: Preserve custom domain
         run: |
