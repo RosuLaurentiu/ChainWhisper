@@ -110,3 +110,16 @@ are historical evidence, not current compatibility requirements.
   action in Backlog. Local tests/build are not connected-wallet acceptance.
 - Reports and experiments belong with this component. Preserve useful evidence;
   remove owned disposable output when it is no longer needed.
+
+## Publication
+
+- Owner decision, 2026-11-15 (CW-087): the `main` branch publishes
+  chainwhisper.app. A push to `main` runs the deploy workflow and replaces the
+  hosted Testnet App. Each such push needs the owner's explicit approval. Do not
+  publish through the `whisper` branch or its manual workflow.
+- Check a release build in a clean tree with LF files. A GitHub build has
+  tracked files only; the generated `.env.coti-testnet-candidate.local` is not
+  in it, so the tracked settings must hold the released values.
+- The deploy takes old hash-named files for open tabs from the hosted
+  `BUILD_MANIFEST.json`. If the hosted site cannot be read, the deploy stops.
+  [Record](reports/pages-release-2026-11-15/RELEASE_RESULT.json).
