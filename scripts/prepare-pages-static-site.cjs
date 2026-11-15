@@ -36,11 +36,32 @@ function gitSource(ref,cwd) {
  const read=name=>{assert(safe(name),'PAGES_GIT_PATH');const file=name==='BUILD_MANIFEST.json'?name:'site/'+name;assert(git(['ls-tree',id,'--',file]).toString().startsWith('100644 blob '),'PAGES_GIT_FILE');return git(['show',id+':'+file]);};
  return {id,manifest:JSON.parse(read('BUILD_MANIFEST.json')),read};
 }
-module.exports={prepareStaticSite,gitSource};
-if(require.main===module) {
- const {values}=parseArgs({options:{build:{type:'string'},output:{type:'string'},graph:{type:'string'},'previous-ref':{type:'string',multiple:true,default:[]}}});
+// The hosted site as the previous release: BUILD_MANIFEST.json names its files; prepareStaticSite checks each hash.
+async function httpSource(base,{fetch:request=globalThis.fetch,wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)),limit=32*1024*1024,parallel=8}={}) {
+ let origin=null;try{origin=new URL(base);}catch{origin=null;}
+ assert(origin&&origin.protocol==='https:'&&!origin.username&&!origin.password&&!origin.search&&!origin.hash,'PAGES_HTTP_URL');
+ const root=origin.href.replace(/\/+$/,'');
+ async function load(url) {
+  for(let attempt=1;;attempt++) {
+   let response=null;try{response=await request(url,{redirect:'error',signal:AbortSignal.timeout(60000)});}catch(error){if(attempt===3)throw new Error('PAGES_HTTP_REQUEST',{cause:error});}
+   if(response&&response.status===200){const bytes=Buffer.from(await response.arrayBuffer());assert(bytes.length<=limit,'PAGES_HTTP_SIZE');return bytes;}
+   // Repeat only a temporary answer. A missing or moved file stops at once.
+   assert(attempt<3&&(!response||response.status===429||response.status>=500),'PAGES_HTTP_STATUS');await wait(1000*attempt);
+  }
+ }
+ // The manifest changes with each release, so it must not come from a cache. Hash-named files do not change.
+ let manifest;try{manifest=JSON.parse(await load(root+'/BUILD_MANIFEST.json?v='+Date.now()));}catch(error){if(error instanceof SyntaxError)throw new Error('PAGES_HTTP_MANIFEST');throw error;}
+ assert(manifest&&manifest.files&&typeof manifest.files==='object'&&!Array.isArray(manifest.files),'PAGES_HTTP_MANIFEST');
+ const names=Object.keys(manifest.files).filter(name=>safe(name)&&name.startsWith('assets/')),bytes=new Map();let next=0;
+ await Promise.all(Array.from({length:Math.min(parallel,names.length)},async()=>{while(next<names.length){const name=names[next++];bytes.set(name,await load(root+'/'+name.split('/').map(encodeURIComponent).join('/')));}}));
+ return {id:root,manifest,read:name=>{assert(bytes.has(name),'PAGES_HTTP_FILE');return bytes.get(name);}};
+}
+module.exports={prepareStaticSite,gitSource,httpSource};
+if(require.main===module)(async()=>{
+ const {values}=parseArgs({options:{build:{type:'string'},output:{type:'string'},graph:{type:'string'},'previous-ref':{type:'string',multiple:true,default:[]},'previous-url':{type:'string',multiple:true,default:[]}}});
  assert(values.build&&values.output&&values.graph,'PAGES_USAGE');
- const result=prepareStaticSite({build:values.build,output:values.output,graph:values.graph,previous:values['previous-ref'].map(ref=>gitSource(ref,process.cwd()))});
+ const previous=values['previous-ref'].map(ref=>gitSource(ref,process.cwd()));for(const url of values['previous-url'])previous.push(await httpSource(url));
+ const result=prepareStaticSite({build:values.build,output:values.output,graph:values.graph,previous});
  fs.writeFileSync(path.resolve(values.output)+'.manifest.json',JSON.stringify(result.manifest,null,2)+'\n',{flag:'wx'});
  console.log(JSON.stringify({status:'PAGES_STATIC_SITE_PREPARED',files:Object.keys(result.manifest.files).length,retainedAssets:result.retained.length,indexSha256:result.manifest.indexSha256}));
-}
+})().catch(error=>{console.error(error);process.exit(1);});

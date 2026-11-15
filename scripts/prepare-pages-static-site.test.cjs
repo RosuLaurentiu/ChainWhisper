@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{createHash}=require('node:crypto');
-const {prepareStaticSite}=require('./prepare-pages-static-site.cjs'),sha=b=>createHash('sha256').update(b).digest('hex'),graph='a'.repeat(64);
+const {prepareStaticSite,httpSource}=require('./prepare-pages-static-site.cjs'),sha=b=>createHash('sha256').update(b).digest('hex'),graph='a'.repeat(64);
 function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'cw-pages-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const build=path.join(root,'build'),output=path.join(root,'site');fs.mkdirSync(path.join(build,'assets'),{recursive:true});fs.writeFileSync(path.join(build,'index.html'),'<script src="/assets/current-12345678.js"></script>');fs.writeFileSync(path.join(build,'assets/current-12345678.js'),'current');fs.writeFileSync(path.join(build,'DEX_BUILD_IDENTITY.json'),JSON.stringify({schema:'CURRENT_DEX_BUILD_V1',graph}));return {root,build,output,graph};}
 const prior=(files,sourceGraph=graph)=>({id:'b'.repeat(40),manifest:{schema:'CHECKED_BETA_APP_STATIC_TREE_V1',graph:sourceGraph,files:Object.fromEntries(Object.entries(files).map(([name,bytes])=>[name,sha(bytes)]))},read:name=>Buffer.from(files[name])});
 test('open tabs retain previous lazy assets without replacing current HTML or configuration',t=>{const f=fixture(t),result=prepareStaticSite({...f,previous:[prior({'assets/old-abcdefgh.js':'old lazy','index.html':'old index','deployments/current.json':'old config'})]});assert.equal(fs.readFileSync(path.join(f.output,'assets/old-abcdefgh.js'),'utf8'),'old lazy');assert.equal(fs.readFileSync(path.join(f.output,'index.html'),'utf8'),'<script src="/assets/current-12345678.js"></script>');assert(!fs.existsSync(path.join(f.output,'deployments/current.json')));assert.equal(result.retained.length,1);});
@@ -11,3 +11,34 @@ test('graph cutover retains only checked assets and keeps the new graph and HTML
 test('missing current entry assets fail closed',t=>{const f=fixture(t);fs.unlinkSync(path.join(f.build,'assets/current-12345678.js'));assert.throws(()=>prepareStaticSite(f),/PAGES_ENTRY_ASSET/);assert(!fs.existsSync(f.output));});
 test('an existing output is never replaced',t=>{const f=fixture(t);fs.mkdirSync(f.output);fs.writeFileSync(path.join(f.output,'pending.json'),'preserve');assert.throws(()=>prepareStaticSite(f),/PAGES_OUTPUT_EXISTS/);assert.equal(fs.readFileSync(path.join(f.output,'pending.json'),'utf8'),'preserve');});
 test('missing or mismatched resolved build identity cannot be labelled as the requested graph',t=>{for(const kind of ['missing','graph','schema']){const f=fixture(t),file=path.join(f.build,'DEX_BUILD_IDENTITY.json');if(kind==='missing')fs.unlinkSync(file);else fs.writeFileSync(file,JSON.stringify({schema:kind==='schema'?'wrong':'CURRENT_DEX_BUILD_V1',graph:kind==='graph'?'c'.repeat(64):graph}));assert.throws(()=>prepareStaticSite(f),/PAGES_BUILD_IDENTITY/);assert(!fs.existsSync(f.output));}});
+// A hosted site as the previous release: its manifest and files come over HTTPS. The fake fetch records each request.
+function hosted(files,{served=files,status=()=>null}={}) {
+ const manifest={schema:'CHECKED_BETA_APP_STATIC_TREE_V1',graph,files:Object.fromEntries(Object.entries(files).map(([name,bytes])=>[name,sha(bytes)]))},calls=[];
+ const fetch=async(url,options)=>{const target=new URL(url),name=decodeURIComponent(target.pathname.slice(1));calls.push({name,search:target.search,options});
+  const body=Buffer.from(name==='BUILD_MANIFEST.json'?JSON.stringify(manifest):served[name]??''),code=status(name,calls.filter(call=>call.name===name).length)??(name==='BUILD_MANIFEST.json'||name in served?200:404);
+  return {status:code,arrayBuffer:async()=>body.buffer.slice(body.byteOffset,body.byteOffset+body.length)};};
+ return {manifest,calls,options:{fetch,wait:async()=>{}}};
+}
+test('a hosted site supplies previous lazy assets with the same checks',async t=>{const f=fixture(t),site=hosted({'assets/old-abcdefgh.js':'old lazy','index.html':'old index','deployments/current.json':'old config'});
+ const source=await httpSource('https://site.example/',site.options),result=prepareStaticSite({...f,previous:[source]});
+ assert.equal(fs.readFileSync(path.join(f.output,'assets/old-abcdefgh.js'),'utf8'),'old lazy');assert.equal(result.retained.length,1);assert(!fs.existsSync(path.join(f.output,'deployments/current.json')));
+ assert.deepEqual(site.calls.map(call=>call.name),['BUILD_MANIFEST.json','assets/old-abcdefgh.js']);assert.match(site.calls[0].search,/^\?v=\d+$/);assert.equal(site.calls[1].search,'');
+ assert(site.calls.every(call=>call.options.redirect==='error'));});
+test('a hosted site without a manifest or with a missing file fails closed',async t=>{const f=fixture(t);
+ await assert.rejects(httpSource('https://site.example',hosted({},{status:name=>name==='BUILD_MANIFEST.json'?404:null}).options),/PAGES_HTTP_STATUS/);
+ await assert.rejects(httpSource('https://site.example',hosted({'assets/old-abcdefgh.js':'old lazy'},{served:{}}).options),/PAGES_HTTP_STATUS/);
+ await assert.rejects(httpSource('https://site.example',hosted({'assets/old-abcdefgh.js':'old lazy'},{status:name=>name.startsWith('assets/')?301:null}).options),/PAGES_HTTP_STATUS/);assert(!fs.existsSync(f.output));});
+test('changed bytes from a hosted site stop before writing',async t=>{const f=fixture(t),source=await httpSource('https://site.example',hosted({'assets/old-abcdefgh.js':'old lazy'},{served:{'assets/old-abcdefgh.js':'changed'}}).options);
+ assert.throws(()=>prepareStaticSite({...f,previous:[source]}),/PAGES_PREVIOUS_HASH/);assert(!fs.existsSync(f.output));});
+test('a hosted source accepts only a plain https origin and requests no unsafe name',async t=>{const f=fixture(t);
+ for(const url of ['http://site.example','https://user:secret@site.example','https://site.example/?x=1','https://site.example/#part','not a url'])await assert.rejects(httpSource(url,hosted({}).options),/PAGES_HTTP_URL/);
+ const site=hosted({'assets/old-abcdefgh.js':'old lazy'});site.manifest.files['../outside.js']='f'.repeat(64);site.manifest.files['assets/../../outside.js']='f'.repeat(64);
+ const source=await httpSource('https://site.example',site.options);assert.deepEqual(site.calls.map(call=>call.name),['BUILD_MANIFEST.json','assets/old-abcdefgh.js']);
+ assert.throws(()=>prepareStaticSite({...f,previous:[source]}),/PAGES_PREVIOUS_PATH/);assert(!fs.existsSync(f.output));});
+test('a hosted source repeats a temporary failure three times at most',async t=>{const f=fixture(t),files={'assets/old-abcdefgh.js':'old lazy'};
+ const recovered=hosted(files,{status:(name,count)=>name.startsWith('assets/')&&count<3?503:null}),source=await httpSource('https://site.example',recovered.options);
+ assert.equal(recovered.calls.filter(call=>call.name.startsWith('assets/')).length,3);assert.equal(prepareStaticSite({...f,previous:[source]}).retained.length,1);
+ const down=hosted(files,{status:name=>name.startsWith('assets/')?503:null});await assert.rejects(httpSource('https://site.example',down.options),/PAGES_HTTP_STATUS/);
+ assert.equal(down.calls.filter(call=>call.name.startsWith('assets/')).length,3);
+ const absent=hosted(files,{served:{}});await assert.rejects(httpSource('https://site.example',absent.options),/PAGES_HTTP_STATUS/);assert.equal(absent.calls.filter(call=>call.name.startsWith('assets/')).length,1);});
+test('a hosted manifest that is not a file list is rejected',async()=>{const site=hosted({});site.manifest.files=null;await assert.rejects(httpSource('https://site.example',site.options),/PAGES_HTTP_MANIFEST/);});

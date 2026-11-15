@@ -43,6 +43,7 @@ jobs:
         run: |
           test "$(cat CNAME)" = "chainwhisper.app"
           cp CNAME pages-site/CNAME
+          cp pages-site.manifest.json pages-site/BUILD_MANIFEST.json
           printf '{"commit":"%s","network":"coti-testnet"}\n' "$GITHUB_SHA" > pages-site/release.json
 
       - name: Disable Jekyll processing
