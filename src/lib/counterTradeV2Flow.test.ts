@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Interface, keccak256 } from '@coti-io/coti-ethers';
-const artifact = JSON.parse(readFileSync(new URL('../../reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperCounterOTCEscrowV2.json', import.meta.url), 'utf8'));
-const linkArtifact = JSON.parse(readFileSync(new URL('../../reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperLinkOTCEscrowV2.json', import.meta.url), 'utf8'));
+import artifact from '../../tests/fixtures/input-signatures-ChainWhisperCounterOTCEscrowV2.json';
+import linkArtifact from '../../tests/fixtures/input-signatures-ChainWhisperLinkOTCEscrowV2.json';
 import bookArtifact from '../../tests/fixtures/production-ChainWhisperPrivateOTCEscrowV2.json';
 import standardArtifact from '../../tests/fixtures/production-ChainWhisperStandardOTCEscrowV2.json';
 import { COUNTER_TRADE_V2_ABI } from './counterTradeV2Abi';

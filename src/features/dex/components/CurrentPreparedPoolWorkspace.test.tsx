@@ -204,9 +204,9 @@ describe('prepared Pool creation view', () => {
     const tree = f.render();
     expect(elements(tree).filter(element => element.type === 'input' && element.props['aria-label']?.endsWith('Pool budget')).map(element => element.props['aria-label']))
       .toEqual(pair.tokens.map(token => `${token.label} Pool budget`));
-    expect(text(tree)).toContain(`${pair.tokens[0].label} per ${pair.tokens[1].label}`);
+    expect(text(tree)).toContain(`Starting price *${pair.tokens[0].label}/${pair.tokens[1].label}`);
     f.props.priceDisplayInverted = true;
-    expect(text(f.render())).toContain(`${pair.tokens[1].label} per ${pair.tokens[0].label}`);
+    expect(text(f.render())).toContain(`Starting price *${pair.tokens[1].label}/${pair.tokens[0].label}`);
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
   });
   it('requires live submission capability before provider or private input prompts', async () => {

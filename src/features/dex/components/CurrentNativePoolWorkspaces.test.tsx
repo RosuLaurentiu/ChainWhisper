@@ -17,7 +17,8 @@ vi.mock('../../../lib/dexV2Deployment',async original=>{
 
 const hooks=vi.hoisted(()=>({index:0,refIndex:0,states:[] as unknown[],refs:[] as {current:unknown}[],
   confirm:vi.fn(async()=>true)}));
-vi.mock('react',async original=>{const actual=await original<typeof import('react')>();return {...actual,
+// Position effects only write wallet diagnostics; these tests do not check them.
+vi.mock('react',async original=>{const actual=await original<typeof import('react')>();return {...actual,useEffect:()=>{},
   useState:(initial:unknown)=>{const i=hooks.index++;if(!(i in hooks.states))hooks.states[i]=initial;
     return [hooks.states[i],(value:unknown)=>{hooks.states[i]=typeof value==='function'?value(hooks.states[i]):value;}];},
   useRef:(initial:unknown)=>{const i=hooks.refIndex++;return hooks.refs[i]??(hooks.refs[i]={current:initial});}};});
@@ -31,6 +32,10 @@ const hash=`0x${'44'.repeat(32)}`;
 const active={positionId:20n,context:`0x${'77'.repeat(32)}`,status:1n,producerKind:'snapshot',
   amounts:{classId:0n,amount0:2n*10n**18n,amount1:3n*10n**18n,shares:10n}};
 const setup=(positions:object,sender:object,Workspace=CurrentPoolPositionsWorkspace)=>{
+  // Position status reads the saved record first; a browser always has this storage.
+  const records=new Map<string,string>();
+  vi.stubGlobal('window',{sessionStorage:{getItem:(key:string)=>records.get(key)??null,
+    setItem:(key:string,value:string)=>records.set(key,value),removeItem:(key:string)=>records.delete(key)}});
   const getSender=vi.fn(async()=>sender),getPositions=vi.fn(async()=>positions);
   const session={walletAddress:`0x${'22'.repeat(20)}`,chainId:Number(candidate.chainId),browserProvider:{request:vi.fn()},
     actions:{getCurrentDexPoolPositionCapability:getPositions,getCurrentDexSubmissionCapability:getSender}} as unknown as SharedWalletSession;
@@ -49,6 +54,7 @@ const setupFunding=(sender:object,Workspace=CurrentPoolWorkspace)=>{
     actions:{getCurrentDexPoolFundingCapability:async()=>({preparePoolCreation}),getCurrentDexSubmissionCapability:getSender}} as unknown as SharedWalletSession;
   const render=()=>{hooks.index=0;hooks.refIndex=0;return Workspace({sharedWalletSession:session});};
   const button=(name:string)=>elements(render()).find(x=>x.type==='button'&&text(x.props.children)===name)!;
+  // Pool scope is ref 2; two approval-mode hooks hold refs 0 and 1.
   render();return {render,button,preparePoolCreation,getSender,records};
 };
 
@@ -139,7 +145,7 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
     const metadata=vi.fn(),ui=setupFunding({recoverCurrentNativePoolFundingResult:async()=>null,
       readCurrentNativePoolResume,recoverPendingPoolAttempt:metadata});
     ui.button('Check Pool status').props.onClick!();await settle();
-    expect(hooks.states[10]).toEqual({value:funding,scope:hooks.refs[0].current});
+    expect(hooks.states[10]).toEqual({value:funding,scope:hooks.refs[2].current});
     expect(ui.button('Test token 1 approval verified').props.disabled).toBe(true);
     expect(ui.button('Approve exact Test token 0').props.disabled).toBe(false);
     expect(ui.button('Review and fund Pool').props.disabled).toBe(true);
@@ -152,10 +158,10 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
       await review({amount:funding.amounts.used0,previousAllowance:0n,spender:candidate.core});return null;});
     const submitCurrentTokenFunding=vi.fn(),ui=setupFunding({checkCurrentCheapCandidate:async()=>({chainId:BigInt(candidate.chainId),
       owner:`0x${'22'.repeat(20)}`,graph:candidate.graph,core:candidate.core,packageSha256:candidate.packageSha256,readyToSign:false}),preparePoolApproval,submitCurrentTokenFunding});
-    hooks.states[10]={value:funding,scope:hooks.refs[0].current};hooks.confirm.mockResolvedValue(false);
+    hooks.states[10]={value:funding,scope:hooks.refs[2].current};hooks.confirm.mockResolvedValue(false);
     ui.button('Approve exact Test token 1').props.onClick!();await settle();
     expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({summaryRows:expect.arrayContaining([
-      {label:'Token',value:'Test token 1'},{label:'Approval',value:'2.0'},{label:'Previous allowance',value:'0.0'}])}));
+      {label:'Token',value:'Test token 1'},{label:'Deposit amount',value:'2.0'},{label:'Previous allowance',value:'0.0'}])}));
     expect(submitCurrentTokenFunding).not.toHaveBeenCalled();expect(ui.preparePoolCreation).not.toHaveBeenCalled();
   });
   it.each([false,true])('stops only a reviewed unsigned deposit and exposes only required zero clears (bothZero=%s)',async bothZero=>{
@@ -165,7 +171,7 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
       return {status:bothZero?'unfunded-allowances-cleared':'unfunded-abandoned',cleanupRequired:[!bothZero,false],readyToSign:false};});
     const submitCurrentTokenFunding=vi.fn(),ui=setupFunding({checkCurrentCheapCandidate:async()=>({chainId:BigInt(candidate.chainId),
       owner:`0x${'22'.repeat(20)}`,graph:candidate.graph,core:candidate.core,packageSha256:candidate.packageSha256,readyToSign:false}),abandonCurrentNativePoolFunding,submitCurrentTokenFunding});
-    hooks.states[10]={value:funding,scope:hooks.refs[0].current};hooks.states[19]=true;
+    hooks.states[10]={value:funding,scope:hooks.refs[2].current};hooks.states[19]=true;
     ui.button('Review stop and clear approvals').props.onClick!();await settle();
     expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({title:'Stop this unfunded Pool deposit',
       summaryRows:expect.arrayContaining([{label:'Test token 1 unused approval',value:bothZero?'0.0':'2.0'},
@@ -181,7 +187,7 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
       await review({allowances:[2n*10n**18n,0n],scope:'original-pool',readyToSign:false});return null;});
     const ui=setupFunding({checkCurrentCheapCandidate:async()=>({chainId:BigInt(candidate.chainId),owner:`0x${'22'.repeat(20)}`,
       graph:candidate.graph,core:candidate.core,packageSha256:candidate.packageSha256,readyToSign:false}),abandonCurrentNativePoolFunding});
-    const original={value:{amounts:{}},scope:hooks.refs[0].current};hooks.states[10]=original;
+    const original={value:{amounts:{}},scope:hooks.refs[2].current};hooks.states[10]=original;
     expect(ui.button('Review stop and clear approvals').props.disabled).toBe(true);
     ui.button('Review stop and clear approvals').props.onClick!();expect(abandonCurrentNativePoolFunding).not.toHaveBeenCalled();
     hooks.states[19]=true;hooks.confirm.mockResolvedValue(false);ui.button('Review stop and clear approvals').props.onClick!();await settle();
@@ -193,8 +199,8 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
     const sender={checkCurrentCheapCandidate:async()=>({chainId:BigInt(candidate.chainId),owner:`0x${'22'.repeat(20)}`,
       graph:candidate.graph,core:candidate.core,packageSha256:candidate.packageSha256,readyToSign:false}),readCurrentNativePoolResume:async()=>({funding,
       approvals:cleanup?[true,true]:[false,true],unfundedFailed:true,completed:false,unfundedAbandonEligible:false})};
-    const ui=setupFunding(sender);hooks.states[10]={value:funding,scope:hooks.refs[0].current};
-    hooks.states[13]={phase,scope:hooks.refs[0].current,recover:async()=>({token:candidate.tokens[1][0],fundingOutcome:'reverted'})};
+    const ui=setupFunding(sender);hooks.states[10]={value:funding,scope:hooks.refs[2].current};
+    hooks.states[13]={phase,scope:hooks.refs[2].current,recover:async()=>({token:candidate.tokens[1][0],fundingOutcome:'reverted'})};
     ui.button('Check Pool status').props.onClick!();await settle();
     expect(text(ui.render())).toContain('approval transaction reverted. Its allowance was not changed.');
     expect(hooks.states[11]).toEqual(cleanup?[true,true]:[false,true]);expect(hooks.states[12]).toEqual(cleanup?[false,false]:[true,false]);

@@ -15,7 +15,7 @@ describe('active native candidate integration', () => {
     expect(createHash('sha256').update(JSON.stringify(observed)).digest('hex'))
       .toBe('0aa630d033db523b5988bbf1d0e1ee44da7829ae3d03ace83ff4aaa3ec852059');
   });
-  it('selects d06 with admitted public history while native signing remains held', () => {
+  it('selects d06 without a retired daily-price read while native signing remains held', () => {
     expect(current).toBe(d06);
     expect(resolveCurrentCheapDexCandidate('cheap-current')).toBe(d06);
     expect(currentCheapDexCandidateKey(current)).toBe('cheap-d06');
@@ -29,10 +29,12 @@ describe('active native candidate integration', () => {
       'fast-pool': { quote: 75_000_000n, accept: 75_000_000n },
       'cheap-async': { quote: 65_000_000n, accept: 35_000_000n, cancel: 20_000_000n, recover: 50_000_000n }
     });
-    expect(currentNativeDexDailyPriceConfig(current).status).toBe('active');
+    // Clean slate (owner decision 2026-10-29): the retired d06 and native daily-price manifests are not loaded.
+    // A daily-price read exists only for a selected pair of the current history source.
+    expect(currentNativeDexDailyPriceConfig(current)).toEqual({ status: 'inactive' });
     expect(resolveCurrentCheapDexCandidate('cheap-native')).toBe(native);
     expect(() => assertCurrentSwapCandidate(native)).not.toThrow();
-    expect(currentNativeDexDailyPriceConfig(native).status).toBe('active');
+    expect(currentNativeDexDailyPriceConfig(native)).toEqual({ status: 'inactive' });
   });
   it('retains phase-specific admission and does not grant generic owner authority', () => {
     expect(current.readyToSign).toBe(false);

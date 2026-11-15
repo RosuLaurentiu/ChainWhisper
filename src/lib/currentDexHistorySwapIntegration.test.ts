@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './currentDexHistoryCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as retired } from './currentDexHistoryCandidate';
+import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as b2aa } from './currentDexExitCandidate';
 import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 import { currentCheapDexGasCaps } from './currentDexSubmission';
@@ -11,8 +12,10 @@ import { CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
 
 const hash = (byte: string) => `0x${byte.repeat(32)}`;
 const owner = `0x${'12'.repeat(20)}`;
+// The swap policy binds to the selected current candidate. The earlier 7b67 descriptor is a record only.
+const history = selectCurrentDexCandidate(undefined);
 
-describe('7b67 history swap technical integration', () => {
+describe('selected candidate swap technical integration', () => {
   it('selects current history phase caps and preserves unapproved App holds', () => {
     expect(usesCurrentNativeSwapChecks(history)).toBe(true);
     expect(currentCheapDexGasCaps(history)['cheap-async']).toEqual({ quote: 110_000_000n, accept: 35_000_000n,
@@ -60,6 +63,8 @@ describe('7b67 history swap technical integration', () => {
 
     expect(() => validateCurrentNativeSwapCheckpoint(saved, `0x${'13'.repeat(20)}`, history)).toThrow();
     expect(() => validateCurrentNativeSwapCheckpoint(saved, owner, b2aa)).toThrow();
+    expect(() => validateCurrentNativeSwapCheckpoint(saved, owner, retired)).toThrow();
+    expect(() => currentNativeSigningBudget({}, owner, () => 100n, retired)).toThrow('identity changed');
     expect(() => validateCurrentNativeSwapCheckpoint({ ...saved, charges: saved.charges.map((row, i) =>
       i === 0 ? { ...row, gasPrice: '52000000' } : row) }, owner, history)).toThrow();
     expect(() => validateCurrentNativeSwapCheckpoint({ ...saved, charges: saved.charges.map((row, i) =>

@@ -16,7 +16,8 @@ vi.mock('../../../lib/dexV2Deployment', async original => {
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[] }));
 vi.mock('react', async original => {
   const actual = await original<typeof import('react')>();
-  return { ...actual,
+  // Position effects only write wallet diagnostics; these tests do not check them.
+  return { ...actual, useEffect: () => {},
     useState: (initial: unknown) => { const i = hooks.index++; if (!(i in hooks.states)) hooks.states[i] = initial;
       return [hooks.states[i], (value: unknown) => { hooks.states[i] = value; }]; },
     useRef: (initial: unknown) => { const i = hooks.refIndex++; return hooks.refs[i] ?? (hooks.refs[i] = { current: initial }); }
@@ -55,7 +56,8 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
   const render = () => { hooks.index = 0; hooks.refIndex = 0;
     return panel === 'pool' ? components.pool({ sharedWalletSession: session }) : panel === 'position' ? components.position({ sharedWalletSession: session }) : CurrentLimitWorkspace({ sharedWalletSession: session, view: 'manage' }); };
   const button = (label: string) => elements(render()).find(e => e.type === 'button' && text(e.props.children) === label)!;
-  const idle = async () => { await vi.waitFor(() => expect(hooks.states[panel === 'limit' ? 4 : 5]).toBe(false)); };
+  // Busy is state 5 in all panels; the Limit approval-mode hook now holds state 4.
+  const idle = async () => { await vi.waitFor(() => expect(hooks.states[5]).toBe(false)); };
   render();
   if (panel !== 'pool') {
     const label = panel === 'position' ? 'Liquidity NFT ID' : 'Limit owner NFT ID';

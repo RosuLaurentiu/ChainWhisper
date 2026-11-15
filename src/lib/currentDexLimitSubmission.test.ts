@@ -45,7 +45,7 @@ function fixture(snapshot=false,candidateKey:CurrentCheapDexCandidateKey='cheap-
   const storage=new Map<string,string>();vi.stubGlobal('window',{sessionStorage:{getItem:(k:string)=>storage.get(k)??null,setItem:(k:string,v:string)=>storage.set(k,v),removeItem:(k:string)=>storage.delete(k)}});
   const signer={},guard=vi.fn(async()=>{}),small={ciphertext:1n,signature},wide={ciphertext:{ciphertextHigh:1n,ciphertextLow:1n},signature};
   const result={positionId:9n},prepared={from:owner,to:c.core as string,chainId,value:0n as bigint,phase:snapshot?'limit-snapshot':'limit-create',positionId:9n,marketId:pair?.marketId,poolTokens:pair?.tokens,
-    data:snapshot?abi.encodeFunctionData('privateOrderSnapshot',[9n]):abi.encodeFunctionData('createPrivateOrder',[...(pair?[pair.marketId]:[]),wide,small,small,Array(5).fill(small),Array(3).fill(wide)]),
+    data:snapshot?abi.encodeFunctionData('privateOrderSnapshot',[9n]):abi.encodeFunctionData('createPrivateOrder',abi===limitCodec.packedLimitAbi?[pair!.marketId,wide,Array(3).fill(wide)]:[...(pair?[pair.marketId]:[]),wide,small,small,Array(5).fill(small),Array(3).fill(wide)]),
     intent:{sellToken0:true,amount:100n,terms:[3n,1n,1n,1n,2n]},graph:c.graph as string,packageSha256:c.packageSha256 as string,readyToSign:false,assertCurrent:guard,assertAuthority:vi.fn(async()=>{}),readResult:vi.fn(async()=>result)};
   brands.set(prepared,signer);let tx:Record<string,unknown>|null=null;
   const receipt={hash:txHash,status:1,from:owner,to:c.core,blockNumber:10,blockHash:hash,logs:[{address:c.core,...abi.encodeEventLog(abi.getEvent('FixedPositionCreated')!,[9n])},{address:c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1],...currentLimitNftAbi.encodeEventLog(currentLimitNftAbi.getEvent('Transfer')!,[`0x${'00'.repeat(20)}`,owner,9n])}]};
@@ -296,7 +296,7 @@ describe('native owner canonical completion boundary',()=>{
 describe('current Limit edit sender boundaries',()=>{
   const editFixture=(action:'topup'|'reprice',candidate:CurrentCheapDexCandidateKey='cheap-exit')=>{
     const f=fixture(true,candidate),abi=currentLimitAbiForCandidate(candidate),small={ciphertext:1n,signature},wide={ciphertext:{ciphertextHigh:1n,ciphertextLow:1n},signature};
-    Object.assign(f.prepared,{phase:'limit-owner',action,expectedTermsRevision:3n,expectedLifecycleRevision:7n,data:abi.encodeFunctionData(action==='topup'?'topUpPrivateOrder':'repricePrivateOrder',action==='topup'?[9n,3n,7n,wide]:[9n,3n,Array(5).fill(small),Array(3).fill(wide)])});return f;
+    Object.assign(f.prepared,{phase:'limit-owner',action,expectedTermsRevision:3n,expectedLifecycleRevision:7n,data:abi.encodeFunctionData(action==='topup'?'topUpPrivateOrder':'repricePrivateOrder',action==='topup'?[9n,3n,7n,wide]:abi===limitCodec.packedLimitAbi?[9n,3n,Array(3).fill(wide)]:[9n,3n,Array(5).fill(small),Array(3).fill(wide)])});return f;
   };
   it.each(['topup','reprice']as const)('keeps new candidate %s held before nonce, estimate or send',async action=>{
     const f=editFixture(action,'cheap-history');

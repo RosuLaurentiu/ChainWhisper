@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import TradingProductSwitch from './TradingProductSwitch';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from '../../lib/currentDexExitCandidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from '../../lib/currentDexHistoryCandidate';
+// The selected current candidate. The descriptor in lib/currentDexHistoryCandidate is an earlier record that the App does not select.
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from '../../lib/dexV2Deployment';
 import type { P2PTradingHeaderContext } from '../../features/trading/components/P2PTradingPage.helpers';
 
 const p2pMarket = (): P2PTradingHeaderContext => ({

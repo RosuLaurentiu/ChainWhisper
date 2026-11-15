@@ -23,7 +23,7 @@ and Supabase functions run separately; a frontend push does not start or deploy
 them. Hosting this candidate does not close the beta acceptance or production
 security gates. Existing service and wallet holds remain in force.
 
-`npm run test:ci` runs self-contained App tests. It excludes the 38 tests that
+`npm run test:ci` runs self-contained App tests. It excludes the 45 test files that
 load exact contract candidates or private/local evidence from the full workspace;
 their explicit file list is in `package.json`. `npm test` retains those checks
 for the full workspace. Small public ABI and synthetic chart fixtures live in

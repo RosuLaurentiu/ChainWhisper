@@ -13,7 +13,8 @@ vi.mock('../../../lib/dexV2Deployment', async original => {
       actual.resolveCurrentCheapDexCandidate(key === 'cheap-current' ? 'cheap-native' : key) };
 });
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[] }));
-vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
+// Position effects only write wallet diagnostics; these tests do not check them.
+vi.mock('react', async original => ({ ...await original<typeof import('react')>(), useEffect: () => {},
   useState: (initial: unknown) => { const index = hooks.index++; if (!(index in hooks.states)) hooks.states[index] = initial;
     return [hooks.states[index], (value: unknown) => { hooks.states[index] = value; }]; },
   useRef: (initial: unknown) => { const index = hooks.refIndex++; return hooks.refs[index] ?? (hooks.refs[index] = { current: initial }); },
@@ -59,7 +60,8 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
     render();
   };
   return { session, sender, render, status, start, finish, change, pendingRead, button, statusLabel, reject,
-    idle: async () => { await vi.waitFor(() => expect(hooks.states[panel === 'limit' ? 4 : 5]).toBe(false)); } };
+    // Busy is state 5 in all panels; the Limit approval-mode hook now holds state 4.
+    idle: async () => { await vi.waitFor(() => expect(hooks.states[5]).toBe(false)); } };
 }
 afterEach(() => { hooks.states = []; hooks.refs = []; vi.unstubAllGlobals(); });
 describe.each(['pool', 'position', 'limit'] as const)('retained native %s error session', panel => {

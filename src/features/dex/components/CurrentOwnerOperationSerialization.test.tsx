@@ -17,7 +17,8 @@ vi.mock('../../../lib/dexV2Deployment', async original => {
 // Capture one render's callbacks. React busy state cannot change that closure.
 // This tests component dispatch only; capabilities/sends are local mocks.
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[] }));
-vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
+// Position effects only write wallet diagnostics; these tests do not check them.
+vi.mock('react', async original => ({ ...await original<typeof import('react')>(), useEffect: () => {},
   useState: (initial: unknown) => { const i = hooks.index++; if (!(i in hooks.states)) hooks.states[i] = initial;
     return [hooks.states[i], (value: unknown) => { hooks.states[i] = typeof value === 'function' ? value(hooks.states[i]) : value; }]; },
   useRef: (initial: unknown) => { const i = hooks.refIndex++; return hooks.refs[i] ?? (hooks.refs[i] = { current: initial }); },
@@ -57,7 +58,8 @@ function fixture(kind: 'pool' | 'position' | 'limit', components = {
       components.position({ sharedWalletSession: session }) : components.limit({ sharedWalletSession: session, view: 'manage' }); };
   const button = (label: string | RegExp) => elements(render()).find(element => element.type === 'button' &&
     (typeof label === 'string' ? text(element.props.children) === label : label.test(text(element.props.children))))!;
-  const busyIndex = kind === 'limit' ? 4 : 5;
+  // Busy is state 5 in all panels; the Limit approval-mode hook now holds state 4.
+  const busyIndex = 5;
   const done = () => vi.waitFor(() => expect(hooks.states[busyIndex]).toBe(false));
   render();
   return { render, button, done, getSender, getCapability, sender, capability, position };
@@ -70,7 +72,8 @@ describe('retained native owner workspace operation serialization with local cap
   });
   it.each(['Review and fund Pool', 'Approve exact', 'Review stop and clear approvals'])('starts only one prepared Pool operation for %s', async label => {
     const f = fixture('pool');
-    hooks.states[10] = { value: { prepared: 'local' }, scope: hooks.refs[0].current };
+    // Pool scope is ref 2; two approval-mode hooks hold refs 0 and 1.
+    hooks.states[10] = { value: { prepared: 'local' }, scope: hooks.refs[2].current };
     hooks.states[11] = label === 'Review and fund Pool' ? [true, true] : [false, false]; hooks.states[19] = true;
     const callback = f.button(label === 'Approve exact' ? /^Approve exact / : label).props.onClick!;
     callback(); callback(); await f.done(); expect(f.getSender).toHaveBeenCalledTimes(1);
@@ -94,18 +97,19 @@ describe('retained native owner workspace operation serialization with local cap
   });
   it('starts only one private creation snapshot from repeated callbacks', async () => {
     const f = fixture('limit'), prepareSnapshot = vi.fn(async () => null);
-    hooks.states[8] = { value: { positionId: 9n, prepareSnapshot }, scope: hooks.refs[0].current };
+    // Limit states after index 3 and refs moved by one for the approval-mode hook.
+    hooks.states[9] = { value: { positionId: 9n, prepareSnapshot }, scope: hooks.refs[1].current };
     const callback = f.button('Refresh private Limit result').props.onClick!; callback(); callback(); await f.done(); expect(prepareSnapshot).toHaveBeenCalledTimes(1);
   });
   it.each(['Load private order', 'Check Limit status'])('starts only one Limit operation for repeated %s', async label => {
-    const f = fixture('limit'); hooks.states[10] = '9'; const callback = f.button(label).props.onClick!;
+    const f = fixture('limit'); hooks.states[11] = '9'; const callback = f.button(label).props.onClick!;
     callback(); callback(); await f.done(); expect(label === 'Check Limit status' ? f.getSender : f.getCapability).toHaveBeenCalledTimes(1);
   });
   it.each(['Claim Limit proceeds', 'Pause Limit', 'Close Limit and return funds'])('dispatches one owner send for repeated %s callbacks', async label => {
-    const f = fixture('limit'); hooks.states[10] = '9'; f.render();
-    hooks.states[11] = { value: { positionId: 9n, status: 0n, closed: false, refreshRequired: false,
+    const f = fixture('limit'); hooks.states[11] = '9'; f.render();
+    hooks.states[12] = { value: { positionId: 9n, status: 0n, closed: false, refreshRequired: false,
       amounts: { unspent: 100n, proceeds: 7n, sellToken0: true, priceNumerator: 2n, priceDenominator: 1n, makerMinimum: 0n } },
-      capability: f.capability, scope: hooks.refs[0].current };
+      capability: f.capability, scope: hooks.refs[1].current };
     const callback = f.button(label).props.onClick!; callback(); callback(); await f.done();
     expect(f.capability.prepareOwnerAction).toHaveBeenCalledTimes(1); expect(f.sender.submitLimitOwner).toHaveBeenCalledTimes(1);
   });

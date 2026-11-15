@@ -76,8 +76,14 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s ow
     expect(preview).toMatchObject({ positionId: 43n, ownerContext: context });
     assertCurrentPoolFundingPrepared(prepared, f.signer); assertCurrentPoolFundingPrepared(funding, f.signer);
     expect(() => assertCurrentPoolFundingPrepared({ ...funding }, f.signer)).toThrow('not prepared');
-    expect(m.wide.mock.calls.map(call => call[1])).toEqual([10n, 20n]);
-    expect(m.small.mock.calls.map(call => call[1])).toEqual([1n, 200n]);
+    // The selected 'cheap-history' candidate uses the packed Pool input graph: one (1<<128|200) tolerance input.
+    if (poolInputs.usesPackedPoolInputs(resolveCurrentCheapDexCandidate(candidateKey))) {
+      expect(m.wide.mock.calls.map(call => call[1])).toEqual([10n, 20n, (1n << 128n) | 200n]);
+      expect(m.small).not.toHaveBeenCalled();
+    } else {
+      expect(m.wide.mock.calls.map(call => call[1])).toEqual([10n, 20n]);
+      expect(m.small.mock.calls.map(call => call[1])).toEqual([1n, 200n]);
+    }
     const selector = new Interface(PREPARED_POOL_FUNDING_ABI).getFunction('managePoolPosition')!.selector;
     expect(m.resign.mock.calls.every(call => call[3] === selector)).toBe(true);
     const decoded = new Interface(PREPARED_POOL_FUNDING_ABI).decodeFunctionData('managePoolPosition', funding.data);

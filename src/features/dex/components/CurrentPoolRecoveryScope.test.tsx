@@ -54,6 +54,7 @@ function fixture(Workspace = CurrentPoolWorkspace) {
       graph: `0x${candidate.graph}`, phase, callHash: `0x${'11'.repeat(32)}`, nonce: 9, txHash: null, verificationBlocked: true });
     records.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, value); return value;
   };
+  // Pool scope is ref 2; two approval-mode hooks hold refs 0 and 1.
   render(); return { session, first, next, getSender, render, button, check, idle, change, records, writes, journal };
 }
 afterEach(() => { hooks.states = []; hooks.refs = []; vi.unstubAllGlobals(); });
@@ -77,7 +78,7 @@ describe('retained native Pool recovery session cache', () => {
   });
   it.each(['pool-preview', 'token-approve'] as const)('skips an old callback and follows the current %s journal without changing it', async phase => {
     const f = fixture(); await f.check(); const oldRecover = vi.fn(async () => null);
-    hooks.states[13] = { phase: phase === 'pool-preview' ? 'approval-0' : 'preview', scope: hooks.refs[0].current, recover: oldRecover };
+    hooks.states[13] = { phase: phase === 'pool-preview' ? 'approval-0' : 'preview', scope: hooks.refs[2].current, recover: oldRecover };
     f.change('onboard'); const before = f.journal(phase);
     const pending = { status: 'manual-reconciliation-required', readyToSign: false };
     f.next.recoverPendingPoolAttempt.mockResolvedValue(pending); f.next.recoverPendingCurrentTokenFunding.mockResolvedValue(pending);
@@ -89,7 +90,7 @@ describe('retained native Pool recovery session cache', () => {
   });
   it('keeps current-session private pending recovery ahead of metadata', async () => {
     const f = fixture(), recover = vi.fn(async () => ({ positionId: 19n }));
-    hooks.states[13] = { phase: 'fund', scope: hooks.refs[0].current, recover };
+    hooks.states[13] = { phase: 'fund', scope: hooks.refs[2].current, recover };
     await f.check(); expect(recover).toHaveBeenCalledOnce(); expect(f.getSender).not.toHaveBeenCalled();
     expect(text(f.render())).toContain('Verified position NFT ID: 19.'); expect(f.writes).not.toHaveBeenCalled();
   });

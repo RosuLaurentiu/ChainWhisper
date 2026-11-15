@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { STAGED_REFERENCE_DEX_CANDIDATE } from './currentDexReferenceCandidate';
+import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import { currentDexAppPair, resolveCurrentDexAppCandidate } from './currentDexAppScope';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
 import { currentLimitOwnerNativeAdmission } from './currentDexLimit';
 import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 
 describe('main App DEX scope', () => {
-  it('pins the public Testnet build to the accepted reference graph', () => {
+  it('pins the public Testnet build and its deploy check to the selected current graph', () => {
     const env = readFileSync(new URL('../../.env.coti-testnet-candidate', import.meta.url), 'utf8');
-    expect(env.split(/\r?\n/)).toContain(`VITE_LOW_RPC_TRIAL=${STAGED_REFERENCE_DEX_CANDIDATE.graph}`);
+    const graph = selectCurrentDexCandidate(undefined).graph;
+    expect(env.split(/\r?\n/)).toContain(`VITE_LOW_RPC_TRIAL=${graph}`);
+    // The deploy workflow stops when the build graph differs from its value (PAGES_BUILD_IDENTITY_MISMATCH).
+    expect(readFileSync(new URL('../../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8')).toContain(`--graph ${graph} `);
   });
   it('allows the exact shared-history Testnet scope while App swap signing remains held', () => {
     const scope=resolveCurrentDexAppCandidate('coti-testnet-candidate','cheap-history');

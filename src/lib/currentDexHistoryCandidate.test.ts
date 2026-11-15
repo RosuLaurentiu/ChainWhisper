@@ -1,21 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './currentDexHistoryCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as retired } from './currentDexHistoryCandidate';
+import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as previous, resolveCurrentCheapDexCandidate,
   currentCheapDexCandidateKey, currentCheapDexStages, currentCheapDexQuoteProtocol,
   assertCurrentCheapDexNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { currentDexDisplayPair, parseDexCandidateTokenAmount, readCurrentDexDisplay } from './currentDexDisplay';
-import { currentLimitAbiForCandidate, exitLimitAbi, currentLimitOwnerNativeAdmission,
+import { currentLimitAbiForCandidate, packedLimitAbi, usesPackedLimitInputs, currentLimitOwnerNativeAdmission,
   resolveCurrentLimitScope } from './currentDexLimit';
 import { assertCurrentD06AppAuthority, assertCurrentAppSigningCount, CURRENT_APP_SWAP_OWNER } from './currentDexC1SwapPolicy';
 import { resolveCurrentDexAppCandidate } from './currentDexAppScope';
 
 const key: CurrentCheapDexCandidateKey = 'cheap-history';
+// The key 'cheap-history' names the selected current candidate. The earlier shared-history descriptor is a record only.
+const history = selectCurrentDexCandidate(undefined);
 
 describe('shared history public candidate and separate signing admission', () => {
   it('selects only current App history while preserving the historical engineering descriptor', () => {
     expect(resolveCurrentCheapDexCandidate(key)).toBe(history);
     expect(currentCheapDexCandidateKey(history)).toBe(key);
+    expect(retired.graph).not.toBe(history.graph);
+    expect(() => currentCheapDexCandidateKey(retired)).toThrow('do not match a reviewed candidate');
     expect(resolveCurrentCheapDexCandidate('cheap-exit')).toBe(previous);
     expect(currentCheapDexStages(history)).toEqual({ workCalls: 4, ready: 5, funded: 6, settled: 7, released: 8 });
     expect(currentCheapDexQuoteProtocol(history)).toBe('quote-slippage');
@@ -46,7 +51,9 @@ describe('shared history public candidate and separate signing admission', () =>
   });
 
   it('uses admitted Limit phases but holds owner swaps without a live browser signer', () => {
-    expect(currentLimitAbiForCandidate(key)).toBe(exitLimitAbi);
+    // The selected graph takes packed Limit inputs, so its Limit ABI is the packed one (currentDexLimit.ts).
+    expect(usesPackedLimitInputs(history)).toBe(true);
+    expect(currentLimitAbiForCandidate(key)).toBe(packedLimitAbi);
     expect(currentLimitOwnerNativeAdmission(key)).toEqual({ refresh: true, claim: true, pause: true,
       resume: true, close: true, topup: true, reprice: true });
     expect(() => assertCurrentD06AppAuthority(history.graph)).toThrow('hold');

@@ -2,9 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { AbiCoder,Interface,keccak256 } from '@coti-io/coti-ethers';
 import { CURRENT_CHEAP_DEX_CANDIDATE as current,STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from '../../../lib/dexV2Deployment';
-import { STAGED_LIMIT_INPUT_DEX_CANDIDATE as history } from '../../../lib/currentDexLimitInputCandidate';
+import { STAGED_GAP_DEX_CANDIDATE as history } from '../../../lib/currentDexGapCandidate';
 import { makeCurrentReferenceStorage } from '../../../../tests/fixtures/currentReferenceSource.fixture';
-vi.mock('../../../lib/selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('../../../lib/selectedCurrentDexCandidate')>();const current=await import('../../../lib/currentDexLimitInputCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_LIMIT_INPUT_DEX_CANDIDATE};});
+vi.mock('../../../lib/selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('../../../lib/selectedCurrentDexCandidate')>();const current=await import('../../../lib/currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});
 import { CURRENT_DEX_DISPLAY_PAIR,readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { HISTORY_FIXTURE_DAY,makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
@@ -15,7 +15,8 @@ import useCurrentDexMarketReference,{loadCurrentDexMarketReference} from './useC
 // Same synthetic runtime identities as currentDexMarketReference.test.ts.
 vi.mock('@coti-io/coti-ethers',async original=>{
   const actual=await original<typeof import('@coti-io/coti-ethers')>();
-  return{...actual,keccak256:(value:string)=>value==='0x6001'?'0x4fd3079f945285b696694ea995c7c7eca423042589a7b2e15eef4cd62a3fca3b':
+  // '0x6001' stands for the Core runtime of the selected gap candidate (its runtimes entry); '0x6002' for a token runtime.
+  return{...actual,keccak256:(value:string)=>value==='0x6001'?'0x1323551e49525d6c732e4560f364f7006dec13d5bc1fc562f9a78d575b9b4b41':
     value==='0x6002'?'0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0':actual.keccak256(value)};
 });
 

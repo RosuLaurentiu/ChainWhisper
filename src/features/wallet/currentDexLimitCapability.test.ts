@@ -444,8 +444,15 @@ describe('current plain Limit edit preparation',()=>{
   });
   it.each(['cheap-exit','cheap-history']as const)('encrypts exact repricing on %s with zero range terms, binds selector and leaves wallets fixed',async key=>{
     const f=await ownerFixture(true,key),prepared=(await edit(f,'reprice'))!,call=f.abi.decodeFunctionData('repricePrivateOrder',prepared.data);
+    // The selected 'cheap-history' candidate uses the packed Limit input graph: three (high<<128|low) term pairs, no range inputs.
+    if(limitCodec.usesPackedLimitInputs(f.c)){
+      const packed=[(5n<<128n)|2n,(1n<<128n)|1n,2n<<128n];
+      expect(call).toHaveLength(3);expect(call[2].map((x:{ciphertext:{ciphertextLow:bigint}})=>x.ciphertext.ciphertextLow)).toEqual(packed);
+      expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).toHaveBeenLastCalledWith(f.signer,packed[2],f.c.core,f.abi.getFunction('repricePrivateOrder')!.selector);
+    }else{
     expect(call[2].map((x:{ciphertext:bigint})=>x.ciphertext)).toEqual(terms);expect(call[3].map((x:{ciphertext:{ciphertextLow:bigint}})=>x.ciphertext.ciphertextLow)).toEqual([0n,0n,0n]);
     expect(mocks.small).toHaveBeenLastCalledWith(f.signer,2n,f.c.core,f.abi.getFunction('repricePrivateOrder')!.selector);
+    }
     const receipt=f.ownerMine(prepared,'refresh');receipt.logs.push({address:f.c.core,...f.abi.encodeEventLog(f.abi.getEvent('FixedPositionRepriced')!,[9n,2n])});
     f.set(f.c.core,slot(24n,l.coreSources)+9n,2n);f.set(f.engine,slot(24n,l.engineSources)+9n,2n);
     expect(await prepared.readResult(txHash)).toMatchObject({values:null,amounts:null,refreshRequired:true,termsRevision:2n,lifecycleRevision:1n});

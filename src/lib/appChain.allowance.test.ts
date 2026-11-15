@@ -103,7 +103,7 @@ describe('private token setup admission', () => {
 });
 
 describe.each(['erc20', 'private-erc20'] as const)('%s trade allowance through the real helper', kind => {
-  it.each([0n, 3n, 20n])('sets allowance %s to the exact required amount', async initial => {
+  it.each([0n, 3n])('sets allowance %s to the exact required amount', async initial => {
     mocks.allowance = initial;
     await ensure(kind);
     expect(mocks.allowance).toBe(10n);
@@ -112,10 +112,13 @@ describe.each(['erc20', 'private-erc20'] as const)('%s trade allowance through t
     expect(mocks.read).toHaveBeenCalledTimes(2);
   });
 
-  it('reuses only an exact allowance without a write', async () => {
-    mocks.allowance = 10n;
+  // Owner allowance policy, 2026-11-11 (ARCHITECTURE.md): reuse a sufficient allowance.
+  it.each([10n, 20n])('reuses a sufficient allowance %s without a write', async initial => {
+    mocks.allowance = initial;
     await ensure(kind);
+    expect(mocks.allowance).toBe(initial);
     expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.read).toHaveBeenCalledOnce();
   });
 
   it.each([0n, -1n])('does not send for non-positive amount %s', async amount => {

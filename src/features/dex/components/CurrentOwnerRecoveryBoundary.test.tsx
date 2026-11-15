@@ -36,11 +36,12 @@ function fixture(operation:Operation, Positions=CurrentPoolPositionsWorkspace, p
     actions:{getCurrentDexSubmissionCapability:getSender,getCurrentDexLimitCapability:vi.fn(async()=>capability),getCurrentDexPoolPositionCapability:vi.fn()}} as unknown as SharedWalletSession;
   const render=()=>{hooks.index=0;hooks.refIndex=0;return isPosition?Positions({sharedWalletSession:session,...(!publicFallback?{candidateKey:'cheap-native' as const}:{})}):CurrentLimitWorkspace({sharedWalletSession:session});};
   render();if(!isPosition){hooks.states[1]='10';hooks.states[2]='1';render();}
-  if(operation==='limit-snapshot'){hooks.states[8]={value:{positionId:9n,prepareSnapshot},scope:hooks.refs[0].current};render();}
+  // Limit states after index 3 and refs moved by one for the approval-mode hook; busy is state 5 in both panels.
+  if(operation==='limit-snapshot'){hooks.states[9]={value:{positionId:9n,prepareSnapshot},scope:hooks.refs[1].current};render();}
   const label=operation==='limit-create'?'Review order':operation==='limit-snapshot'?'Refresh private Limit result':isPosition?'Check position status':'Check Limit status';
   const button=()=>nodes(render()).find(node=>node.type==='button'&&text(node.props.children)===label)!;
   const status=()=>text(nodes(render()).find(node=>node.props.role==='status')?.props.children);
-  const idle=()=>vi.waitFor(()=>expect(hooks.states[isPosition?5:4]).toBe(false));
+  const idle=()=>vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
   let finish:()=>void=()=>{};
   const startDelayed=async()=>{
     if(operation==='position-fallback'){(publicFallback?metadata:privateRead).mockImplementationOnce(()=>new Promise(resolve=>{finish=()=>resolve(null);}));}

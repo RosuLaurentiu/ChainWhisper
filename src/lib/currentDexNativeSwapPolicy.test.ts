@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const ownerBeta = vi.hoisted(() => ({ active: false, activation: { activatedAt: 2_000_000_000n, startingNonce: 220, legacyReservationHash:'' } }));
 vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
   const actual = await importOriginal<typeof import('./currentDexOwnerBetaPolicy')>();
-  const { STAGED_SHARED_HISTORY_DEX_CANDIDATE: history } = await import('./currentDexHistoryCandidate');
+  const history = (await import('./selectedCurrentDexCandidate')).selectCurrentDexCandidate(undefined);
   const selected = (graph:string,owner:string) => ownerBeta.active && graph===history.graph && owner.toLowerCase()===actual.CURRENT_OWNER_BETA.owner;
   return { ...actual, CURRENT_OWNER_BETA: {...actual.CURRENT_OWNER_BETA, graph:history.graph, core:history.core, activation:ownerBeta.activation}, isCurrentOwnerBeta:selected,
     assertCurrentOwnerBetaWindow:(graph:string,owner:string,core:string,chainId:bigint,now:bigint,nonce:number,recovery:boolean,cap:bigint,price:bigint) => {
@@ -23,13 +23,21 @@ import { CURRENT_EXIT_SWAP_LIMITS } from './currentDexExitSwapPolicy';
 import {currentNativeSwapCheckpoint,recordCurrentNativeSwapHash,restoreCurrentNativeSwapCheckpoint,validateCurrentNativeSwapCheckpoint} from './currentDexNativeSwapPolicy';
 import { bindCurrentNativeSwapFundingScope, renewCurrentNativeSwapFundingWindow, renewCurrentNativeSwapClosedWindow } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_SWAP_OWNER, CURRENT_APP_REPLACEMENT_TRIAL } from './currentDexC1SwapPolicy';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './currentDexHistoryCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as retired } from './currentDexHistoryCandidate';
+import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import { recoverCurrentPartialLedger } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY as recovery } from './currentDexC1SwapPolicy';
 import { readCurrentDexNativeReload, writeCurrentDexNativeReload } from './currentDexNativeReload';
 import { currentOwnerBetaLegacyReservationHash } from './currentDexNativeSwapPolicy';
+// The swap policy binds to the selected current candidate. The earlier currentDexHistoryCandidate descriptor is a record only.
+const history = selectCurrentDexCandidate(undefined);
 
 describe('finite native swap identity and budget', () => {
+  it('rejects the earlier history descriptor that the App no longer selects', () => {
+    expect(retired.graph).not.toBe(history.graph);
+    expect(() => assertCurrentSwapIdentity(retired)).toThrow('Native swap candidate identity changed.');
+    expect(() => currentNativeSigningBudget({}, CURRENT_APP_SWAP_OWNER, () => 100n, retired)).toThrow('Native swap candidate identity changed.');
+  });
   it('keeps engineering bounds for the same address without actual browser context and admits a new browser wallet at nonce zero',()=>{
     ownerBeta.active=true;
     const scope=`quote:0x${'af'.repeat(32)}`,wallet=`0x${'cd'.repeat(20)}`;

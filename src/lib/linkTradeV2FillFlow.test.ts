@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { Interface, keccak256 } from '@coti-io/coti-ethers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const artifact = JSON.parse(readFileSync(new URL('../../reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperLinkOTCEscrowV2.json', import.meta.url), 'utf8'));
+import artifact from '../../tests/fixtures/input-signatures-ChainWhisperLinkOTCEscrowV2.json';
 import { executeLinkTradeV2Fill, reconcileLinkTradeV2Fill, continueLinkTradeV2Fill } from './linkTradeV2FillFlow';
 import { readLinkTradeV2Review } from './linkTradeV2';
 import { createLinkTradeV2CreationJournal } from './linkTradeV2CreationJournal';

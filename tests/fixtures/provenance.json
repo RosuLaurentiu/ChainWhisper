@@ -202,5 +202,15 @@
     "contractSourceSha256": "1dc80713e448ac7941ee23900edbf33f42fd76822aac22a50788d51d64b6513b",
     "fixture": "worker-event-abis.json",
     "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "input-signatures-ChainWhisperLinkOTCEscrowV2.json": {
+    "source": "APP/reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperLinkOTCEscrowV2.json",
+    "sourceSha256": "982c798c69d998eec8d9fe010d5aa1df5aa672bbcfbdec49da5cdbf5730170e6",
+    "fixtureSha256": "07258d50c8a553df24306ad863ec7a59e0a3d5a8e5da65d81f0736ec1ca6c620"
+  },
+  "input-signatures-ChainWhisperCounterOTCEscrowV2.json": {
+    "source": "APP/reports/p2p-input-signatures-2026-11-12/candidate/ChainWhisperCounterOTCEscrowV2.json",
+    "sourceSha256": "8d0708f81be0d76a54441bebe798dffc088fcb1efa7ddb80af40356ee42941d3",
+    "fixtureSha256": "009b78778e37960a46feaaae3c178461d21257d09b38bbbf7cbfef73a7407a7f"
   }
 }

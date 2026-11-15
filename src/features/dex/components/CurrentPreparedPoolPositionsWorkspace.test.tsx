@@ -251,7 +251,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(rendered).toContain(`${f.pair.tokens[1].label} entitlement2.345678`);
     expect(rendered).toContain(`Token pair${f.pair.tokens[0].label} / ${f.pair.tokens[1].label}`);
     expect(rendered).toContain('Pool spread0.3%');expect(rendered).toContain('Private shares100');
-    expect(rendered).toContain(`Approximate Pool rate (snapshot)1 ${f.pair.tokens[0].label} ≈ 1.9 ${f.pair.tokens[1].label}`);
+    expect(rendered).toContain(`Approximate Pool rate (snapshot)1.90000056 ${f.pair.tokens[1].label}/${f.pair.tokens[0].label} (rounded down)`);
     expect(rendered).toContain('last verified snapshot');expect(rendered).toContain('Integer rounding');
     expect(rendered).toContain('excludes spread, fees and price impact and is not a live quote');
     if(key==='cheap-prepared')expect(rendered).toContain('integration is incomplete');
@@ -272,13 +272,13 @@ describe('prepared Positions owner snapshot view',()=>{
   });
   it('shows a positive rate below display precision without rounding it to zero',async()=>{
     const f=fixture();hooks.allowNative=true;
-    f.readPosition.mockResolvedValue({...f.value,amounts:{...f.value.amounts,amount0:10_000_000n,amount1:1n}} as never);await f.load();
-    expect(text(f.render())).toContain(`1 ${f.pair.tokens[0].label} ≈ <0.000001 ${f.pair.tokens[1].label}`);
+    f.readPosition.mockResolvedValue({...f.value,amounts:{...f.value.amounts,amount0:1_000_000_000n,amount1:1n}} as never);await f.load();
+    expect(text(f.render())).toContain(`<0.00000001 ${f.pair.tokens[1].label}/${f.pair.tokens[0].label} (rounded down)`);
   });
   it('uses the authenticated token order for the rate',async()=>{
     const f=fixture();hooks.allowNative=true;
     f.readPosition.mockResolvedValue({...f.value,poolTokens:[...f.value.poolTokens].reverse()} as never);await f.load();
-    expect(text(f.render())).toContain(`1 ${f.pair.tokens[1].label} ≈ 1.9 ${f.pair.tokens[0].label}`);
+    expect(text(f.render())).toContain(`1.90000056 ${f.pair.tokens[0].label}/${f.pair.tokens[1].label} (rounded down)`);
   });
   it.each(['candidate','owner','position'])('hides private amounts when %s changes',async changed=>{
     const f=fixture();hooks.allowNative=true;await f.load();expect(text(f.render())).toContain('1.234567');

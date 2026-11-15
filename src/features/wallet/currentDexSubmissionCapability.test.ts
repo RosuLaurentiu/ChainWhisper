@@ -611,10 +611,14 @@ describe('selected candidate acceptance review metadata', () => {
       expect(parsed.args[1].toLowerCase()).toBe(f.c.core);return abi.encodeFunctionResult(parsed.fragment,[[[99n,999n],[2n,allowance],[999n,999n]]]);
     });
     mocks.decrypt.mockImplementation((_,cipher:{ciphertextHigh:bigint;ciphertextLow:bigint})=>{expect([1n,2n]).toContain(cipher.ciphertextHigh);return cipher.ciphertextLow;});
+    // Owner allowance policy, 2026-11-11 (ARCHITECTURE.md; reports/consistent-allowances-2026-11-11): the selected
+    // 'cheap-history' candidate reuses a sufficient allowance. The older 'cheap-exit' candidate keeps the exact rule.
+    const sufficient=candidate==='cheap-history';
     await expect(f.options.requireFunding!(f.issued as never,head)).resolves.toBeUndefined();
-    allowance=amount+1n;await expect(f.options.requireFunding!(f.issued as never,head)).rejects.toThrow('must equal');
+    allowance=amount+1n;if(sufficient)await expect(f.options.requireFunding!(f.issued as never,head)).resolves.toBeUndefined();else await expect(f.options.requireFunding!(f.issued as never,head)).rejects.toThrow('must equal');
+    allowance=amount-1n;await expect(f.options.requireFunding!(f.issued as never,head)).rejects.toThrow('insufficient');
     allowance=0n;await expect(f.options.requireFunding!(f.issued as never,head,true)).resolves.toBeUndefined();
-    allowance=1n;await expect(f.options.requireFunding!(f.issued as never,head,true)).rejects.toThrow('must equal');
+    allowance=1n;if(sufficient)await expect(f.options.requireFunding!(f.issued as never,head,true)).resolves.toBeUndefined();else await expect(f.options.requireFunding!(f.issued as never,head,true)).rejects.toThrow('must equal');
     expect(f.signer.sendTransaction).not.toHaveBeenCalled();expect(f.signer.estimateGas).not.toHaveBeenCalled();
   });
   it('keeps the real exit submission hold before wallet or RPC work', async () => {
@@ -684,7 +688,12 @@ describe('selected six-market Pool funding', () => {
     const prepared = { intent: { marketId: pair.marketId, poolTokens: pair.tokens }, amounts: { used0: 11n, used1: 13n } };
     await expect(options.requireFunding(prepared as never, head)).resolves.toBeUndefined();
     expect(send.mock.calls.map(([, params]) => (params[0] as { to: string }).to)).toEqual([pair.tokens[0], pair.tokens[0], pair.tokens[1], pair.tokens[1]]);
-    extra = 1n; await expect(options.requireFunding(prepared as never, head)).rejects.toThrow('must equal');
+    // Owner allowance policy, 2026-11-11 (ARCHITECTURE.md; reports/consistent-allowances-2026-11-11): the selected
+    // 'cheap-history' candidate reuses a sufficient allowance. The older 'cheap-exit' candidate keeps the exact rule.
+    extra = 1n;
+    if (candidate === 'cheap-history') await expect(options.requireFunding(prepared as never, head)).resolves.toBeUndefined();
+    else await expect(options.requireFunding(prepared as never, head)).rejects.toThrow('must equal');
+    extra = -1n; await expect(options.requireFunding(prepared as never, head)).rejects.toThrow('insufficient');
     send.mockClear();
     for (const intent of [{ ...prepared.intent, marketId: c.pairs.find(p => p.marketId !== pair.marketId)!.marketId },
       { ...prepared.intent, poolTokens: [...pair.tokens].reverse() }]) {
@@ -762,6 +771,10 @@ describe('current DEX wallet hash and RPC visibility', () => {
 
 describe('current DEX submission owner capability', () => {
   it('exposes four-token funding through the existing transport with the real App hold before all wallet/RPC calls', async () => {
+    // CW-086 keeps DEX records in browser storage; a real browser has it, so the check reaches the hold.
+    const store = new Map<string, string>();
+    vi.stubGlobal('window', { sessionStorage: { getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key) } });
     const sendTransaction = vi.fn(), estimateGas = vi.fn(), getNonce = vi.fn(), send = vi.fn();
     mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: vi.fn(), assertSnapshotCurrent: vi.fn(),
       chainId: 7082400n, ownerAddress: `0x${'22'.repeat(20)}`, readProvider: { send }, signer: { sendTransaction, estimateGas, getNonce } }));
@@ -773,6 +786,7 @@ describe('current DEX submission owner capability', () => {
     await expect(capability.submitSharedTokenFunding({ action: 'initial', token: '0xe595F63789D1D31B4b7c0Bee69062Daf5BE81ac8' } as never)).rejects.toThrow('held');
     await expect(capability.prepareSharedTokenFunding({ action: 'initial', token: '0xe595F63789D1D31B4b7c0Bee69062Daf5BE81ac8', confirm: async () => true })).rejects.toThrow('held');
     expect(getNonce).not.toHaveBeenCalled(); expect(estimateGas).not.toHaveBeenCalled(); expect(sendTransaction).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
   });
   it('binds Pool and Limit attestation to the explicitly selected candidate', async () => {
     const selected = resolveCurrentCheapDexCandidate('cheap-native');

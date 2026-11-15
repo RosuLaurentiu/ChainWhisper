@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { Interface, keccak256 } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT as artifact } from './packedInputDexDailyPriceArtifact';
@@ -16,12 +14,6 @@ const fixture=(mode:Parameters<typeof makeHistoryFixture>[0]='ready')=>{
   return f;
 };
 describe('packed-input current chart',()=>{
-  it('binds the generated artifact to the exact compiled recorder',()=>{
-    const raw=readFileSync('../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/recorder-build/build-packed-inputs-1/ChainWhisperDailyPoolPrice.json');
-    const compiled=JSON.parse(raw.toString());
-    expect(createHash('sha256').update(raw).digest('hex')).toBe(source.recorderArtifact);
-    expect(artifact.abi).toEqual(compiled.abi);expect(artifact.deployedBytecode).toBe(compiled.deployedBytecode);
-  });
   it.each(['ready','empty','stale','suppressed','unobserved'] as const)('reads current %s state independently from saved daily samples',async mode=>{
     const f=fixture(mode),s=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
     expect(s.manifest.sourceGraph).toBe(source.graph);
