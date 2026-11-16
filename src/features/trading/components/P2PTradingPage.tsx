@@ -2562,7 +2562,7 @@ export default function P2PTradingPage({
           ? 'Save Edit'
           : counterParentTrade
             ? 'Send Counter'
-            : 'Create Offer'
+            : 'Create offer'
       }
       sendingLabel="Creating..."
       sendTitle={
@@ -3010,7 +3010,7 @@ export default function P2PTradingPage({
                   ? `Edit public offer #${editingTrade.tradeId}`
                   : counterParentTrade
                     ? `Counter offer #${counterParentTrade.tradeId}`
-                  : 'Create P2P offer'}
+                  : 'Create offer'}
               </h2>
               {editingTrade || counterParentTrade ? <p className="p2p-create-task-description">
                 {editingTrade

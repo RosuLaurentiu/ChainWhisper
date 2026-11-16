@@ -76,6 +76,7 @@ import useGroupMessageActions from './features/groups/hooks/useGroupMessageActio
 import useInChatTradeActions from './features/trading/hooks/useInChatTradeActions';
 import useTradeActionConfirmationState from './features/trading/hooks/useTradeActionConfirmationState';
 import TradeActionConfirmModal from './features/trading/components/TradeActionConfirmModal';
+import { P2P_WALLET_REQUIRED_MESSAGE } from './features/trading/p2pWalletNotice';
 import useActiveTradeOfferSnapshots from './features/trading/hooks/useActiveTradeOfferSnapshots';
 import useChatTradeAgentActions from './features/trading/hooks/useChatTradeAgentActions';
 import useTradeAgentChatFeeLabels from './features/trading/hooks/useTradeAgentChatFeeLabels';
@@ -1308,7 +1309,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
         ? OTC_V2_DEPLOYMENT_CATALOG.error
         : OTC_V2_DEPLOYMENT_CATALOG.status !== 'active'
           ? 'P2P deployment is not configured.'
-          : 'P2P needs a current wallet session on the configured network. Connect the wallet to continue.' });
+          : P2P_WALLET_REQUIRED_MESSAGE });
       return () => { disposed = true; };
     }
     if (!otcV2StartupScopeKey) return () => { disposed = true; };

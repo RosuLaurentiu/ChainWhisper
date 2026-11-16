@@ -277,7 +277,7 @@ test.describe('trading V1 routes', () => {
     });
     await page.goto('/otc/recurring');
     await expect(page).toHaveURL(/\/otc\/limit$/);
-    await expect(page.getByRole('heading', { name: 'Create P2P offer', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Create offer', exact: true })).toBeVisible();
     await expect(page.getByRole('group', { name: 'P2P trade offer', exact: true })).toBeVisible();
     await expect(page.getByRole('group', { name: 'Recurring P2P order', exact: true })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'Recurring', exact: true })).toHaveCount(0);

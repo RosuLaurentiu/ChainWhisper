@@ -16,6 +16,7 @@ import {
 import { moveFocusWithin } from '../../../shared/components/a11y';
 import type { TradeComposerTokenOption } from './TradeComposerPanel';
 import OtcOfferMarketChart from './OtcOfferMarketChart';
+import { isP2PWalletRequiredMessage } from '../p2pWalletNotice';
 import {
   resolveCanonicalTradeActionSide,
   resolveDisplayedTradeActionSide,
@@ -248,8 +249,8 @@ export default function OtcOffersPanel({
             </div>
           ) : null}
           {visibleCandidates.length === 0 && !loadingOffers && offersError ? (
-            <div className="p2p-offers-empty is-error" role="alert">
-              <strong>Offers could not be loaded</strong>
+            <div className={isP2PWalletRequiredMessage(offersError) ? 'p2p-offers-empty is-note' : 'p2p-offers-empty is-error'} role={isP2PWalletRequiredMessage(offersError) ? 'status' : 'alert'}>
+              <strong>{isP2PWalletRequiredMessage(offersError) ? 'Wallet needed' : 'Offers could not be loaded'}</strong>
               <span>{offersError}</span>
               <button type="button" onClick={onRetryOffers}>Try again</button>
             </div>

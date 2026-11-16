@@ -76,7 +76,7 @@ export default function TradePublicOffersSection({
               ) : (
                 <>
                   <button type="button" onClick={onCreateOffer}>
-                    Create Offer
+                    Create offer
                   </button>
                   <button type="button" onClick={onRefreshPublicTrades} disabled={loadingPublicTrades}>
                     {loadingPublicTrades ? 'Refreshing...' : 'Refresh'}

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { isP2PWalletRequiredMessage } from '../p2pWalletNotice';
 
 type TradeDeskIdentity = {
   title: string;
@@ -61,7 +62,7 @@ export default function TradeMarketOverviewPanel({
 
         </div>
 
-        {walletError || tradeActionError ? <p className="error p2p-market-status">{walletError || tradeActionError}</p> : null}
+        {walletError || tradeActionError ? <p className={isP2PWalletRequiredMessage(walletError || tradeActionError) ? 'p2p-market-status p2p-market-status-note' : 'error p2p-market-status'}>{walletError || tradeActionError}</p> : null}
       </section>
     </>
   );

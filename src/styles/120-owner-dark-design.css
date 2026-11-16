@@ -1268,3 +1268,102 @@
   :root body .app-shell .p2p-secondary-nav-mobile nav :is(button, a),
   :root body .app-shell-dex-v2 .dex-view-navigation:has(> .dex-agent-link) > nav > button { font-size: .75rem; font-weight: 700; }
 }
+
+/* CW-097. P2P: the CW-096 segmented style for Buy / Sell in Create, the DEX disabled look for the main
+   button, one disclosure chevron on plain-text summaries, the CW-095 title on My trades, a neutral
+   "Wallet needed" note instead of the error colour, and the 12 px text floor in the offer filter. */
+:root body .app-shell-trades .p2p-trading-shell :is(.standalone-trade-create-panel, .p2p-counter-panel) .trade-compose-direction-control > [role="tablist"] {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-base);
+  box-shadow: none;
+}
+:root body .app-shell-trades .p2p-trading-shell :is(.standalone-trade-create-panel, .p2p-counter-panel) .trade-compose-direction-control > [role="tablist"] > button {
+  min-height: 44px;
+  height: auto;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: .8125rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+:root body .app-shell-trades .p2p-trading-shell :is(.standalone-trade-create-panel, .p2p-counter-panel) .trade-compose-direction-control > [role="tablist"] > button[aria-selected="true"] {
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px var(--brand-strong);
+}
+/* The DEX main button shows its disabled state with opacity .68; P2P kept the full fill. */
+:root body .app-shell .trade-compose-send:disabled { opacity: .68; cursor: not-allowed; }
+
+/* Plain-text summaries (no element inside) get the one chevron; summaries with their own icon or
+   layout (Show market chart, Advanced options, the terminal and agent headings) keep theirs. */
+:root body .app-shell-trades .p2p-trading-shell details > summary:not(:has(*)) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+:root body .app-shell-trades .p2p-trading-shell details > summary:not(:has(*))::-webkit-details-marker { display: none; }
+:root body .app-shell-trades .p2p-trading-shell details > summary:not(:has(*))::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+:root body .app-shell-trades .p2p-trading-shell details[open] > summary:not(:has(*)) { color: var(--text-primary); }
+:root body .app-shell-trades .p2p-trading-shell details[open] > summary:not(:has(*))::after { transform: translateY(2px) rotate(225deg); }
+
+:root body .app-shell-trades .p2p-trading-shell .p2p-my-trades-section > .standalone-trades-section-head h2 {
+  margin: 0;
+  font: 700 1.1rem/normal "Inter", "Segoe UI", Arial, sans-serif;
+  letter-spacing: normal;
+  color: var(--text-primary);
+}
+
+/* Not connected is a normal state: a neutral note, as the Chat "Wallet needed" card. */
+:root body .app-shell-trades .p2p-market-status.p2p-market-status-note { color: var(--text-secondary); }
+:root body .app-shell-trades .p2p-offers-empty.is-note {
+  border-color: var(--border-default);
+  background: var(--surface-base);
+}
+
+:root body .app-shell-trades :is(.p2p-offers-filter-heading > span, .p2p-offers-filter-type > span, .p2p-offers-filter-reset, .p2p-offers-filter-summary) {
+  font-size: .75rem;
+}
+
+@media (min-width: 920.02px) {
+  /* My trades kept a fixed minimum height (520 px, or the window height minus 230 px while disconnected)
+     that is taller than its grid row at common window heights. It covered the "Recover existing strategy
+     funds" row below it: that row was blurred by the panel backdrop filter and clicks reached the panel.
+     The panel now fits its row and scrolls inside (it has overflow-y: auto). */
+  :root body .app-shell-trades .p2p-trading-shell-mine > .p2p-my-trades-section { min-height: 0; }
+}
+@media (max-width: 920px) {
+  /* The token picker has a visible name; its field label stays for screen readers only (CW-094 desktop rule). */
+  :root body .app-shell-trades .standalone-trade-create-panel .trade-compose-asset-field > .trade-compose-field-head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-height: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

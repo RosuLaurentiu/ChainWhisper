@@ -609,7 +609,7 @@ test.describe('mobile layout polish', () => {
 
     const sendAmountError = page.locator('.trade-compose-section-sell .trade-compose-field-error').filter({ hasText: /Enter a valid .+ amount to send\./ });
     await expect(sendAmountError).toHaveCount(0);
-    await page.getByRole('button', { name: 'Create Offer' }).click();
+    await page.getByRole('button', { name: 'Create offer' }).click();
     await expect(sendAmountError).toBeVisible();
 
     await page.locator('.trade-compose-section-sell .trade-compose-amount-field .trade-compose-input').fill('10');
@@ -619,7 +619,7 @@ test.describe('mobile layout polish', () => {
     await expect(page.locator('.trade-compose-pricing-derived .trade-compose-pricing-state')).toHaveText('Calculated');
 
     await scrollTradeShellToBottom(page);
-    await expect(page.getByRole('button', { name: 'Create Offer' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create offer' })).toBeVisible();
     await expectClearOfTradeTabs(page, '.trade-compose-footer');
     await expectNoHorizontalOverflow(page);
   });
@@ -631,7 +631,7 @@ test.describe('mobile layout polish', () => {
     await expect(page.getByRole('tab', { name: 'Recurring', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Create recurring strategy', exact: true })).toHaveCount(0);
     await scrollTradeShellToBottom(page);
-    await expect(page.getByRole('button', { name: 'Create Offer', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath('p2p-create-mobile.png') });
   });
@@ -851,7 +851,7 @@ test.describe('trading responsive layout', () => {
     await composer.locator('.trade-compose-section-sell .trade-compose-amount-field .trade-compose-input').fill('10');
     await composer.locator('.trade-compose-limit-price .trade-compose-price-field .trade-compose-input').fill('1');
     await expect(composer.locator('.trade-compose-readiness')).toContainText(/Connect wallet|Complete required fields|Loading token balance/);
-    await expect(composer.getByRole('button', { name: 'Create Offer', exact: true })).toBeVisible();
+    await expect(composer.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Recurring', exact: true })).toHaveCount(0);
     await expect(page.getByRole('group', { name: 'Recurring P2P order', exact: true })).toHaveCount(0);
     await expect(page.locator('.trading-ratio-trigger')).toBeVisible();

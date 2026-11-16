@@ -190,7 +190,7 @@ export default function TradeMyTradesSection({
         </button>
       ) : selectedMyTradeGroup.id === 'active' ? (
         <button type="button" onClick={onCreateOffer}>
-          Create Offer
+          Create offer
         </button>
       ) : null}
     </div>
@@ -225,7 +225,7 @@ export default function TradeMyTradesSection({
         {hasActiveDeskFilters ? (
           <button type="button" onClick={onClearFilters}>Clear filters</button>
         ) : group.id === 'active' ? (
-          <button type="button" onClick={onCreateOffer}>Create Offer</button>
+          <button type="button" onClick={onCreateOffer}>Create offer</button>
         ) : null}
       </div>
     );
@@ -358,7 +358,7 @@ export default function TradeMyTradesSection({
         ? renderP2PEmptyState(
             renderAdditionalTrades ? 'Some trades could not load' : 'My trades could not load',
             'Refresh to try again.',
-            <details className="p2p-inline-diagnostics"><summary>Technical details</summary><p>{myTradesError}</p></details>,
+            <details className="p2p-inline-diagnostics"><summary>Error details</summary><p>{myTradesError}</p></details>,
             'error'
           )
         : null}
