@@ -97,6 +97,6 @@ export default function TokenApprovalsDialog({ session, onClose }: { session: Sh
       {visible.map(row => <div key={row.token} className="token-approvals-row"><span>{row.symbol}: {format(row)}</span>{' '}
         <button type="button" className="connect-btn" disabled={busy || held || !!pending.current || row.allowance === 0n} onClick={() => setSelected(row)}>Revoke {row.symbol}</button>
       </div>)}
-      <p className="modal-copy">Revocation is held while a swap or transaction needs reconciliation. Cancellation does not automatically clear an approval.</p>
+      <p className="modal-copy">Revoke is not available while a swap or transaction needs a status check. Cancelling a swap does not clear an approval.</p>
     </div>}/>;
 }

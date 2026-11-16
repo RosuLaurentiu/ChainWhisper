@@ -32,7 +32,7 @@ describe('PrivateTvlSnapshotView', () => {
     expect(markup).toContain('TVL by token');
     expect(markup).toContain('Locked reserve');
     expect(markup).toContain('Private liability');
-    expect(markup).toContain('Liabilities are reconciled, never counted twice');
+    expect(markup).toContain('Liabilities are checked, never counted twice');
     expect(markup.match(/100% backed/g)).toHaveLength(7);
   });
 

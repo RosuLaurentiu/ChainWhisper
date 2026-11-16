@@ -1394,3 +1394,48 @@
 }
 :root body .app-shell-chat .contacts-empty-state details[open] > summary { color: var(--text-primary); }
 :root body .app-shell-chat .contacts-empty-state details[open] > summary::after { transform: translateY(2px) rotate(225deg); }
+
+/* CW-097. Portal, Private TVL, Home and the pair picker: the App touch size on every page (Portal, TVL
+   and Home were outside it, with 32-38 px header controls and a 66 px header), one disclosure chevron
+   for Token contracts and the 12 px text floor in the pair picker and on the TVL and Portal cards. */
+:root body .app-shell:is(.app-shell-swap, .app-shell-landing) :is(button, input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, summary) {
+  min-width: 44px;
+  min-height: 44px;
+}
+/* The Portal pair search keeps its input inside one 44 px field with the App field tokens. */
+:root body .app-shell-swap .privacy-token-search {
+  height: auto;
+  min-height: 44px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--surface-base);
+}
+:root body .app-shell-swap .privacy-token-search input { background: transparent; }
+:root body .app-shell .trading-market-token-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+:root body .app-shell .trading-market-token-details > summary::-webkit-details-marker { display: none; }
+:root body .app-shell .trading-market-token-details > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+:root body .app-shell .trading-market-token-details[open] > summary { color: var(--text-primary); }
+:root body .app-shell .trading-market-token-details[open] > summary::after { transform: translateY(2px) rotate(225deg); }
+:root body .app-shell :is(.trading-market-catalog > header :is(span, small), .trading-market-token-details .dex-token-identity small,
+  .treasury-meta-card > span, .treasury-shell article > span, .privacy-token-rail-note, .privacy-connection-copy > span,
+  .privacy-connection-facts small) {
+  font-size: .75rem;
+}

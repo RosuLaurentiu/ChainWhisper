@@ -110,7 +110,7 @@ export function PrivateTvlSnapshotView({ snapshot }: { snapshot: PrivateTvlSnaps
       <section className="treasury-panel treasury-performance-panel" aria-labelledby="private-tvl-summary-title">
         <div className="treasury-section-head treasury-section-head-compact">
           <div>
-            <p className="landing-eyebrow">Current safe-head snapshot</p>
+            <p className="landing-eyebrow">Latest confirmed block</p>
             <h2 id="private-tvl-summary-title" className="treasury-section-title">Private assets locked on COTI</h2>
           </div>
         </div>
@@ -136,7 +136,7 @@ export function PrivateTvlSnapshotView({ snapshot }: { snapshot: PrivateTvlSnaps
           <PrivateTvlStatCard
             label="Reserve coverage"
             value={coverageIssueCount === 0 ? `${exactCoverageCount} exact` : `${coverageIssueCount} warning`}
-            detail="Liabilities are reconciled, never counted twice"
+            detail="Liabilities are checked, never counted twice"
           />
         </div>
         {snapshot.hasUnpricedValue ? (
@@ -252,19 +252,19 @@ export default function PrivateTvlPage({ isCompactLayout = false }: { isCompactL
           <p className="landing-eyebrow">COTI Private TVL</p>
           <h1 className="treasury-title">Private assets backed by reviewed COTI bridges.</h1>
           <p className="treasury-description">
-            Public reserves locked in official privacy bridges, reconciled against private liabilities and valued with fresh Band USD references.
+            Public reserves locked in official privacy bridges, checked against private liabilities and valued with fresh Band USD prices.
           </p>
         </div>
         <div className="treasury-hero-bottom">
           <div className="treasury-meta-grid">
             <PrivateTvlMetaCard label="Network" value="COTI Mainnet" />
             <PrivateTvlMetaCard
-              label="Safe-head block"
+              label="Confirmed block"
               value={snapshot?.blockNumber ?? (status === 'error' ? 'Unavailable' : 'Verifying')}
               href={snapshot ? `${COTI_MAINNET_EXPLORER_URL}/block/${snapshot.blockNumber}` : undefined}
             />
             <PrivateTvlMetaCard
-              label="Band proxy"
+              label="Price source"
               value={snapshot ? shortAddress(snapshot.bandProxyAddress) : status === 'error' ? 'Not verified' : 'Verifying'}
               href={snapshot ? `${COTI_MAINNET_EXPLORER_URL}/address/${snapshot.bandProxyAddress}` : undefined}
             />
@@ -280,7 +280,7 @@ export default function PrivateTvlPage({ isCompactLayout = false }: { isCompactL
         <section className="treasury-panel">
           <div className="treasury-state-card" role="status" aria-live="polite">
             <strong>Verifying COTI Private TVL</strong>
-            <p>Reading bridges and Band prices at one safe-head block.</p>
+            <p>Reading bridges and Band prices at one confirmed block.</p>
           </div>
         </section>
       ) : null}
@@ -300,8 +300,8 @@ export default function PrivateTvlPage({ isCompactLayout = false }: { isCompactL
             </article>
             <article>
               <span>Consistency</span>
-              <strong>One safe-head block</strong>
-              <p>Bridge reserves and liabilities are reconciled at the same block.</p>
+              <strong>One confirmed block</strong>
+              <p>Bridge reserves and liabilities are checked at the same block.</p>
             </article>
             <article>
               <span>Pricing</span>
