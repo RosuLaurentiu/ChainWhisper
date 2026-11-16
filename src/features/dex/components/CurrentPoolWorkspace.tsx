@@ -18,6 +18,7 @@ import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
 import type { CurrentPoolPreparedPreview } from '../../wallet/currentDexPoolFundingCapability';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
+import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import './CurrentPoolWorkspace.css';
 
 export const CURRENT_POOL_SPREADS = ['0.1', '0.3', '0.5', '1', '2', '5', '10'] as const;
@@ -625,7 +626,10 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       </div></details>
       {preparedCandidate ? <details className="dex-v2-setup"><summary>Recovery</summary>{recovery}</details> : recovery}
       {savedActionPending ? <p role="alert">A saved action needs reconciliation. Open its status and recovery from Activity before a new deposit.</p> : null}
-      <p className="dex-v2-activation-note" role="status">{(messageScope.current === scope.current && message) || (connected ? !privacyReady ? 'Use “Unlock privacy with MetaMask” in the header to review your deposit.' : !previewInputsValid ? 'Enter both deposit amounts and a valid price and tolerance.' : 'Review your deposit before any tokens move.' : 'Connect your wallet on COTI Testnet to prepare this Pool.')}</p>
+      {!(messageScope.current === scope.current && message) && connected && !privacyReady
+        ? <PrivacyLockedNotice message="Your deposit preview is locked." disabled={busy}
+          onUnlock={sharedWalletSession?.actions?.unlockPrivacy ? () => sharedWalletSession.actions!.unlockPrivacy() : undefined} />
+        : <p className="dex-v2-activation-note" role="status">{(messageScope.current === scope.current && message) || (connected ? !previewInputsValid ? 'Enter both deposit amounts and a valid price and tolerance.' : 'Review your deposit before any tokens move.' : 'Connect your wallet on COTI Testnet to prepare this Pool.')}</p>}
       {transactionHash ? <p className="dex-v2-activation-note" style={{ overflowWrap: 'anywhere' }}>Transaction {transactionHash}</p> : null}
       {nftId !== null && nftScope.current === scope.current ? <p className="dex-v2-activation-note">Verified position NFT ID: {nftId.toString()}. {attemptComplete ? 'The claim exit is complete.' : 'Use this ID and funding transaction in Your liquidity to refresh and exit the claim.'}</p> : null}
     </section>

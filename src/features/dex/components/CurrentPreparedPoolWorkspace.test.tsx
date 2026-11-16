@@ -2,6 +2,7 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as poolInputs from '../../../lib/currentDexPoolFunding';
 import CurrentPoolWorkspace, { currentPoolIntent } from './CurrentPoolWorkspace';
+import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY } from '../../../lib/currentDexC1SwapPolicy';
@@ -79,7 +80,14 @@ describe('prepared Pool creation view', () => {
     expect(f.button('Preview deposit').props.disabled).toBe(false);
     f.props.sharedWalletSession = { ...f.props.sharedWalletSession, sessionOnboardInfo: {} };
     expect(f.button('Preview deposit').props.disabled).toBe(true);
-    expect(text(f.render())).toContain('Unlock privacy with MetaMask');
+    const notice = () => elements(f.render()).find(element => element.type === PrivacyLockedNotice) as ReactElement<{ message: string; onUnlock?: () => unknown }> | undefined;
+    expect(notice()?.props.message).toBe('Your deposit preview is locked.');
+    expect(notice()?.props.onUnlock).toBeUndefined();
+    expect(text(f.render())).not.toContain('Unlock privacy with MetaMask');
+    const unlockPrivacy = vi.fn(async () => undefined);
+    f.props.sharedWalletSession = { ...f.props.sharedWalletSession, actions: { ...f.props.sharedWalletSession.actions, unlockPrivacy } } as SharedWalletSession;
+    notice()!.props.onUnlock!();
+    expect(unlockPrivacy).toHaveBeenCalledTimes(1);
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled();
   });
   it('shows scoped creation steps without treating recovery as a ready position', () => {
