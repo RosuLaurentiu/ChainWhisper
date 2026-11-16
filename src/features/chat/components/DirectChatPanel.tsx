@@ -482,7 +482,7 @@ function DirectChatPanel({
               className="contact"
               onClick={onWithdrawNativeCredit}
               disabled={withdrawingNativeCredit}
-              title="Claim native COTI tips credited by Direct Chat V2"
+              title="Claim native COTI tips sent to you in Direct Chat"
             >
               {withdrawingNativeCredit
                 ? 'Claiming tips...'
@@ -534,7 +534,7 @@ function DirectChatPanel({
         ) : renderableMessages.length === 0 ? (
           <div className="chat-empty-state" role="status" aria-live="polite">
             <strong>No messages yet</strong>
-            <p>Send the first message, or use Force sync if this conversation already exists on-chain.</p>
+            <p>Send the first message, or select Refresh if this conversation already exists on-chain.</p>
           </div>
         ) : (
           <div

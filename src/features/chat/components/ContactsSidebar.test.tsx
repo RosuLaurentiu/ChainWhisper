@@ -55,9 +55,9 @@ function renderSidebar(overrides: Partial<ComponentProps<typeof ContactsSidebar>
 }
 
 describe('ContactsSidebar group discovery status', () => {
-  it('uses Force sync as the only discovery control', () => {
+  it('uses Refresh as the only discovery control', () => {
     const markup = renderSidebar({ hasOlderContacts: true, hasOlderGroups: true });
-    expect(markup.match(/>Force sync<\/button>/g)).toHaveLength(1);
+    expect(markup.match(/>Refresh<\/button>/g)).toHaveLength(1);
     expect(markup).not.toContain('Refresh Direct conversations');
     expect(markup).not.toContain('Load older conversations');
     expect(markup).not.toContain('Load older groups');
@@ -84,7 +84,7 @@ describe('ContactsSidebar group discovery status', () => {
     const markup = renderSidebar({ groupDiscoveryState: 'error' });
 
     expect(markup).toContain('role="status"');
-    expect(markup).toContain('Groups unavailable. Use Force sync to retry.');
+    expect(markup).toContain('Groups unavailable. Select Refresh to try again.');
     expect(markup).not.toContain('No groups yet.');
   });
 
@@ -115,9 +115,9 @@ describe('ContactsSidebar group discovery status', () => {
         admin: '0xowner', createdAt: 0, members: [], lastBlock: 0 }]
     });
 
-    expect(markup).toContain('Groups may be incomplete. Use Force sync to retry.');
+    expect(markup).toContain('Groups may be incomplete. Select Refresh to try again.');
     expect(markup).toContain('Group discovery (message history): Read unavailable.');
-    expect(markup).toContain('<summary>Details</summary>');
+    expect(markup).toContain('<summary>Error details</summary>');
     expect(markup).toContain('Existing action error.');
     expect(markup).toContain('Project group (#7)');
   });
@@ -146,7 +146,7 @@ it.each(['loading', 'error'] as const)('keeps memberships without confirmed end 
 describe('ContactsSidebar Direct discovery status', () => {
   it('marks older conversations as incomplete and preserves privacy lock', () => {
     expect(renderSidebar({ directDiscoveryState: 'ready', hasOlderContacts: true }))
-      .toContain('More Direct conversations may remain. Use Force sync to load more.');
+      .toContain('More Direct conversations may remain. Select Refresh to load more.');
     expect(renderSidebar({ hasOlderContacts: true, hasAesReady: false })).toContain('Unlock privacy');
   });
   it('hides cached saved contact names and private group titles on privacy lock', () => {
@@ -158,7 +158,7 @@ describe('ContactsSidebar Direct discovery status', () => {
   it('shows Direct setup errors without claiming the list is empty', () => {
     const markup = renderSidebar({ directDiscoveryState: 'error', canRefreshContacts: false, directDiscoveryError: 'Secure nonce storage unavailable.' });
     expect(markup).toContain('Direct Chat setup is unavailable.');
-    expect(markup).not.toContain('Use Force sync to retry.');
+    expect(markup).not.toContain('Select Refresh to try again.');
     expect(markup).toContain('Secure nonce storage unavailable.');
     expect(markup).not.toContain('No contacts yet.');
   });
@@ -167,8 +167,8 @@ describe('ContactsSidebar Direct discovery status', () => {
     const markup = renderSidebar({ directDiscoveryState: state });
     expect(markup).not.toContain('No contacts yet.');
     expect(markup).toContain('role="status"');
-    expect(markup).toContain(state === 'error' ? 'Direct conversations unavailable. Use Force sync to retry.'
-      : state === 'partial' ? 'More Direct conversations may remain. Use Force sync to load more.' : 'Loading Direct conversations…');
+    expect(markup).toContain(state === 'error' ? 'Direct conversations unavailable. Select Refresh to try again.'
+      : state === 'partial' ? 'More Direct conversations may remain. Select Refresh to load more.' : 'Loading Direct conversations…');
   });
 
   it('shows empty contacts only after the index is ready, and shows privacy lock separately', () => {
@@ -184,9 +184,9 @@ describe('ContactsSidebar Direct discovery status', () => {
         { address: '0x1111111111111111111111111111111111111111', name: 'Known peer' }
       ] });
     expect(markup).toContain('Known peer');
-    expect(markup).toContain('Direct conversations may be incomplete. Use Force sync to retry.');
+    expect(markup).toContain('Direct conversations may be incomplete. Select Refresh to try again.');
     expect(markup).toContain('Contract admission failed.');
-    expect(markup).toContain('Syncing...');
+    expect(markup).toContain('Refreshing…');
   });
 });
 

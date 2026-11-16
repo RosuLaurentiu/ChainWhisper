@@ -131,10 +131,10 @@ function ContactsSidebar({
     ? 'Unlock privacy to load Direct conversations.'
     : directDiscoveryState === 'error'
       ? !canRefreshContacts ? 'Direct Chat setup is unavailable.' : visibleSortedContacts.length > 0
-        ? 'Direct conversations may be incomplete. Use Force sync to retry.'
-        : 'Direct conversations unavailable. Use Force sync to retry.'
+        ? 'Direct conversations may be incomplete. Select Refresh to try again.'
+        : 'Direct conversations unavailable. Select Refresh to try again.'
       : directDiscoveryState === 'partial' || hasOlderContacts
-        ? 'More Direct conversations may remain. Use Force sync to load more.'
+        ? 'More Direct conversations may remain. Select Refresh to load more.'
         : directDiscoveryState === 'loading' ? 'Loading Direct conversations…' : '';
 
   return (
@@ -197,7 +197,7 @@ function ContactsSidebar({
               onClick={onForceSync}
               disabled={syncInProgress || !hasAesReady}
             >
-              {syncInProgress ? 'Syncing...' : 'Force sync'}
+              {syncInProgress ? 'Refreshing…' : 'Refresh'}
             </button>
             <button
               type="button"
@@ -228,8 +228,8 @@ function ContactsSidebar({
               {showHiddenContacts
                 ? 'Back to main chats'
                 : hiddenContactsCount > 0
-                  ? `Show hidden chats (${hiddenContactsCount})`
-                  : 'No hidden chats'}
+                  ? `Hidden chats (${hiddenContactsCount})`
+                  : 'Hidden chats (0)'}
             </button>
           </div>
         </div>
@@ -251,7 +251,7 @@ function ContactsSidebar({
           <div className="contacts-empty-state" role="status">
             {directDiscoveryMessage}
             {hasAesReady && directDiscoveryState === 'error' && directDiscoveryError ? (
-              <details><summary>Details</summary>{directDiscoveryError}</details>
+              <details><summary>Error details</summary>{directDiscoveryError}</details>
             ) : null}
           </div>
         ) : null}
@@ -490,8 +490,8 @@ function ContactsSidebar({
           ) : null}
           {groupDiscoveryState === 'error' ? (
             <li className="contacts-empty-state" role="status">
-              {sortedGroups.length === 0 ? 'Groups unavailable. Use Force sync to retry.' : 'Groups may be incomplete. Use Force sync to retry.'}
-              {groupDiscoveryError ? <details><summary>Details</summary><p>{groupDiscoveryError}</p></details> : null}
+              {sortedGroups.length === 0 ? 'Groups unavailable. Select Refresh to try again.' : 'Groups may be incomplete. Select Refresh to try again.'}
+              {groupDiscoveryError ? <details><summary>Error details</summary><p>{groupDiscoveryError}</p></details> : null}
             </li>
           ) : null}
           {sortedGroups.length === 0 && groupDiscoveryState === 'loading' ? (

@@ -99,7 +99,7 @@ export default function GroupActionControls({
         onClick={onDisband}
         disabled={processingGroupAction}
       >
-        {processingGroupAction ? 'Working...' : 'Disband'}
+        {processingGroupAction ? 'Working…' : 'Archive group'}
       </button>
     </>
   ) : null;

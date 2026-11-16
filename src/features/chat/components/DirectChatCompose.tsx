@@ -174,7 +174,7 @@ export default function DirectChatCompose({
           </div>
           {nativeTipsOnly ? (
             <p className="chat-tip-warning">
-              Direct Chat V2 sends native COTI with this one message transaction. The recipient claims the credited tip from chat.
+              Direct Chat sends native COTI with this message transaction. The recipient claims the tip in Chat.
             </p>
           ) : null}
           {tipAmountExceedsBalance ? (

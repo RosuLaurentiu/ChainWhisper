@@ -102,7 +102,7 @@ describe('DirectChatPanel history state', () => {
   it('keeps the existing empty state when no history read is pending', () => {
     const markup = renderDirectHistory(false);
     expect(markup).toContain('No messages yet');
-    expect(markup).toContain('use Force sync');
+    expect(markup).toContain('select Refresh');
     expect(markup).not.toContain('Sync History');
     expect(markup).not.toContain('aria-label="Loading direct messages"');
   });

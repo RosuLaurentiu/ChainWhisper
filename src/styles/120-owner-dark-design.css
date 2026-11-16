@@ -1367,3 +1367,30 @@
     white-space: nowrap;
   }
 }
+
+/* CW-097. Chat: the error details under a Direct or Group discovery message use the one disclosure
+   chevron of the Trading pages instead of the browser triangle, at the 44 px touch size. */
+:root body .app-shell-chat .contacts-empty-state details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+:root body .app-shell-chat .contacts-empty-state details > summary::-webkit-details-marker { display: none; }
+:root body .app-shell-chat .contacts-empty-state details > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+:root body .app-shell-chat .contacts-empty-state details[open] > summary { color: var(--text-primary); }
+:root body .app-shell-chat .contacts-empty-state details[open] > summary::after { transform: translateY(2px) rotate(225deg); }

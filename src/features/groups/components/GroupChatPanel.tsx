@@ -522,7 +522,7 @@ export default function GroupChatPanel({
             <strong>{hasOlderHistory ? 'No messages in this page' : membershipEnded ? 'No messages from your membership periods' : 'No group messages yet'}</strong>
             <p>{hasOlderHistory ? 'Older group history remains available.'
               : membershipEnded ? 'This wallet has no readable messages in the loaded history.'
-                : 'Send the first message, or use Force sync if recent messages are still missing.'}</p>
+                : 'Send the first message, or select Refresh if recent messages are still missing.'}</p>
           </div>
         ) : (
           <div
