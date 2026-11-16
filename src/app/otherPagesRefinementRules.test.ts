@@ -26,8 +26,10 @@ const rule = (selectorPart: string) => {
 describe('touch size on every page', () => {
   it('extends the App 44 px rule to the Portal, TVL and Home shells', () => {
     const touch = rule(':root body .app-shell:is(.app-shell-swap, .app-shell-landing) :is(button,');
-    expect(touch).toContain('min-width: 44px;');
     expect(touch).toContain('min-height: 44px;');
+    // No min-width on every button: it would undo wider set widths such as the Home Open Chat button.
+    expect(touch).not.toContain('min-width');
+    expect(rule('.app-shell:is(.app-shell-swap, .app-shell-landing) .header-icon-btn {')).toContain('min-width: 44px;');
   });
 
   it('keeps the Portal search input inside one 44 px field with the App field tokens', () => {
