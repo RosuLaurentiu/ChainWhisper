@@ -7,7 +7,7 @@ import { assertCurrentSwapCandidate } from '../../../lib/currentDexNativeSwapPol
 import CurrentSharedTestTokenControls from './CurrentSharedTestTokenControls';
 import CurrentSwapProgress from './CurrentSwapProgress';
 import CurrentSwapSteps from './CurrentSwapSteps';
-import TransactionGuide, { TransactionGuideLauncher } from './TransactionGuide';
+import TransactionSteps from './TransactionSteps';
 import { currentDexQuoteInputPlan } from '../../../lib/currentDexQuoteInputPlan';
 import type { CurrentDexQuoteInputProgress } from '../../wallet/currentDexQuoteCapability';
 import type { SharedWalletSession } from '../../../lib/walletSession';
@@ -36,12 +36,10 @@ vi.mock('../../trading/hooks/useTradeActionConfirmationState', () => ({ default:
 
 type Props = { children?: ReactNode; onClick?: () => void; onChange?: (event: { target: { value: string } }) => void; disabled?: boolean; role?: string; href?: string; 'aria-label'?: string; 'aria-pressed'?: boolean; 'aria-current'?:string };
 // The shallow fixture must render the stateless progress view to observe its status and result.
-// The step list lives in the transaction guide window; the fixture renders it as if the user opened it.
 const presentation = (node: ReactNode): ReactNode =>
   isValidElement<Parameters<typeof CurrentSwapProgress>[0]>(node) && node.type === CurrentSwapProgress
-    ? CurrentSwapProgress(node.props) : isValidElement<Parameters<typeof CurrentSwapSteps>[0]>(node)&&node.type===CurrentSwapSteps?CurrentSwapSteps(node.props)
-      : isValidElement<Parameters<typeof TransactionGuideLauncher>[0]>(node)&&node.type===TransactionGuideLauncher?TransactionGuideLauncher(node.props)
-        : isValidElement<Parameters<typeof TransactionGuide>[0]>(node)&&node.type===TransactionGuide?TransactionGuide({...node.props,open:true}):node;
+    ? CurrentSwapProgress(node.props) : isValidElement<Parameters<typeof CurrentSwapSteps>[0]>(node)&&node.type===CurrentSwapSteps?presentation(CurrentSwapSteps(node.props))
+      : isValidElement<Parameters<typeof TransactionSteps>[0]>(node)&&node.type===TransactionSteps?TransactionSteps(node.props):node;
 const elements = (input: ReactNode): ReactElement<Props>[] => {
   const node = presentation(input);
   return Array.isArray(node) ? node.flatMap(elements) : isValidElement<Props>(node) ? [node, ...elements(node.props.children)] : [];
@@ -127,10 +125,10 @@ describe('prepared candidate swap view', () => {
   it('announces the selected private-input plan and conditional approval before starting',()=>{
     const f=fixture(),content=text(f.render());
     expect(content).toContain(`${currentDexQuoteInputPlan(key).length} signatures · 2 transactions`);
-    expect(content).toContain('Approval if needed: +1 signature, +1 transaction');
+    expect(content).not.toContain('Approval if needed');
     expect(f.getQuote).not.toHaveBeenCalled();expect(f.providerRequest).not.toHaveBeenCalled();
     expect(content).not.toContain('steps complete');
-    // Before the swap starts no step is current; the guide lists every step as upcoming.
+    // Before the swap starts no step is current; the track lists every step as upcoming.
     expect(elements(f.render()).filter(e=>e.props['aria-current']==='step')).toHaveLength(0);
   });
   it.skipIf(key==='cheap-prepared')('shows verified Multi-source stage counts and only its keeper step as active',async()=>{
@@ -138,11 +136,11 @@ describe('prepared candidate swap view', () => {
     const issued={transactionHash:quoteHash,operationId:3n,intent:{profile:'cheap-async',candidate:prepared,destination:owner,inputToken:addresses[1],outputToken:addresses[0],maximumInput:1_234_567n,minimumInput:1n,minimumOutput:1n,toleranceBps:50,rateNumerator:0n,rateDenominator:1n},operation:{ready:false,phase:'preparing-quote',stage:3},readCurrent:vi.fn()};issued.readCurrent.mockResolvedValue(issued);
     Object.assign(f.sender,{readCurrentCheapRestoreHint:vi.fn(()=>({quoteHash})),restoreCurrentCheapOperation:vi.fn(async()=>issued)});f.getQuote.mockResolvedValue({restoreCurrentQuote:vi.fn(async()=>issued)});
     f.click('Check current state');await vi.waitFor(()=>expect(f.status()).toContain('2 of'));
-    expect(text(f.render())).toContain(`2/${stages.workCalls} steps complete`);
-    const active=elements(f.render()).filter(e=>e.props['aria-current']==='step');expect(active).toHaveLength(1);expect(text(active[0])).toContain(`Quote2/${stages.workCalls} steps complete`);
+    expect(text(f.render())).toContain(`2 of ${stages.workCalls} steps complete.`);
+    const active=elements(f.render()).filter(e=>e.props['aria-current']==='step');expect(active).toHaveLength(1);expect(text(active[0])).toContain('Quote');
     expect(text(f.render())).toContain('Preparing quote');
     issued.operation={ready:true,phase:'quote-prepared',stage:stages.ready};f.click('Check current state');await vi.waitFor(()=>expect(f.status()).toBe('Private Quote is READY for review.'));
-    expect(text(f.render())).toContain('QuoteConfirmed');expect(f.providerRequest).not.toHaveBeenCalled();
+    expect(text(f.render())).toContain('Quote: Complete');expect(f.providerRequest).not.toHaveBeenCalled();
   });
   async function progressFixture() {
     const f = fixture(), quoteHash = `0x${'55'.repeat(32)}`;
@@ -414,22 +412,22 @@ describe('prepared candidate swap view', () => {
       throw new Error('Wallet signature rejected');
     });
     f.click('Get Quote');await vi.waitFor(()=>expect(f.status()).toContain('Wallet signature rejected'));
-    expect(text(f.render())).toContain(`0/${total} signatures`);expect(text(f.render())).toContain('Swap stopped');
+    expect(text(f.render())).toContain('Sign: Stopped');expect(text(f.render())).toContain('Swap stopped');
     expect(elements(f.render()).filter(e=>e.props['aria-current']==='step')).toHaveLength(0);
     expect(f.submitQuote).not.toHaveBeenCalled();
   });
   it.skipIf(key==='cheap-prepared')('shows a cancelled private-input review without claiming a Quote or signature',async()=>{
     const f=admittedFundingFixture();f.prepareQuote.mockResolvedValue(null as never);f.click('Get Quote');
     await vi.waitFor(()=>expect(f.status()).toBe('Private input review cancelled. No Quote was sent.'));
-    expect(text(f.render())).toContain('No quote was submitted.');expect(text(f.render())).toContain(`0/${currentDexQuoteInputPlan(key).length} signatures`);expect(f.submitQuote).not.toHaveBeenCalled();
+    expect(text(f.render())).toContain('No quote was submitted.');expect(text(f.render())).not.toContain('Sign: Complete');expect(text(f.render())).not.toContain('signatures complete');expect(f.submitQuote).not.toHaveBeenCalled();
   });
   it.skipIf(key==='cheap-prepared')('clears old signature progress when inputs are replaced and ignores late callbacks',async()=>{
     const f=admittedFundingFixture(),total=currentDexQuoteInputPlan(key).length;let finish!:()=>void,observe!:(event:CurrentDexQuoteInputProgress)=>void;
     const waiting=new Promise<void>(resolve=>{finish=resolve;});
     f.prepareQuote.mockImplementation(async request=>{observe=(request as typeof request&{progress:typeof observe}).progress;observe({phase:'completed',completed:2,total});await waiting;return{intent:{maximumInput:1_234_567n,deadline:2_000n}};});
-    f.click('Get Quote');await vi.waitFor(()=>expect(text(f.render())).toContain(`2/${total} signatures`));
+    f.click('Get Quote');await vi.waitFor(()=>expect(text(f.render())).toContain(`2 of ${total} signatures complete.`));
     elements(f.render()).find(e=>e.props['aria-label']==='Maximum input')!.props.onChange!({target:{value:'2'}});f.render();
-    observe({phase:'completed',completed:total,total});expect(text(f.render())).toContain('Wallet or inputs changed');expect(text(f.render())).not.toContain(`${total}/${total} signatures`);
+    observe({phase:'completed',completed:total,total});expect(text(f.render())).toContain('Wallet or inputs changed');expect(text(f.render())).not.toContain(`${total} of ${total} signatures complete`);
     finish();await vi.waitFor(()=>expect(f.status()).toContain('changed'));expect(f.submitQuote).not.toHaveBeenCalled();
   });
   it.skipIf(key === 'cheap-prepared')('displays the verified Fast Accept delivery without another operation or private result read', async () => {
@@ -858,7 +856,7 @@ describe('prepared candidate swap view', () => {
     expect(tree.find(e => e.props['aria-label'] === 'Minimum net output')?.props).toMatchObject({ value: '0.9', disabled: true });
     expect(tree.find(e => e.type === 'button' && text(e.props.children) === (profile==='cheap-async'?'Multi-source':'Fast'))?.props['aria-pressed']).toBe(true);
     expect(text(f.render())).toContain('0.25%');
-    expect(text(f.render())).toContain('No new signatures');
+    expect(text(f.render())).toContain('Sign: Complete');expect(text(f.render())).not.toContain('signatures · 2 transactions');
     expect(text(f.render())).not.toContain('Quote and Accept each need');
     expect(f.providerRequest).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
     expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled();

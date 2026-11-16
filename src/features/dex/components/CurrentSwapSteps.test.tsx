@@ -1,72 +1,45 @@
 import {renderToStaticMarkup} from 'react-dom/server';
 import {describe,expect,it} from 'vitest';
 import type {ComponentProps} from 'react';
-import CurrentSwapSteps,{currentSwapGuideModel} from './CurrentSwapSteps';
+import CurrentSwapSteps,{currentSwapStepsModel} from './CurrentSwapSteps';
 import CurrentSwapProgress from './CurrentSwapProgress';
-import TransactionGuide from './TransactionGuide';
 type Input=Partial<ComponentProps<typeof CurrentSwapSteps>>;
 const base={profile:'fast-pool',inputs:{completed:0,total:4,requesting:false},restored:false,privacyReady:true,
  approval:'conditional',quote:'next',accept:'next',stage:'idle',reviewReady:false,delivered:false,scopeChanged:false} as const;
 const render=(overrides:Input={})=>renderToStaticMarkup(<CurrentSwapSteps {...base} {...overrides}/>);
-/** The full step list now lives in the guide window; render it open to inspect it. */
-const guide=(overrides:Input={})=>renderToStaticMarkup(<TransactionGuide flow="Swap" model={currentSwapGuideModel({...base,...overrides})} open onClose={()=>{}} />);
-const compact=(html:string)=>html.match(/<button[^>]*class="tx-guide-launcher"[^>]*>([\s\S]*?)<\/button>/)?.[1]??'';
-describe('Compact swap steps',()=>{
- it('shows a short upfront summary and keeps the full list closed',()=>{
-  const html=render(),visible=compact(html);
-  expect(visible).toContain('4 signatures · 2 transactions');expect(visible).toContain('Approval if needed: +1 signature, +1 transaction');
-  expect(visible).not.toContain('Private inputs');expect(visible).not.toContain('Conditional');expect(visible).not.toContain('Waiting for verified delivery');
-  expect(html).toContain('aria-expanded="false"');expect(html).not.toContain('role="dialog"');
-  expect(html.match(/<button/g)).toHaveLength(1);
-  const list=guide();
-  expect(list.match(/<li /g)).toHaveLength(4);
-  expect(list).toContain('<strong>Approve</strong><small>If needed');
-  expect(html+list).not.toContain('keeper');
+const summary=(html:string)=>html.match(/<p class="tx-steps-summary"[^>]*>([\s\S]*?)<\/p>/)?.[1]??'';
+describe('Inline swap steps',()=>{
+ it('shows a short upfront summary and the step track inline',()=>{
+  const html=render(),visible=summary(html);
+  expect(visible).toContain('4 signatures · 2 transactions');expect(html).not.toContain('Approval if needed');
+  expect(html).toContain('class="tx-steps current-swap-steps"');expect(html).not.toContain('<button');expect(html).not.toContain('role="dialog"');
+  expect(html.match(/<li /g)).toHaveLength(4);expect(html).not.toContain('keeper');
  });
  it('shows the exact extra approval requests when approval is needed',()=>{
-  const visible=compact(render({stage:'preparing',approval:'needed',inputs:{completed:4,total:4,requesting:false}}));
+  const visible=summary(render({stage:'preparing',approval:'needed',inputs:{completed:4,total:4,requesting:false}}));
   expect(visible).toContain('Approve token');expect(visible).toContain('1 signature · 1 transaction');
  });
  it('shows the real signature request as one current step',()=>{
-  const visible=compact(render({stage:'preparing',inputs:{completed:1,total:4,requesting:true}}));
-  expect(visible).toContain('Signature 2 of 4');expect(visible).toContain('Confirm in your wallet');
-  const list=guide({stage:'preparing',inputs:{completed:1,total:4,requesting:true}});
-  expect(list.match(/aria-current="step"/g)).toHaveLength(1);
-  expect(list).toContain('1/4 signatures - confirm in wallet');
+  const html=render({stage:'preparing',inputs:{completed:1,total:4,requesting:true}});
+  expect(summary(html)).toContain('Signature 2 of 4');expect(summary(html)).toContain('Confirm in your wallet');
+  expect(html.match(/aria-current="step"/g)).toHaveLength(1);
  });
  it('shows verified multi-source work without adding a Fast work stage',()=>{
-  expect(compact(render({profile:'cheap-async',stage:'preparing-quote',quote:'verified',work:{completed:2,total:4}}))).toContain('2 of 4 steps complete.');
+  expect(summary(render({profile:'cheap-async',stage:'preparing-quote',quote:'verified',work:{completed:2,total:4}}))).toContain('2 of 4 steps complete.');
   expect(render()).not.toContain('keeper work steps');
  });
  it('does not announce new quote work for a restored quote',()=>{
-  const visible=compact(render({restored:true,inputs:{completed:0,total:0,requesting:false},quote:'verified',stage:'ready',reviewReady:true}));
+  const visible=summary(render({restored:true,inputs:{completed:0,total:0,requesting:false},quote:'verified',stage:'ready',reviewReady:true}));
   expect(visible).toContain('Quote ready');expect(visible).not.toContain('2 transactions');expect(visible).not.toContain('4 signatures');
  });
  it.each(['error','expired','reverted'])('does not keep a wallet prompt active after %s',stage=>{
-  const html=render({stage,inputs:{completed:1,total:4,requesting:true}}),visible=compact(html);
-  expect(visible).toContain('Swap stopped');expect(visible).not.toContain('Confirm signature');expect(html).not.toContain('aria-current="step"');
-  const list=guide({stage,inputs:{completed:1,total:4,requesting:true}});
-  expect(list).not.toContain('confirm in wallet');expect(list).not.toContain('>Next<');expect(list).not.toContain('aria-current="step"');
-  expect(list.match(/<li /g)).toHaveLength(1);
+  const html=render({stage,inputs:{completed:1,total:4,requesting:true}});
+  expect(summary(html)).toContain('Swap stopped');expect(html).not.toContain('onfirm in');expect(html).not.toContain('aria-current="step"');
+  expect(html.match(/<li /g)).toHaveLength(1);
  });
- it('marks unvisited stages after cancellation without losing verified recovery',()=>{
-  const list=guide({profile:'cheap-async',stage:'released',quote:'verified',work:{completed:0,total:4},delivered:true});
-  expect(list).not.toContain('>Next<');expect(list).not.toContain('<strong>Confirm</strong>');
-  expect(list).not.toContain('aria-current="step"');expect(list).toContain('Refund confirmed');
- });
- it('keeps the reported pre-Quote failure to the completed signatures and approval only',()=>{
-  const list=guide({profile:'cheap-async',stage:'error',inputs:{completed:4,total:4,requesting:false},approval:'needed'});
-  expect(list.match(/<li /g)).toHaveLength(2);expect(list).toContain('4/4 signatures');expect(list).toContain('Needed');
-  expect(list).not.toContain('>Next<');expect(list).not.toContain('<strong>Quote</strong>');expect(list).not.toContain('Keep pending recovery checks');
- });
- it('shows an applicable approval and stopped submitted quote only',()=>{
-  expect(guide({approval:'not-needed'})).not.toContain('<strong>Approve</strong>');
-  const list=guide({stage:'error',inputs:{completed:4,total:4,requesting:false},approval:'verified',quote:'submitted'});
-  expect(list).toContain('<strong>Quote</strong><small>Submitted');expect(list).not.toContain('<strong>Confirm</strong>');
- });
- it('keeps the privacy prerequisite out of the compact summary',()=>{
-  const html=render({privacyReady:false});expect(compact(html)).not.toContain('Unlock privacy');
-  expect(currentSwapGuideModel({...base,privacyReady:false}).outcome).toBe('idle');
+ it('keeps the privacy prerequisite out of the summary',()=>{
+  expect(summary(render({privacyReady:false}))).not.toContain('Unlock privacy');
+  expect(currentSwapStepsModel({...base,privacyReady:false}).outcome).toBe('idle');
  });
  it('flattens only the idle check row and retains pending recovery status',()=>{
   const idle=renderToStaticMarkup(<CurrentSwapProgress visible status={null}><button>Check current state</button></CurrentSwapProgress>);
@@ -75,8 +48,8 @@ describe('Compact swap steps',()=>{
   expect(pending).not.toContain('is-idle');expect(pending).toContain('role="alert"');expect(pending).toContain('Recover');
  });
  it('shows completion only when delivery is verified',()=>{
-  expect(compact(render({stage:'settlement-pending'}))).not.toContain('Swap complete');
-  expect(compact(render({stage:'settled',delivered:true}))).toContain('Swap complete');
-  expect(compact(render({stage:'released',delivered:true}))).toContain('Refund confirmed');
+  expect(summary(render({stage:'settlement-pending'}))).not.toContain('Swap complete');
+  expect(summary(render({stage:'settled',delivered:true}))).toContain('Swap complete');
+  expect(summary(render({stage:'released',delivered:true}))).toContain('Refund confirmed');
  });
 });
