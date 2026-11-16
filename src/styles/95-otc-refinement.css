@@ -870,7 +870,7 @@
 }
 
 /* Order review keeps its three useful regions but gives detail clear precedence. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades .p2p-trading-shell-drawer-open {
     grid-template-rows:
       minmax(76px, auto)
@@ -997,7 +997,7 @@
   background: rgba(54, 35, 88, 0.58);
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades
     .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
     .p2p-agent-section:has(.p2p-agent-setup-panel) {

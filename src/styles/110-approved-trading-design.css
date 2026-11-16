@@ -2030,7 +2030,7 @@
   display: flex;
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades
     .p2p-trading-shell-create
     .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot) {
@@ -2117,7 +2117,7 @@
   line-height: 1.4;
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades
     .p2p-trading-shell-create
     .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
@@ -2388,7 +2388,7 @@
 .app-shell-trades .p2p-footer-links-compact { display: flex; align-self: end; align-items: center; justify-content: flex-end; width: min(calc(100% - 56px), 1160px); height: 30px; min-height: 30px; margin: -22px auto 18px; border: 0; background: transparent; padding: 0; }
 .app-shell-trades .p2p-footer-links-compact .p2p-footer-contracts-btn { align-self: center; min-height: 28px; height: 28px; }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-wallet .top-header-bar { grid-template-columns: 250px minmax(0, 1fr); }
   .app-shell-wallet .top-header-right { position: static; width: auto; justify-content: flex-start; gap: 10px; padding-inline: 14px; }
   .app-shell-wallet .top-header-app-nav { position: static; transform: none; }
@@ -2455,7 +2455,7 @@
   .app-shell-wallet .top-header-actions .wallet-header-panel-connected .p2p-wallet-menu-trigger { border-radius: 0 9px 9px 0; }
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel,
   .app-shell-trades .p2p-trading-shell-create .p2p-trade-entry-mode-slot,
   .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel,
@@ -3576,7 +3576,7 @@
 }
 .wallet-utility-value.warning { color: #f2b95c; }
 .wallet-utility-value.warning i { background: #f5ad35; }
-.wallet-utility-row > svg:last-child { transition: transform 150ms ease; }
+.wallet-utility-row > svg:last-child { grid-column: -2 / -1; transition: transform 150ms ease; }
 .wallet-utility-row > svg:last-child.open { transform: rotate(90deg); }
 .wallet-utility-submenu,
 .wallet-utility-notifications {
@@ -3981,12 +3981,12 @@
   font-size: 1.22rem;
   line-height: 1.16;
 }
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades .p2p-my-trades-section .p2p-wallet-trade-group:has(.p2p-wallet-trade-empty) { min-height: 185px; }
   .app-shell-trades .p2p-my-trades-section .p2p-wallet-trade-empty { min-height: 160px; padding-block: 22px; }
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades .p2p-trading-shell-drawer-open:not(.p2p-trading-shell-empty-terminal) {
     grid-template-rows: minmax(76px, auto) minmax(0, 1fr) auto;
     grid-template-areas:
@@ -4980,7 +4980,7 @@
   .trading-market-change { padding-left: 14px; }
 }
 
-@media (min-width: 921px) and (max-width: 1180px) {
+@media (min-width: 920.02px) and (max-width: 1180px) {
   .app-shell-trades .trading-market-context {
     grid-template-columns: 298px minmax(260px, 1fr) minmax(90px, 0.35fr) minmax(180px, 0.65fr);
   }
@@ -5085,7 +5085,7 @@
   color: #fff;
 }
 /* Compact desktop product switch. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .trading-product-bar { padding: 0 14px 0 22px; }
   .trading-market-ratio { padding: 0 20px 0 22px; }
   .trading-product-switch {
@@ -5134,7 +5134,7 @@
   }
 }
 /* One desktop workspace rhythm for DEX and P2P. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-dex-v2,
   .app-shell-trades {
     --trading-content-gutter: clamp(28px, 2vw, 52px);
@@ -5257,7 +5257,7 @@
   .app-shell-dex-v2 .dex-v2-mode-nav .dex-v2-agent-nav-tab,
   .app-shell-trades .p2p-trade-tabs .p2p-agent-nav-tab { margin-left: 0; }
 }
-@media (min-width: 921px) and (max-width: 1120px) {
+@media (min-width: 920.02px) and (max-width: 1120px) {
   .app-shell-dex-v2 {
     --dex-workspace-columns: minmax(0, 1.25fr) minmax(360px, 0.9fr);
   }
@@ -5273,7 +5273,7 @@
   }
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-wallet:is(.app-shell-dex-v2, .app-shell-trades)
     .top-header-actions
     .wallet-header-panel-connected {
@@ -5323,7 +5323,7 @@
 }
 
 /* Final shared Trading page frame and explicit order inspector. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-dex-v2 :is(.dex-v2-strategies-shell, .dex-v2-positions-shell) {
     padding-top: 0;
   }
@@ -5641,7 +5641,7 @@ html {
   min-height: 44px;
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades .p2p-trading-shell-offers-terminal > .standalone-trade-detail-section {
     min-height: 0;
     align-self: start;
@@ -5689,7 +5689,7 @@ html {
 }
 
 /* Final Trading workspace contract: lists stay left and task terminals stay right. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-dex-v2 .dex-v2-positions-shell {
     display: block;
     width: 100%;
@@ -5823,7 +5823,7 @@ html {
 }
 
 /* Keep Trading route changes on fixed tracks and use the open P2P navigation row. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-dex-v2 .trading-market-pair-picker {
     border-left: 0;
   }
@@ -6036,7 +6036,7 @@ html {
 .app-shell-dex-v2 .dex-v2-mode-nav .dex-view-navigation button.active { background: #37215a; color: #f4efff; box-shadow: inset 0 0 0 1px #8050bb; }
 .app-shell-dex-v2 .dex-v2-mode-nav .dex-view-navigation button.active::after { content: none; }
 .app-shell-dex-v2 .dex-v2-mode-nav .dex-agent-link { width: 58px; color: #b6acc7; font-size: 0.78rem; }
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-dex-v2 .dex-v2-mode-nav .dex-view-navigation {
     grid-column: 2;
     padding: 0 18px 0 28px;
@@ -6179,7 +6179,7 @@ html {
   .app-shell-dex-v2 .trading-product-switch { height: 50px; }
 }
 
-@media (min-width: 921px) and (max-width: 1180px) {
+@media (min-width: 920.02px) and (max-width: 1180px) {
   .app-shell.app-shell-dex-v2 {
     grid-template-rows: auto minmax(76px, auto) minmax(0, 1fr);
   }

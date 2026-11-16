@@ -15,7 +15,7 @@ body {
   grid-template-columns: 320px minmax(0, 1fr);
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-chat .top-header.top-header-has-wallet.top-header-no-links .top-header-bar {
     grid-template-columns: 320px minmax(0, 1fr);
   }

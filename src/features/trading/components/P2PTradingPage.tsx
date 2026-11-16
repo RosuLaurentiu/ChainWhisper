@@ -3073,7 +3073,6 @@ export default function P2PTradingPage({
         <section className="standalone-trades-section standalone-trade-detail-section">
           <div className="standalone-trades-section-head">
             <div>
-              <p className="landing-eyebrow">P2P</p>
               <h2>{currentCounterSelection ? 'Counter review' : route.linkV2Reference ? 'Shared trade' : offersTerminalEmpty
                 ? 'Trade terminal'
                 : myTradesSelectionEmpty

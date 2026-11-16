@@ -126,7 +126,7 @@
   display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
   border-bottom: 1px solid var(--border-subtle); padding-bottom: 16px;
 }
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   :root body .app-shell-dex-v2 .dex-v2-manage { --dex-workspace-columns: var(--trading-workspace-columns); --dex-workspace-column-gap: var(--trading-workspace-gap); }
   :root body .app-shell-dex-v2 .dex-v2-manage .dex-owner-split { grid-template-columns: var(--dex-workspace-columns); align-items: stretch; }
   :root body .app-shell-dex-v2 .dex-v2-manage .dex-market-chart-host,

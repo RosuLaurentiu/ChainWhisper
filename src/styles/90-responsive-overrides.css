@@ -593,7 +593,7 @@
   display: none;
 }
 
-@media (min-width: 921px) and (max-width: 1180px) {
+@media (min-width: 920.02px) and (max-width: 1180px) {
   .app-shell-trades .top-header-bar {
     grid-template-columns: 240px minmax(0, 1fr);
   }
@@ -4459,40 +4459,21 @@ summary:focus:not(:focus-visible),
   outline: none;
 }
 
+/* CW-095: P2P uses the base color tokens of 00-base-header-wallet.css (one palette with DEX and Chat).
+   Only the P2P tokens that a rule still reads remain; the neutral ones point at the base tokens. */
 .app-shell-trades,
 .app-shell-trades .standalone-trades-shell,
 .app-shell-trades .p2p-trading-shell {
-  --bg: #05050b;
-  --bg-elev-1: #0b0a14;
-  --bg-elev-2: #12101f;
-  --bg-elev-3: #19152b;
-  --border: rgba(118, 96, 178, 0.48);
-  --border-strong: rgba(129, 106, 190, 0.78);
-  --text: #f6f3ff;
-  --muted: #aaa3c7;
-  --accent: #8b5cf6;
-  --accent-soft: rgba(139, 92, 246, 0.18);
   --p2p-bg: #030306;
-  --p2p-surface: #080710;
-  --p2p-panel: #0f0c1a;
-  --p2p-panel-strong: #161225;
-  --p2p-card: #100d1b;
-  --p2p-card-raised: #151124;
   --p2p-input: #020205;
-  --p2p-border: rgba(118, 96, 178, 0.62);
-  --p2p-border-strong: rgba(135, 110, 196, 0.86);
-  --p2p-border-muted: rgba(148, 163, 184, 0.2);
-  --p2p-border-muted-strong: rgba(203, 213, 225, 0.34);
-  --p2p-text: #f6f3ff;
-  --p2p-muted: #aaa3c7;
+  --p2p-border: var(--border-default);
+  --p2p-border-strong: var(--border-strong);
+  --p2p-text: var(--text-primary);
+  --p2p-muted: var(--text-secondary);
   --p2p-violet: #8b5cf6;
   --p2p-violet-strong: #7c3aed;
-  --p2p-violet-soft: rgba(139, 92, 246, 0.18);
-  --p2p-private: #500085;
   --p2p-buy: #2dd4bf;
   --p2p-sell: #ef6666;
-  --p2p-warning: #eabf5a;
-  --p2p-success: #22c55e;
   color: var(--p2p-text);
 }
 

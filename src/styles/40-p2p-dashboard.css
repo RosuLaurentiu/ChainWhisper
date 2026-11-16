@@ -9028,7 +9028,7 @@ button.p2p-carbon-price-reference:focus-visible {
   background: rgba(139, 92, 246, 0.18);
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine) {
     grid-template-rows: auto minmax(0, 1fr) auto;
     align-content: stretch;

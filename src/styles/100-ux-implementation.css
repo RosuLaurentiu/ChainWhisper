@@ -695,7 +695,7 @@
   color: #e9e5f7;
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open):has(> .p2p-advanced-tools),
   .app-shell-trades .p2p-trading-shell-create:not(.p2p-trading-shell-drawer-open):has(> .p2p-advanced-tools),
   .app-shell-trades .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine):has(> .p2p-advanced-tools) {

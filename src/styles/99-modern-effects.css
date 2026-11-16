@@ -510,7 +510,7 @@ button:not(:disabled):active,
   animation: cw-agent-loading-dots 900ms steps(3, end) infinite;
 }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .app-shell-trades .p2p-trading-shell-drawer-open > .standalone-trade-detail-section {
     animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
   }
@@ -571,7 +571,7 @@ button:not(:disabled):active,
 }
 
 /* Privacy Portal density: keep the full conversion workspace visible on desktop. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   .swap-page-shell {
     padding: 16px 20px 20px;
   }

@@ -419,22 +419,29 @@
 :root body .app-shell .dex-v2-current-amounts > label > strong { font-size: .875rem; }
 :root body .app-shell .dex-market-chart-legend > .candle-up { font-size: 1.2rem; }
 
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   /* Keep both utility targets at 44px without pushing the address outside its border. */
   :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected { width: 238px; min-width: 238px; }
   :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected .p2p-wallet-status { width: 192px; flex-basis: 192px; }
   :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected :is(.p2p-wallet-identity, .p2p-wallet-primary-wrap, .wallet-primary-action) { width: 148px; flex-basis: 148px; }
   :root body .app-shell-wallet .top-header-actions .wallet-header-panel-connected :is(.p2p-wallet-privacy-direct, .p2p-wallet-menu-wrap, .p2p-wallet-menu-trigger) { width: 44px; min-width: 44px; max-width: 44px; flex: 0 0 44px; }
   /* Navigation and content use the same desktop tracks on DEX and P2P. */
-  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) { --trading-content-gutter: 24px; --trading-workspace-columns: minmax(0, 1fr) clamp(340px, 36vw, 560px); --trading-workspace-gap: 16px; }
+  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) { --trading-content-gutter: var(--app-edge-inset); --trading-workspace-columns: minmax(0, 1fr) clamp(340px, 36vw, 560px); --trading-workspace-gap: 16px; }
   :root body .app-shell-dex-v2 {
     --dex-workspace-columns: var(--trading-workspace-columns);
     --dex-workspace-column-gap: var(--trading-workspace-gap);
     --dex-navigation-height: 58px;
     --dex-workspace-top-gap: 12px;
   }
+  /* The DEX page scrolls inside the shell; P2P does not. The page always keeps its scrollbar space, and the
+     right inset gives that space back, so the tab menu and the panels have the same edges on DEX and P2P.
+     The page scrollbar and the reserved window scrollbar have the same width: (100vw - 100%) / 2. */
+  :root body .app-shell-dex-v2 .dex-v2-page {
+    --dex-page-end-inset: calc(var(--trading-content-gutter) - (100vw - 100%) / 2);
+    scrollbar-gutter: stable;
+  }
   :root body .app-shell-dex-v2 .dex-v2-main {
-    padding: 0 24px 24px;
+    padding: 0 var(--dex-page-end-inset) 24px var(--trading-content-gutter);
   }
   :root body .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav {
     display: grid;
@@ -442,7 +449,7 @@
     column-gap: var(--dex-workspace-column-gap);
     align-items: center;
     min-height: 64px;
-    padding: 8px 24px;
+    padding: 8px var(--dex-page-end-inset) 8px var(--trading-content-gutter);
   }
   :root body .app-shell-dex-v2 .dex-v2-content-grid:not(.dex-v2-management-grid) {
     grid-template-columns: var(--dex-workspace-columns);
@@ -457,23 +464,29 @@
   :root body .app-shell-trades .p2p-trading-shell > :is(.p2p-market-overview, .p2p-create-overview) > :is(.p2p-market-overview-head, .p2p-create-overview-head) { display: grid; grid-template-columns: var(--trading-workspace-columns); grid-template-areas: none; column-gap: var(--trading-workspace-gap); min-height: 48px; }
   :root body .app-shell-trades .p2p-trading-shell > :is(.standalone-trade-detail-section, .standalone-trade-create-panel) { grid-column: 2; width: 100%; max-width: none; margin: 0; }
   :root body .app-shell-trades .p2p-trading-shell > :is(.p2p-offers-workspace, .p2p-my-trades-section) { grid-column: 1; width: 100%; margin: 0; padding-inline: 0; }
+  /* The Agent page has no workspace class, so it gets the same gutter here. */
+  :root body .app-shell-trades .p2p-trading-shell > .p2p-market-overview-agent { padding-inline: var(--trading-content-gutter); }
   :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation,
-  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs {
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .dex-view-navigation,
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs:not(.p2p-product-view-tabs) {
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
     width: 100%; min-height: 48px; margin: 0; padding: 0; gap: 0;
     border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; background: transparent; box-shadow: none;
   }
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .dex-view-navigation > nav.p2p-product-view-tabs,
   :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation > nav.p2p-product-view-tabs { grid-column: span 3; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; min-width: 0; max-width: none; margin: 0; gap: 0; background: transparent; }
   :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation { grid-column: 2; }
   :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) { grid-column: 2; grid-row: 1; width: 100%; min-width: 0; margin: 0; }
   :root body .app-shell-trades :is(.p2p-market-overview-head, .p2p-create-overview-head) > .p2p-market-identity { grid-column: 1; grid-row: 1; }
   :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-product-navigation { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
   :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation button,
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .dex-view-navigation button,
   :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button {
     width: 100%; min-width: 0; height: 48px; min-height: 48px; margin: 0; padding: 8px 12px; border: 0; border-radius: 0;
     background: transparent; color: var(--text-secondary); font-size: .85rem; font-weight: 600; box-shadow: none;
   }
   :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation button[aria-current="page"],
+  :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .dex-view-navigation button[aria-current="page"],
   :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button[aria-current="page"] { background: transparent; color: var(--text-primary); box-shadow: inset 0 -2px var(--brand-strong); }
   :root body .app-shell-dex-v2 .dex-v2-page .dex-v2-mode-nav .dex-view-navigation button::after,
   :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button::after { content: none; }
@@ -510,7 +523,7 @@
 }
 :root body .trade-action-confirm-heading { display: grid; gap: 8px; }
 :root body .trade-action-confirm-heading h3 { margin: 0; font-size: 1.125rem; line-height: 1.35; font-weight: 600; }
-:root body .trade-action-confirm-heading .modal-copy {
+:root body .trade-action-confirm-content .modal-copy {
   margin: 0;
   padding: 0;
   border: 0;
@@ -708,7 +721,7 @@
 }
 
 /* Keep the price readable in the compact desktop context. */
-@media (min-width: 921px) and (max-width: 1180px) {
+@media (min-width: 920.02px) and (max-width: 1180px) {
   :root body .app-shell.app-shell-trades {
     grid-template-rows: auto minmax(76px, auto) minmax(0, 1fr);
   }
@@ -722,7 +735,7 @@
 }
 
 /* Create uses the same compact book columns as the Offers workspace. */
-@media (min-width: 921px) {
+@media (min-width: 920.02px) {
   :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .p2p-offers-workspace {
     grid-template-columns: minmax(0, 1fr);
     padding-right: 14px;
@@ -736,5 +749,127 @@
   }
   :root body .app-shell-trades .p2p-trading-shell-create-with-offers .p2p-offers-filter-controls {
     grid-template-columns: auto minmax(0, 220px) auto auto;
+  }
+}
+
+/* P2P Create window (desktop): one 16px inset for the title and every section, the same
+   numeral size as the DEX form, and a submit area that stays visible while the fields scroll. */
+@media (min-width: 920.02px) {
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel > .standalone-trades-section-head {
+    min-height: 0;
+    padding: 14px 16px 6px;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel > .trade-compose-panel {
+    padding: 0 16px;
+    gap: 12px;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel :is(.trade-compose-settings-slot-primary, .p2p-trade-access-settings, .standalone-trade-visibility, .p2p-create-terms) {
+    padding: 0;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .p2p-trade-access-settings {
+    background: transparent;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .trade-compose-limit-price {
+    padding: 8px 12px;
+    gap: 2px;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .trade-compose-grid {
+    gap: 0;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .trade-compose-section {
+    min-height: 0;
+    padding: 8px 0;
+    gap: 4px;
+  }
+  /* The heading and the Buy or Sell choice share one row. */
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .p2p-create-terms {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px 12px;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .p2p-create-terms > :not(.p2p-create-section-heading, .trade-compose-direction-control) {
+    grid-column: 1 / -1;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .p2p-create-terms > .p2p-create-section-heading {
+    padding: 0;
+    border: 0;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .p2p-create-terms > .trade-compose-direction-control {
+    display: flex;
+    justify-content: flex-end;
+  }
+  /* The token picker has a visible name; its field label stays for screen readers only. */
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .trade-compose-asset-field > .trade-compose-field-head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-height: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .trade-compose-submit-context {
+    grid-column: 1 / -1;
+  }
+  /* The same 4px corner as every other control of the Trading pages. */
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel :is(.trade-compose-send, .standalone-trade-visibility button, .trade-compose-direction-control > div) {
+    border-radius: 4px;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .trade-compose-panel :is(.trade-compose-limit-price, .trade-compose-section-sell, .trade-compose-section-buy) :is(.trade-compose-price-field, .trade-compose-amount-field) input.trade-compose-input {
+    height: 40px;
+    min-height: 40px;
+    font-size: 1.75rem;
+    font-weight: 700;
+  }
+  :root body .app-shell-trades .p2p-trading-shell-create-with-offers > .standalone-trade-create-panel .trade-compose-quote-dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-inline: -16px;
+    padding: 0 16px 14px;
+    background: var(--surface-canvas);
+  }
+}
+
+/* CW-095. One page edge for the header, the pair bar, the tab menu and the panels (desktop).
+   Every page header uses the same inset as the Trading content, so the wallet box, the DEX / P2P
+   switch, the tab menu and the panels end on one line, and the header does not move between pages. */
+@media (min-width: 920.02px) {
+  :root body .app-shell {
+    --app-edge-inset: 24px;
+  }
+  :root body .app-shell > .top-header .top-header-brand {
+    padding-left: var(--app-edge-inset);
+  }
+  :root body .app-shell > .top-header .top-header-right {
+    padding-right: var(--app-edge-inset);
+  }
+  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) > .trading-product-bar {
+    padding-inline: var(--trading-content-gutter);
+  }
+  /* The Agent section never scrolls (overflow hidden), so it keeps no scrollbar space and no side
+     border; its content then has the edges of the tab menu. */
+  :root body .app-shell-trades .p2p-trading-shell > .p2p-agent-section {
+    padding-inline: var(--trading-content-gutter);
+    border-inline-width: 0;
+    scrollbar-gutter: auto;
+  }
+  /* P2P side panels use the DEX side-panel title (Position details): no eyebrow line, same font. */
+  :root body .app-shell-trades .p2p-trading-shell > :is(.standalone-trade-detail-section, .standalone-trade-create-panel) > .standalone-trades-section-head h2 {
+    margin: 0;
+    font: 700 1.1rem/normal "Inter", "Segoe UI", Arial, sans-serif;
+    letter-spacing: normal;
+    color: var(--text-primary);
+  }
+}
+
+/* CW-095. P2P switch row on small screens: the DEX / P2P buttons keep the 44 px touch height, so the
+   P2P row gets the same 52 px row and 50 px switch as DEX; before, the buttons hung 12 px into the pair row. */
+@media (max-width: 920px) {
+  :root body .app-shell.app-shell-trades {
+    --ux-mobile-trading-nav: 52px;
+  }
+  :root body .app-shell-trades .trading-product-switch {
+    height: 50px;
   }
 }
