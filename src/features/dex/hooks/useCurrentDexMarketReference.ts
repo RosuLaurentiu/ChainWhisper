@@ -66,7 +66,7 @@ export default function useCurrentDexMarketReference(active: boolean,candidate:C
   if(reference.status==='available'||reference.status==='last-known')last.current={candidate,pair:[base,quote],reference};
   else if(last.current&&now>=BigInt(last.current.reference.sampledAt)){
     const {price,sampledAt,revision}=last.current.reference;
-    return {status:'last-known' as const,price,sampledAt,revision};
+    return {status:'last-known' as const,price,sampledAt,revision,pair:last.current.pair};
   }
   return reference;
 }

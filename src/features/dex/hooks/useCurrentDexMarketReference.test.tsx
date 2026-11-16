@@ -101,7 +101,7 @@ describe('selected candidate market-reference hook',()=>{
       if(second===30)expect(view).toMatchObject({status:'available',price:2});
       if(second>=30)expect(read).toHaveBeenCalledTimes(2);
     }
-    expect(Render()).toMatchObject({status:'last-known',price:2});
+    expect(Render()).toMatchObject({status:'last-known',price:2,pair:['HBR','BCN']});
     release();await vi.advanceTimersByTimeAsync(0);
     expect(Render()).toMatchObject({status:'last-known',price:2});
     expect(hooks.slots.some(slot=>{

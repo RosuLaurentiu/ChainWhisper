@@ -18,6 +18,15 @@ describe('DexMarketChart actual daily sample display',()=>{
     expect(buildCurrentDexChartLivePoint(reference,pair,false,now-1000,now-20)).toBeNull();
     expect(buildCurrentDexChartLivePoint(reference,pair,false,now,now)).toBeNull();
     expect(buildCurrentDexChartLivePoint({status:'stale'},pair,false,now-1000,now)).toBeNull();
+    // A last recorded Pool price is a tail point too, marked as recorded and bound to its pair.
+    const known={status:'last-known' as const,price:4,sampledAt:String(now-500),revision:'7',pair};
+    expect(buildCurrentDexChartLivePoint(known,pair,false,now-1000,now)).toEqual({price:4,timestamp:now-500,recorded:true});
+    expect(buildCurrentDexChartLivePoint(known,pair,true,now-1000,now)?.price).toBe(0.25);
+    expect(buildCurrentDexChartLivePoint(known,['cwTPB','cwTPA'],false,now-1000,now)).toBeNull();
+    expect(buildCurrentDexChartLivePoint({status:'last-known',price:4,sampledAt:String(now-500),revision:'7'},pair,false,now-1000,now)).toBeNull();
+    expect(buildCurrentDexChartLivePoint(known,pair,false,now-500,now)).toBeNull();
+    expect(buildCurrentDexChartLivePoint({...known,sampledAt:String(now+1)},pair,false,now-1000,now)).toBeNull();
+    expect(buildCurrentDexChartLivePoint({...known,price:0},pair,false,now-1000,now)).toBeNull();
   });
   it('labels the live tail separately, preserves daily records and follows only the selected ratio',async()=>{
     const f=makeHistoryFixture(),snapshot=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
@@ -35,6 +44,14 @@ describe('DexMarketChart actual daily sample display',()=>{
       expect(updated).toContain('Live 3 cwTPB/cwTPA');expect(updated).toContain('Last sample 2 cwTPB/cwTPA');
       const stale=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" history={{status:'ready',snapshot}} marketReference={{status:'stale'}}/>);
       expect(stale).not.toContain('Live 2');expect(stale).toContain('Last sample 2');
+      // The last recorded Pool price keeps the tail with its own label; it is not called live.
+      const recorded=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" history={{status:'ready',snapshot}}
+        marketReference={{status:'last-known',price:3,sampledAt:String(now-30),revision:'9',pair:['cwTPA','cwTPB']}}/>);
+      expect(recorded).toContain('Last recorded 3 cwTPB/cwTPA');expect(recorded).not.toContain('Live 3');expect(recorded).toContain('Last sample 2 cwTPB/cwTPA');
+      expect(recorded).toContain('current price is not verified');expect(recorded).not.toContain('updates from the live price');
+      const otherPair=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" history={{status:'ready',snapshot}}
+        marketReference={{status:'last-known',price:3,sampledAt:String(now-30),revision:'9',pair:['cwTPB','cwTPA']}}/>);
+      expect(otherPair).not.toContain('Last recorded');
       expect(JSON.stringify(snapshot.slots)).toBe(saved);
     }finally{clock.mockRestore();}
   });
@@ -54,6 +71,9 @@ describe('DexMarketChart actual daily sample display',()=>{
     expect(buildCurrentDexChartCandles(saved,{timestamp:20001*86400+120,price:1.5})).toEqual([saved[0],{day:'20001',timestamp:20001*86400+120,price:1.5,openingPrice:1,body:[1,1.5],live:true}]);
     expect(buildCurrentDexChartCandles(saved,{timestamp:20002*86400,price:3})[2]).toMatchObject({openingPrice:2,body:[2,3],live:true});
     expect(buildCurrentDexChartCandles(saved,{timestamp:20004*86400,price:3})[2]).not.toHaveProperty('openingPrice');
+    expect(buildCurrentDexChartCandles(saved,{timestamp:20002*86400,price:3,recorded:true})[2]).toEqual({day:'20002',timestamp:20002*86400,price:3,openingPrice:2,body:[2,3],recorded:true});
+    expect(renderToStaticMarkup(<svg><CandleMark payload={{day:'20002',timestamp:20002*86400,price:3,openingPrice:2,body:[2,3],recorded:true}}/></svg>)).toContain('Last recorded, not saved');
+    expect(renderToStaticMarkup(<SampleTooltip active payload={[{payload:{day:'20002',timestamp:20002*86400,price:3,recorded:true}}]} preview={false} ratioLabel="HBR/BCN"/>)).toContain('Last recorded, not saved');
     expect(buildCurrentDexChartCandles(saved,null)).toBe(saved);expect(JSON.stringify(saved)).toBe(before);
   });
   it('draws narrow rising, falling and flat candles without invented wicks or isolated dots',()=>{

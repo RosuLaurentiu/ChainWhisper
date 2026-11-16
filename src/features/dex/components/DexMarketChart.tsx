@@ -12,7 +12,14 @@ const formatTime = (timestamp: number) => new Intl.DateTimeFormat('en',{day:'num
 const formatDay = (timestamp: number) => new Intl.DateTimeFormat('en',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}).format(new Date(timestamp*1000));
 const formatPrice = (price: number) => price.toLocaleString('en',{maximumSignificantDigits:6});
 
-export function buildCurrentDexChartLivePoint(reference:CurrentDexMarketReference|undefined,pair:readonly[string,string],inverted:boolean,lastTimestamp:number|undefined,now=Math.floor(Date.now()/1000)){
+export function buildCurrentDexChartLivePoint(reference:CurrentDexMarketReference|undefined,pair:readonly[string,string],inverted:boolean,lastTimestamp:number|undefined,now=Math.floor(Date.now()/1000)):{timestamp:number;price:number;recorded?:true}|null{
+  // The last recorded Pool price keeps the tail when the current price is not verified. It is marked as recorded, not live.
+  if(reference?.status==='last-known'){
+    const timestamp=Number(reference.sampledAt);
+    if(lastTimestamp===undefined||reference.pair?.[0]!==pair[0]||reference.pair?.[1]!==pair[1]||!Number.isFinite(reference.price)||reference.price<=0||
+      !Number.isSafeInteger(timestamp)||timestamp<=lastTimestamp||timestamp>now)return null;
+    return {timestamp,price:inverted?1/reference.price:reference.price,recorded:true};
+  }
   if(!reference||reference.status!=='available'||!isVerifiedCurrentDexMarketReference(reference)||lastTimestamp===undefined||
     reference.pair[0]!==pair[0]||reference.pair[1]!==pair[1])return null;
   const timestamp=Number(reference.checkedAt??reference.sampledAt);
@@ -20,23 +27,24 @@ export function buildCurrentDexChartLivePoint(reference:CurrentDexMarketReferenc
   return {timestamp,price:inverted?1/reference.price:reference.price};
 }
 type Sample = Readonly<{day:string;timestamp:number;price:number;recordedAt?:string;sourceBlock?:string;recordBlock?:string;
-  openingPrice?:number;openingTimestamp?:number;openingSourceBlock?:string;body?:[number,number];live?:boolean}>;
-export function buildCurrentDexChartCandles(saved:readonly Sample[],live:{timestamp:number;price:number}|null):readonly Sample[]{
+  openingPrice?:number;openingTimestamp?:number;openingSourceBlock?:string;body?:[number,number];live?:boolean;recorded?:boolean}>;
+const tailNote=(point:Pick<Sample,'live'|'recorded'>)=>point.live?' · Live, not saved':point.recorded?' · Last recorded, not saved':'';
+export function buildCurrentDexChartCandles(saved:readonly Sample[],live:{timestamp:number;price:number;recorded?:boolean}|null):readonly Sample[]{
   const latest=saved[saved.length-1];
   if(!live||!latest)return saved;
   const day=String(Math.floor(live.timestamp/DAY)),sameDay=day===latest.day;
   const openingPrice=sameDay?latest.openingPrice??latest.price:BigInt(day)===BigInt(latest.day)+1n?latest.price:undefined;
-  const current:Sample={day,timestamp:live.timestamp,price:live.price,live:true,...(openingPrice===undefined?{}:{openingPrice,body:[openingPrice,live.price]})};
+  const current:Sample={day,timestamp:live.timestamp,price:live.price,...(live.recorded?{recorded:true}:{live:true}),...(openingPrice===undefined?{}:{openingPrice,body:[openingPrice,live.price]})};
   return [...saved.filter(point=>point.day!==day),current];
 }
 export function CandleMark({x=0,y=0,width=0,height=0,payload}:{x?:number;y?:number;width?:number;height?:number;payload?:Sample}){
   if(!payload)return null;
-  const label=`${formatDay(payload.timestamp)}${payload.live?' · Live, not saved':''}: ${payload.openingPrice===undefined?'single observed price':`open ${formatPrice(payload.openingPrice)}, close`} ${formatPrice(payload.price)}`;
+  const label=`${formatDay(payload.timestamp)}${tailNote(payload)}: ${payload.openingPrice===undefined?'single observed price':`open ${formatPrice(payload.openingPrice)}, close`} ${formatPrice(payload.price)}`;
   const color=payload.price>=(payload.openingPrice??payload.price)?'#26d6a0':'#ef49c1';
   const bodyHeight=payload.body?Math.max(Math.abs(height),2):2,bodyWidth=Math.min(width,8);
   const top=(height<0?y+height:y)-(bodyHeight-Math.abs(height))/2;
   return <g role="img" aria-label={label}>
-    <rect x={x+(width-bodyWidth)/2} y={top} width={bodyWidth} height={bodyHeight} fill={color} stroke={color}/>
+    <rect x={x+(width-bodyWidth)/2} y={top} width={bodyWidth} height={bodyHeight} fill={color} stroke={color} opacity={payload.recorded?0.55:undefined}/>
   </g>;
 }
 const stateMessage = (history: CurrentDexDailyPriceView) => {
@@ -49,7 +57,7 @@ const stateMessage = (history: CurrentDexDailyPriceView) => {
 export function SampleTooltip({active,payload,preview,ratioLabel}:{active?:boolean;payload?:readonly {payload:Sample}[];preview:boolean;ratioLabel:string}){
   const point=payload?.[0]?.payload;if(!active||!point)return null;
   return <div className="dex-market-chart-tooltip"><strong>{formatDay(Number(point.day)*DAY)} UTC</strong>
-    <small>{ratioLabel}{preview?' · Illustrative preview':''}{point.live?' · Live, not saved':''}</small>
+    <small>{ratioLabel}{preview?' · Illustrative preview':''}{tailNote(point)}</small>
     {point.openingPrice===undefined?null:<div>Open <b>{formatPrice(point.openingPrice)}</b></div>}
     <div>{point.openingPrice===undefined?'Price':'Close'} <b>{formatPrice(point.price)}</b></div></div>;
 }
@@ -103,7 +111,7 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
   const padding=Math.max((maximum-minimum)*0.1,Math.abs(maximum)*0.005,0.000001);
   const ratioLabel=priceDisplayInverted?`${baseSymbol}/${quoteSymbol}`:`${quoteSymbol}/${baseSymbol}`;
   const message=stateMessage(view);
-  const currentNotice=live?null:snapshot?.currentReference==='stale'?'Current reference is stale. Saved samples keep their original times.'
+  const currentNotice=live&&!live.recorded?null:snapshot?.currentReference==='stale'?'Current reference is stale. Saved samples keep their original times.'
     :snapshot?.currentReference==='suppressed-or-changed'?'Current reference is unavailable: suppressed or source changed.'
       :snapshot?.currentReference==='unobserved'?'No current reference has been sampled.':null;
   return <section className={`dex-market-chart${showMarketSeries?' dex-market-chart-samples':''}${expanded?' is-expanded':''}`}
@@ -116,7 +124,8 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       {recurringBuyPrice===undefined?null:<span className={`recurring-${recurringBuySide}`}><i />{recurringBuyLabel??'Buy order'}</span>}
       {recurringSellPrice===undefined?null:<span className={`recurring-${recurringSellSide}`}><i />{recurringSellLabel??'Sell order'}</span>}
       {latest?<small>{`${preview?'Preview':'Last sample'} ${formatPrice(latest.price)} ${ratioLabel}`}</small>:!showMarketSeries?<small>Two exact prices</small>:null}
-      {live?<small title={`${formatTime(live.timestamp)} UTC · not a saved daily record`}>{`Live ${formatPrice(live.price)} ${ratioLabel}`}</small>:null}
+      {live?<small title={live.recorded?`${formatTime(live.timestamp)} UTC · last recorded Pool price · the current price is not verified · not a saved daily record`
+        :`${formatTime(live.timestamp)} UTC · not a saved daily record`}>{`${live.recorded?'Last recorded':'Live'} ${formatPrice(live.price)} ${ratioLabel}`}</small>:null}
     </div><div className="dex-market-chart-actions"><div role="group" aria-label="Chart period">
       {RANGES.map(option=><button key={option.label} type="button" aria-pressed={range===option.label} className={range===option.label?'active':undefined} onClick={()=>setRange(option.label)}>{option.label}</button>)}
     </div>{showMarketSeries&&onHistoryRefresh&&view.status!=='unconfigured'?<button type="button" aria-label="Refresh daily history" title="Refresh daily history" disabled={view.status==='loading'} onClick={onHistoryRefresh}><RefreshCw size={18} aria-hidden="true"/></button>:null}<button type="button" className="dex-market-chart-expand" aria-label={expanded?'Close expanded chart':'Expand chart'} aria-expanded={expanded} onClick={()=>setExpanded(v=>!v)}>
@@ -143,7 +152,8 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       {illustrative&&!snapshot?<button type="button" aria-pressed={preview} onClick={()=>setPreviewSelected(v=>!v)}>{preview?'Hide illustrative preview':'Show illustrative preview'}</button>:null}
       <details><summary>Details</summary>{currentNotice?<p>{currentNotice}</p>:null}<p>{preview?'Preview never supplies Quote or settlement.':message[1]}</p>
         {visible.length?<p>Body: previous recorded close → latest recorded price. No intraday high/low or final day close.</p>:null}
-        {live?<p>The current UTC day updates from the live price; it is not a saved daily record. A single observation is a flat mark. Dotted markers show missing days.</p>:null}
+        {live?<p>{live.recorded?'The current UTC day shows the last recorded Pool price; the current price is not verified. It is not a saved daily record.'
+          :'The current UTC day updates from the live price; it is not a saved daily record.'} A single observation is a flat mark. Dotted markers show missing days.</p>:null}
         {snapshot?<p>{visible.length} saved samples · {gaps.length} gaps · at canonical block {snapshot.atBlock.number}. At most 32 days per read.</p>:null}
       </details>
     </div>:null}

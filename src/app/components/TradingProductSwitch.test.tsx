@@ -95,6 +95,17 @@ describe('TradingProductSwitch', () => {
     expect(markup).toContain(inverted?'0.5 BCN/ORBT':'2 ORBT/BCN');
     expect(markup).toContain('Last Pool price');expect(markup).toContain('Recorded ');
     expect(markup).not.toContain('Live Pool reference');expect(markup).not.toContain('Price unavailable');
+    // A recent record shows its age, like the live state does. An old record shows its date. The exact time stays in the title.
+    const clock=vi.spyOn(Date,'now').mockReturnValue(1_000_000_000);
+    try{
+      const recorded=(sampledAt:string)=>renderToStaticMarkup(createElement(TradingProductSwitch,{
+        activeProduct:'dex',dexCandidate:STAGED_EXIT_PREVIEW_DEX_CANDIDATE,onNavigate:()=>{},selectedPair:['BCN','ORBT'],onSelectedPairChange:()=>{},
+        priceDisplayInverted:inverted,onPriceDisplayInvertedChange:()=>{},marketReference:{status:'last-known',price:2,sampledAt,revision:'1'}}));
+      expect(recorded('999955')).toContain('>Recorded 45s ago<');expect(recorded('999400')).toContain('>Recorded 10m ago<');
+      expect(recorded('996401')).toContain('>Recorded 59m ago<');
+      const old=recorded('996400');expect(old).toMatch(/>Recorded \d{1,2} \w{3} \d{4}, \d{2}:\d{2}</);expect(old).not.toMatch(/Recorded \d+[sm] ago/);
+      expect(recorded('999955')).toMatch(/title="\d{1,2} \w{3} \d{4}, \d{2}:\d{2} · Last recorded public Pool price\. Current market price is not verified\."/);
+    }finally{clock.mockRestore();}
   });
   it('presents DEX and P2P as one local trading choice', () => {
     const markup = renderToStaticMarkup(createElement(TradingProductSwitch, {

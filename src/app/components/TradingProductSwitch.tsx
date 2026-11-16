@@ -65,6 +65,8 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
   const sampleAge = hasPrice
     ? Math.max(0, Math.floor(Date.now() / 1000) - Number(marketReference.status==='available'?marketReference.checkedAt??marketReference.sampledAt:marketReference.sampledAt)) : null;
   const lastSampleTime = lastKnown ? new Date(Number(marketReference.sampledAt)*1000).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'}) : null;
+  // A recent record shows its age, like the live state. An older record shows its date and time.
+  const lastSampleLabel = !lastKnown || sampleAge === null ? null : sampleAge < 60 ? `${sampleAge}s ago` : sampleAge < 3600 ? `${Math.floor(sampleAge / 60)}m ago` : lastSampleTime;
   const p2pTokenSelect = (side: 'buy' | 'sell', label: string, selection: string, otherSelection: string) => p2pMarket ?
     <label className="trading-market-token-choice">{label}<select aria-label={label} value={selection} disabled={p2pMarket.disabled}
       onChange={event => {
@@ -133,7 +135,7 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
         <div className="trading-market-change" data-price-state={activeProduct === 'dex' ? marketReference?.status ?? 'unavailable' : p2pMarket?.reference ? 'available' : 'unavailable'}>
           <span>{activeProduct === 'dex' ? lastKnown ? 'COTI Testnet · Last Pool price' : 'COTI Testnet · Live Pool reference' : 'Market reference'}</span>
           <strong title={activeProduct === 'dex' ? 'Rounded Pool reference · excludes Limits' : p2pMarket?.reference?.title}>{activeProduct === 'dex' ? marketLabel : p2pMarket?.reference?.label ?? 'Price unavailable'}</strong>
-          {activeProduct === 'dex' && lastSampleTime ? <small title="Last recorded public Pool price. Current market price is not verified.">Recorded {lastSampleTime}</small> : activeProduct === 'dex' && sampleAge !== null ? <small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'} title={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}>{sampleAge}s ago</small> : null}
+          {activeProduct === 'dex' && lastSampleTime ? <small title={`${lastSampleTime} · Last recorded public Pool price. Current market price is not verified.`}>{`Recorded ${lastSampleLabel}`}</small> : activeProduct === 'dex' && sampleAge !== null ? <small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'} title={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}>{sampleAge}s ago</small> : null}
         </div>
         <div className="trading-product-switch">
           <button
