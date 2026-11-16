@@ -336,7 +336,12 @@ describe('DexV2Page', () => {
     expect(markup).toContain('aria-label="Swap side"');
     expect(markup).toContain('aria-label="Buy" aria-pressed="true"');
     expect(markup).toContain('aria-label="Sell" aria-pressed="false"');
-    expect(markup).toContain('aria-label="Reverse price ratio"');
+    // CW-096. The middle button switches Buy and Sell; the header keeps the price-ratio control.
+    expect(markup).toContain('aria-label="Switch Buy and Sell"');
+    expect(markup).not.toContain('aria-label="Reverse price ratio"');
+    expect(markup).toMatch(/<div class="dex-v2-swap-settings"><div class="dex-v2-execution-choice">[\s\S]*?aria-label="Swap mode"[\s\S]*?<summary><strong>Slippage<\/strong>/);
+    expect(markup.indexOf('<span>Get Quote</span>')).toBeLessThan(markup.indexOf('aria-label="Swap steps"'));
+    expect(markup).not.toContain('aria-label="Use the full balance"');
     expect(markup).toContain('<small>Test token 1</small>');
     expect(markup).toContain('<small>Test token 0</small>');
     expect(markup).toContain('<strong>Slippage</strong><span>0.5%</span>');

@@ -197,7 +197,6 @@ export function CurrentSwapWorkspace({
   selectedPair,
   marketReference,
   sharedWalletSession,
-  onPriceDisplayInvertedChange,
   onInspect,
   candidateKey = 'cheap-current', visible = true
 }: {
@@ -205,7 +204,6 @@ export function CurrentSwapWorkspace({
   selectedPair: TradingPair;
   marketReference?: CurrentDexMarketReference;
   sharedWalletSession?: SharedWalletSession;
-  onPriceDisplayInvertedChange?: (inverted: boolean) => void;
   onInspect?: (view: CurrentDexOwnerRecoveryView) => void;
   candidateKey?: CurrentCheapDexCandidateKey;
   visible?: boolean;
@@ -996,6 +994,11 @@ export function CurrentSwapWorkspace({
     catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Privacy unlock failed. Try again.'); }
     finally { setConnecting(false); }
   };
+  // CW-096. Max uses the exact balance text only when it is a positive amount of the input token; status text such as Loading… gives no Max.
+  let fullBalanceInput = '';
+  if (wallet.address && privacyReady && balances.eligible && !balances.loading) {
+    try { if (parseInput(balances.labels[inputIndex], 'Balance', true) > 0n) fullBalanceInput = balances.labels[inputIndex]; } catch { /* Not an amount. */ }
+  }
   const priceLimitField = <label>
     <span><strong>{displayedSide === 'buy' ? 'Maximum buy price' : 'Minimum sell price'}</strong><small>net of fees</small></span>
     <input aria-label="Price limit" inputMode="decimal" placeholder={quoteProtocol ? 'Optional' : 'Required'} value={restoredQuote
@@ -1016,12 +1019,16 @@ export function CurrentSwapWorkspace({
       <button type="button" aria-label="Sell" aria-pressed={displayedSide === 'sell'} disabled={inputsLocked} onClick={() => selectSide('sell')}>Sell <span aria-hidden="true">{trialTokens[displayedBaseIndex]}</span></button>
     </div>
     <div className="dex-v2-current-amounts">
-      <label>
+      {/* CW-096. A div, not a label: the box holds the Max button, and a label may hold only its one control. */}
+      <div className="dex-v2-amount-input">
         <span><strong>You send</strong><small>{trialTokens[inputIndex]}</small></span>
         <input aria-label="Maximum input" inputMode="decimal" placeholder="0" value={restoredQuote ? formatInput(issued.intent.maximumInput) : maximumInput} onChange={event => setMaximumInput(event.target.value)} disabled={inputsLocked} />
-        {wallet.address ? <small aria-label="Input token balance">Balance: {connected && !privacyReady ? 'Locked' : balances.labels[inputIndex]}</small> : null}
-      </label>
-      <button className="dex-v2-current-direction" type="button" aria-label="Reverse price ratio" title="Reverse price ratio" disabled={inputsLocked || !onPriceDisplayInvertedChange} onClick={() => { setPriceLimit(''); onPriceDisplayInvertedChange?.(!priceDisplayInverted); }}>
+        {wallet.address ? <span className="dex-v2-amount-balance">
+          <small aria-label="Input token balance">Balance: {connected && !privacyReady ? 'Locked' : balances.labels[inputIndex]}</small>
+          {fullBalanceInput ? <button type="button" className="dex-v2-amount-max" aria-label="Use the full balance" disabled={inputsLocked} onClick={() => setMaximumInput(fullBalanceInput)}>Max</button> : null}
+        </span> : null}
+      </div>
+      <button className="dex-v2-current-direction" type="button" aria-label="Switch Buy and Sell" title="Switch Buy and Sell" disabled={inputsLocked} onClick={() => selectSide(displayedSide === 'buy' ? 'sell' : 'buy')}>
         <ArrowDownUp size={18} aria-hidden="true" />
       </button>
       <div className="dex-v2-quote-output">
@@ -1037,6 +1044,15 @@ export function CurrentSwapWorkspace({
     {balances.eligible ? <div className="dex-v2-current-actions">
       <button type="button" disabled={!balances.eligible || balances.loading || busy || checking} onClick={() => { void balances.refresh(); }}>Refresh balances</button>
     </div> : null}
+    {/* CW-096. The swap mode and the protection settings share one row; open settings take the full width below it. */}
+    <div className="dex-v2-swap-settings">
+    <div className="dex-v2-execution-choice">
+      <div className="dex-v2-swap-mode-toggle" role="group" aria-label="Swap mode">
+        <button type="button" aria-pressed={displayedProfile === 'fast-pool'} disabled={inputsLocked} onClick={() => setProfile('fast-pool')}>Fast</button>
+        <button type="button" aria-pressed={displayedProfile === 'cheap-async'} disabled={inputsLocked} onClick={() => setProfile('cheap-async')}>Multi-source</button>
+      </div>
+      <span>{displayedProfile === 'fast-pool' ? 'Pools only' : 'Pools and Limits · asynchronous'}</span>
+    </div>
     <details className="dex-v2-current-advanced">
       <summary><strong>{quoteProtocol ? 'Slippage' : 'Price protection'}</strong><span>{quoteProtocol ? `${displayedSlippage}%` : priceLimit || 'Set price limit · Required'}</span></summary>
       <div>
@@ -1063,16 +1079,20 @@ export function CurrentSwapWorkspace({
         </details>
       </div>
     </details>
+    </div>
     {visibleQuote ? <details className="dex-v2-current-advanced"><summary>Quote details</summary><div>
       <p>Quotes do not reserve liquidity. Average price includes fees. Price impact uses the Pool reference captured for this review; the live header can change.</p>
       <dl className="dex-v2-current-facts">{visibleQuote.summaryRows.map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
     </div></details> : null}
-    <div className="dex-v2-execution-choice">
-      <div className="dex-v2-swap-mode-toggle" role="group" aria-label="Swap mode">
-        <button type="button" aria-pressed={displayedProfile === 'fast-pool'} disabled={inputsLocked} onClick={() => setProfile('fast-pool')}>Fast</button>
-        <button type="button" aria-pressed={displayedProfile === 'cheap-async'} disabled={inputsLocked} onClick={() => setProfile('cheap-async')}>Multi-source</button>
-      </div>
-      <span>{displayedProfile === 'fast-pool' ? 'Pools only' : 'Pools and Limits · asynchronous'}</span>
+    {/* CW-096. The main button comes before the step and cost summary. */}
+    <div className="dex-v2-current-actions">
+      {unusedApproval?.scope === currentReviewScope && !unusedApproval.readyToContinue && !issued ? <button className="dex-v2-review-button" type="button"
+        disabled={!privacyReady || !connected || busy || checking || Boolean(pending) || savedActionPending || fundingRecovery || walletChanged || candidateChanged}
+        onClick={() => { void clearUnusedApproval(); }}>Update approval</button> : null}
+      {!wallet.address && sharedWalletSession?.actions?.connectBrowserWallet ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking} onClick={() => { void connectWallet(); }}>{connecting ? 'Connecting…' : 'Connect wallet'}</button> : unlockRequired ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking || walletChanged} onClick={() => { void unlockPrivacy(); }}>{connecting ? 'Unlocking…' : 'Unlock privacy'}</button> : newQuoteEligible ? <button className="dex-v2-review-button" type="button" disabled={checking || savedActionPending} onClick={startNewQuote}><span>New Quote</span><ArrowRight size={20} aria-hidden="true" /></button> : !issued ? <button className="dex-v2-review-button" type="button" disabled={!connected || walletChanged || busy || checking || Boolean(pending) || savedActionPending || unknownOrigin || unusedApproval?.scope === currentReviewScope && !unusedApproval.readyToContinue && !fundingRecovery} onClick={() => { void getQuote(); }}><span>{fundingRecovery ? 'Check funding and continue' : unusedApproval?.scope === currentReviewScope && unusedApproval.readyToContinue ? 'Continue swap' : 'Get Quote'}</span><ArrowRight size={20} aria-hidden="true" /></button> :
+      <button className="dex-v2-review-button" type="button" disabled={!enabled || checking || savedActionPending || changed || stage !== 'ready' ||
+        BigInt(Math.floor(Date.now() / 1000)) >= (issued?.intent.deadline ?? 0n)}
+      onClick={() => { void accept(); }}><span>Review and Accept</span><ArrowRight size={20} aria-hidden="true" /></button>}
     </div>
     <CurrentSwapSteps profile={displayedProfile} stage={stage} privacyReady={privacyReady} restored={restoredQuote} status={swapStatus && swapStatus !== stage ? swapStatus : null}
       cancelledBeforeQuote={stepProgress?.scope===currentReviewScope&&stepProgress.cancelledBeforeQuote}
@@ -1084,15 +1104,6 @@ export function CurrentSwapWorkspace({
       work={displayedProfile==='cheap-async'?{total:currentCheapDexStages(candidate).workCalls,
         ...(issued&&(issued.operation.ready||['settling','settled','consumed-unverified'].includes(issued.operation.phase))?{completed:currentCheapDexStages(candidate).workCalls}:issued?.operation.phase==='preparing-quote'?{completed:Math.max(0,Math.min(currentCheapDexStages(candidate).workCalls,Number(issued.operation.stage)-1))}:{})}:undefined}
       delivered={Boolean(result&&result.scope===currentReviewScope&&!walletChanged)} scopeChanged={walletChanged||candidateChanged||changed||Boolean(stepProgress||issued)&&!progressReady}/>
-    <div className="dex-v2-current-actions">
-      {unusedApproval?.scope === currentReviewScope && !unusedApproval.readyToContinue && !issued ? <button className="dex-v2-review-button" type="button"
-        disabled={!privacyReady || !connected || busy || checking || Boolean(pending) || savedActionPending || fundingRecovery || walletChanged || candidateChanged}
-        onClick={() => { void clearUnusedApproval(); }}>Update approval</button> : null}
-      {!wallet.address && sharedWalletSession?.actions?.connectBrowserWallet ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking} onClick={() => { void connectWallet(); }}>{connecting ? 'Connecting…' : 'Connect wallet'}</button> : unlockRequired ? <button className="dex-v2-review-button" type="button" disabled={connecting || busy || checking || walletChanged} onClick={() => { void unlockPrivacy(); }}>{connecting ? 'Unlocking…' : 'Unlock privacy'}</button> : newQuoteEligible ? <button className="dex-v2-review-button" type="button" disabled={checking || savedActionPending} onClick={startNewQuote}><span>New Quote</span><ArrowRight size={20} aria-hidden="true" /></button> : !issued ? <button className="dex-v2-review-button" type="button" disabled={!connected || walletChanged || busy || checking || Boolean(pending) || savedActionPending || unknownOrigin || unusedApproval?.scope === currentReviewScope && !unusedApproval.readyToContinue && !fundingRecovery} onClick={() => { void getQuote(); }}><span>{fundingRecovery ? 'Check funding and continue' : unusedApproval?.scope === currentReviewScope && unusedApproval.readyToContinue ? 'Continue swap' : 'Get Quote'}</span><ArrowRight size={20} aria-hidden="true" /></button> :
-      <button className="dex-v2-review-button" type="button" disabled={!enabled || checking || savedActionPending || changed || stage !== 'ready' ||
-        BigInt(Math.floor(Date.now() / 1000)) >= (issued?.intent.deadline ?? 0n)}
-      onClick={() => { void accept(); }}><span>Review and Accept</span><ArrowRight size={20} aria-hidden="true" /></button>}
-    </div>
     <CurrentSwapProgress visible={progressVisible} status={swapStatus}
       result={result && result.scope === currentReviewScope && !walletChanged ? result.text : null}
       fundingRecovery={fundingRecovery}
@@ -1194,10 +1205,11 @@ const DEFAULT_DEX_PAIR: TradingPair = ['BCN', 'HBR'];
 
 export default function DexV2Page({
   priceDisplayInverted = false, selectedPair = DEFAULT_DEX_PAIR, sharedWalletSession,
-  onPriceDisplayInvertedChange, onOpenAgent, onNavigateMode, dailyPriceConfig, dailyPriceProvider, marketReference,
+  onOpenAgent, onNavigateMode, dailyPriceConfig, dailyPriceProvider, marketReference,
   swapCandidate = 'cheap-current'
 }: {
   priceDisplayInverted?: boolean; selectedPair?: TradingPair; sharedWalletSession?: SharedWalletSession;
+  /** Unused since CW-096: the header pair control reverses the price ratio; the Swap middle button switches Buy and Sell. */
   onPriceDisplayInvertedChange?: (inverted: boolean) => void; onOpenAgent?: () => void;
   onNavigateMode?: (mode: DexMode) => void; dailyPriceConfig?: CurrentDexDailyPriceConfig;
   dailyPriceProvider?: Pick<Eip1193Provider, 'request'>;
@@ -1251,7 +1263,7 @@ export default function DexV2Page({
           </div>
           {/* Keep transaction origins and private result scopes alive when users change views. */}
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'swap'}>
-            <CurrentSwapWorkspace onPriceDisplayInvertedChange={onPriceDisplayInvertedChange} priceDisplayInverted={priceDisplayInverted} onInspect={inspect}
+            <CurrentSwapWorkspace priceDisplayInverted={priceDisplayInverted} onInspect={inspect}
               selectedPair={selectedPair} sharedWalletSession={sharedWalletSession} marketReference={marketReference} candidateKey={swapCandidate} visible={activeMode === 'swap'} />
           </div>
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'limit' && !(activeMode === 'activity' && activityView === 'orders')}>
