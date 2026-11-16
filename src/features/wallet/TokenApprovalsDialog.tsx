@@ -90,11 +90,11 @@ export default function TokenApprovalsDialog({ session, onClose }: { session: Sh
     fundingMoves: [], stats: [], summaryRows: selected ? [{ label: 'Current allowance', value: format(selected) }] : [] }}
     onCancel={() => { if (!busy) { if (selected) setSelected(undefined); else onClose(); } }}
     onConfirm={() => { if (!busy) { if (selected) void run(true); else onClose(); } }}
-    details={<div aria-busy={busy}>
+    details={<div className="token-approvals-details" aria-busy={busy}>
       <p className="modal-copy" style={{overflowWrap:'anywhere'}}>DEX spender: {candidate.core}</p>
       {held ? <label>Transaction hash (if needed)<input value={knownHash} disabled={busy} onChange={event => setKnownHash(event.target.value.trim())}/></label> : null}
       <button type="button" className="connect-btn" disabled={busy || !!selected} onClick={() => { void run(); }}>{pending.current ? 'Check submitted revocation' : 'Check approvals'}</button>
-      {visible.map(row => <div key={row.token}><span>{row.symbol}: {format(row)}</span>{' '}
+      {visible.map(row => <div key={row.token} className="token-approvals-row"><span>{row.symbol}: {format(row)}</span>{' '}
         <button type="button" className="connect-btn" disabled={busy || held || !!pending.current || row.allowance === 0n} onClick={() => setSelected(row)}>Revoke {row.symbol}</button>
       </div>)}
       <p className="modal-copy">Revocation is held while a swap or transaction needs reconciliation. Cancellation does not automatically clear an approval.</p>

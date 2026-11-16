@@ -92,4 +92,42 @@ describe('P2P switch row on small screens', () => {
     expect(rule(mobileBlock(), ':root body .app-shell.app-shell-trades {')).toContain('--ux-mobile-trading-nav: 52px;');
     expect(rule(mobileBlock(), ':root body .app-shell-trades .trading-product-switch {')).toContain('height: 50px;');
   });
+
+  it('includes the bar padding and border in the P2P bar height so the pair picker stays inside the bar', () => {
+    const height = 'calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 6px)';
+    expect(rule(mobileBlock(), ':root body .app-shell.app-shell-trades {\n    grid-template-rows')).toContain(`grid-template-rows: auto ${height} minmax(0, 1fr);`);
+    const bar = rule(mobileBlock(), ':root body .app-shell.app-shell-trades > .trading-product-bar {');
+    expect(bar).toContain(`min-height: ${height};`);
+    expect(bar).toContain(`height: ${height};`);
+  });
+
+  it('keeps no window scrollbar space on small screens, where the 100vw shells fill the window', () => {
+    expect(rule(mobileBlock(), ':root {')).toContain('scrollbar-gutter: auto;');
+  });
+});
+
+describe('Agent section in a short window', () => {
+  it('lets the Agent section scroll when its content does not fit, without fixed scrollbar space', () => {
+    const agent = rule(edgeBlock(), ':root body .app-shell-trades .p2p-trading-shell:not(.p2p-trading-shell-drawer-open) > .p2p-agent-section {');
+    expect(agent).toContain('overflow-y: auto;');
+    expect(agent).toContain('overflow-x: hidden;');
+    expect(rule(edgeBlock(), ':root body .app-shell-trades .p2p-trading-shell > .p2p-agent-section {')).toContain('scrollbar-gutter: auto;');
+  });
+});
+
+describe('Token approvals window buttons', () => {
+  const dialog = read('features/wallet/TokenApprovalsDialog.tsx');
+
+  it('marks the detail block and the token rows for the window rules', () => {
+    expect(dialog).toContain('className="token-approvals-details"');
+    expect(dialog).toContain('className="token-approvals-row"');
+  });
+
+  it('gives the detail buttons the size of the window Cancel button and spaces the detail lines', () => {
+    expect(rule(last, ':root body .trade-action-confirm-content > .token-approvals-details {')).toContain('gap: 12px;');
+    const button = rule(last, ':root body .token-approvals-details .connect-btn {');
+    expect(button).toContain('min-height: 44px;');
+    expect(button).toContain('padding: 10px 16px;');
+    expect(button).toContain('font-size: .875rem;');
+  });
 });

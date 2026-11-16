@@ -847,12 +847,18 @@
   :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) > .trading-product-bar {
     padding-inline: var(--trading-content-gutter);
   }
-  /* The Agent section never scrolls (overflow hidden), so it keeps no scrollbar space and no side
-     border; its content then has the edges of the tab menu. */
+  /* The Agent section keeps no fixed scrollbar space and no side border; its content then has the
+     edges of the tab menu. */
   :root body .app-shell-trades .p2p-trading-shell > .p2p-agent-section {
     padding-inline: var(--trading-content-gutter);
     border-inline-width: 0;
     scrollbar-gutter: auto;
+  }
+  /* In a short window (about 560 px high) the Agent content is taller than the section. The section then
+     scrolls; a scrollbar shows only while the content does not fit, so tall windows keep the tab menu edge. */
+  :root body .app-shell-trades .p2p-trading-shell:not(.p2p-trading-shell-drawer-open) > .p2p-agent-section {
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   /* P2P side panels use the DEX side-panel title (Position details): no eyebrow line, same font. */
   :root body .app-shell-trades .p2p-trading-shell > :is(.standalone-trade-detail-section, .standalone-trade-create-panel) > .standalone-trades-section-head h2 {
@@ -863,6 +869,26 @@
   }
 }
 
+/* CW-095. Token approvals window: the Check approvals and Revoke buttons use the size of the window's
+   Cancel button (secondary), and the detail lines keep the window spacing. */
+:root body .trade-action-confirm-content > .token-approvals-details {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+:root body .token-approvals-details .connect-btn {
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: .875rem;
+}
+:root body .token-approvals-details > .token-approvals-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-primary);
+  font-size: .875rem;
+}
+
 /* CW-095. P2P switch row on small screens: the DEX / P2P buttons keep the 44 px touch height, so the
    P2P row gets the same 52 px row and 50 px switch as DEX; before, the buttons hung 12 px into the pair row. */
 @media (max-width: 920px) {
@@ -871,5 +897,20 @@
   }
   :root body .app-shell-trades .trading-product-switch {
     height: 50px;
+  }
+  /* On small screens the shells scroll inside themselves and the window does not, but the page kept 10 px
+     for a classic window scrollbar while the 100vw shells (P2P, Chat) filled it: their header ran 10 px past
+     the page and DEX and Home left a blank strip. No space is kept there now; phones use overlay bars. */
+  :root {
+    scrollbar-gutter: auto;
+  }
+  /* The bar height held only its two rows; its 2 px + 3 px padding and 1 px top border (6 px) pushed the
+     44 px pair picker 2 px below the bar. The bar and its shell row now include them. */
+  :root body .app-shell.app-shell-trades {
+    grid-template-rows: auto calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 6px) minmax(0, 1fr);
+  }
+  :root body .app-shell.app-shell-trades > .trading-product-bar {
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 6px);
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 6px);
   }
 }
