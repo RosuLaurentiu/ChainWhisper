@@ -133,7 +133,7 @@ export default function TradeAgentPanel({
                     <span>Private trading assistant</span>
                     <h2>What do you want to do?</h2>
                     <p>Start from the current Trading context or describe a different trade.</p>
-                    <div className="p2p-agent-quick-actions p2p-agent-quick-action-grid" aria-label="Trade Agent actions">
+                    {actionsAvailable ? <div className="p2p-agent-quick-actions p2p-agent-quick-action-grid" aria-label="Trade Agent actions">
                       {quickActions.map((item) => {
                         const quickPrompt = resolveQuickActionPrompt(item);
                         return (
@@ -144,11 +144,11 @@ export default function TradeAgentPanel({
                             onClick={() => onSelectQuickAction(item, quickPrompt)}
                           >
                             <strong>{item.label}</strong>
-                            <small>{actionsAvailable ? 'Use current Trading context' : 'DEX action coming soon'}</small>
+                            <small>Use current Trading context</small>
                           </button>
                         );
                       })}
-                    </div>
+                    </div> : null}
                   </div>
                 ) : (
                   <div
@@ -289,7 +289,7 @@ export default function TradeAgentPanel({
                           role={readiness.kind === 'error' ? 'alert' : 'status'}
                           aria-live={readiness.kind === 'error' ? 'assertive' : 'polite'}
                         >
-                          {actionsAvailable ? readiness.message : 'DEX preparation actions are preview-only for now.'}
+                          {actionsAvailable ? readiness.message : 'DEX trade actions are not available in the agent yet.'}
                         </span>
                         {readiness.kind === 'account-needed' ? (
                           <button type="button" className="standalone-trade-secondary-btn p2p-agent-connect-account" onClick={onConnectAccount}>
@@ -325,8 +325,8 @@ export default function TradeAgentPanel({
                 </article>
                 <article>
                   <span>Readiness</span>
-                  <strong>{actionsAvailable ? 'P2P actions available' : 'DEX preview'}</strong>
-                  <small>{actionsAvailable ? feeLabel : 'DEX execution actions will unlock when their integrations are ready.'}</small>
+                  <strong>{actionsAvailable ? 'P2P actions available' : 'Not available yet'}</strong>
+                  {actionsAvailable ? <small>{feeLabel}</small> : null}
                 </article>
               </details>
             ) : null}

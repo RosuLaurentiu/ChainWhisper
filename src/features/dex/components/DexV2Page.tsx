@@ -1149,10 +1149,8 @@ export function CurrentSwapWorkspace({
         <button type="button" disabled={!connected || checking || busy || walletChanged} onClick={() => { void checkCandidate(); }}>Check current contracts</button>
       </div>
     </aside> : null}
-    <details><summary>Trial token addresses</summary>
-      <p>{trialTokens[0]}: {selectedTokens[0]}<br />{trialTokens[1]}: {selectedTokens[1]}</p>
-    </details>
-    {activeJourney && !walletChanged ? <details aria-label="Local trial timing">
+    {/* CW-097: the engineering timing panel shows only on the Vite development server, where the browser journey checks run. */}
+    {import.meta.env.DEV && activeJourney && !walletChanged ? <details aria-label="Local trial timing">
       <summary>Local trial timing</summary>
       <p>Session timings in milliseconds; intervals can overlap. These do not measure mining or browser paint.</p>
       <dl>{([

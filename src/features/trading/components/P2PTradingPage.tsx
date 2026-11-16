@@ -159,6 +159,7 @@ import TradeAgentPanel from './TradeAgentPanel';
 import TradeCounterParentSummary from './TradeCounterParentSummary';
 import { DexViewTabs, TradeViewTabs } from './TradeDeskTabs';
 import TradeMarketOverviewPanel from './TradeMarketOverviewPanel';
+import { isP2PWalletRequiredMessage } from '../p2pWalletNotice';
 import TradeMyTradesSection from './TradeMyTradesSection';
 import {
   type TradeOrderCardProps
@@ -174,9 +175,6 @@ import {
   TradeTerminalOpenPanel,
   TradeTerminalRouteStatus
 } from './TradeTerminalDrawerPanels';
-import TestnetTokenAdmissionPanel from './TestnetTokenAdmissionPanel';
-import TestnetTokenFaucetPanel from './TestnetTokenFaucetPanel';
-import TestnetQaChecklist from './TestnetQaChecklist';
 import TradeComposerPanel from './TradeComposerPanel';
 import {
   resolveTerminalHistoryMergeWalletKey,
@@ -375,14 +373,6 @@ export default function P2PTradingPage({
     route,
     showEmptyTradeRoute
   } = useP2PTradeRoute();
-  const navigateTestnetQaJourney = useCallback((path: string) => {
-    if (path.startsWith('/otc')) {
-      navigateToTradePath(path);
-      return;
-    }
-    window.history.pushState(window.history.state, '', path);
-    window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
-  }, [navigateToTradePath]);
   const { resolveBlockTimestampMap } = useBlockTimestampCache();
   const walletPreference = useStoredWalletPreference();
   const preferredBrowserWalletId = getPreferredBrowserWalletId(walletPreference);
@@ -2750,7 +2740,8 @@ export default function P2PTradingPage({
         myOpenTradeCount={myOpenTrades.length}
         walletTradeHistoryCount={walletTradeHistory.length}
         walletError={showOffersSurface && !approvedOffersDesignQa && walletError === publicTradesError ? '' : walletError}
-        tradeActionError={showOffersSurface && !approvedOffersDesignQa && (otcV2SetupError || tradeActionError) === publicTradesError ? '' : (otcV2SetupError || tradeActionError)}
+        tradeActionError={(showOffersSurface && !approvedOffersDesignQa && (otcV2SetupError || tradeActionError) === publicTradesError)
+          || (isDexProduct && isP2PWalletRequiredMessage(otcV2SetupError || tradeActionError)) ? '' : (otcV2SetupError || tradeActionError)}
       />
       {sharedWalletSession?.otcV2ActionRuntime ? <PendingTradeRecoveryDisclosure key={`pending-recovery:${walletKey}:${chainId}`}>
         {sharedWalletSession.otcV2ActionRuntime.privateBook ? <PrivateBookV2RecoveryPanel
@@ -2808,14 +2799,6 @@ export default function P2PTradingPage({
           </button>
         </div>
       ) : null}
-      <details className="p2p-advanced-tools">
-        <summary>Testnet tools</summary>
-        <div className="testnet-token-tools">
-          <TestnetTokenAdmissionPanel session={sharedWalletSession} />
-          <TestnetTokenFaucetPanel session={sharedWalletSession} />
-          <TestnetQaChecklist onNavigate={navigateTestnetQaJourney} />
-        </div>
-      </details>
 
       {showOffersSurface ? (
         <OtcOffersPanel

@@ -4118,7 +4118,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     }
   };
   const debugControl =
-    typeof window !== 'undefined' && window.location.search.includes('debug') ? (
+    // CW-097: the simulated incoming message is a development tool; the published App never shows it.
+    import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug') ? (
       <button
         type="button"
         className="sound-toggle-btn"

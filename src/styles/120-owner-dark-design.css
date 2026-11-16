@@ -1354,6 +1354,9 @@
      funds" row below it: that row was blurred by the panel backdrop filter and clicks reached the panel.
      The panel now fits its row and scrolls inside (it has overflow-y: auto). */
   :root body .app-shell-trades .p2p-trading-shell-mine > .p2p-my-trades-section { min-height: 0; }
+  /* Owner-approved (CW-097 P3): the terminal field "Offer link, code or ID" is beside the offer list on
+     desktop, so the button that only focuses it is not shown. Small screens keep it: it opens that field. */
+  :root body .app-shell-trades .p2p-offers-private-link-tool { display: none; }
 }
 @media (max-width: 920px) {
   /* The token picker has a visible name; its field label stays for screen readers only (CW-094 desktop rule). */
