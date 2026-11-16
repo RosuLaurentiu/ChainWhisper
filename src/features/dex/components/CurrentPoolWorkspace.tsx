@@ -18,6 +18,7 @@ import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
 import type { CurrentPoolPreparedPreview } from '../../wallet/currentDexPoolFundingCapability';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
+import TransactionGuide, { TransactionGuideLauncher, currentPoolGuideModel, useTransactionGuide } from './TransactionGuide';
 import './CurrentPoolWorkspace.css';
 
 export const CURRENT_POOL_SPREADS = ['0.1', '0.3', '0.5', '1', '2', '5', '10'] as const;
@@ -542,6 +543,11 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   const approvalCount = ready ? 2 : validFunding && !unfundedFailed && !attemptComplete ? approvals.filter(Boolean).length : 0;
   const step = stopped ? -1 : ready ? 3 : validFunding && approvalCount === 2 ? 2 : validPreview || validFunding ? 1 : 0;
   const steps = ['Preview', step === 1 ? `Approve (${approvalCount}/2)` : 'Approve', 'Deposit', 'Done'];
+  // Presentation only: the guide reads the step state above and owns no action.
+  const guideModel = currentPoolGuideModel({ step, approvalCount, ready, stopped, blocked, pendingPhase: pending?.phase ?? null, tokenLabels: [tokenLabels[0], tokenLabels[1]] });
+  const [guideOpen, setGuideOpen] = useTransactionGuide(guideModel.outcome);
+  const guideLauncher = useRef<HTMLButtonElement>(null);
+  const scopedMessage = messageScope.current === scope.current && message ? message : null;
   const recovery = <>
       {(nativeTrial || preparedCandidate) && funding && validFunding && nftId === null && !unfundedFailed && !attemptComplete ? <>
         <button type="button" disabled={!connected || busy || savedActionPending || !unfundedAbandonEligible}
@@ -569,6 +575,9 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         aria-current={index === step ? 'step' : undefined} data-complete={index < step || (index === 3 && ready) || undefined}>
         <span className="dex-v2-pool-step-number" aria-hidden="true">{index < step || (index === 3 && ready) ? <Check size={14} /> : index + 1}</span>
         <span>{label}</span>{index < step || (index === 3 && ready) ? <span className="sr-only"> · Complete</span> : null}</li>)}</ol>
+      {guideModel.outcome !== 'idle' ? <div className="dex-v2-pool-guide"><TransactionGuideLauncher flow="Add liquidity" model={guideModel} open={guideOpen}
+        onToggle={() => setGuideOpen(value => !value)} buttonRef={guideLauncher} track={false} /></div> : null}
+      <TransactionGuide flow="Add liquidity" model={guideModel} open={guideOpen} onClose={() => setGuideOpen(false)} status={scopedMessage} returnFocus={guideLauncher} />
       {stopped ? <p role="status">Deposit stopped. Unused approvals cleared.</p> : null}
       {nativeTrial ? <p className="dex-v2-activation-note">This Testnet join uses 100 of each token, 0.1% spread and 0.5% funding tolerance.</p> : null}
       <section className="dex-v2-pool-section dex-v2-pool-amounts-section">

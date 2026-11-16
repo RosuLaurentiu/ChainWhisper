@@ -1,16 +1,1 @@
 .current-swap-steps { margin: 8px 0; padding: 0; border: 0; border-top: 1px solid var(--border-subtle); background: transparent; font-size: 12px; line-height: 1.5; }
-.current-swap-steps p { margin: 0 0 8px; color: inherit; }
-.current-swap-steps ol { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
-.current-swap-steps li { display: grid; grid-template-columns: minmax(90px, .7fr) minmax(0, 1.3fr); gap: 12px; }
-.current-swap-steps li > span { opacity: .7; }
-.current-swap-steps li > strong { font-weight: 500; }
-
-.current-swap-steps-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 0; cursor: pointer; list-style: none; color: var(--text-primary); }
-.current-swap-steps-summary > span { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
-.current-swap-steps-summary strong { font-size: 13px; }
-.current-swap-steps-summary small { color: var(--text-secondary); font-size: 12px; }
-.current-swap-steps-summary > svg { flex-shrink: 0; color: var(--text-secondary); }
-.current-swap-steps-summary::-webkit-details-marker { display: none; }
-.current-swap-steps > details[open] > summary > svg { transform: rotate(180deg); }
-.current-swap-steps-details { padding: 4px 0 12px; }
-.current-swap-steps-summary:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 3px; }

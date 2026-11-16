@@ -7,6 +7,7 @@ import { assertCurrentSwapCandidate } from '../../../lib/currentDexNativeSwapPol
 import CurrentSharedTestTokenControls from './CurrentSharedTestTokenControls';
 import CurrentSwapProgress from './CurrentSwapProgress';
 import CurrentSwapSteps from './CurrentSwapSteps';
+import TransactionGuide, { TransactionGuideLauncher } from './TransactionGuide';
 import { currentDexQuoteInputPlan } from '../../../lib/currentDexQuoteInputPlan';
 import type { CurrentDexQuoteInputProgress } from '../../wallet/currentDexQuoteCapability';
 import type { SharedWalletSession } from '../../../lib/walletSession';
@@ -35,9 +36,12 @@ vi.mock('../../trading/hooks/useTradeActionConfirmationState', () => ({ default:
 
 type Props = { children?: ReactNode; onClick?: () => void; onChange?: (event: { target: { value: string } }) => void; disabled?: boolean; role?: string; href?: string; 'aria-label'?: string; 'aria-pressed'?: boolean; 'aria-current'?:string };
 // The shallow fixture must render the stateless progress view to observe its status and result.
+// The step list lives in the transaction guide window; the fixture renders it as if the user opened it.
 const presentation = (node: ReactNode): ReactNode =>
   isValidElement<Parameters<typeof CurrentSwapProgress>[0]>(node) && node.type === CurrentSwapProgress
-    ? CurrentSwapProgress(node.props) : isValidElement<Parameters<typeof CurrentSwapSteps>[0]>(node)&&node.type===CurrentSwapSteps?CurrentSwapSteps(node.props):node;
+    ? CurrentSwapProgress(node.props) : isValidElement<Parameters<typeof CurrentSwapSteps>[0]>(node)&&node.type===CurrentSwapSteps?CurrentSwapSteps(node.props)
+      : isValidElement<Parameters<typeof TransactionGuideLauncher>[0]>(node)&&node.type===TransactionGuideLauncher?TransactionGuideLauncher(node.props)
+        : isValidElement<Parameters<typeof TransactionGuide>[0]>(node)&&node.type===TransactionGuide?TransactionGuide({...node.props,open:true}):node;
 const elements = (input: ReactNode): ReactElement<Props>[] => {
   const node = presentation(input);
   return Array.isArray(node) ? node.flatMap(elements) : isValidElement<Props>(node) ? [node, ...elements(node.props.children)] : [];
@@ -126,7 +130,8 @@ describe('prepared candidate swap view', () => {
     expect(content).toContain('Approval if needed: +1 signature, +1 transaction');
     expect(f.getQuote).not.toHaveBeenCalled();expect(f.providerRequest).not.toHaveBeenCalled();
     expect(content).not.toContain('steps complete');
-    expect(elements(f.render()).filter(e=>e.props['aria-current']==='step')).toHaveLength(1);
+    // Before the swap starts no step is current; the guide lists every step as upcoming.
+    expect(elements(f.render()).filter(e=>e.props['aria-current']==='step')).toHaveLength(0);
   });
   it.skipIf(key==='cheap-prepared')('shows verified Multi-source stage counts and only its keeper step as active',async()=>{
     const f=fixture(),quoteHash=`0x${'55'.repeat(32)}`,stages=currentCheapDexStages(prepared);
@@ -134,7 +139,8 @@ describe('prepared candidate swap view', () => {
     Object.assign(f.sender,{readCurrentCheapRestoreHint:vi.fn(()=>({quoteHash})),restoreCurrentCheapOperation:vi.fn(async()=>issued)});f.getQuote.mockResolvedValue({restoreCurrentQuote:vi.fn(async()=>issued)});
     f.click('Check current state');await vi.waitFor(()=>expect(f.status()).toContain('2 of'));
     expect(text(f.render())).toContain(`2/${stages.workCalls} steps complete`);
-    const active=elements(f.render()).filter(e=>e.props['aria-current']==='step');expect(active).toHaveLength(1);expect(text(active[0])).toContain('Preparing quote');
+    const active=elements(f.render()).filter(e=>e.props['aria-current']==='step');expect(active).toHaveLength(1);expect(text(active[0])).toContain(`Quote2/${stages.workCalls} steps complete`);
+    expect(text(f.render())).toContain('Preparing quote');
     issued.operation={ready:true,phase:'quote-prepared',stage:stages.ready};f.click('Check current state');await vi.waitFor(()=>expect(f.status()).toBe('Private Quote is READY for review.'));
     expect(text(f.render())).toContain('QuoteConfirmed');expect(f.providerRequest).not.toHaveBeenCalled();
   });

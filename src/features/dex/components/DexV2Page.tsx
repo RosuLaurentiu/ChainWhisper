@@ -1074,7 +1074,7 @@ export function CurrentSwapWorkspace({
       </div>
       <span>{displayedProfile === 'fast-pool' ? 'Pools only' : 'Pools and Limits · asynchronous'}</span>
     </div>
-    <CurrentSwapSteps profile={displayedProfile} stage={stage} privacyReady={privacyReady} restored={restoredQuote}
+    <CurrentSwapSteps profile={displayedProfile} stage={stage} privacyReady={privacyReady} restored={restoredQuote} status={swapStatus && swapStatus !== stage ? swapStatus : null}
       cancelledBeforeQuote={stepProgress?.scope===currentReviewScope&&stepProgress.cancelledBeforeQuote}
       inputs={stepProgress?.scope===currentReviewScope?stepProgress.inputs:{completed:0,total:currentDexQuoteInputPlan(candidateKey,restoredQuote).length,requesting:false}}
       approval={stepProgress?.scope===currentReviewScope?stepProgress.approval:'conditional'}
