@@ -329,7 +329,7 @@ export default function OtcOffersPanel({
         </div>
 
         <div className="p2p-offers-private-link-tool">
-          <button type="button" onClick={onOpenTradeLink}><Link2 size={15} aria-hidden="true" /> Open a private trade link</button>
+          <button type="button" className="standalone-trade-secondary-btn" onClick={onOpenTradeLink}><Link2 size={15} aria-hidden="true" /> Open a private trade link</button>
         </div>
         {pinnedTrade ? <p className="p2p-offers-linked-note">Selected offer #{pinnedTrade.recurringOrder?.orderId ?? pinnedTrade.tradeId} is shown with its exact terms.</p> : null}
         <details ref={marketChartRef} className="p2p-offers-chart" onToggle={handleMarketChartToggle}>

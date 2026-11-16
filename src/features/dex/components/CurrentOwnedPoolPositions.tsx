@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
+import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 
 type Capability=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexPoolPositionCapability']>>>;
 type Inventory=Awaited<ReturnType<Capability['readOwnedPositions']>>;
@@ -35,7 +36,7 @@ export default function CurrentOwnedPoolPositions({session,candidateKey='cheap-e
     <div className="dex-owner-list-toolbar">{managementNavigation?<div className="dex-owner-index-header"><h2>My trades</h2><p>Orders, positions and activity</p></div>:null}<span>{current?.inventory ? `${current.inventory.positions.length} positions` : null}</span>
     <button type="button" aria-label="Refresh owned liquidity positions" disabled={!connected||!privacyReady||disabled||current?.state==='loading'} onClick={()=>setRefresh(value=>value+1)}>{current?.state==='loading'?'Loading…':'Refresh positions'}</button></div>
     {managementNavigation}
-    {!connected?<p>Connect your wallet on COTI Testnet to see your positions.</p>:!privacyReady?<p>Use “Unlock privacy with MetaMask” in the header to see your positions.</p>:
+    {!connected?<p>Connect your wallet on COTI Testnet to see your positions.</p>:!privacyReady?<PrivacyLockedNotice message="Your positions are locked." disabled={disabled} onUnlock={session?.actions?.unlockPrivacy?()=>session.actions!.unlockPrivacy():undefined}/>:
       current?.state==='loading'?<p role="status">Loading your positions…</p>:current?.state==='error'?<p role="alert">Could not load positions. Refresh to try again.</p>:null}
     <div className="dex-owner-list-items">{current?.inventory?.positions.map(position=><button type="button" className="dex-owner-item" key={position.positionId.toString()} aria-label={`Open liquidity NFT ${position.positionId}`}
       aria-pressed={selectedId===position.positionId.toString()} disabled={disabled} onClick={()=>onSelect(position.positionId)}><span className="dex-owner-item-title">Position #{position.positionId.toString()}</span><span className="dex-owner-item-meta">Liquidity position</span><span className="dex-owner-status" data-state={['pending','active','paused','pending','closed'][Number(position.status)]}>{['None','Active','Paused','Needs privacy activation','Closed'][Number(position.status)]}</span></button>)}</div>

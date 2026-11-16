@@ -38,6 +38,14 @@ function fixture() {
 }
 afterEach(() => { hooks.states = []; hooks.refs = []; hooks.effect = null; vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
+it('gives the unlock action in the locked history instead of a pointer to the header', () => {
+  const f = fixture(); f.session.sessionOnboardInfo = {};
+  (f.session.actions as unknown as Record<string, unknown>).unlockPrivacy = vi.fn(async () => undefined);
+  const html = f.render();
+  expect(html).toContain('privacy-locked-notice'); expect(html).toContain('Your trade results are locked.');
+  expect(html).toContain('>Unlock privacy</button>'); expect(html).not.toContain('in the header');
+});
+
 function completedSwapRows(pair: readonly [string, string], inputIndex: 0 | 1, refund = 0n, fast = false): CurrentDexActivityRow[] {
   const inputToken = candidate.tokenMetadata.find(token => token.symbol === pair[inputIndex])!.address;
   const outputToken = candidate.tokenMetadata.find(token => token.symbol === pair[1 - inputIndex])!.address;

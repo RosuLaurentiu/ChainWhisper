@@ -13,6 +13,8 @@ describe('Offers navigation and units', () => {
       onTypeFilterChange={noop} onClearFilters={noop} onRetryOffers={noop} onOpenTradeLink={noop}
       onClearPinnedOrder={noop} onCreateLimitOrder={noop} onOpenQuote={noop} formatAvailability={()=>'Unavailable'} />);
     expect(markup).toContain('Open a private trade link');
+    const linkButton = markup.slice(markup.lastIndexOf('<button', markup.indexOf('Open a private trade link')));
+    expect(linkButton.startsWith('<button type="button" class="standalone-trade-secondary-btn">')).toBe(true);
     expect(markup).not.toContain('Paste a private trade link');
     expect(markup).not.toContain('<form');
     expect(markup).toMatch(/Rate \(.*\/.*\)/);

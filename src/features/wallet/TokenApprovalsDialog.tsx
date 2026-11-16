@@ -85,18 +85,18 @@ export default function TokenApprovalsDialog({ session, onClose }: { session: Sh
   };
   const visible = rows?.scope === scope ? rows.values : [];
   const format = (row: Row) => row.allowance === MAX_TOKEN_ALLOWANCE ? 'Unlimited' : formatDexCandidateTokenAmount(candidate, row.token, row.allowance);
-  return <TradeActionConfirmModal confirmation={{ title: 'Token approvals', primaryLabel: selected ? 'Revoke selected approval' : 'Close',
+  return <TradeActionConfirmModal confirmation={{ title: 'Token approvals', primaryLabel: selected ? 'Revoke selected approval' : 'Close', ...(selected ? {} : { secondaryLabel: null }),
     message: selected ? `Revoke ${selected.symbol} permission for the DEX spender ${candidate.core}. This needs a wallet transaction. Existing swaps and deposits are not cancelled.` : message,
     fundingMoves: [], stats: [], summaryRows: selected ? [{ label: 'Current allowance', value: format(selected) }] : [] }}
     onCancel={() => { if (!busy) { if (selected) setSelected(undefined); else onClose(); } }}
     onConfirm={() => { if (!busy) { if (selected) void run(true); else onClose(); } }}
     details={<div aria-busy={busy}>
-      <p style={{overflowWrap:'anywhere'}}>DEX spender: {candidate.core}</p>
+      <p className="modal-copy" style={{overflowWrap:'anywhere'}}>DEX spender: {candidate.core}</p>
       {held ? <label>Transaction hash (if needed)<input value={knownHash} disabled={busy} onChange={event => setKnownHash(event.target.value.trim())}/></label> : null}
-      <button type="button" disabled={busy || !!selected} onClick={() => { void run(); }}>{pending.current ? 'Check submitted revocation' : 'Check approvals'}</button>
+      <button type="button" className="connect-btn" disabled={busy || !!selected} onClick={() => { void run(); }}>{pending.current ? 'Check submitted revocation' : 'Check approvals'}</button>
       {visible.map(row => <div key={row.token}><span>{row.symbol}: {format(row)}</span>{' '}
-        <button type="button" disabled={busy || held || !!pending.current || row.allowance === 0n} onClick={() => setSelected(row)}>Revoke {row.symbol}</button>
+        <button type="button" className="connect-btn" disabled={busy || held || !!pending.current || row.allowance === 0n} onClick={() => setSelected(row)}>Revoke {row.symbol}</button>
       </div>)}
-      <p>Revocation is held while a swap or transaction needs reconciliation. Cancellation does not automatically clear an approval.</p>
+      <p className="modal-copy">Revocation is held while a swap or transaction needs reconciliation. Cancellation does not automatically clear an approval.</p>
     </div>}/>;
 }

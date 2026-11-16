@@ -1,0 +1,58 @@
+.app-shell .privacy-locked-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--border-default, #424854);
+  border-radius: 6px;
+  color: var(--text-secondary, #c2c7d2);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.app-shell .privacy-locked-notice > svg {
+  flex: 0 0 auto;
+  color: var(--brand-strong, #9469e3);
+}
+
+.app-shell .privacy-locked-notice > p {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+:root body .app-shell .privacy-locked-notice > button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--brand, #7c4dcb);
+  background: var(--brand, #7c4dcb);
+  color: #fff;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+:root body .app-shell .privacy-locked-notice > button:hover:not(:disabled) {
+  border-color: #a17bdf;
+  background: #8859d5;
+}
+
+:root body .app-shell .privacy-locked-notice > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* A grid parent must not stretch the notice over a whole row. */
+.app-shell .privacy-locked-notice {
+  align-self: start;
+}
+
+/* The P2P list has no padding of its own; its children carry the 14px inset. */
+.app-shell-trades .p2p-my-trades-section > .privacy-locked-notice {
+  margin: 8px 14px;
+}

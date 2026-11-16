@@ -138,6 +138,9 @@ describe('My trades readiness', () => {
     expectUnavailableCounts(markup);
   });
   it('keeps the ordinary unlocked empty state and zero counts', () => {
+    const locked = render({ privateTradesLocked: true, onUnlockPrivacy: vi.fn() });
+    expect(locked).toContain('privacy-locked-notice'); expect(locked).toContain('Private trades are locked.');
+    expect(locked).toContain('>Unlock privacy</button>'); expect(locked).not.toContain('in the header');
     const markup = render();
     expect(markup).toContain('No active trades'); expect(markup).toContain('aria-label="Active: 0"');
     expect(markup).not.toContain('Private trades are locked');

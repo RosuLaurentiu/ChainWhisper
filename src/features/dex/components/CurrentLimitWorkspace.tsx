@@ -260,7 +260,9 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       <label>Minimum fill ({sold})<input aria-label="Limit maker minimum" inputMode="decimal" value={minimum} disabled={busy||blocked} onChange={e=>setMinimum(e.target.value)}/></label>
       <p>A smaller fill is allowed only if it uses all remaining inventory. Proceeds stay claimable; they do not fund a reverse order.</p>
     </div></details>
-    <button className="dex-v2-review-button" type="button" disabled={!connected||busy||blocked||savedActionPending} onClick={()=>{void create();}}>Review order</button>
+    {connected&&!privacyReady&&sharedWalletSession?.actions?.unlockPrivacy
+      ?<button className="dex-v2-review-button" type="button" disabled={busy||blocked||savedActionPending} onClick={()=>{void sharedWalletSession.actions!.unlockPrivacy().catch(()=>undefined);}}>Unlock privacy</button>
+      :<button className="dex-v2-review-button" type="button" disabled={!connected||busy||blocked||savedActionPending} onClick={()=>{void create();}}>Review order</button>}
     {ownedDiscovery?<button type="button" disabled={!connected||!privacyReady||busy||blocked||savedActionPending} onClick={()=>{void approve('create');}}>Review exact order allowance</button>:null}
     {creation?.scope===scope.current?<><p>Minted NFT {creation.value.positionId.toString()}. Private terms verification is pending.</p><button type="button" disabled={busy||blocked} onClick={()=>{void snapshot();}}>Refresh private Limit result</button></>:null}
     {verified?.scope===scope.current?<p>Verified plain Limit NFT {verified.id.toString()}</p>:null}

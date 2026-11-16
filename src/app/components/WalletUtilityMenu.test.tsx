@@ -14,4 +14,16 @@ describe('Wallet utility sound switch', () => {
     expect(markup).toContain(`role="switch" aria-checked="${soundEnabled}"`);
     expect(noop).not.toHaveBeenCalled();
   });
+  it('gives the Token approvals row an icon, like the other rows', () => {
+    const noop = vi.fn();
+    const markup = renderToStaticMarkup(<WalletUtilityMenu activeNetworkId="coti-testnet" networkSelectionLocked={false}
+      walletChainId={7082400} networkSwitching={false} onSelectNetwork={noop} notifications={[]} unreadCount={0}
+      soundEnabled onToggleSound={noop} onOpenNotification={noop} onMarkAllRead={noop}
+      onClearNotifications={noop} onOpenHelp={noop} onOpenApprovals={noop} />);
+    const start = markup.lastIndexOf('<button', markup.indexOf('Token approvals'));
+    const row = markup.slice(start, markup.indexOf('</button>', start));
+    expect(row).toContain('Token approvals');
+    expect(row).toMatch(/^<button type="button" class="wallet-utility-row" role="menuitem"><svg/);
+    expect(row.match(/<svg/g)).toHaveLength(2);
+  });
 });

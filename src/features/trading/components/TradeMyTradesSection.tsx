@@ -2,6 +2,7 @@ import { SlidersHorizontal } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
 import { moveFocusWithin } from '../../../shared/components/a11y';
+import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import {
   MY_TRADES_EMPTY_PREVIEW_GROUPS,
   renderP2PEmptyState,
@@ -29,6 +30,7 @@ type TradeMyTradesSectionProps = TradeOrderCardProps & {
   myTradesCount: number;
   myTradesError: string;
   privateTradesLocked?: boolean;
+  onUnlockPrivacy?: () => unknown;
   historyHasMore?: boolean;
   historyComplete?: boolean;
   historyLoading?: boolean;
@@ -93,6 +95,7 @@ export default function TradeMyTradesSection({
   myTradesCount,
   myTradesError,
   privateTradesLocked = false,
+  onUnlockPrivacy,
   historyHasMore = false,
   historyComplete = false,
   historyLoading = false,
@@ -350,7 +353,7 @@ export default function TradeMyTradesSection({
         </div>
       ) : null}
       {!walletAddress ? <DisconnectedMyTradesState /> : null}
-      {walletAddress && privateTradesLocked ? <p role="status">Private trades are locked. Unlock privacy in the header.</p> : null}
+      {walletAddress && privateTradesLocked ? <PrivacyLockedNotice message="Private trades are locked." onUnlock={onUnlockPrivacy} /> : null}
       {walletAddress && myTradesError
         ? renderP2PEmptyState(
             renderAdditionalTrades ? 'Some trades could not load' : 'My trades could not load',

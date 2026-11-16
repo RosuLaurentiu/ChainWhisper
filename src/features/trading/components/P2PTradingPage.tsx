@@ -3248,6 +3248,7 @@ export default function P2PTradingPage({
           historyError={otcTradeHistoryV2Error}
           onLoadOlderHistory={loadOlderOtcTradeHistoryV2}
           privateTradesLocked={Boolean(walletAddress && !walletHasAes)}
+          onUnlockPrivacy={sharedWalletActions?.unlockPrivacy ? () => sharedWalletActions.unlockPrivacy() : undefined}
           myTradeGroupOptions={myTradeGroupOptions}
           selectedMyTradeGroup={selectedMyTradeGroup}
           selectedTradeKey={selectedMyTradeDetailKey}

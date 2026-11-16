@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeftRight, Clock3, Coins, Layers3, ListOrdered } from 'lucide-react';
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
+import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
 import { currentDexDisplayPair, formatDexCandidateTokenAmount, readCurrentDexDisplay, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import { readCurrentDexActivityPage, buildCurrentDexActivityEntries } from '../../../lib/currentDexActivity';
@@ -169,7 +170,7 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
       <p>{pending.phase.replace(/-/g, ' ')} · {pending.verificationBlocked ? 'Verification blocked' : 'Pending or uncertain'}</p>
       {pending.txHash ? <a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${pending.txHash}`} target="_blank" rel="noreferrer">View transaction</a> : null}
       <button type="button" onClick={() => onInspect(inspectMode)}>Open status and recovery</button></aside> : null}
-    {!connected ? <p>Connect your wallet on COTI Testnet to view activity.</p> : !privacyReady ? <p>Use “Unlock privacy with MetaMask” in the header to view your trade results.</p> :
+    {!connected ? <p>Connect your wallet on COTI Testnet to view activity.</p> : !privacyReady ? <PrivacyLockedNotice message="Your trade results are locked." onUnlock={sharedWalletSession?.actions?.unlockPrivacy ? () => sharedWalletSession.actions!.unlockPrivacy() : undefined} /> :
       currentView?.state === 'loading' ? <p role="status">Checking activity{currentView.total ? `: ${currentView.checked} of ${currentView.total} transactions` : '…'}</p> :
       currentView?.state === 'error' ? <p role="alert">{currentView.message}</p> : currentView?.state === 'empty' ?
         <div className="dex-v2-empty-state"><Clock3 size={28} aria-hidden="true" /><h3>No recorded DEX activity</h3></div> : null}

@@ -64,6 +64,10 @@ describe('My Orders current wallet list',()=>{
   it('does not read orders while privacy is locked',()=>{
     const f=fixture();f.session.sessionOnboardInfo={};expect(f.render()).toContain('Unlock privacy');hooks.effect!();expect(f.getOrders).not.toHaveBeenCalled();
   });
+  it('gives the unlock action in the locked list instead of a pointer to the header',()=>{
+    const f=fixture();f.session.sessionOnboardInfo={};(f.session.actions as unknown as Record<string,unknown>).unlockPrivacy=vi.fn(async()=>undefined);
+    const html=f.render();expect(html).toContain('privacy-locked-notice');expect(html).toContain('Your orders are locked.');expect(html).toContain('>Unlock privacy</button>');expect(html).not.toContain('in the header');
+  });
   it.each(['empty','incomplete','failed']as const)('distinguishes %s inventory',async state=>{
     const f=fixture();if(state==='failed')f.read.mockRejectedValue(Error('private RPC payload'));else f.read.mockResolvedValue({orders:[],complete:state==='empty'});
     f.render();hooks.effect!();await vi.waitFor(()=>expect(hooks.states[1]).toMatchObject({state:state==='failed'?'error':'ready'}));

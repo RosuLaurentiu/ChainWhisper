@@ -37,6 +37,17 @@ it('does not read or send until requested and reviews one token/spender before r
   f.render().props.onConfirm();await vi.waitFor(()=>expect(f.recover).toHaveBeenCalledOnce());
   expect(f.cap.submitSharedPoolApproval).toHaveBeenCalledOnce();
 });
+it('shows only Close while nothing is selected, and Cancel with Revoke after a selection',async()=>{
+  const f=fixture();
+  expect(f.render().props.confirmation).toMatchObject({primaryLabel:'Close',secondaryLabel:null});
+  await f.check();f.button('Revoke TOKEN').props.onClick!();
+  const selected=f.render().props.confirmation!;expect(selected.primaryLabel).toBe('Revoke selected approval');expect(selected.secondaryLabel).toBeUndefined();
+  f.render().props.onCancel();expect(f.close).not.toHaveBeenCalled();expect(f.render().props.confirmation).toMatchObject({primaryLabel:'Close',secondaryLabel:null});
+});
+it('uses the App button style for the actions inside the window',async()=>{
+  const f=fixture();expect((f.button('Check approvals').props as {className?:string}).className).toBe('connect-btn');
+  await f.check();expect((f.button('Revoke TOKEN').props as {className?:string}).className).toBe('connect-btn');
+});
 it('holds revocation when the capability reports an active operation',async()=>{
   const f=fixture();await f.check();f.cap.prepareSharedPoolAllowanceCleanup.mockRejectedValue(new Error('Active swap'));
   f.button('Revoke TOKEN').props.onClick!();f.render().props.onConfirm();

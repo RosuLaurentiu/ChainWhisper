@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
+import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import type { CurrentOwnedLimit } from '../../../lib/currentDexOwnedLimits';
 type Capability=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexLimitCapability']>>>;
@@ -31,7 +32,7 @@ export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',se
     <div className="dex-owner-list-toolbar">{managementNavigation?<div className="dex-owner-index-header"><h2>My trades</h2><p>Orders, positions and activity</p></div>:null}<span>{current?.inventory ? `${current.inventory.orders.length} orders` : null}</span>
     <button type="button" aria-label="Refresh owned Limit orders" disabled={!connected||!privacyReady||disabled||current?.state==='loading'} onClick={()=>setRefresh(v=>v+1)}>{current?.state==='loading'?'Loading…':'Refresh orders'}</button></div>
     {managementNavigation}
-    {!connected?<p>Connect your wallet on COTI Testnet to see your orders.</p>:!privacyReady?<p>Use “Unlock privacy with MetaMask” in the header to see your orders.</p>:
+    {!connected?<p>Connect your wallet on COTI Testnet to see your orders.</p>:!privacyReady?<PrivacyLockedNotice message="Your orders are locked." disabled={disabled} onUnlock={session?.actions?.unlockPrivacy?()=>session.actions!.unlockPrivacy():undefined}/>:
       current?.state==='loading'?<p role="status">Loading your orders…</p>:current?.state==='error'?<p role="alert">Could not load orders. Refresh to try again.</p>:null}
     <div className="dex-owner-list-items">{current?.inventory?.orders.map(order=><button type="button" className="dex-owner-item" key={order.positionId.toString()} aria-label={`Open Limit NFT ${order.positionId}`} aria-pressed={selectedId===order.positionId.toString()} disabled={disabled} onClick={()=>onSelect(order)}>
       <span className="dex-owner-item-title">{order.poolTokens.map(address=>display.tokens.find(t=>t.address===address)?.label??'Unknown token').join(' / ')}</span><span className="dex-owner-item-meta">Order #{order.positionId.toString()}</span><span className="dex-owner-status" data-state={order.closed?'closed':order.status===0n?'active':order.status===1n?'paused':'pending'}>{order.closed?'Closed':['Open','Paused','Needs privacy activation'][Number(order.status)]}</span>

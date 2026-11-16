@@ -182,7 +182,7 @@
 :root body .app-shell :is(.dex-v2-review-button, .landing-action-btn-primary,
   .landing-module-card-primary .landing-module-cta, .p2p-create-trade-btn,
   .standalone-trade-primary-btn, .swap-submit-btn, .modal-primary,
-  .chat-placeholder-card > button, .trade-compose-send,
+  .chat-placeholder-card > button, .trade-compose-send, .privacy-locked-notice > button,
   .wallet-primary-action:not(.p2p-wallet-address)) {
   background: var(--brand);
   color: #fff;
@@ -191,14 +191,14 @@
   filter: none;
 }
 :root body .app-shell :is(.dex-v2-review-button, .landing-action-btn-primary,
-  .standalone-trade-primary-btn, .p2p-create-trade-btn):hover:not(:disabled) {
+  .standalone-trade-primary-btn, .p2p-create-trade-btn, .privacy-locked-notice > button):hover:not(:disabled) {
   background: #8859d5;
   border-color: #a17bdf;
   box-shadow: none;
 }
 :root body .app-shell :is(.standalone-trade-secondary-btn, .landing-action-btn-secondary,
   .app-help-context-link, .dex-v2-current-actions > button:not(.dex-v2-review-button),
-  .dex-owner-workspace button:not(.dex-owner-danger):not([aria-pressed="true"]),
+  .dex-owner-workspace button:not(.dex-owner-danger):not([aria-pressed="true"]):not(.privacy-locked-notice > button),
   .dex-history-toolbar button:not([aria-pressed="true"]),
   .p2p-wallet-menu-trigger, .p2p-wallet-privacy-direct, .p2p-wallet-address) {
   background: var(--surface-base);

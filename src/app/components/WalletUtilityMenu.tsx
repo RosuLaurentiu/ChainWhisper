@@ -1,4 +1,4 @@
-import { Bell, ChevronRight, CircleHelp, Globe2, Volume2 } from 'lucide-react';
+import { Bell, ChevronRight, CircleHelp, Globe2, ShieldCheck, Volume2 } from 'lucide-react';
 import { useState } from 'react';
 import {
   CHAINWHISPER_NETWORK_OPTIONS,
@@ -132,6 +132,7 @@ export default function WalletUtilityMenu({
       </section>
 
       {onOpenApprovals ? <button type="button" className="wallet-utility-row" onClick={onOpenApprovals} role="menuitem">
+        <ShieldCheck size={17} aria-hidden="true" />
         <span><strong>Token approvals</strong><small>View and revoke spending permission</small></span>
         <ChevronRight size={16} aria-hidden="true" />
       </button> : null}

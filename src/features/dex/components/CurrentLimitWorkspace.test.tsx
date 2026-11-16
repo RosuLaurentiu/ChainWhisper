@@ -117,6 +117,13 @@ describe('current exact Limit form',()=>{
   });
   it.each(['0','1e3','-1','1.5',''])('rejects invalid offered budget %s',amount=>expect(()=>currentLimitIntent(true,amount,'1','0')).toThrow());
   it('does not enable a legacy writer without an owner session',()=>{const html=renderToStaticMarkup(<CurrentLimitWorkspace/>);expect(html).toContain('when matched at your price.');expect(html).toContain('Minimum fill');expect(html).toMatch(/disabled=""[^>]*>Review order/);expect(html).not.toContain('lot size');});
+  it('shows Unlock privacy as the main button while privacy is locked',()=>{
+    hooks.enabled=true;hooks.states=[];hooks.refs=[];const owner=`0x${'22'.repeat(20)}`,unlockPrivacy=vi.fn(async()=>undefined);
+    const session={walletAddress:owner,chainId:Number(c.chainId),browserProvider:{request:vi.fn()},sessionOnboardInfo:{},walletAesHealthByAddress:{},actions:{getCurrentDexLimitCapability:vi.fn(),getCurrentDexSubmissionCapability:vi.fn(),unlockPrivacy}}as unknown as SharedWalletSession;
+    const buttons=()=>{hooks.index=0;hooks.refIndex=0;return elements(CurrentLimitWorkspace({sharedWalletSession:session})).filter(x=>x.type==='button');};
+    const names=buttons().map(x=>text(x.props.children));expect(names).toContain('Unlock privacy');expect(names).not.toContain('Review order');
+    buttons().find(x=>text(x.props.children)==='Unlock privacy')!.props.onClick!();expect(unlockPrivacy).toHaveBeenCalledOnce();
+  });
   it.each(['Claim Limit proceeds','Pause Limit'])('%s clears private amounts and requires explicit refresh',async label=>{
     const f=ownerView();expect(f.button(label).props.disabled).toBe(false);f.button(label).props.onClick!();expect(text(f.render())).toContain('Checking your order');await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(f.sender.submitLimitOwner).toHaveBeenCalledTimes(1);expect(text(f.render())).not.toContain('Unspent Test token 10.0000000000000001');f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
