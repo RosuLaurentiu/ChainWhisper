@@ -247,7 +247,7 @@ describe('four-asset beta funding controls', () => {
   it('hides unread private balances and keeps the initial action disabled until verified', () => {
     const html = renderToStaticMarkup(<CurrentSharedTestTokenControls />);
     expect(html).not.toContain('Last checked balance:');
-    expect(html).toContain('Check claim/refill availability');
+    expect(html).toContain('Not checked');
     expect(html.replace(/<[^>]+>/g, '')).not.toContain('Receive 10,000.0 BCN');
     expect(html).not.toContain('Last checked balance: 0.0');
     expect(html.match(/>(?:Claim|Refill) (?:BCN|HBR|EMBR|ORBT)<\/button>/g)).toHaveLength(4);

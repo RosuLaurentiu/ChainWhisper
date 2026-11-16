@@ -43,6 +43,16 @@ describe('current exact Limit form',()=>{
     expect(shown).toContain(kind==='validation'?'Maker minimum must fit uint128.':kind==='payload'?'Limit action failed':'rejected');
     expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();expect(f.button('Load private order').props.disabled).toBeFalsy();
   });
+  it('offers Connect wallet as the main action when no wallet is connected, as Swap does',()=>{
+    const connectBrowserWallet=vi.fn(async()=>undefined);
+    const session={walletAddress:'',browserWalletId:'metamask',actions:{connectBrowserWallet}} as unknown as SharedWalletSession;
+    hooks.enabled=true;hooks.states=[];hooks.refs=[];hooks.index=0;hooks.refIndex=0;
+    const tree=CurrentLimitWorkspace({sharedWalletSession:session,view:'create'});
+    const named=(name:string)=>elements(tree).filter(x=>x.type==='button'&&text(x.props.children)===name);
+    expect(named('Connect wallet')).toHaveLength(1);expect(named('Review order')).toHaveLength(0);
+    named('Connect wallet')[0].props.onClick!();expect(connectBrowserWallet).toHaveBeenCalledWith('metamask');
+    hooks.enabled=false;expect(renderToStaticMarkup(<CurrentLimitWorkspace view="create"/>)).toContain('Review order');
+  });
   it('shows separate order regions and an empty selection without private values',()=>{
     const html=renderToStaticMarkup(<CurrentLimitWorkspace view="manage"/>);
     expect(html).toContain('aria-label="Order list"');expect(html).toContain('aria-label="Order details"');
@@ -56,7 +66,7 @@ describe('current exact Limit form',()=>{
   });
   it.each(['create','manage'] as const)('keeps saved recovery open in %s',view=>{
     window.sessionStorage.setItem('chainwhisper:dex:current-pending-attempt:v1',JSON.stringify({version:1,chainId:'7082400',owner:`0x${'22'.repeat(20)}`,core:`0x${'33'.repeat(20)}`,graph:`0x${'44'.repeat(32)}`,phase:'limit-owner',callHash:`0x${'55'.repeat(32)}`,nonce:1,txHash:null}));
-    const html=renderToStaticMarkup(<CurrentLimitWorkspace view={view}/>);expect(html).toContain('A saved action needs reconciliation');expect(html).toMatch(/<details class="dex-owner-footer" open=""/);
+    const html=renderToStaticMarkup(<CurrentLimitWorkspace view={view}/>);expect(html).toContain('A saved action needs a status check');expect(html).toMatch(/<details class="dex-owner-footer" open=""/);
     if(view==='manage')expect(html.indexOf('aria-label="Order details"')).toBeLessThan(html.indexOf('Status and recovery'));
   });
   it('automatically verifies one submitted private refresh and stays busy until its result is authenticated',async()=>{
@@ -85,7 +95,7 @@ describe('current exact Limit form',()=>{
     hooks.enabled=true;hooks.index=0;hooks.refIndex=0;
     const tree=CurrentLimitWorkspace({candidateKey:'cheap-history',selectedPair:['HBR','BCN'],view:'manage'}),list=elements(tree).find(x=>x.type===CurrentOwnedLimits)as ReactElement<{candidateKey:string}>;
     expect(list.props.candidateKey).toBe('cheap-history');
-    const lookup=elements(tree).find(x=>x.type==='details'&&text(x.props.children).includes('Manual order lookup'))as ReactElement<{open:boolean}>;
+    const lookup=elements(tree).find(x=>x.type==='details'&&text(x.props.children).includes('Find an order by ID'))as ReactElement<{open:boolean}>;
     expect(lookup.props.open).toBe(false);
   });
   it.each([false, true])('forwards management visibility %s without unmounting its form or owner list', visible => {

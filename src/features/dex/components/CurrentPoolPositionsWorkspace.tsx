@@ -289,7 +289,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       if(observed.status==='observed-mined'||observed.status==='observed-reverted'){
         setBlocked(false);setPending(null);setSnapshot(null);setMessage(observed.status==='observed-reverted'?'Position transaction reverted. Refresh before another action.':
           'Position transaction mined. No private payout is confirmed in this session. Refresh the owner claim.');
-      }else{setBlocked(true);setMessage('Position transaction is pending or needs manual reconciliation. Do not resend.');}
+      }else{setBlocked(true);setMessage('Position transaction is pending or needs a status check. Do not resend.');}
     }catch(error){setBlocked(true);fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
   };
   const value=current?snapshot?.value:null;
@@ -312,7 +312,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     {!connected&&!ownedDiscovery?<p>Connect the owner wallet on COTI Testnet to see your positions.</p>:null}
     {ownedDiscovery?<CurrentOwnedPoolPositions managementNavigation={managementNavigation} session={sharedWalletSession} candidateKey={candidateKey} visible={visible} refreshToken={ownedRefresh} selectedId={id} disabled={busy||topUpOpen}
       onSelect={positionId=>{setId(positionId.toString());setProducerHash('');setSnapshot(null);setExitPreview(null);void read(positionId);}}/>:null}
-    <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Manual position lookup</summary><label>Position NFT ID<input aria-label="Liquidity NFT ID" inputMode="numeric" value={id} disabled={busy||topUpOpen} onChange={event=>setId(event.target.value)}/></label>
+    <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Find a position by ID</summary><label>Position NFT ID<input aria-label="Liquidity NFT ID" inputMode="numeric" value={id} disabled={busy||topUpOpen} onChange={event=>setId(event.target.value)}/></label>
       {signedSnapshot?<label>Verified funding or snapshot transaction (optional)<input aria-label="Liquidity snapshot transaction" value={producerHash} disabled={busy||topUpOpen} onChange={event=>setProducerHash(event.target.value)}/></label>:null}
       <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
     </section><section className="dex-owner-detail" aria-label="Position details">
@@ -371,7 +371,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     </div></details>
     {value?.status===3n?<button type="button" disabled={!connected||busy||blocked} onClick={()=>{void action('activate');}}>Activate claim privacy</button>:null}
     {value?.status===2n?<button type="button" disabled={!connected||busy||blocked} onClick={()=>{void action('resume');}}>Resume liquidity claim</button>:null}</>:
-      <p>Partial withdrawal, NFT transfer and activation are awaiting current-candidate validation.</p>}
+      <p>Partial withdrawal, NFT transfer and activation are not available yet.</p>}
     </fieldset> : null}
     {busy?<p role="status" className="dex-owner-progress">{pending?'Checking the submitted position transaction and private result. No new request is being sent.':'Checking your position… If MetaMask opens, complete its request there. Keep this attempt open.'}</p>:null}
     {!busy?<p role="status" className="dex-owner-progress">{message&&messageScope.current===scope.current?(/another owner or adapter/.test(message)?'Another DEX action needs a status check. Open History for its recovery.':message):''}</p>:null}

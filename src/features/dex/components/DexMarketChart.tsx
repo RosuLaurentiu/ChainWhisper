@@ -154,7 +154,7 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
         {visible.length?<p>Body: previous recorded close → latest recorded price. No intraday high/low or final day close.</p>:null}
         {live?<p>{live.recorded?'The current UTC day shows the last recorded Pool price; the current price is not verified. It is not a saved daily record.'
           :'The current UTC day updates from the live price; it is not a saved daily record.'} A single observation is a flat mark. Dotted markers show missing days.</p>:null}
-        {snapshot?<p>{visible.length} saved samples · {gaps.length} gaps · at canonical block {snapshot.atBlock.number}. At most 32 days per read.</p>:null}
+        {snapshot?<p>{visible.length} saved days · {gaps.length} days without data · block {snapshot.atBlock.number}. The chart shows at most 32 days.</p>:null}
       </details>
     </div>:null}
     {showMarketSeries&&visibleSlots.length?<details className="dex-market-history-data"><summary>{preview?'Preview data':'Price data'}</summary><table>

@@ -303,7 +303,7 @@ describe('prepared Pool creation view', () => {
   it('keeps recovery available and locks its controls while busy', () => {
     const f = fundingFixture();
     const recovery = elements(f.render()).find(element => element.type === 'details' &&
-      elements(element).some(child => child.type === 'summary' && text(child) === 'Recovery'));
+      elements(element).some(child => child.type === 'summary' && text(child) === 'Status and recovery'));
     expect(recovery).toBeDefined();
     expect(elements(recovery).some(child => child.type === 'button' && text(child) === 'Check Pool status')).toBe(true);
     expect(f.button(`Approve exact ${f.pair.tokens[1].label}`)).toBeUndefined();

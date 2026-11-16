@@ -214,7 +214,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
             : action === 'initial' ? 'Initial claim available' : 'Refill available';
       return <article className="dex-v2-beta-token-card" key={token.address}>
         <header><strong>{token.symbol}</strong>{funds ? <span>Last checked balance: {formatUnits(funds.balance, funds.decimals)} (block {current?.funds?.head.number.toString()})</span> : null}</header>
-        <div className="dex-v2-beta-token-action"><span>{publicToken ? <>{action === 'initial' ? 'One-time claim' : 'Refill'} <strong>{amount}</strong> {token.symbol}</> : 'Check claim/refill availability'}</span>
+        <div className="dex-v2-beta-token-action"><span>{publicToken ? <>{action === 'initial' ? 'One-time claim' : 'Refill'} <strong>{amount}</strong> {token.symbol}</> : 'Not checked'}</span>
           <button type="button" aria-describedby={`beta-token-setup ${actionId}`} disabled={held || availability !== 'ready'} onClick={() => { void claim(action, token.address); }}>{action === 'initial' ? 'Claim' : 'Refill'} {token.symbol}</button>
         </div>
         <p className="dex-v2-beta-token-status" id={actionId} role="status">{publicToken ? actionStatus : ''}</p>

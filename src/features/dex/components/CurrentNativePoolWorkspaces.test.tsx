@@ -65,7 +65,7 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
     expect(readPosition).toHaveBeenCalledWith(20n,{producerHash:hash});
     expect(text(ui.render())).not.toContain('Withdraw selected shares');
     expect(text(ui.render())).not.toContain('Transfer liquidity NFT');
-    expect(text(ui.render())).toContain('awaiting current-candidate validation');
+    expect(text(ui.render())).toContain('activation are not available yet');
   });
   it('uses the authenticated entitlements as both full-close minimums',async()=>{
     const prepareAction=vi.fn(async()=>null),ui=setup({readPosition:async()=>active,prepareAction},{});

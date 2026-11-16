@@ -171,7 +171,7 @@ export const currentTrialAttemptPresentation = (attempt: TrialAttempt) => {
     'verificationBlocked' in attempt && attempt.verificationBlocked
       ? 'Private verification failed or is unavailable. The saved action remains blocked. Check its exact private receipt in the original session; do not resend.'
       : 'transactionHash' in attempt && attempt.transactionHash
-        ? `${'reason' in attempt ? attempt.reason : 'The existing transaction needs manual reconciliation.'} Transaction hash retained. Do not resend.`
+        ? `${'reason' in attempt ? attempt.reason : 'The existing transaction needs a status check.'} Transaction hash retained. Do not resend.`
         : 'The saved action has no transaction hash. Enter its existing hash below, then Check current state. Do not resend.' };
   if (attempt.status === 'awaiting-chain-confirmation') return { stage: 'reconciling',
     message: 'Transaction remains pending or is not available from the chain. Check current state later; do not resend.' };
@@ -1145,7 +1145,7 @@ export function CurrentSwapWorkspace({
         disabled={busy || checking || walletChanged || unknownOrigin || Boolean(pending) || (Boolean(issued) && stage !== 'ready')} /> : null}
     {!candidateReady ? <aside className="dex-v2-current-warning">
       <ShieldCheck size={19} aria-hidden="true" />
-      <div><strong>Test contracts</strong>
+      <div><strong>Contracts not checked yet</strong>
         <button type="button" disabled={!connected || checking || busy || walletChanged} onClick={() => { void checkCandidate(); }}>Check current contracts</button>
       </div>
     </aside> : null}

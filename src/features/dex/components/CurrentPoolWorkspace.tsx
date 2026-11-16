@@ -524,7 +524,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         if (!tokenPending) setPreview(null);
         setMessage(observed.status === 'observed-reverted' ? 'Pool transaction reverted. No funds or NFT result are confirmed.' :
           'Pool transaction mined. This session has no authenticated private result; no funding or NFT amount is confirmed.');
-      } else { setBlocked(true); setMessage('Pool transaction is pending or needs manual reconciliation. Do not resend it.'); }
+      } else { setBlocked(true); setMessage('Pool transaction is pending or needs a status check. Do not resend it.'); }
     } catch (cause) {
       setBlocked(true);
       fail(firstRecoveryError && cause instanceof Error && cause.message === 'Known Pool verification failure. Manual reconciliation is required.'
@@ -547,7 +547,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       {(nativeTrial || preparedCandidate) && funding && validFunding && nftId === null && !unfundedFailed && !attemptComplete ? <>
         <button type="button" disabled={!connected || busy || savedActionPending || !unfundedAbandonEligible}
           onClick={() => { void abandon(); }}>Review stop and clear approvals</button>
-        <p className="dex-v2-activation-note">Check Pool status to verify whether this unsigned deposit can stop. A pending or signed deposit needs reconciliation first.</p>
+        <p className="dex-v2-activation-note">Check Pool status to verify whether this unsigned deposit can stop. A pending or signed deposit needs a status check first.</p>
       </> : null}
       {(nativeTrial || preparedCandidate) && funding && validFunding && nftId === null && unfundedFailed && !attemptComplete ? <details className="dex-v2-setup"><summary>Unused approval recovery</summary>
         <p>Only a verified unfunded attempt can clear these approvals. This does not restart the attempt.</p>
@@ -624,8 +624,8 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         <p>Preview costs network gas but moves no tokens and creates no position. Deposit needs separate review, private balances and token approvals for both tokens.</p>
         <p>A starting price is required for preview. An existing Pool uses its reserve ratio.</p>
       </div></details>
-      {preparedCandidate ? <details className="dex-v2-setup"><summary>Recovery</summary>{recovery}</details> : recovery}
-      {savedActionPending ? <p role="alert">A saved action needs reconciliation. Open its status and recovery from Activity before a new deposit.</p> : null}
+      {preparedCandidate ? <details className="dex-v2-setup"><summary>Status and recovery</summary>{recovery}</details> : recovery}
+      {savedActionPending ? <p role="alert">A saved action needs a status check. Open its status and recovery in History before a new deposit.</p> : null}
       {!(messageScope.current === scope.current && message) && connected && !privacyReady
         ? <PrivacyLockedNotice message="Your deposit preview is locked." disabled={busy}
           onUnlock={sharedWalletSession?.actions?.unlockPrivacy ? () => sharedWalletSession.actions!.unlockPrivacy() : undefined} />

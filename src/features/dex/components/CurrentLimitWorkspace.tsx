@@ -241,7 +241,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
     {busy?<p className="dex-owner-progress" role="status">Checking your order… If MetaMask opens, complete its request there. Keep this attempt open.</p>:null}
     {!busy?<p className="dex-owner-progress" role="status">{message?.scope===scope.current&&(!message.view||message.view===view)?(/another owner adapter/.test(message.text)?'Another DEX action needs a status check. Open History for its recovery.':message.text):''}</p>:null}
     <details className="dex-owner-footer" open={blocked||savedActionPending||!!pending||undefined}><summary>Status and recovery</summary>
-    {savedActionPending ? <p role="alert">A saved action needs reconciliation. Check its status before a new request.</p> : null}
+    {savedActionPending ? <p role="alert">A saved action needs a status check before a new request.</p> : null}
     {connected ? <button type="button" disabled={!getSender||busy||state.chain!==Number(c.chainId)} onClick={()=>{void refresh();}}>Check Limit status</button> : null}
     {recoveryTarget?<div className="dex-v2-panel-fields"><label>Expected top-up amount<input aria-label="Expected submitted Limit top-up amount" inputMode="decimal" value={recoveryAmount} disabled={busy} onChange={event=>setRecoveryAmount(event.target.value)}/></label><button type="button" disabled={!privacyReady||busy||!recoveryAmount} onClick={()=>{void reconcileTopUp();}}>Verify existing top-up</button></div>:null}
     {message?.scope===scope.current&&/another owner adapter/.test(message.text)?<p>{message.text}</p>:null}
@@ -253,14 +253,16 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
     <div className="dex-v2-current-side-toggle" role="group" aria-label="Limit side">
       {(['buy','sell']as const).map(side=><button key={side} type="button" aria-pressed={displayedSide===side} disabled={busy||blocked||savedActionPending} onClick={()=>setDirection(pair?(side==='sell'?baseIndex===0:baseIndex!==0):resolveCanonicalTradeActionSide(side,priceDisplayInverted)==='buy')}>{side==='buy'?'Buy':'Sell'} {displayedBase}</button>)}
     </div>
-    <label className="dex-v2-limit-amount-field"><span><strong>You send</strong><small>{sold}</small></span><input aria-label="Limit offered budget" inputMode="decimal" placeholder="0" value={amount} disabled={busy||blocked} onChange={e=>setAmount(e.target.value)}/></label>
-    <label className="dex-v2-limit-price-field"><span><strong>Limit price</strong><small>{displayedQuote}/{displayedBase}</small></span><input aria-label="Limit exact price" inputMode="decimal" placeholder="0.00" value={price} disabled={busy||blocked} onChange={e=>setPrice(e.target.value)}/></label>
+    <div className="dex-v2-limit-entry"><label className="dex-v2-limit-amount-field"><span><strong>You send</strong><small>{sold}</small></span><input aria-label="Limit offered budget" inputMode="decimal" placeholder="0" value={amount} disabled={busy||blocked} onChange={e=>setAmount(e.target.value)}/></label>
+    <label className="dex-v2-limit-price-field"><span><strong>Limit price</strong><small>{displayedQuote}/{displayedBase}</small></span><input aria-label="Limit exact price" inputMode="decimal" placeholder="0.00" value={price} disabled={busy||blocked} onChange={e=>setPrice(e.target.value)}/></label></div>
     <p className="dex-v2-limit-fill-note">Receive {received} when matched at your price.</p>
     <details className="dex-v2-setup"><summary>Advanced order settings</summary><div>
       <label>Minimum fill ({sold})<input aria-label="Limit maker minimum" inputMode="decimal" value={minimum} disabled={busy||blocked} onChange={e=>setMinimum(e.target.value)}/></label>
       <p>A smaller fill is allowed only if it uses all remaining inventory. Proceeds stay claimable; they do not fund a reverse order.</p>
     </div></details>
-    {connected&&!privacyReady&&sharedWalletSession?.actions?.unlockPrivacy
+    {!sharedWalletSession?.walletAddress&&sharedWalletSession?.actions?.connectBrowserWallet
+      ?<button className="dex-v2-review-button" type="button" disabled={busy} onClick={()=>{void sharedWalletSession.actions!.connectBrowserWallet(sharedWalletSession.browserWalletId||undefined).catch(()=>undefined);}}>Connect wallet</button>
+      :connected&&!privacyReady&&sharedWalletSession?.actions?.unlockPrivacy
       ?<button className="dex-v2-review-button" type="button" disabled={busy||blocked||savedActionPending} onClick={()=>{void sharedWalletSession.actions!.unlockPrivacy().catch(()=>undefined);}}>Unlock privacy</button>
       :<button className="dex-v2-review-button" type="button" disabled={!connected||busy||blocked||savedActionPending} onClick={()=>{void create();}}>Review order</button>}
     {ownedDiscovery?<button type="button" disabled={!connected||!privacyReady||busy||blocked||savedActionPending} onClick={()=>{void approve('create');}}>Review exact order allowance</button>:null}
@@ -273,7 +275,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
     {!managementNavigation?<header className="dex-owner-heading"><h2>My orders</h2><p>Select an order to view and manage it.</p></header>:null}
     {ownedDiscovery?<CurrentOwnedLimits managementNavigation={managementNavigation} session={sharedWalletSession} candidateKey={candidateKey} selectedPair={pair!.tokens.map(token=>token.address)as[string,string]} visible={visible&&view==='manage'} disabled={busy||blocked||savedActionPending}
       selectedId={ownerId} refreshToken={`${hash}:${ownerResult?.value.context??''}:${creation?.value.positionId??''}`} onSelect={order=>{setOwnerId(order.positionId.toString());setOwnerPair(order.poolTokens);setSelectedOrder({id:order.positionId,closed:order.closed,context:order.context});setOwnerResult(null);setMessage(null);setHash('');setTopUp('');setEditPrice('');setEditMinimum('0');}}/>:null}
-    <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Manual order lookup</summary><label>Limit position NFT<input aria-label="Limit owner NFT ID" value={ownerId} disabled={busy||blocked} onChange={e=>{setOwnerId(e.target.value);setOwnerPair(null);setSelectedOrder(null);setOwnerResult(null);setTopUp('');setEditPrice('');setEditMinimum('0');}}/></label></details>
+    <details className="dex-owner-footer" open={!ownedDiscovery}><summary>Find an order by ID</summary><label>Limit position NFT<input aria-label="Limit owner NFT ID" value={ownerId} disabled={busy||blocked} onChange={e=>{setOwnerId(e.target.value);setOwnerPair(null);setSelectedOrder(null);setOwnerResult(null);setTopUp('');setEditPrice('');setEditMinimum('0');}}/></label></details>
     </section><section className="dex-owner-detail" aria-label="Order details">
     <header className="dex-owner-heading"><h2>{managementNavigation&&ownerId?`Order #${ownerId}`:'Order details'}</h2></header>
     {!ownerId?<p className="dex-owner-selection-empty">Select an order to see its details.</p>:null}

@@ -216,7 +216,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
       } else if (observed.status === 'observed-mined-verification-held' || observed.status === 'observed-reverted-verification-held') {
         const action = saved.phase === 'pool-fund' ? 'Top-up deposit' : saved.phase === 'pool-snapshot' ? 'Top-up verification snapshot' : 'Transaction';
         show(`${action} ${observed.status === 'observed-mined-verification-held' ? 'mined' : 'reverted'}, but verification remains on hold. ${observed.poolTopUpHash && !observed.verificationFailure ? 'Final top-up accounting has not completed.' : currentPoolVerificationMessage(observed.verificationFailure)} Keep the saved record. Do not resend.`);
-      } else show('Transaction is pending or needs manual reconciliation. Do not resend it.');
+      } else show('Transaction is pending or needs a status check. Do not resend it.');
       return;
     }
     const result = await pending.recover(); assertScope(captured);
