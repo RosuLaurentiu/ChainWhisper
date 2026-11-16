@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import CurrentPoolWorkspace from './CurrentPoolWorkspace';
 import CurrentPoolPositionsWorkspace from './CurrentPoolPositionsWorkspace';
 import CurrentLimitWorkspace from './CurrentLimitWorkspace';
+import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import { CURRENT_CHEAP_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 // Retained native recovery tests select their candidate before component import.
@@ -44,7 +45,9 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
   const render = () => { hooks.index = 0; hooks.refIndex = 0;
     return panel === 'pool' ? components.pool({ sharedWalletSession: session }) : panel === 'position' ? components.position({ sharedWalletSession: session }) : CurrentLimitWorkspace({ sharedWalletSession: session, view: 'manage' }); };
   const button = (label: string) => elements(render()).find(node => node.type === 'button' && text(node.props.children) === label)!;
-  const status = () => text(elements(render()).find(node => node.props.role === 'status')!.props.children);
+  // A locked Pool panel shows the shared locked notice in place of its status line (CW-095).
+  const status = () => { const nodes = elements(render()); const notice = nodes.find(node => node.type === PrivacyLockedNotice) as ReactElement<{ message: string }> | undefined;
+    return notice ? notice.props.message : text(nodes.find(node => node.props.role === 'status')!.props.children); };
   const statusLabel = panel === 'pool' ? 'Check Pool status' : panel === 'position' ? 'Check position status' : 'Check Limit status';
   const start = async () => { button(statusLabel).props.onClick!(); await vi.waitFor(() => expect(pendingRead).toHaveBeenCalledOnce()); };
   const finish = async () => { reject(new Error(errorText)); await vi.waitFor(() => expect(button(statusLabel).props.disabled).toBe(false)); };
