@@ -4800,6 +4800,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       }}
     />
   );
+  // The wallet menu is in the header of every wallet page, so its window is rendered with the header.
+  const tokenApprovalsDialog = tokenApprovalsOpen
+    ? <TokenApprovalsDialog session={sharedTradeWalletSession} onClose={() => setTokenApprovalsOpen(false)}/>
+    : null;
   const renderAppHeader = ({
     brandActions,
     debugControl: headerDebugControl,
@@ -4814,7 +4818,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     subtitle?: string;
     walletControl?: ReactNode;
     showSoundToggle?: boolean;
-  }) => (
+  }) => (<>
     <AppHeader
       headerRef={topHeaderRef}
       mobileLinksOpen={mobileLinksOpen}
@@ -4833,7 +4837,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       subtitle={subtitle}
       showSoundToggle={showSoundToggle && !walletControl}
     />
-  );
+    {tokenApprovalsDialog}
+  </>);
   const chatRealtimeReconnecting =
     activePage === 'chat' &&
     (directRealtimeStatus === 'reconnecting' || groupRealtimeStatus === 'reconnecting');
@@ -5216,7 +5221,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
           />
         </Suspense>
       ) : null}
-      {tokenApprovalsOpen ? <TokenApprovalsDialog session={sharedTradeWalletSession} onClose={() => setTokenApprovalsOpen(false)}/> : null}
       <TradeActionConfirmModal
         confirmation={inChatTradeConfirmation}
         onCancel={() => resolveInChatTradeConfirmation(false)}

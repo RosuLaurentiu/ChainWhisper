@@ -5791,6 +5791,8 @@ html {
     width: calc(100% - var(--trading-content-gutter));
     max-width: none;
     min-height: 0;
+    /* The shell hides overflow. Without this limit a tall panel grows past its row and its own scroll never starts. */
+    max-height: calc(100% - 34px);
     align-self: start;
     margin: 0 14px 34px auto;
     border: 1px solid var(--approved-border-soft);
