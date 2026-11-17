@@ -165,9 +165,11 @@ describe('prepared Pool top-up money flow', () => {
     const profile = vi.spyOn(poolInputs, 'usesPackedPoolInputs').mockReturnValue(packed);
     try {
       const f = fixture(); hooks.allowNative = true; await f.fundingFlow();
-      for (const phase of ['preview', 'funding']) expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({
-        summaryRows: expect.arrayContaining([{ label: `Private-input signatures for ${phase}`, value: packed ? '3' : '4' }])
+      // Owner decision 2026-11-17: the preview input signatures open no App window; the funding review keeps its count.
+      expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({
+        summaryRows: expect.arrayContaining([{ label: 'Private-input signatures for funding', value: packed ? '3' : '4' }])
       }));
+      expect(hooks.confirm).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Review liquidity top-up' }));
       expect(f.submitFunding).not.toHaveBeenCalled();
     } finally { profile.mockRestore(); }
   });
@@ -255,13 +257,16 @@ describe('prepared Pool top-up money flow', () => {
     expect(f.allowances).toEqual([0n, 0n]); expect(f.props.onReleased).toHaveBeenCalledOnce(); expect(f.submitFunding).not.toHaveBeenCalled();
     expect(f.submitApproval.mock.calls.slice(2).map(([request]) => [request.cleanup, request.amount])).toEqual([[true, 0n], [true, 0n]]);
   });
-  it.each(['preview', 'exact-review'] as const)('does not send after cancelled %s confirmation', async phase => {
-    const f = fixture(); hooks.allowNative = true;
-    if (phase === 'exact-review') await f.previewFlow(); else f.enter();
+  it('asks no App window before the preview input signatures (owner decision 2026-11-17)', async () => {
+    const f = fixture(); hooks.allowNative = true; f.enter();
+    await f.click('Review top-up preview');
+    expect(hooks.confirm).not.toHaveBeenCalled(); expect(f.submitPreview).toHaveBeenCalledOnce();
+  });
+  it('does not send after a cancelled exact-review confirmation', async () => {
+    const f = fixture(); hooks.allowNative = true; await f.previewFlow();
     hooks.confirm.mockResolvedValueOnce(false);
-    await f.click(phase === 'preview' ? 'Review top-up preview' : 'Review exact top-up');
+    await f.click('Review exact top-up');
     expect(f.submitFunding).not.toHaveBeenCalled(); expect(f.prepareApproval).not.toHaveBeenCalled();
-    if (phase === 'preview') expect(f.submitPreview).not.toHaveBeenCalled();
   });
   it.each(['wrong-position', 'wrong-context', 'missing-private-proof'] as const)('rejects recovered preview %s', async reason => {
     const f = fixture(); hooks.allowNative = true; f.enter(); await f.click('Review top-up preview');

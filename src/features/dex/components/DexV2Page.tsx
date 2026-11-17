@@ -750,15 +750,11 @@ export function CurrentSwapWorkspace({
           if(currentWallet.current!==attemptWallet||reviewScope.current!==currentReviewScope)return;
           updateSteps({inputs:{completed:event.completed,total:event.total,requesting:event.phase==='requesting'}});
         },
-        confirmPrivateInputs: review => confirm('Confirm private Quote inputs', [
-          {label:'Quote private-input signatures',value:`${currentDexQuoteInputPlan(candidateKey).length} message signatures · no network gas`},
-          { label: 'Maximum input', value: `${formatInput(review.maximumInput)} ${trialTokens[inputIndex]}` },
-          { label: 'Fill policy', value: review.minimumInput === 0n ? 'Any positive partial fill (0% minimum)' : `${minimumInput}% minimum · ${formatInput(review.minimumInput)} ${trialTokens[inputIndex]}` },
-          { label: 'Minimum net output', value: `${formatOutput(review.minimumOutput)} ${trialTokens[outputIndex]}` },
-          ...(quoteProtocol ? [{ label: 'Slippage', value: `${slippagePercent}% of the Quote net rate` }] : []),
-          { label: displayedSide === 'buy' ? 'Maximum buy price' : 'Minimum sell price',
-            value: quoteProtocol && !priceLimit.trim() ? 'No optional hard price limit' : `${priceLimit} ${trialTokens[1 - displayedBaseIndex]}/${trialTokens[displayedBaseIndex]} · net of fees` }
-        ])
+        // Owner decision 2026-11-17: no App window before the Quote input signatures; the step track shows them.
+        confirmPrivateInputs: async () => {
+          if (currentWallet.current === attemptWallet && reviewScope.current === currentReviewScope) setMessage('Complete the private Quote input signatures in your wallet.');
+          return true;
+        }
       });
       if (!quote) {updateSteps({cancelledBeforeQuote:true});setStage('idle');setMessage('Private input review cancelled. No Quote was sent.');return;}
       if(preparedCandidate&&!await clock.observeWait('Exact branded Quote approval',()=>ensureFunding(sender,maximum,attemptWallet,quote)))return;

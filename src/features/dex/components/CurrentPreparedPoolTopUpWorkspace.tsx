@@ -119,11 +119,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     const prepared = await cap.preparePoolTopUp({ graph: { expectedGraph: candidate.graph, expectedPackageSha256: candidate.packageSha256,
       blockNumber: BigInt(raw.number), blockHash: raw.hash }, positionId: position.positionId, ownerContext: position.context,
       producerHash: position.producerHash, pair: position.poolTokens, intent: { budgets, tolerance: fraction },
-      confirmPrivateInputs: async () => { const accepted = await confirm('Review liquidity top-up', [
-        { label: 'Position NFT', value: position.positionId.toString() }, ...budgets.map((value, i) => ({ label: `${labels[i]} maximum`, value: format(value, i) })),
-        { label: 'Funding tolerance', value: `${tolerance}%` },
-        { label: 'Private-input signatures for preview', value: String(usesPackedPoolInputs(candidate) ? 3 : 4) },
-        { label: 'Preview transaction', value: '1 transaction; network fee applies' } ]); assertScope(captured);
+      confirmPrivateInputs: async () => { const accepted = true; assertScope(captured);
         if (accepted) show(`Complete ${usesPackedPoolInputs(candidate) ? 3 : 4} private-input signatures for this preview. The transaction request follows separately.`);
         return accepted; } });
     assertScope(captured); if (!prepared) { show('Top-up preview cancelled.'); return; }

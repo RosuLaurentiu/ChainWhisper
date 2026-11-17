@@ -192,14 +192,8 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       ])) { assertScope(captured); setMessage('Original Pool preview cancelled.'); return; }
       const prepared = retained ?? await capability.preparePoolCreation({ graph: { expectedGraph: candidate.graph, expectedPackageSha256: candidate.packageSha256,
         blockNumber: BigInt(head.number), blockHash: head.hash }, pair: preparedCandidate ? poolTokens : undefined, intent, confirmPrivateInputs: async () => {
-          const accepted = await confirm('Confirm private Pool inputs', [
-            { label: 'Pool spread', value: `${CURRENT_POOL_SPREADS[classId]}%` },
-            { label: `${tokenLabels[0]} maximum`, value: format(intent.budgets[0], 0) }, { label: `${tokenLabels[1]} maximum`, value: format(intent.budgets[1], 1) },
-            { label: 'Starting price if empty', value: `${price} ${priceUnits}` },
-            { label: 'Funding tolerance', value: `${tolerance}%` },
-            { label: 'Private-input signatures for preview', value: String(usesPackedPoolInputs(candidate) ? 8 : 13) },
-            { label: 'Preview transaction', value: '1 transaction; network fee applies' }
-          ]);
+          // Owner decision 2026-11-17: no App window before the preview input signatures.
+          const accepted = true;
           assertScope(captured);
           if (accepted) setMessage(`Complete ${usesPackedPoolInputs(candidate) ? 8 : 13} private-input signatures for this preview. The transaction request follows separately.`);
           return accepted;

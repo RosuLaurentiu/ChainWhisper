@@ -529,23 +529,19 @@ describe('prepared candidate swap view', () => {
     await vi.waitFor(() => expect(f.status()).toContain('do not resend'));
     expect(submit).toHaveBeenCalledOnce();
   });
-  it.skipIf(key === 'cheap-prepared')('shows exact Fast fee limits and the wallet signature step after private input review', async () => {
+  it.skipIf(key === 'cheap-prepared')('goes to the wallet signature step with no App window before the private Quote inputs', async () => {
+    // Owner decision 2026-11-17: the Quote input signatures open no App review window.
     const f = admittedFundingFixture();
     let continuePreparation!: () => void;
     const waiting = new Promise<void>(resolve => { continuePreparation = resolve; });
     f.prepareQuote.mockImplementation(async request => {
-      await request.confirmPrivateInputs({ maximumInput: 1_234_567n, minimumInput: 617_284n, minimumOutput: 900_000n });
+      expect(await request.confirmPrivateInputs({ maximumInput: 1_234_567n, minimumInput: 617_284n, minimumOutput: 900_000n })).toBe(true);
       await waiting;
       return { intent: { maximumInput: 1_234_567n, deadline: 2_000n } };
     });
     f.click('Get Quote');
-    await vi.waitFor(() => expect(hooks.confirm).toHaveBeenCalled());
-    expect(hooks.confirm.mock.calls[0][0].title).toBe('Confirm private Quote inputs');
-    expect(hooks.confirm.mock.calls[0][0].stats).toEqual([
-      { label: 'Quote fee limit', value: `${key === 'cheap-history' ? '0.0055' : '0.00572'} COTI` },
-      { label: 'Accept fee limit', value: `${key === 'cheap-history' ? '0.0055' : '0.00572'} COTI` }
-    ]);
-    await vi.waitFor(() => expect(f.status()).toBe('Private input review accepted. Complete the required wallet signatures.'));
+    await vi.waitFor(() => expect(f.status()).toBe('Complete the private Quote input signatures in your wallet.'));
+    expect(hooks.confirm).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Confirm private Quote inputs' }));
     continuePreparation();
     await vi.waitFor(() => expect(f.status()).toBe('Funding reached Quote submission'));
   });
