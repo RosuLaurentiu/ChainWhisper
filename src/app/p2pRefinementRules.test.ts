@@ -65,6 +65,14 @@ describe('P2P states and layout', () => {
     expect(rule('.trade-compose-asset-field > .trade-compose-field-head {', mobile)).toContain('clip-path: inset(50%);');
   });
 
+  it('gives the token picker meta text the grey text token at the 12 px floor (was a lavender literal)', () => {
+    const meta = rule(':root body .app-shell-trades :is(.trade-token-select-trigger-copy small, .trade-token-select-state span');
+    expect(meta).toContain('.trade-token-select-state a');
+    expect(meta).toContain('color: var(--text-tertiary);');
+    expect(meta).toContain('font-size: .75rem;');
+    expect(meta).not.toContain('217, 211, 255');
+  });
+
   it('uses the 12 px text floor in the offer filter and no new hex values', () => {
     expect(rule('.p2p-offers-filter-heading > span')).toContain('font-size: .75rem;');
     expect(block()).not.toMatch(/#[0-9a-f]{3,8}\b/iu);

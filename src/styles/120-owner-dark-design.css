@@ -1337,6 +1337,16 @@
   color: var(--text-primary);
 }
 
+/* Token picker meta text (PRIVATE badge, balance status, contract link, option sublabels) kept the old P2P
+   lavender literal at 9.9-11 px. It now uses the grey text tokens at the 12 px floor, as "Available" beside it. */
+:root body .app-shell-trades :is(.trade-token-select-trigger-copy small, .trade-token-select-state span, .trade-token-select-state small,
+  .trade-token-select-state a, .trade-token-select-option-main small) {
+  color: var(--text-tertiary);
+  font-size: .75rem;
+  font-weight: 600;
+}
+:root body .app-shell-trades .trade-token-select-state a:is(:hover, :focus-visible) { color: var(--text-secondary); text-decoration: underline; }
+
 /* Not connected is a normal state: a neutral note, as the Chat "Wallet needed" card. */
 :root body .app-shell-trades .p2p-market-status.p2p-market-status-note { color: var(--text-secondary); }
 :root body .app-shell-trades .p2p-offers-empty.is-note {
