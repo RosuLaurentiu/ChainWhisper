@@ -74,7 +74,7 @@ describe('P2P states and layout', () => {
   });
 
   it('draws no fill behind the contract link row: only the picker trigger has a box', () => {
-    expect(rule(':root body .app-shell-trades :is(.trade-compose-asset-field, .trade-token-select) {')).toContain('background: transparent;');
+    expect(rule('.p2p-trading-shell .trade-compose-section :is(.trade-compose-asset-field, .trade-token-select) {')).toContain('background: transparent;');
   });
 
   it('uses the 12 px text floor in the offer filter and no new hex values', () => {
