@@ -1277,6 +1277,9 @@
   :root body .app-shell-dex-v2 .dex-view-navigation:has(> .dex-agent-link) > nav > button { font-size: .75rem; font-weight: 700; }
 }
 
+/* CW-097. DEX column divider: owner decision 2026-11-18 removes the vertical line on the left of the Trade,
+   Limit and Liquidity column (desktop). The chart already sits in its own framed box. */
+:root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-v2-form-column { border-left: 0; }
 /* CW-097. P2P: the CW-096 segmented style for Buy / Sell in Create, the DEX disabled look for the main
    button, one disclosure chevron on plain-text summaries, the CW-095 title on My trades, a neutral
    "Wallet needed" note instead of the error colour, and the 12 px text floor in the offer filter. */

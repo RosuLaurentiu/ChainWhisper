@@ -86,6 +86,12 @@ describe('test-token rows', () => {
   });
 });
 
+describe('DEX column divider', () => {
+  it('removes the vertical line left of the Trade, Limit and Liquidity column (owner decision 2026-11-18)', () => {
+    expect(rule(':root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-v2-form-column {')).toContain('border-left: 0;');
+  });
+});
+
 describe('mobile Trading shell on DEX pages', () => {
   const mobile = () => block().slice(block().indexOf('@media (max-width: 920px)'));
 
