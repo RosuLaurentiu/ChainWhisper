@@ -90,6 +90,10 @@ describe('DEX column divider', () => {
   it('removes the vertical line left of the Trade, Limit and Liquidity column (owner decision 2026-11-18)', () => {
     expect(rule(':root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-v2-form-column {')).toContain('border-left: 0;');
   });
+
+  it('removes the line right of the live price block in the market bar (owner decision 2026-11-18)', () => {
+    expect(rule(':root body .app-shell .trading-product-bar .trading-market-change {')).toContain('border-right: 0;');
+  });
 });
 
 describe('mobile Trading shell on DEX pages', () => {
