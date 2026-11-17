@@ -61,6 +61,15 @@ export function SampleTooltip({active,payload,preview,ratioLabel}:{active?:boole
     {point.openingPrice===undefined?null:<div>Open <b>{formatPrice(point.openingPrice)}</b></div>}
     <div>{point.openingPrice===undefined?'Price':'Close'} <b>{formatPrice(point.price)}</b></div></div>;
 }
+/** CW-098: while the chart covers the page, Tab must not reach the hidden controls behind it. Returns the control to focus, or null to let the browser move focus. */
+export function wrapExpandedChartFocus<T>(items:readonly T[],active:T|null,backward:boolean):T|null{
+  if(!items.length)return null;
+  const first=items[0],last=items[items.length-1];
+  if(active===null||!items.includes(active))return backward?last:first;
+  if(backward)return active===first?last:null;
+  return active===last?first:null;
+}
+const FOCUSABLE='button:not(:disabled),[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex]:not([tabindex="-1"])';
 export type DexMarketChartProps=Readonly<{
   baseSymbol?:string;quoteSymbol?:string;history?:CurrentDexDailyPriceView;onHistoryRefresh?:()=>void;marketReference?:CurrentDexMarketReference;
   illustrative?:boolean;priceDisplayInverted?:boolean;showMarketSeries?:boolean;
@@ -116,7 +125,13 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       :snapshot?.currentReference==='unobserved'?'No current reference has been sampled.':null;
   return <section className={`dex-market-chart${showMarketSeries?' dex-market-chart-samples':''}${expanded?' is-expanded':''}`}
     aria-label={showMarketSeries?preview?'Illustrative DEX daily price preview':'DEX daily sampled price history':'Recurring order prices'}
-    onKeyDown={event=>{if(event.key==='Escape')setExpanded(false);}}>
+    onKeyDown={event=>{
+      if(event.key==='Escape'){setExpanded(false);return;}
+      if(!expanded||event.key!=='Tab')return;
+      const items=[...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(item=>item.getClientRects().length>0);
+      const next=wrapExpandedChartFocus(items,document.activeElement instanceof HTMLElement?document.activeElement:null,event.shiftKey);
+      if(next){event.preventDefault();next.focus();}
+    }}>
     <header><div className="dex-market-chart-legend" aria-label="Chart legend">
       {showMarketSeries?<span className="candle-up">{preview?'Preview candles':'Daily prices'}</span>:null}
       {limitPrice===undefined?null:<span className="limit"><i />{limitLabel??`Your limit / ${formatPrice(limitPrice)}`}</span>}

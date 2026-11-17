@@ -3,7 +3,7 @@ import { describe,expect,it,vi } from 'vitest';
 import { readCurrentDexDailyPrice,type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { currentDexMarketReference } from '../../../lib/currentDexMarketReference';
-import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles} from './DexMarketChart';
+import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles,wrapExpandedChartFocus} from './DexMarketChart';
 describe('DexMarketChart actual daily sample display',()=>{
   it('adds only a verified, fresh, matching live point after the last saved sample',async()=>{
     const f=makeHistoryFixture(),snapshot=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
@@ -114,5 +114,20 @@ describe('DexMarketChart actual daily sample display',()=>{
   });
   it('retains separate recurring order levels',()=>{
     const markup=renderToStaticMarkup(<DexMarketChart recurringBuyLabel="Buy cwTPB" recurringBuyPrice={0.95} recurringSellLabel="Sell cwTPB" recurringSellPrice={1.05} showMarketSeries={false}/>);expect(markup).toContain('Buy cwTPB');expect(markup).toContain('Sell cwTPB');expect(markup).not.toContain('Daily samples');
+  });
+});
+
+describe('Expanded chart keyboard focus (CW-098, WCAG 2.4.3)',()=>{
+  const items=['range-7d','range-30d','close','details'] as const;
+  it('wraps Tab from the last control to the first and Shift+Tab from the first to the last',()=>{
+    expect(wrapExpandedChartFocus(items,'details',false)).toBe('range-7d');
+    expect(wrapExpandedChartFocus(items,'range-7d',true)).toBe('details');
+  });
+  it('leaves Tab to the browser inside the chart and pulls focus back from outside it',()=>{
+    expect(wrapExpandedChartFocus(items,'range-30d',false)).toBeNull();
+    expect(wrapExpandedChartFocus(items,'close',true)).toBeNull();
+    expect(wrapExpandedChartFocus(items,'swap',false)).toBe('range-7d');
+    expect(wrapExpandedChartFocus(items,null,true)).toBe('details');
+    expect(wrapExpandedChartFocus([],'swap',false)).toBeNull();
   });
 });

@@ -1453,3 +1453,17 @@
   .privacy-connection-facts small) {
   font-size: .75rem;
 }
+
+/* CW-098. Accessibility: fixes from the 17 November audit (APP/reports/accessibility-audit-2026-11-17). */
+/* The P2P tabs lost the shared focus ring: 110 sets outline: 0 and 120 sets box-shadow: none on them. */
+:root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: -2px;
+}
+/* Below 360px the offer list kept 296px of minimum column widths and pushed the Offers panel past a 320px screen. */
+@media (max-width: 359.98px) {
+  :root body .app-shell-trades :is(.p2p-offers-list-head, .p2p-offer-rate-row) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.86fr) minmax(0, 0.8fr) 54px;
+  }
+  :root body .app-shell-trades :is(.p2p-offers-list-head, .p2p-offer-rate-row) > * { min-width: 0; overflow-wrap: anywhere; }
+}
