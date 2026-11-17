@@ -73,6 +73,10 @@ describe('P2P states and layout', () => {
     expect(meta).not.toContain('217, 211, 255');
   });
 
+  it('draws no fill behind the contract link row: only the picker trigger has a box', () => {
+    expect(rule(':root body .app-shell-trades :is(.trade-compose-asset-field, .trade-token-select) {')).toContain('background: transparent;');
+  });
+
   it('uses the 12 px text floor in the offer filter and no new hex values', () => {
     expect(rule('.p2p-offers-filter-heading > span')).toContain('font-size: .75rem;');
     expect(block()).not.toMatch(/#[0-9a-f]{3,8}\b/iu);

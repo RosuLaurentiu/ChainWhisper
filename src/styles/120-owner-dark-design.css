@@ -1346,6 +1346,9 @@
   font-weight: 600;
 }
 :root body .app-shell-trades .trade-token-select-state a:is(:hover, :focus-visible) { color: var(--text-secondary); text-decoration: underline; }
+/* The picker wrapper and its field label had their own fills (a translucent dark and --surface-base) that showed
+   as a band behind the contract link row. Only the trigger draws a box; the row under it is plain text. */
+:root body .app-shell-trades :is(.trade-compose-asset-field, .trade-token-select) { background: transparent; }
 
 /* Not connected is a normal state: a neutral note, as the Chat "Wallet needed" card. */
 :root body .app-shell-trades .p2p-market-status.p2p-market-status-note { color: var(--text-secondary); }
