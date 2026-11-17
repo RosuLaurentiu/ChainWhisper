@@ -1034,7 +1034,7 @@ describe('revocable shared signer leases', () => {
         return COTI_NETWORK.chainIdHex;
       }
       if (method === 'wallet_getSnaps') {
-        return { [snapId]: {} };
+        return { [snapId]: { version: '1.0.54-8a5cfb', enabled: true, blocked: false } };
       }
       if (method === 'wallet_requestSnaps') {
         return { [snapId]: {} };

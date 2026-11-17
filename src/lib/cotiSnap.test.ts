@@ -14,6 +14,7 @@ import {
 import type { Eip1193Provider } from './appShared';
 
 const snapId = 'npm:@coti-io/coti-snap';
+const currentSnap = { id: snapId, version: '1.0.54-8a5cfb', enabled: true, blocked: false };
 
 type ProviderRequest = {
   method: string;
@@ -91,7 +92,7 @@ describe('detectWalletSnapCapability', () => {
       detectWalletSnapCapability(
         providerWithFlags(({ method }) => {
           requestedMethods.push(method);
-          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
           return null;
         }, { isMetaMask: true }),
         'Mozilla/5.0 (Linux; Android 14) Mobile MetaMaskMobile'
@@ -121,7 +122,7 @@ describe('getCotiSnapAesStatus', () => {
     await expect(
       getCotiSnapAesStatus(
         provider(({ method }) => {
-          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
           return null;
         })
       )
@@ -143,7 +144,7 @@ describe('getCotiSnapAesStatus', () => {
     const invokedMethods: string[] = [];
     await getCotiSnapAesStatus(
       provider(({ method, params }) => {
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap') {
           invokedMethods.push(params?.request?.method ?? '');
           return true;
@@ -162,7 +163,7 @@ describe('getCotiSnapAesKey', () => {
     const invokedParams: Array<Record<string, unknown> | undefined> = [];
     const aesKey = await getCotiSnapAesKeyResult(
       provider(({ method, params }) => {
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap') {
           const snapMethod = params?.request?.method ?? '';
           invokedMethods.push(snapMethod);
@@ -177,13 +178,17 @@ describe('getCotiSnapAesKey', () => {
 
     expect(aesKey).toEqual({ status: 'ready', aesKey: 'aes-key' });
     expect(invokedMethods).toEqual(['connect-to-wallet', 'has-aes-key', 'get-aes-key']);
-    expect(invokedParams).toEqual([undefined, { chainId: '2632500' }, { chainId: '2632500' }]);
+    expect(invokedParams).toEqual([
+      undefined,
+      { address: '0x1111111111111111111111111111111111111111', chainId: '2632500' },
+      { address: '0x1111111111111111111111111111111111111111', chainId: '2632500' }
+    ]);
   });
 
   it('returns rejected instead of reading stale AES when Snap wallet sync fails', async () => {
     const aesKey = await getCotiSnapAesKeyResult(
       provider(({ method, params }) => {
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') {
           throw Object.assign(new Error('rejected'), { code: 4001 });
         }
@@ -201,7 +206,7 @@ describe('getCotiSnapAesKey', () => {
     const aesKey = await getCotiSnapAesKeyResult(
       provider(({ method, params }) => {
         if (method === 'eth_accounts') return ['0x2222222222222222222222222222222222222222'];
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap') {
           invokedMethods.push(params?.request?.method ?? '');
         }
@@ -224,7 +229,7 @@ describe('getCotiSnapAesKey', () => {
             ? ['0x2222222222222222222222222222222222222222']
             : ['0x1111111111111111111111111111111111111111'];
         }
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap') {
           const snapMethod = params?.request?.method ?? '';
           invokedMethods.push(snapMethod);
@@ -248,7 +253,7 @@ describe('getCotiSnapAesKey', () => {
     const aesKey = await getCotiSnapAesKeyResult(
       provider(({ method }) => {
         if (method === 'eth_chainId') return '0x1';
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         return null;
       }),
       { walletAddress: '0x1111111111111111111111111111111111111111' }
@@ -261,7 +266,7 @@ describe('getCotiSnapAesKey', () => {
     await expect(
       getCotiSnapAesKey(
         provider(({ method, params }) => {
-          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return false;
           return null;
@@ -336,7 +341,7 @@ describe('getCotiSnapAesKey', () => {
           requestedMethods.push(method);
           if (method === 'eth_accounts') return ['0x1111111111111111111111111111111111111111'];
           if (method === 'eth_chainId') return '0x282b34';
-          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return true;
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'get-aes-key') return 'mobile-emulated-aes';
@@ -360,7 +365,7 @@ describe('getCotiSnapOwnerAesKeyResult', () => {
     await expect(
       getCotiSnapOwnerAesKeyResult(
         provider(({ method, params }) => {
-          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return true;
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'get-aes-key') return ' owner-aes ';
@@ -375,7 +380,7 @@ describe('getCotiSnapOwnerAesKeyResult', () => {
     await expect(
       getCotiSnapOwnerAesKeyResult(
         provider(({ method, params }) => {
-          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
           if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return false;
           return null;
@@ -384,7 +389,7 @@ describe('getCotiSnapOwnerAesKeyResult', () => {
       )
     ).resolves.toEqual({ status: 'snap-missing-aes' });
 
-    expect(getCotiSnapOwnerAesStatusMessage('snap-missing-aes')).toContain('onboard this owner wallet');
+    expect(getCotiSnapOwnerAesStatusMessage('snap-missing-aes')).toContain('metamask.coti.io');
   });
 });
 
@@ -402,7 +407,7 @@ describe('storeCotiSnapAesKey', () => {
     await expect(
       storeCotiSnapAesKeyResult(
         provider(({ method, params }) => {
-          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
           if (method === 'wallet_invokeSnap') {
             invokedMethods.push(params?.request?.method ?? '');
             return true;
@@ -422,7 +427,7 @@ describe('storeCotiSnapAesKey', () => {
     const invokedMethods: string[] = [];
     await storeCotiSnapAesKey(
       provider(({ method, params }) => {
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap') {
           invokedMethods.push(params?.request?.method ?? '');
           return true;
@@ -443,7 +448,7 @@ describe('deleteCotiSnapAesKeyResult', () => {
     await expect(
       deleteCotiSnapAesKeyResult(
         provider(({ method, params }) => {
-        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap') {
           invokedMethods.push(params?.request?.method ?? '');
           return true;
@@ -455,5 +460,106 @@ describe('deleteCotiSnapAesKeyResult', () => {
     ).resolves.toBe('ready');
 
     expect(invokedMethods).toEqual(['connect-to-wallet', 'delete-aes-key']);
+  });
+});
+
+describe('COTI Snap minimum version', () => {
+  const wallet = '0x1111111111111111111111111111111111111111';
+
+  it('asks MetaMask to update an installed Snap that is older than the minimum version', async () => {
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    let installed: Record<string, unknown> = { id: snapId, version: '1.0.52-eeccdb', enabled: true, blocked: false };
+    const aesKey = await getCotiSnapAesKeyResult(
+      provider((request) => {
+        requests.push(request);
+        if (request.method === 'wallet_getSnaps') return { [snapId]: installed };
+        if (request.method === 'wallet_requestSnaps') {
+          installed = { ...currentSnap };
+          return { [snapId]: installed };
+        }
+        if (request.method === 'wallet_invokeSnap') {
+          if (request.params?.request?.method === 'get-aes-key') return 'updated-aes';
+          return true;
+        }
+        return null;
+      }),
+      { expectedChainId: 2632500, walletAddress: wallet }
+    );
+
+    expect(aesKey).toEqual({ status: 'ready', aesKey: 'updated-aes' });
+    const install = requests.find((request) => request.method === 'wallet_requestSnaps');
+    expect(install?.params).toEqual({ [snapId]: { version: '>=1.0.54-8a5cfb' } });
+  });
+
+  it('requests the minimum Snap version for a new install', async () => {
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    await getCotiSnapAesKeyResult(
+      provider((request) => {
+        requests.push(request);
+        if (request.method === 'wallet_getSnaps') return {};
+        if (request.method === 'wallet_requestSnaps') return { [snapId]: currentSnap };
+        if (request.method === 'wallet_invokeSnap') return request.params?.request?.method === 'get-aes-key' ? 'k' : true;
+        return null;
+      }),
+      { expectedChainId: 2632500, walletAddress: wallet }
+    );
+
+    const install = requests.find((request) => request.method === 'wallet_requestSnaps');
+    expect(install?.params).toEqual({ [snapId]: { version: '>=1.0.54-8a5cfb' } });
+  });
+
+  it('does not read AES from an outdated Snap that MetaMask did not update', async () => {
+    const invokedMethods: string[] = [];
+    const aesKey = await getCotiSnapAesKeyResult(
+      provider((request) => {
+        if (request.method === 'wallet_getSnaps') return { [snapId]: { ...currentSnap, version: '1.0.29-f8a26a' } };
+        if (request.method === 'wallet_requestSnaps') throw new Error('Snap update failed');
+        if (request.method === 'wallet_invokeSnap') {
+          invokedMethods.push(request.params?.request?.method ?? '');
+          return true;
+        }
+        return null;
+      }),
+      { expectedChainId: 2632500, walletAddress: wallet }
+    );
+
+    expect(aesKey).toEqual({ status: 'outdated' });
+    expect(invokedMethods).toEqual([]);
+  });
+
+  it('maps an outdated Snap to an owner update message', async () => {
+    await expect(
+      getCotiSnapOwnerAesKeyResult(
+        provider((request) => {
+          if (request.method === 'wallet_getSnaps') return { [snapId]: { ...currentSnap, version: '1.0.0' } };
+          if (request.method === 'wallet_requestSnaps') return { [snapId]: { ...currentSnap, version: '1.0.0' } };
+          return request.method === 'wallet_invokeSnap' ? true : null;
+        }),
+        wallet,
+        { expectedChainId: 2632500 }
+      )
+    ).resolves.toEqual({ status: 'snap-outdated' });
+    expect(getCotiSnapOwnerAesStatusMessage('snap-outdated')).toContain('1.0.54');
+  });
+
+  it('passes the App wallet address when storing and deleting AES', async () => {
+    const invokedParams: Array<Record<string, unknown> | undefined> = [];
+    const snapProvider = provider((request) => {
+      if (request.method === 'wallet_getSnaps') return { [snapId]: currentSnap };
+      if (request.method === 'wallet_invokeSnap') {
+        invokedParams.push(request.params?.request?.params);
+        return true;
+      }
+      return null;
+    });
+    await storeCotiSnapAesKeyResult(snapProvider, 'aes-key', { expectedChainId: 2632500, walletAddress: wallet.toUpperCase().replace('0X', '0x') });
+    await deleteCotiSnapAesKeyResult(snapProvider, { expectedChainId: 2632500, walletAddress: wallet });
+
+    expect(invokedParams).toEqual([
+      undefined,
+      { newUserAesKey: 'aes-key', address: wallet, chainId: '2632500' },
+      undefined,
+      { address: wallet, chainId: '2632500' }
+    ]);
   });
 });

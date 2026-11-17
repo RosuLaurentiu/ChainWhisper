@@ -492,6 +492,9 @@ const getPrivacyFallbackUnavailableMessage = (reason: PrivacyFallbackReason): st
   if (reason === 'missing-aes') {
     return getCotiSnapOwnerAesStatusMessage('snap-missing-aes');
   }
+  if (reason === 'outdated') {
+    return getCotiSnapOwnerAesStatusMessage('snap-outdated');
+  }
   if (reason === 'unrecoverable') {
     return 'Privacy recovery data is incomplete. Retry privacy setup to create a fresh owner key.';
   }
