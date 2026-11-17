@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const https = require('node:https');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { createRequire } = require('node:module');
@@ -14,6 +15,40 @@ const readMethods = new Set(['eth_chainId','eth_blockNumber','eth_getBlockByNumb
   'eth_getTransactionByHash','eth_getTransactionReceipt','eth_call','eth_getCode','eth_gasPrice',
   'eth_getStorageAt','eth_getBalance','eth_getTransactionCount','eth_estimateGas','eth_getProof']);
 const safeMethod = name => readMethods.has(name) || name === 'eth_sendRawTransaction' ? name : 'other';
+// CW-102: one failed read must not stop the group. Reads only, at most three retries, each through the
+// same admission. A broadcast, a batch with a broadcast and any unknown method are never retried.
+// A caller may only shorten or remove delays (tests); it cannot add attempts.
+const readRetry = Object.freeze({ delaysMs: Object.freeze([1000, 4000, 16000]), maximumRetryAfterMs: 300_000 });
+// The endpoint keeps an idle connection for more than 200 s (CW-102 host probe); Node drops it after 5 s,
+// so a service with a 5 s cycle opened a new TLS connection almost every cycle.
+const keepAliveIdleMs = 60_000;
+const safeText = (value, pattern) => typeof value === 'string' && pattern.test(value) ? value : null;
+// Only the error class: a Node/ethers code and syscall. Never a message, payload or address.
+function transportCause(error) {
+  for (let item = error, depth = 0; item && typeof item === 'object' && depth < 3; item = item.cause ?? item.error, depth++) {
+    const code = safeText(item.code, /^[A-Z][A-Z0-9_]{1,47}$/);
+    if (code) return { code, syscall: safeText(item.syscall, /^[a-z]{1,24}$/) };
+  }
+  return { code: null, syscall: null };
+}
+// Review H1: ethers' getUrl rejects on its own timeout but leaves the request open, so a TIMEOUT,
+// CANCELLED or unknown error may still be in flight. Retry only errors after which Node has destroyed the
+// socket or never connected. A response timeout is never retried.
+const settledTransportCodes = /^(ECONNRESET|ECONNREFUSED|ECONNABORTED|EPIPE|ETIMEDOUT|ENETUNREACH|ENETDOWN|EHOSTUNREACH|EAI_AGAIN|ENOTFOUND|ERR_SSL_[A-Z0-9_]+|ERR_TLS_[A-Z0-9_]+)$/;
+function retryAfterMs(headers) {
+  const entry = Object.entries(headers ?? {}).find(([name]) => name.toLowerCase() === 'retry-after');
+  const value = typeof entry?.[1] === 'string' ? entry[1].trim() : '';
+  if (/^[0-9]{1,9}$/.test(value)) return Number(value) * 1000;
+  const at = value ? Date.parse(value) : NaN;
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
+}
+function checkRetryPolicy(retry) {
+  assert(Array.isArray(retry?.delaysMs) && retry.delaysMs.length <= readRetry.delaysMs.length &&
+    retry.delaysMs.every((delay, index) => Number.isFinite(delay) && delay >= 0 && delay <= readRetry.delaysMs[index]) &&
+    Number.isFinite(retry.maximumRetryAfterMs) && retry.maximumRetryAfterMs >= 0 &&
+    retry.maximumRetryAfterMs <= readRetry.maximumRetryAfterMs, 'DEX_RPC_RETRY_POLICY');
+  return Object.freeze({ delaysMs: Object.freeze([...retry.delaysMs]), maximumRetryAfterMs: retry.maximumRetryAfterMs });
+}
 function safeProviderIds(headers) {
   const ids = {};
   for (const [name, value] of Object.entries(headers ?? {})) {
@@ -40,10 +75,12 @@ function createManagedAdmission(service, target = process) {
   assert(['keeper', 'prices', 'matching', 'c1'].includes(service), 'DEX_RPC_SERVICE');
   assert(target.connected && typeof target.send === 'function', 'DEX_RPC_IPC_UNAVAILABLE');
   let pending = null, sequence = 0, stopped = null;
+  const waiters = new Set();
   const clear = row => { clearTimeout(row.timer); if (pending === row) pending = null; };
   const stop = code => {
     stopped ??= code;
     if (pending?.phase === 'queued') { const row = pending; clear(row); row.reject(Error(stopped)); }
+    for (const wake of [...waiters]) wake();
   };
   const send = message => {
     try {
@@ -76,7 +113,8 @@ function createManagedAdmission(service, target = process) {
     if (!pending && !stopped) send({ type: 'CHAINWHISPER_RPC_IDLE_EXIT', id: sequence + 1 });
   });
   const admission = {
-    acquire(expires, onCancel) {
+    get stopped() { return stopped; },
+    acquire(expires, onCancel, read = false, broadcast = false) {
       assert(!stopped && target.connected && !pending, stopped ?? 'DEX_RPC_IPC_UNAVAILABLE');
       const queueMs = expires - performance.now();
       assert(queueMs > 0, 'DEX_RPC_QUEUE_TIMEOUT');
@@ -90,7 +128,23 @@ function createManagedAdmission(service, target = process) {
         };
         row.timer = setTimeout(cancel, Math.ceil(queueMs));
         onCancel?.(cancel);
-        send({ type: 'CHAINWHISPER_RPC_REQUEST', id: row.id, queueMs });
+        // The supervisor holds reads during a refusal cool-down and refuses a retry of a non-read.
+        send({ type: 'CHAINWHISPER_RPC_REQUEST', id: row.id, queueMs, read: read === true, send: broadcast === true });
+      });
+    },
+    // A settled read attempt that the child retries later through a new admission.
+    retry(row, { code, statusCode, waitMs }) {
+      assert(pending === row && row.phase === 'started', 'DEX_RPC_IPC_PROTOCOL');
+      clear(row);
+      assert(send({ type: 'CHAINWHISPER_RPC_RETRY', id: row.id, code, waitMs,
+        ...(statusCode === undefined ? {} : { statusCode }) }), 'DEX_RPC_IPC_UNAVAILABLE');
+    },
+    // Retry backoff; a group stop ends it at once so the child can exit.
+    pause(ms) {
+      return new Promise(resolve => {
+        if (stopped) { resolve(); return; }
+        const wake = () => { clearTimeout(timer); waiters.delete(wake); resolve(); };
+        const timer = setTimeout(wake, ms); waiters.add(wake);
       });
     },
     assertCurrent(row) {
@@ -126,20 +180,26 @@ function createManagedAdmission(service, target = process) {
   return admission;
 }
 
-function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = null, readBatches = false) {
+function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = null, readBatches = false, options = {}) {
   assert([0, 500, 334].includes(gapMs), 'DEX_RPC_RATE');
   assert.equal(typeof readBatches, 'boolean', 'DEX_RPC_BATCH_POLICY');
+  const retry = checkRetryPolicy(options.retry ?? readRetry);
+  const connections = typeof options.connections === 'function' ? options.connections : null;
   const managed = managedServices.has(admission);
   if (managed) gapMs = 0;
   let outstanding = 0;
   let tail = Promise.resolve(), last = null, stopped = null, requests = 0, minimumGapMs = null, lastFailure = null;
   let grants = 0, physicalSettled = 0, physicalPending = 0, unresolved = 0, expired = 0, cancelled = 0, rpcCalls = 0;
   const methods = {}, statuses = {}, started = performance.now();
+  // Retried attempts. `statuses` still counts every physical response; `lastFailure` only a final failure.
+  const retries = { total: 0, byCode: {}, last: null };
   const code = error => {
     const name = String(error?.message ?? '').split(/\r?\n/, 1)[0];
     return /^DEX_RPC_[A-Z0-9_]+$/.test(name) ? name : 'DEX_RPC_TRANSPORT_STOP';
   };
-  function send(request, signal, item, expires, responseTimeoutMs, allRead) {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const retryMarker = Symbol('retry');
+  function send(request, signal, item, expires, responseTimeoutMs, allRead, attempt = 0) {
     // Four clients, one outstanding admission each: three peers can precede this
     // client; each earlier local work item can add itself and three peer turns.
     if (managed && allRead && responseTimeoutMs > 0 && responseTimeoutMs <= managedResponseCeilingMs)
@@ -159,11 +219,18 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
     queueTimer = setTimeout(() => cancelQueue(true), Math.max(1, Math.ceil(expires - performance.now())));
     const work = tail.then(async () => {
       let lease = null, invoked = false, settled = false, statusCode, responseTimer, response, phase = 'queued', methodNames = [];
+      let transportError = null, transportFailed = false, startedAt = null, failedAt = null, connectionsBefore = null;
       const details = () => ({ method: methodNames.length === 1 ? methodNames[0] : methodNames.length ? 'batch' : null,
         methods: [...methodNames], phase, status: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null,
         providerIds: safeProviderIds(response?.headers) });
+      // CW-102: the error class of a failed transport, so a host record names its cause.
+      const cause = () => transportFailed ? { cause: { ...transportCause(transportError),
+        newConnection: connections && connectionsBefore !== null && !methodNames.includes('eth_sendRawTransaction') ? connections() > connectionsBefore : null,
+        transportMs: Math.round((failedAt ?? performance.now()) - startedAt) } } : {};
       try {
         if (stopped) throw Error(stopped);
+        // A group stop during a retry backoff ends the request before any local spacing wait.
+        if (admission?.stopped) throw Error(admission.stopped);
         if (queueExpired) throw Error(queueReason);
         checkSource();
         const check = () => {
@@ -178,69 +245,100 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
         else assert(item?.jsonrpc === '2.0' && typeof item.method === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(item.method) && item.id !== undefined, 'DEX_RPC_PAYLOAD');
         methodNames = [...new Set(items.map(value => safeMethod(value.method)))];
         assert(Number.isFinite(responseTimeoutMs) && responseTimeoutMs > 0 && responseTimeoutMs <= (managed ? managedResponseCeilingMs : 2_147_483_647), 'DEX_RPC_TIMEOUT_POLICY');
-        while (last !== null && performance.now() - last < gapMs) {
-          const delay = Math.ceil(gapMs - (performance.now() - last));
-          if (performance.now() + delay >= expires) throw Error('DEX_RPC_QUEUE_TIMEOUT');
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-        check();
-        if (admission) { lease = await admission.acquire(expires, cancel => { cancelAdmission = cancel; }); grants++; }
-        checkSource(); check();
-        assert(request.url === endpoint, 'DEX_RPC_ENDPOINT');
-        if (admission) admission.assertCurrent(lease);
-        const single = request.clone(); single.body = JSON.stringify(item);
-        // Admission expiry does not consume the physical request's finite response budget.
-        single.timeout = responseTimeoutMs;
-        const now = performance.now();
-        if (last !== null) minimumGapMs = Math.min(minimumGapMs ?? Infinity, now - last);
-        last = now; requests++; rpcCalls += items.length;
-        for (const value of items) { const method = safeMethod(value.method); methods[method] = (methods[method] ?? 0) + 1; }
-        entered = true; invoked = true; physicalPending++; clearTimeout(queueTimer);
-        const deadline = new Promise((_, reject) => {
-          responseTimer = setTimeout(() => reject(Error('DEX_RPC_RESPONSE_TIMEOUT')), single.timeout);
-        });
-        phase = 'transport';
-        let transport;
-        try { transport = Promise.resolve(getUrl(single, signal)); } catch (error) { transport = Promise.reject(error); }
-        const completed = transport.then(response => {
-          settled = true; physicalPending--; physicalSettled++; statusCode = response.statusCode;
-          statuses[statusCode] = (statuses[statusCode] ?? 0) + 1;
-          if (unresolved && lease) admission.settled(lease, statusCode);
-          return response;
-        }, error => {
-          settled = true; physicalPending--; physicalSettled++;
-          if (unresolved && lease) admission.settled(lease);
-          throw error;
-        });
-        const physical = Promise.race([completed, deadline]);
-        // Keep observing a request even if IPC fails immediately after its physical start.
-        physical.catch(() => {});
-        // Report after invocation, so a delayed child cannot create an early aggregate timestamp.
-        if (admission) assert(admission.started(lease), 'DEX_RPC_IPC_UNAVAILABLE');
-        response = await physical; phase = 'http-response';
-        // Stop before ethers can retry a refusal or follow a redirect. Never rotate RPCs.
-        assert(response.statusCode === 200, `DEX_RPC_HTTP_${response.statusCode}`);
-        phase = 'rpc-response';
-        const value = decode(response.body);
-        if (Array.isArray(item)) {
-          const replies = value, ids = new Set(items.map(value => value.id));
-          assert(Array.isArray(replies) && replies.length === items.length, 'DEX_RPC_RESPONSE');
-          for (const reply of replies) {
-            assert(reply?.jsonrpc === '2.0' && ids.delete(reply.id) &&
-              Object.hasOwn(reply, 'result') !== Object.hasOwn(reply, 'error'), 'DEX_RPC_RESPONSE');
-            if (Object.hasOwn(reply, 'error')) assert(Number.isInteger(reply.error?.code) && typeof reply.error.message === 'string', 'DEX_RPC_RESPONSE');
+        // Only a request made entirely of listed reads may be retried. Never a broadcast.
+        const readOnly = items.every(value => readMethods.has(value.method)), broadcast = items.some(value => value.method === 'eth_sendRawTransaction');
+        const attemptOnce = async () => {
+          while (last !== null && performance.now() - last < gapMs) {
+            const delay = Math.ceil(gapMs - (performance.now() - last));
+            if (performance.now() + delay >= expires) throw Error('DEX_RPC_QUEUE_TIMEOUT');
+            await sleep(delay);
           }
-        } else assert(value?.jsonrpc === '2.0' && value.id === item.id, 'DEX_RPC_RESPONSE');
-        const failed = (Array.isArray(item) ? value : [value]).find(reply => Number.isSafeInteger(reply?.error?.code));
-        if (failed) {
-          const method = safeMethod(items.find(request => request.id === failed.id)?.method);
-          lastFailure = { code: 'DEX_RPC_ERROR_RESPONSE', ...details(), ...(method ? { method, methods: [method] } : {}), rpcCode: failed.error.code };
+          check();
+          if (admission) { lease = await admission.acquire(expires, cancel => { cancelAdmission = cancel; }, readOnly, broadcast); grants++; }
+          checkSource(); check();
+          assert(request.url === endpoint, 'DEX_RPC_ENDPOINT');
+          if (admission) admission.assertCurrent(lease);
+          const single = request.clone(); single.body = JSON.stringify(item);
+          // Admission expiry does not consume the physical request's finite response budget.
+          single.timeout = responseTimeoutMs;
+          const now = performance.now();
+          if (last !== null) minimumGapMs = Math.min(minimumGapMs ?? Infinity, now - last);
+          last = now; requests++; rpcCalls += items.length;
+          for (const value of items) { const method = safeMethod(value.method); methods[method] = (methods[method] ?? 0) + 1; }
+          entered = true; invoked = true; physicalPending++; clearTimeout(queueTimer);
+          const deadline = new Promise((_, reject) => {
+            responseTimer = setTimeout(() => reject(Error('DEX_RPC_RESPONSE_TIMEOUT')), single.timeout);
+          });
+          phase = 'transport'; startedAt = performance.now(); connectionsBefore = connections?.() ?? null;
+          let transport;
+          try { transport = Promise.resolve(getUrl(single, signal)); } catch (error) { transport = Promise.reject(error); }
+          const row = lease;
+          const completed = transport.then(response => {
+            settled = true; physicalPending--; physicalSettled++; statusCode = response.statusCode;
+            statuses[statusCode] = (statuses[statusCode] ?? 0) + 1;
+            if (unresolved && row) admission.settled(row, statusCode);
+            return response;
+          }, error => {
+            settled = true; physicalPending--; physicalSettled++;
+            transportFailed = true; transportError = error; failedAt = performance.now();
+            if (unresolved && row) admission.settled(row);
+            throw error;
+          });
+          const physical = Promise.race([completed, deadline]);
+          // Keep observing a request even if IPC fails immediately after its physical start.
+          physical.catch(() => {});
+          // Report after invocation, so a delayed child cannot create an early aggregate timestamp.
+          if (admission) assert(admission.started(lease), 'DEX_RPC_IPC_UNAVAILABLE');
+          response = await physical; phase = 'http-response';
+          // Stop before ethers can retry a refusal or follow a redirect. Never rotate RPCs.
+          assert(response.statusCode === 200, `DEX_RPC_HTTP_${response.statusCode}`);
+          phase = 'rpc-response';
+          const value = decode(response.body);
+          if (Array.isArray(item)) {
+            const replies = value, ids = new Set(items.map(value => value.id));
+            assert(Array.isArray(replies) && replies.length === items.length, 'DEX_RPC_RESPONSE');
+            for (const reply of replies) {
+              assert(reply?.jsonrpc === '2.0' && ids.delete(reply.id) &&
+                Object.hasOwn(reply, 'result') !== Object.hasOwn(reply, 'error'), 'DEX_RPC_RESPONSE');
+              if (Object.hasOwn(reply, 'error')) assert(Number.isInteger(reply.error?.code) && typeof reply.error.message === 'string', 'DEX_RPC_RESPONSE');
+            }
+          } else assert(value?.jsonrpc === '2.0' && value.id === item.id, 'DEX_RPC_RESPONSE');
+          const failed = (Array.isArray(item) ? value : [value]).find(reply => Number.isSafeInteger(reply?.error?.code));
+          if (failed) {
+            const method = safeMethod(items.find(request => request.id === failed.id)?.method);
+            lastFailure = { code: 'DEX_RPC_ERROR_RESPONSE', ...details(), ...(method ? { method, methods: [method] } : {}), rpcCode: failed.error.code };
+          }
+          admission?.response(lease, statusCode);
+          return response;
+        };
+        // The wait before the next attempt, or null when this failure must stop as before.
+        const retryWait = reason => {
+          if (stopped || !readOnly || !invoked || attempt >= retry.delaysMs.length) return null;
+          if (admission && (!lease || typeof admission.retry !== 'function' || admission.stopped)) return null;
+          let after = 0;
+          if (reason === 'DEX_RPC_TRANSPORT_STOP') {
+            if (!transportFailed || phase !== 'transport' || !settledTransportCodes.test(transportCause(transportError).code ?? '')) return null;
+          } else {
+            const status = Number(/^DEX_RPC_HTTP_([0-9]{3})$/.exec(reason)?.[1]);
+            if (status !== statusCode || phase !== 'http-response') return null;
+            // A 403 is a refusal of the whole client: only the supervisor can cool down all four services.
+            if (status === 403 ? !admission : status !== 429 && (status < 500 || status > 599)) return null;
+            after = retryAfterMs(response?.headers);
+          }
+          if (after > retry.maximumRetryAfterMs) return null;
+          return Math.max(retry.delaysMs[attempt], after);
+        };
+        try { return await attemptOnce(); } catch (error) {
+          const reason = code(error), waitMs = retryWait(reason);
+          if (waitMs === null) throw error;
+          retries.total++; retries.byCode[reason] = (retries.byCode[reason] ?? 0) + 1;
+          retries.last = { code: reason, ...details(), ...cause(), attempt: attempt + 1, waitMs };
+          if (admission) admission.retry(lease, { code: reason, statusCode, waitMs });
+          return { [retryMarker]: waitMs };
         }
-        admission?.response(lease, statusCode);
-        return response;
       } catch (error) {
         const reason = code(error);
-        if (!stopped) lastFailure = { code: reason, ...details() };
+        if (!stopped) lastFailure = { code: reason, ...details(), ...cause() };
         if (!invoked && ['DEX_RPC_QUEUE_TIMEOUT', 'DEX_RPC_CANCELLED'].includes(reason)) {
           if (reason === 'DEX_RPC_QUEUE_TIMEOUT' && !queueCounted) { expired++; queueCounted = true; }
           if (reason === 'DEX_RPC_CANCELLED') cancelled++;
@@ -255,7 +353,12 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
     });
     tail = work.catch(() => {});
     try { signal.addListener?.(() => cancelQueue(false)); } catch { cancelQueue(false); }
-    return Promise.race([work, queueDeadline]);
+    // The settled attempt has left the FIFO; later requests of this service run during the backoff.
+    return Promise.race([work, queueDeadline]).then(async value => {
+      if (value?.[retryMarker] === undefined) return value;
+      await (admission?.pause ? admission.pause(value[retryMarker]) : sleep(value[retryMarker]));
+      return send(request, signal, item, performance.now() + responseTimeoutMs, responseTimeoutMs, allRead, attempt + 1);
+    });
   }
   return {
     async getUrl(request, signal) {
@@ -281,8 +384,19 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
       ...(lastFailure ? { lastFailure: structuredClone(lastFailure) } : {}),
       expired, cancelled, methods: { ...methods }, statuses: { ...statuses }, minimumGapMs,
       intervalMs: gapMs, localIntervalMs: gapMs, managed: Boolean(admission),
-      maximumInFlight: 1, elapsedMs: Math.round(performance.now() - started), stopped })
+      maximumInFlight: 1, elapsedMs: Math.round(performance.now() - started), stopped,
+      retries: structuredClone(retries), readRetry: { delaysMs: [...retry.delaysMs], maximumRetryAfterMs: retry.maximumRetryAfterMs },
+      connections: connections?.() ?? null })
   };
+}
+
+// CW-102: one keep-alive agent per service process. It counts new connections for the traffic record.
+function createAgent() {
+  let created = 0;
+  class CountingAgent extends https.Agent {
+    createConnection(...args) { created++; return super.createConnection(...args); }
+  }
+  return { agent: new CountingAgent({ keepAlive: true, keepAliveMsecs: 1000, timeout: keepAliveIdleMs }), connections: () => created };
 }
 
 let active;
@@ -300,13 +414,18 @@ function install(service) {
   assert(!process.connected || managed === service, 'DEX_RPC_CHILD_IDENTITY');
   assert(!managed || managed === service, 'DEX_RPC_CHILD_IDENTITY');
   const admission = managed ? createManagedAdmission(service) : null;
-  const pacing = createPacing(FetchRequest.createGetUrlFunc(), service === 'keeper' ? 0 : service === 'c1' ? 334 : 500, check, admission, service === 'keeper');
+  const { agent, connections } = createAgent();
+  const readUrl = FetchRequest.createGetUrlFunc({ agent }), sendUrl = FetchRequest.createGetUrlFunc();
+  // Review L4: a broadcast never reuses a long-idle socket; it keeps the previous default agent.
+  const getUrl = (request, signal) => (decode(request.body)?.method === 'eth_sendRawTransaction' ? sendUrl : readUrl)(request, signal);
+  const pacing = createPacing(getUrl, service === 'keeper' ? 0 : service === 'c1' ? 334 : 500, check, admission,
+    service === 'keeper', { connections });
   // Process-wide: includes separate provider instances, polling and broadcasts.
   for (const cls of classes) cls.registerGetUrl(pacing.getUrl);
   active = { service, pacing };
 }
 const stats = () => active ? { service: active.service, ...active.pacing.stats() } : null;
-module.exports = { createPacing, createManagedAdmission, install, stats };
+module.exports = { createPacing, createManagedAdmission, createAgent, install, stats, readRetry, keepAliveIdleMs };
 
 // Node --require keeps historical, source-bound service entries unchanged.
 const selected = /^current-dex-(keeper|prices|matching|c1)\.cjs$/.exec(path.basename(process.argv[1] ?? ''));

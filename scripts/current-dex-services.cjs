@@ -12,6 +12,17 @@ const pacing = path.join(__dirname, 'current-dex-rpc-pacing.cjs');
 const stopBridge = path.join(__dirname, 'current-dex-service-stop.cjs');
 const maximumNewWorkMs = 15 * 60 * 1000;
 const serviceIntervals = { keeper: 0, prices: 0, matching: 0, c1: 0 };
+// Sustained back-to-back reads reached about 44 starts per second for five minutes
+// on 2026-11-15 and the endpoint answered HTTP 403. Bursts stay unspaced.
+const aggregateStartLimit = Object.freeze({ burstStarts: 600, startsPerSecond: 20 });
+// CW-102: a 403 refuses the whole client, so it cools down every read of all four services.
+// After the listed cool-downs, a further 403 inside the window stops the group as before. The two cool-downs
+// (8 min in all) stay below the 10 min keeper-accounting and 15 min price-process bounds of the services.
+// A retried read's wait (429 Retry-After included) is bounded by the child's retry policy.
+const refusalCoolDown = Object.freeze({ cooldownMs: Object.freeze([3 * 60_000, 5 * 60_000]), windowMs: 2 * 60 * 60_000 });
+const maximumRetryWaitMs = 300_000;
+// A response timeout is never retried: ethers leaves the timed-out request open (CW-102 review H1).
+const retryCodes = /^DEX_RPC_(TRANSPORT_STOP|HTTP_(403|429|5[0-9]{2}))$/;
 const operatingServices = {
   keeper: { maximumRuns: 1, feeLimitWei: '880000000000000000' },
   prices: { maximumRuns: 2, feeLimitWei: '306000000000000000' },
@@ -62,10 +73,21 @@ function serviceSourcePins() {
   };
 }
 
-function createRpcAdmission({ onStop, onChange = () => {}, checkSource = () => {} }) {
+function createRpcAdmission({ onStop, onChange = () => {}, checkSource = () => {}, startLimit = aggregateStartLimit, refusal = refusalCoolDown }) {
+  // A caller may tighten the limit; it cannot exceed the reviewed default.
+  assert(Number.isSafeInteger(startLimit?.burstStarts) && startLimit.burstStarts > 0 && startLimit.burstStarts <= aggregateStartLimit.burstStarts &&
+    Number.isFinite(startLimit.startsPerSecond) && startLimit.startsPerSecond > 0 && startLimit.startsPerSecond <= aggregateStartLimit.startsPerSecond, 'DEX_RPC_START_LIMIT');
+  const { burstStarts, startsPerSecond } = startLimit;
+  // Tests may shorten the cool-downs; nobody can lengthen them, add cool-downs or change the window.
+  assert(Array.isArray(refusal?.cooldownMs) && refusal.cooldownMs.length > 0 && refusal.cooldownMs.length <= refusalCoolDown.cooldownMs.length &&
+    refusal.cooldownMs.every((ms, index) => Number.isFinite(ms) && ms > 0 && ms <= refusalCoolDown.cooldownMs[index]), 'DEX_RPC_REFUSAL_POLICY');
+  const cooldownMs = Object.freeze([...refusal.cooldownMs]), windowMs = refusalCoolDown.windowMs;
+  let coolUntil = 0, refusalCoolDowns = 0, refusals = [];
+  let allowance = burstStarts, refilledAt = performance.now(), delayedGrants = 0, delayedRow = null;
   const peers = new Map(), queue = [];
+  // `statuses` counts final responses only; a retried attempt counts in `retried` and `retryCodes`.
   const counts = () => ({ requested: 0, grants: 0, physicalStarts: 0, physicalSettled: 0,
-    responses: 0, cancelled: 0, expired: 0, stoppedBeforeStart: 0, statuses: {} });
+    responses: 0, cancelled: 0, expired: 0, stoppedBeforeStart: 0, statuses: {}, retried: 0, retryCodes: {} });
   const total = counts(), perService = Object.fromEntries(names.map(name => [name, counts()]));
   let active = null, stopped = null, timer, lastStart = null, minimumGapMs = null;
   const increment = (name, field) => { total[field]++; perService[name][field]++; };
@@ -76,9 +98,12 @@ function createRpcAdmission({ onStop, onChange = () => {}, checkSource = () => {
     } catch { lost(peer); }
   };
   const snapshot = () => ({ intervalMs: 0, perServiceIntervalMs: { ...serviceIntervals },
-    policy: 'Managed services use one shared FIFO slot without local spacing; no provider rate claim', maximumOccupiedSlots: 1, stopped,
-    ...total, statuses: { ...total.statuses }, perService: Object.fromEntries(names.map(name =>
-      [name, { ...perService[name], statuses: { ...perService[name].statuses } }])),
+    policy: 'Managed services use one shared FIFO slot without local spacing; sustained aggregate starts are bounded; no provider rate claim', maximumOccupiedSlots: 1, stopped,
+    aggregateStartLimit: { burstStarts, startsPerSecond }, delayedGrants,
+    ...total, statuses: { ...total.statuses }, retryCodes: { ...total.retryCodes }, perService: Object.fromEntries(names.map(name =>
+      [name, { ...perService[name], statuses: { ...perService[name].statuses }, retryCodes: { ...perService[name].retryCodes } }])),
+    refusalCoolDown: { cooldownMs: [...cooldownMs], windowMs }, refusalCoolDowns,
+    coolingMs: Math.max(0, Math.ceil(coolUntil - performance.now())),
     minimumGapMs, queued: queue.length, occupiedSlots: active ? 1 : 0,
     reserved: active?.phase === 'reserved' ? 1 : 0,
     physicalInFlight: active?.physicalState === 'pending' ? 1 : 0,
@@ -119,14 +144,26 @@ function createRpcAdmission({ onStop, onChange = () => {}, checkSource = () => {
       send(row.peer, { type: 'CHAINWHISPER_RPC_REJECT', id: row.id, code: 'DEX_RPC_QUEUE_TIMEOUT' });
     }
     if (stopped) return;
+    let startDelay = Infinity;
     if (!active && queue.length) {
-      active = queue.shift(); active.phase = 'reserved'; increment(active.peer.name, 'grants');
-      send(active.peer, { type: 'CHAINWHISPER_RPC_GRANT', id: active.id });
+      allowance = Math.min(burstStarts, allowance + (now - refilledAt) * startsPerSecond / 1000); refilledAt = now;
+      // During a refusal cool-down only a marked broadcast may start; every other request keeps its FIFO order.
+      const coolingMs = coolUntil - now, index = coolingMs > 0 ? queue.findIndex(row => row.send) : 0;
+      if (index < 0) startDelay = coolingMs;
+      else if (allowance >= 1) {
+        allowance -= 1;
+        [active] = queue.splice(index, 1); active.phase = 'reserved'; increment(active.peer.name, 'grants');
+        send(active.peer, { type: 'CHAINWHISPER_RPC_GRANT', id: active.id });
+      } else {
+        // Hold the FIFO head until one start is earned. Queue deadlines still apply.
+        if (delayedRow !== queue[index]) { delayedRow = queue[index]; delayedGrants++; }
+        startDelay = (1 - allowance) * 1000 / startsPerSecond;
+      }
     }
     onChange();
     if (stopped || !queue.length) return;
     const expiry = Math.min(...queue.map(row => row.expires)) - performance.now();
-    timer = setTimeout(drain, Math.max(1, Math.ceil(expiry)));
+    timer = setTimeout(drain, Math.max(1, Math.ceil(Math.min(expiry, startDelay))));
   };
   const response = (row, statusCode) => {
     assert(Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599, 'DEX_RPC_IPC_PROTOCOL');
@@ -148,7 +185,7 @@ function createRpcAdmission({ onStop, onChange = () => {}, checkSource = () => {
         assert(Number.isFinite(message.queueMs) && message.queueMs > 0 && message.queueMs <= 2_147_483_647, 'DEX_RPC_IPC_PROTOCOL');
         checkSource(); peer.lastId = message.id;
         peer.pending = { peer, id: message.id, expires: performance.now() + message.queueMs,
-          phase: 'queued', physicalState: 'not-started' };
+          phase: 'queued', physicalState: 'not-started', read: message.read === true, send: message.send === true && message.read !== true };
         queue.push(peer.pending); increment(peer.name, 'requested'); drain(); return;
       }
       if (message.type === 'CHAINWHISPER_RPC_CANCEL') {
@@ -186,6 +223,26 @@ function createRpcAdmission({ onStop, onChange = () => {}, checkSource = () => {
         assert(stopped && row.phase === 'unresolved' && row.physicalState === 'pending', 'DEX_RPC_IPC_PROTOCOL');
         row.physicalState = 'settled'; increment(peer.name, 'physicalSettled');
         if (message.statusCode !== undefined) response(row, message.statusCode);
+      } else if (message.type === 'CHAINWHISPER_RPC_RETRY') {
+        // CW-102: a settled read attempt that the child repeats through a new admission. Never a send.
+        const status = /^DEX_RPC_HTTP_([0-9]{3})$/.exec(message.code)?.[1];
+        assert(row.read === true && row.phase === 'started' && row.physicalState === 'pending' && retryCodes.test(message.code ?? '') &&
+          (status ? message.statusCode === Number(status) : message.statusCode === undefined) &&
+          Number.isFinite(message.waitMs) && message.waitMs >= 0 && message.waitMs <= maximumRetryWaitMs, 'DEX_RPC_IPC_PROTOCOL');
+        row.physicalState = 'settled'; increment(peer.name, 'physicalSettled');
+        const now = performance.now();
+        if (status === '403' && !stopped) {
+          refusals = refusals.filter(at => now - at < windowMs); refusals.push(now);
+          if (refusals.length > cooldownMs.length) {
+            // The refusal repeated past the bound: this 403 is the final response and stops the group.
+            response(row, 403); peer.pending = null; active = null; fail('DEX_RPC_HTTP_403'); return;
+          }
+          refusalCoolDowns++; coolUntil = Math.max(coolUntil, now + cooldownMs[refusals.length - 1]);
+        } else if (status === '429') coolUntil = Math.max(coolUntil, now + message.waitMs);
+        increment(peer.name, 'retried');
+        total.retryCodes[message.code] = (total.retryCodes[message.code] ?? 0) + 1;
+        perService[peer.name].retryCodes[message.code] = (perService[peer.name].retryCodes[message.code] ?? 0) + 1;
+        peer.pending = null; active = null;
       } else throw Error('DEX_RPC_IPC_PROTOCOL');
       drain(); onChange();
     } catch (error) {
@@ -329,11 +386,13 @@ async function main(args, { spawn = fork, signals = process, readPeriod = readSe
           const errorRows = fs.readFileSync(stderr, 'utf8').split(/\r?\n/).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
           const result = errorRows.findLast(row => name === 'c1' && row.status === 'CURRENT_C1_STOP') ?? rows.findLast(row => row.status && row.status !== 'DEX_RPC_PACING_SUMMARY');
           const counters = admission.stats().perService[name];
-          const requests = counters.physicalStarts - before.physicalStarts;
+          const requests = counters.physicalStarts - before.physicalStarts, retried = counters.retried - before.retried;
+          // CW-102: a retried attempt is settled but has no final response; the child must report the same count.
           const cleanTraffic = traffic?.physicalPending === 0 && traffic.unresolvedOccupancy === 0 &&
             traffic.physicalSettled === requests && counters.physicalSettled - before.physicalSettled === requests &&
-            counters.responses - before.responses === requests &&
-            (counters.statuses[200] ?? 0) - (before.statuses[200] ?? 0) === requests;
+            counters.responses - before.responses + retried === requests &&
+            (counters.statuses[200] ?? 0) - (before.statuses[200] ?? 0) === requests - retried &&
+            (traffic.retries?.total ?? 0) === retried;
           const cleanPriceBoundary = cleanTraffic && name === 'prices' && result?.status === 'CURRENT_DEX_PRICES_WINDOW_STOPPED' && result.reason === 'TIME_BOUND';
           const cleanMatchingBoundary = name === 'matching' && (serving && result?.status === 'MATCH_WINDOW_STOPPED' && result.reason === 'TIME_BOUND' || ['MATCH_WINDOW_PUBLIC_EMPTY_STOPPED','MATCH_WINDOW_PUBLIC_CHANGED_STOPPED'].includes(result?.status) ||
             ['MATCH_WINDOW_IDLE_EMPTY_MARKETS','MATCH_WINDOW_IDLE_PUBLIC_WORK'].includes(result?.status) && result.noSend === true && result.noCredentials === true && result.maximumCommittedWei === '0' && result.actualFeeWei === '0');
@@ -411,7 +470,7 @@ async function main(args, { spawn = fork, signals = process, readPeriod = readSe
   }
 }
 
-module.exports = { main, maximumNewWorkMs, createRpcAdmission, readServerPeriod };
+module.exports = { main, maximumNewWorkMs, createRpcAdmission, readServerPeriod, refusalCoolDown };
 if (require.main === module) main(process.argv.slice(2)).then(result => {
   console.log(JSON.stringify(result)); if (!['COMPLETE', 'DEX_SERVICES_STOP_REQUESTED'].includes(result.status)) process.exitCode = 1;
 }).catch(() => { console.error(JSON.stringify({ status: 'DEX_SERVICES_STOP', noAutomaticRestart: true })); process.exitCode = 1; });

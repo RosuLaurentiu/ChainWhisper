@@ -21,12 +21,12 @@ const rpcResponse = (request, statusCode = 200) => ({ statusCode, statusMessage:
   body: new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(new TextDecoder().decode(request.body)).id, result: '0x1' })) });
 const rpcSignal = { checkSignal() {} };
 const flush = async () => { for (let index = 0; index < 30; index++) await Promise.resolve(); };
-function rpcGroup(t, transport, checkSource = () => {}) {
+function rpcGroup(t, transport, checkSource = () => {}, options = {}) {
   const peers = [], stops = [], messages = [];
   const group = createRpcAdmission({ onStop: reason => {
     stops.push(reason);
     for (const peer of peers) peer.target.emit('message', { type: 'CHAINWHISPER_SERVICE_STOP' });
-  } });
+  }, ...(options.refusal ? { refusal: options.refusal } : {}) });
   for (const name of ['keeper', 'prices', 'matching', 'c1']) {
     const child = new EventEmitter(), target = new EventEmitter(), grants = [];
     const peer = { name, child, target, grants, holdGrant: false };
@@ -40,7 +40,7 @@ function rpcGroup(t, transport, checkSource = () => {}) {
     target.send = (message, callback) => { messages.push(message); child.emit('message', message); callback?.(null); };
     group.bind(name, child);
     peer.pacing = createPacing(request => transport(name, request), name === 'c1' ? 334 : 500,
-      () => checkSource(name), createManagedAdmission(name, target));
+      () => checkSource(name), createManagedAdmission(name, target), false, options.retry ? { retry: options.retry } : {});
     peers.push(peer);
   }
   t.after(() => { group.stop('TEST_COMPLETE'); peers.forEach(peer => peer.target.emit('message', { type: 'CHAINWHISPER_SERVICE_STOP' })); });
@@ -160,7 +160,9 @@ for (const [reason, expected] of [['keeper:FAILED', 'DEX_RPC_GROUP_STOP'], ['OPE
 
 for (const status of [403, 429, 503]) test(`managed HTTP${status} stops siblings immediately and is a completed refusal, not unresolved work`, async t => {
   let sent = 0;
-  const fixture = rpcGroup(t, async (_name, request) => { sent++; return rpcResponse(request, status); });
+  // CW-102: with retries disabled a refusal still stops at once; the CW-102 tests cover the retry.
+  const fixture = rpcGroup(t, async (_name, request) => { sent++; return rpcResponse(request, status); }, () => {},
+    { retry: { delaysMs: [], maximumRetryAfterMs: 0 } });
   const results = await Promise.allSettled(fixture.peers.map((peer, index) => peer.pacing.getUrl(rpcRequest(index), rpcSignal)));
   assert(results.every(result => result.status === 'rejected')); assert.equal(sent, 1);
   const stats = fixture.group.stats();
@@ -202,7 +204,9 @@ test('a pre-send source failure stops the group without turning an unused reserv
 
 test('an ambiguous transport rejection keeps its occupied slot and stops sibling admissions', async t => {
   let sent = 0;
-  const fixture = rpcGroup(t, async () => { sent++; throw Error('synthetic transport failure'); });
+  // CW-102: with retries disabled; a retried read is covered by the CW-102 tests.
+  const fixture = rpcGroup(t, async () => { sent++; throw Error('synthetic transport failure'); }, () => {},
+    { retry: { delaysMs: [], maximumRetryAfterMs: 0 } });
   const results = await Promise.allSettled(fixture.peers.map((peer, index) => peer.pacing.getUrl(rpcRequest(index), rpcSignal)));
   assert(results.every(result => result.status === 'rejected')); assert.equal(sent, 1);
   const stats = fixture.group.stats();
@@ -278,8 +282,17 @@ function operatingChildren(onSpawn, onStop = row => row.close()) {
         if (row.closed) return;
         row.closed = true; row.closedAt = performance.now(); child.connected = false; child.emit('disconnect'); child.emit('close', code, null);
       },
-      async complete({ result = {}, stderr = null, requests = 0, traffic = {}, clean = true, close = true, code = 0 } = {}) {
-        for (let id = 1; id <= requests; id++) {
+      async complete({ result = {}, stderr = null, requests = 0, traffic = {}, clean = true, close = true, code = 0, retried = 0 } = {}) {
+        // CW-102: each retried read is one settled physical attempt followed by a new admission.
+        for (let id = 1; id <= retried; id++) {
+          await new Promise(resolve => {
+            row.grants.push(resolve);
+            child.emit('message', { type: 'CHAINWHISPER_RPC_REQUEST', service: name, id, queueMs: 2000, read: true });
+          });
+          child.emit('message', { type: 'CHAINWHISPER_RPC_STARTED', service: name, id });
+          child.emit('message', { type: 'CHAINWHISPER_RPC_RETRY', service: name, id, code: 'DEX_RPC_HTTP_503', statusCode: 503, waitMs: 0 });
+        }
+        for (let id = retried + 1; id <= retried + requests; id++) {
           await new Promise(resolve => {
             row.grants.push(resolve);
             child.emit('message', { type: 'CHAINWHISPER_RPC_REQUEST', service: name, id, queueMs: 2000 });
@@ -291,9 +304,9 @@ function operatingChildren(onSpawn, onStop = row => row.close()) {
         if (stderr) fs.writeSync(options.stdio[2], JSON.stringify(stderr) + '\n');
         else fs.writeSync(options.stdio[1], JSON.stringify({ status: completed[name], ...result }) + '\n');
         fs.writeSync(options.stdio[1], JSON.stringify({ status: 'DEX_RPC_PACING_SUMMARY', service: name,
-          stopped: null, requests, physicalSettled: requests, physicalPending: 0, unresolvedOccupancy: 0,
-          statuses: requests ? { 200: requests } : {}, ...traffic }) + '\n');
-        if (clean) child.emit('message', { type: 'CHAINWHISPER_RPC_IDLE_EXIT', service: name, id: requests + 1 });
+          stopped: null, requests: requests + retried, physicalSettled: requests + retried, physicalPending: 0, unresolvedOccupancy: 0,
+          statuses: requests ? { 200: requests } : {}, ...(retried ? { retries: { total: retried } } : {}), ...traffic }) + '\n');
+        if (clean) child.emit('message', { type: 'CHAINWHISPER_RPC_IDLE_EXIT', service: name, id: requests + retried + 1 });
         if (close) row.close(code);
       }
     };
@@ -893,4 +906,319 @@ for (const service of ['keeper','prices','matching','c1']) test(`a supervised ${
   assert(messages.some(message => message.type === 'CHAINWHISPER_RPC_IDLE_EXIT'));
   assert.equal(group.stats().physicalStarts, 2); assert.equal(group.stats().physicalSettled, 2);
   assert.equal(group.stats().occupiedSlots, 0); group.stop('TEST_COMPLETE');
+});
+
+// CW-084: the 2026-11-15 group stopped with HTTP 403 after about 44 starts per second for five minutes.
+function sustainedDemand(t, total, options = {}) {
+  const child = new EventEmitter(), stops = [], grants = [];
+  child.connected = true;
+  const group = createRpcAdmission({ onStop: reason => stops.push(reason), ...options });
+  t.after(() => group.stop('TEST_COMPLETE'));
+  const finished = new Promise(resolve => {
+    const request = id => child.emit('message', { type: 'CHAINWHISPER_RPC_REQUEST', service: 'c1', id, queueMs: 5000 });
+    child.send = (message, callback) => {
+      callback?.(null);
+      if (message.type !== 'CHAINWHISPER_RPC_GRANT') return;
+      grants.push(performance.now());
+      setImmediate(() => {
+        child.emit('message', { type: 'CHAINWHISPER_RPC_STARTED', service: 'c1', id: message.id });
+        child.emit('message', { type: 'CHAINWHISPER_RPC_RESPONSE', service: 'c1', id: message.id, statusCode: 200 });
+        if (message.id < total) request(message.id + 1); else resolve();
+      });
+    };
+    group.bind('c1', child); request(1);
+  });
+  return { group, stops, grants, finished };
+}
+
+test('sustained aggregate demand is granted at the bounded rate after its burst', { timeout: 5000 }, async t => {
+  const fixture = sustainedDemand(t, 15, { startLimit: { burstStarts: 5, startsPerSecond: 20 } });
+  await fixture.finished;
+  const { grants } = fixture, stats = fixture.group.stats();
+  assert.deepEqual(fixture.stops, []); assert.equal(stats.physicalStarts, 15); assert.equal(stats.responses, 15);
+  // Ten starts after the burst need about 500 ms at 20 per second.
+  assert(grants[14] - grants[0] >= 440, `sustained starts were not bounded: ${Math.round(grants[14] - grants[0])} ms`);
+  assert(grants[4] - grants[0] < 100, 'the permitted burst was delayed');
+  // No interval may hold more than the burst plus the earned starts.
+  for (let index = 5; index < 15; index++) assert(grants[index] - grants[0] >= (index - 5) * 50 - 5, 'a sustained start came early');
+  assert.deepEqual(stats.aggregateStartLimit, { burstStarts: 5, startsPerSecond: 20 });
+  assert(stats.delayedGrants >= 9); assert.equal(stats.expired, 0); assert.equal(stats.occupiedSlots, 0);
+});
+
+test('the default aggregate start limit leaves ordinary bursts undelayed and cannot be weakened', { timeout: 5000 }, async t => {
+  const fixture = sustainedDemand(t, 200);
+  await fixture.finished;
+  const stats = fixture.group.stats();
+  assert.deepEqual(stats.aggregateStartLimit, { burstStarts: 600, startsPerSecond: 20 });
+  assert.equal(stats.delayedGrants, 0); assert.equal(stats.physicalStarts, 200); assert.deepEqual(fixture.stops, []);
+  for (const startLimit of [{ burstStarts: 601, startsPerSecond: 20 }, { burstStarts: 600, startsPerSecond: 21 },
+    { burstStarts: 0, startsPerSecond: 20 }, { burstStarts: 5.5, startsPerSecond: 20 }, { burstStarts: 5 }])
+    assert.throws(() => createRpcAdmission({ onStop() {}, startLimit }), /DEX_RPC_START_LIMIT/);
+});
+
+test('a supervised c1 process reading blocks without local spacing is held to the aggregate start limit', { timeout: 10000 }, async t => {
+  const directory = folder(t), script = path.join(directory, 'managed-c1-blocks.cjs');
+  fs.writeFileSync(script, `
+    const { createPacing, createManagedAdmission } = require(${JSON.stringify(path.join(__dirname, 'current-dex-rpc-pacing.cjs'))});
+    const { FetchRequest } = require(${JSON.stringify(require.resolve('ethers'))});
+    const paced = createPacing(async request => ({ statusCode: 200, statusMessage: 'OK', headers: {},
+      body: new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0',
+        id: JSON.parse(new TextDecoder().decode(request.body)).id, result: { number: '0x1' } })) }),
+      334, () => {}, createManagedAdmission('c1'));
+    (async () => {
+      for (let id = 1; id <= 15; id++) {
+        const request = new FetchRequest('https://testnet.coti.io/rpc');
+        request.body = JSON.stringify({ jsonrpc: '2.0', id, method: 'eth_getBlockByNumber', params: ['0x' + id.toString(16), false] });
+        request.timeout = 5000;
+        await paced.getUrl(request, { checkSignal() {} });
+      }
+      process.send({ type: 'TEST_DONE', stats: paced.stats() });
+    })().catch(() => { process.exitCode = 1; });
+  `);
+  const child = fork(script, [], { windowsHide: true,
+    env: { ...process.env, CHAINWHISPER_RPC_MANAGED_SERVICE: 'c1' },
+    execArgv: ['--require', path.join(__dirname, 'current-dex-service-stop.cjs')],
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(() => { if (child.exitCode === null) child.kill(); });
+  const stops = [], messages = [], starts = [];
+  const group = createRpcAdmission({ onStop: reason => stops.push(reason), startLimit: { burstStarts: 5, startsPerSecond: 20 } });
+  group.bind('c1', child);
+  child.on('message', message => { messages.push(message); if (message.type === 'CHAINWHISPER_RPC_STARTED') starts.push(performance.now()); });
+  const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+  assert.equal(code, 0); assert.deepEqual(stops, []);
+  const done = messages.find(message => message.type === 'TEST_DONE'); assert(done);
+  // The reproduced condition: the managed C1 client itself applies no spacing.
+  assert.equal(done.stats.localIntervalMs, 0); assert.equal(done.stats.methods.eth_getBlockByNumber, 15);
+  assert.equal(starts.length, 15);
+  assert(starts[14] - starts[0] >= 440, `C1 block reads were not bounded: ${Math.round(starts[14] - starts[0])} ms`);
+  const stats = group.stats();
+  assert(stats.delayedGrants >= 9); assert.equal(stats.physicalStarts, 15); assert.equal(stats.physicalSettled, 15);
+  assert.deepEqual(stats.statuses, { 200: 15 }); assert.equal(stats.expired, 0); assert.equal(stats.occupiedSlots, 0);
+  group.stop('TEST_COMPLETE');
+});
+
+test('a start held by the aggregate limit still expires at its queue deadline and is never granted', { timeout: 5000 }, async t => {
+  const child = new EventEmitter(), stops = [], sent = [];
+  child.connected = true; child.send = (message, callback) => { sent.push({ ...message, at: performance.now() }); callback?.(null); };
+  const group = createRpcAdmission({ onStop: reason => stops.push(reason), startLimit: { burstStarts: 1, startsPerSecond: 0.5 } });
+  t.after(() => group.stop('TEST_COMPLETE'));
+  group.bind('c1', child);
+  child.emit('message', { type: 'CHAINWHISPER_RPC_REQUEST', service: 'c1', id: 1, queueMs: 5000 });
+  child.emit('message', { type: 'CHAINWHISPER_RPC_STARTED', service: 'c1', id: 1 });
+  child.emit('message', { type: 'CHAINWHISPER_RPC_RESPONSE', service: 'c1', id: 1, statusCode: 200 });
+  const requested = performance.now();
+  child.emit('message', { type: 'CHAINWHISPER_RPC_REQUEST', service: 'c1', id: 2, queueMs: 120 });
+  assert.equal(group.stats().queued, 1); assert.equal(group.stats().occupiedSlots, 0);
+  await new Promise(resolve => setTimeout(resolve, 400));
+  const rejected = sent.find(message => message.type === 'CHAINWHISPER_RPC_REJECT');
+  assert.equal(rejected?.id, 2); assert.equal(rejected.code, 'DEX_RPC_QUEUE_TIMEOUT'); assert(rejected.at - requested >= 115);
+  assert.deepEqual(sent.filter(message => message.type === 'CHAINWHISPER_RPC_GRANT').map(message => message.id), [1]);
+  const stats = group.stats();
+  assert.equal(stats.expired, 1); assert.equal(stats.grants, 1); assert.equal(stats.queued, 0); assert.equal(stats.delayedGrants, 1);
+  assert.deepEqual(stops, []);
+});
+
+test('a group stop rejects a start held by the aggregate limit and grants nothing later', { timeout: 5000 }, async t => {
+  const child = new EventEmitter(), stops = [], sent = [];
+  child.connected = true; child.send = (message, callback) => { sent.push(message); callback?.(null); };
+  const group = createRpcAdmission({ onStop: reason => stops.push(reason), startLimit: { burstStarts: 1, startsPerSecond: 10 } });
+  group.bind('c1', child);
+  child.emit('message', { type: 'CHAINWHISPER_RPC_REQUEST', service: 'c1', id: 1, queueMs: 5000 });
+  child.emit('message', { type: 'CHAINWHISPER_RPC_STARTED', service: 'c1', id: 1 });
+  child.emit('message', { type: 'CHAINWHISPER_RPC_RESPONSE', service: 'c1', id: 1, statusCode: 200 });
+  child.emit('message', { type: 'CHAINWHISPER_RPC_REQUEST', service: 'c1', id: 2, queueMs: 5000 });
+  assert.equal(group.stats().queued, 1);
+  group.stop('DEX_RPC_HTTP_403');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepEqual(sent.filter(message => message.type === 'CHAINWHISPER_RPC_GRANT').map(message => message.id), [1]);
+  assert.deepEqual(sent.filter(message => message.type === 'CHAINWHISPER_RPC_REJECT').map(message => [message.id, message.code]), [[2, 'DEX_RPC_HTTP_403']]);
+  const stats = group.stats();
+  assert.equal(stats.stopped, 'DEX_RPC_HTTP_403'); assert.equal(stats.stoppedBeforeStart, 1); assert.equal(stats.queued, 0); assert.equal(stats.grants, 1);
+});
+
+// CW-102: one failed read or one 403 must not stop the group; a send is never retried.
+const fastRetry = { delaysMs: [10, 40, 160], maximumRetryAfterMs: 300000 };
+const shortRefusal = { cooldownMs: [150, 300] };
+const transportFailure = () => Object.assign(Error('synthetic reset'), { code: 'ECONNRESET', syscall: 'read' });
+
+for (const kind of ['HTTP 503', 'transport']) test(`a managed read ${kind} failure is retried once and siblings keep running`, async t => {
+  let sent = 0;
+  const fixture = rpcGroup(t, async (_name, request) => {
+    if (++sent === 1) { if (kind === 'transport') throw transportFailure(); return rpcResponse(request, 503); }
+    return rpcResponse(request);
+  }, () => {}, { retry: fastRetry, refusal: shortRefusal });
+  const results = await Promise.all(fixture.peers.map((peer, index) => peer.pacing.getUrl(rpcRequest(index), rpcSignal)));
+  assert(results.every(result => result.statusCode === 200)); assert.equal(sent, 5); assert.deepEqual(fixture.stops, []);
+  const stats = fixture.group.stats();
+  assert.equal(stats.stopped, null); assert.deepEqual(stats.statuses, { 200: 4 });
+  assert.equal(stats.physicalStarts, 5); assert.equal(stats.physicalSettled, 5); assert.equal(stats.responses, 4);
+  assert.equal(stats.retried, 1); assert.deepEqual(stats.retryCodes, { [kind === 'transport' ? 'DEX_RPC_TRANSPORT_STOP' : 'DEX_RPC_HTTP_503']: 1 });
+  assert.equal(stats.perService.keeper.retried, 1); assert.equal(stats.occupiedSlots, 0); assert.equal(stats.unknownInFlight, 0);
+  assert.equal(fixture.peers[0].pacing.stats().retries.total, 1); assert.equal(fixture.peers[0].pacing.stats().lastFailure, undefined);
+});
+
+test('a managed read that fails four times stops the group with one final status', async t => {
+  let sent = 0;
+  const fixture = rpcGroup(t, async (_name, request) => { sent++; return rpcResponse(request, 502); }, () => {}, { retry: fastRetry, refusal: shortRefusal });
+  await assert.rejects(fixture.peers[0].pacing.getUrl(rpcRequest(1), rpcSignal), /DEX_RPC_HTTP_502/);
+  assert.equal(sent, 4); assert.deepEqual(fixture.stops, ['DEX_RPC_HTTP_502']);
+  const stats = fixture.group.stats();
+  assert.deepEqual(stats.statuses, { 502: 1 }); assert.equal(stats.retried, 3); assert.equal(stats.unresolvedOccupancy, 0);
+  assert.equal(stats.physicalInFlight, 0); assert.equal(stats.unknownInFlight, 0);
+});
+
+test('one 403 cools down every read in the group and the refused read then succeeds', { timeout: 5000 }, async t => {
+  let sent = 0, refusedAt = null; const starts = [];
+  const fixture = rpcGroup(t, async (name, request) => {
+    starts.push({ name, at: performance.now() });
+    if (++sent === 1) { refusedAt = performance.now(); return rpcResponse(request, 403); }
+    return rpcResponse(request);
+  }, () => {}, { retry: fastRetry, refusal: shortRefusal });
+  const first = fixture.peers[0].pacing.getUrl(rpcRequest(1), rpcSignal);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const others = fixture.peers.slice(1).map((peer, index) => peer.pacing.getUrl(rpcRequest(index + 2), rpcSignal));
+  const results = await Promise.all([first, ...others]);
+  assert(results.every(result => result.statusCode === 200)); assert.deepEqual(fixture.stops, []);
+  for (const start of starts.slice(1)) assert(start.at - refusedAt >= 145, `a read started during the cool-down: ${Math.round(start.at - refusedAt)} ms`);
+  const stats = fixture.group.stats();
+  assert.deepEqual(stats.statuses, { 200: 4 }); assert.equal(stats.retried, 1); assert.deepEqual(stats.retryCodes, { DEX_RPC_HTTP_403: 1 });
+  assert.equal(stats.refusalCoolDowns, 1); assert.equal(stats.stopped, null);
+});
+
+test('a 403 repeated past the cool-down bound stops the group with one final 403', { timeout: 5000 }, async t => {
+  let sent = 0;
+  const fixture = rpcGroup(t, async (_name, request) => { sent++; return rpcResponse(request, 403); }, () => {}, { retry: fastRetry, refusal: { cooldownMs: [30, 60] } });
+  await assert.rejects(fixture.peers[0].pacing.getUrl(rpcRequest(1), rpcSignal));
+  assert.equal(sent, 3); assert.deepEqual(fixture.stops, ['DEX_RPC_HTTP_403']);
+  const stats = fixture.group.stats();
+  assert.equal(stats.stopped, 'DEX_RPC_HTTP_403'); assert.deepEqual(stats.statuses, { 403: 1 }); assert.equal(stats.retried, 2);
+  assert.equal(stats.refusalCoolDowns, 2); assert.equal(stats.unresolvedOccupancy, 0); assert.equal(stats.physicalInFlight, 0); assert.equal(stats.unknownInFlight, 0);
+  assert.equal(stats.occupiedSlots, 0);
+});
+
+function rawGroup(t, options = {}) {
+  const stops = [], sent = [], group = createRpcAdmission({ onStop: reason => stops.push(reason), refusal: shortRefusal, ...options });
+  t.after(() => group.stop('TEST_COMPLETE'));
+  const peers = Object.fromEntries(['keeper', 'prices', 'matching', 'c1'].map(name => {
+    const child = new EventEmitter(); child.connected = true;
+    child.send = (message, callback) => { sent.push({ ...message, at: performance.now() }); callback?.(null); };
+    group.bind(name, child);
+    return [name, (type, fields = {}) => child.emit('message', { type: `CHAINWHISPER_RPC_${type}`, service: name, ...fields })];
+  }));
+  const grants = name => sent.filter(message => message.type === 'CHAINWHISPER_RPC_GRANT' && message.service === name).map(message => message.id);
+  return { group, stops, sent, peers, grants };
+}
+
+test('a marked send is granted during a read cool-down; reads and unmarked requests wait for its end', { timeout: 5000 }, async t => {
+  const { group, stops, peers, grants } = rawGroup(t);
+  peers.keeper('REQUEST', { id: 1, queueMs: 5000, read: true }); peers.keeper('STARTED', { id: 1 });
+  peers.keeper('RETRY', { id: 1, code: 'DEX_RPC_HTTP_403', statusCode: 403, waitMs: 10 });
+  peers.c1('REQUEST', { id: 1, queueMs: 5000, read: true });
+  peers.matching('REQUEST', { id: 1, queueMs: 5000, read: false });
+  peers.prices('REQUEST', { id: 1, queueMs: 5000, read: false, send: true });
+  assert.deepEqual(grants('prices'), [1]); assert.deepEqual(grants('c1'), []); assert.deepEqual(grants('matching'), []);
+  peers.prices('STARTED', { id: 1 }); peers.prices('RESPONSE', { id: 1, statusCode: 200 });
+  assert.deepEqual(grants('c1'), []); assert(group.stats().coolingMs > 0);
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.deepEqual(grants('c1'), [1]); assert.deepEqual(stops, []);
+  peers.c1('STARTED', { id: 1 }); peers.c1('RESPONSE', { id: 1, statusCode: 200 });
+  assert.deepEqual(grants('matching'), [1]);
+});
+
+for (const [kind, message, setup] of [
+  ['a send', { id: 1, code: 'DEX_RPC_HTTP_503', statusCode: 503, waitMs: 10 }, { read: false, started: true }],
+  ['a request without the read flag', { id: 1, code: 'DEX_RPC_TRANSPORT_STOP', waitMs: 10 }, { started: true }],
+  ['an attempt that has not started', { id: 1, code: 'DEX_RPC_HTTP_503', statusCode: 503, waitMs: 10 }, { read: true, started: false }],
+  ['a status that does not match its code', { id: 1, code: 'DEX_RPC_HTTP_503', statusCode: 502, waitMs: 10 }, { read: true, started: true }],
+  ['a non-retryable status', { id: 1, code: 'DEX_RPC_HTTP_404', statusCode: 404, waitMs: 10 }, { read: true, started: true }],
+  ['a wait above the bound', { id: 1, code: 'DEX_RPC_HTTP_429', statusCode: 429, waitMs: 300001 }, { read: true, started: true }],
+  ['a response timeout', { id: 1, code: 'DEX_RPC_RESPONSE_TIMEOUT', waitMs: 10 }, { read: true, started: true }]
+]) test(`the supervisor refuses a retry for ${kind}`, t => {
+  const { group, stops, peers } = rawGroup(t);
+  peers.matching('REQUEST', { id: 1, queueMs: 5000, ...(setup.read === undefined ? {} : { read: setup.read }) });
+  if (setup.started) peers.matching('STARTED', { id: 1 });
+  peers.matching('RETRY', message);
+  assert.deepEqual(stops, ['DEX_RPC_IPC_PROTOCOL']); assert.equal(group.stats().retried, 0);
+});
+
+test('a 429 holds every read in the group for its wait', { timeout: 5000 }, async t => {
+  const { stops, peers, grants, sent } = rawGroup(t);
+  peers.keeper('REQUEST', { id: 1, queueMs: 5000, read: true }); peers.keeper('STARTED', { id: 1 });
+  const at = performance.now();
+  peers.keeper('RETRY', { id: 1, code: 'DEX_RPC_HTTP_429', statusCode: 429, waitMs: 120 });
+  peers.c1('REQUEST', { id: 1, queueMs: 5000, read: true });
+  assert.deepEqual(grants('c1'), []);
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const grant = sent.find(message => message.type === 'CHAINWHISPER_RPC_GRANT' && message.service === 'c1');
+  assert(grant && grant.at - at >= 115); assert.deepEqual(stops, []);
+});
+
+test('a group stop during a retry backoff ends the wait without a later request', { timeout: 5000 }, async t => {
+  let sent = 0;
+  const fixture = rpcGroup(t, async (_name, request) => { sent++; return rpcResponse(request, 503); }, () => {},
+    { retry: { delaysMs: [1000], maximumRetryAfterMs: 0 }, refusal: shortRefusal });
+  const pending = fixture.peers[0].pacing.getUrl(rpcRequest(1), rpcSignal);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const stoppedAt = performance.now();
+  fixture.peers[0].target.emit('message', { type: 'CHAINWHISPER_SERVICE_STOP' });
+  await assert.rejects(pending, /DEX_RPC_GROUP_STOP/);
+  assert(performance.now() - stoppedAt < 200); assert.equal(sent, 1);
+  assert.equal(fixture.peers[0].pacing.stats().unresolvedOccupancy, 0);
+});
+
+test('the refusal cool-down can be shortened for tests but never lengthened or given more cool-downs', () => {
+  for (const refusal of [{ cooldownMs: [180001] }, { cooldownMs: [1, 1, 1] }, { cooldownMs: [0] }, { cooldownMs: [] }, { cooldownMs: 'x' }])
+    assert.throws(() => createRpcAdmission({ onStop() {}, refusal }), /DEX_RPC_REFUSAL_POLICY/);
+  const group = createRpcAdmission({ onStop() {} });
+  assert.deepEqual(group.stats().refusalCoolDown, { cooldownMs: [180000, 300000], windowMs: 7200000 });
+  group.stop('TEST_COMPLETE');
+});
+
+test('a run whose read was retried returns clean and renews', async t => {
+  const fixture = operatingChildren(row => { void row.complete({ requests: 1, retried: row.name === 'keeper' && row.run === 1 ? 1 : 0 }); });
+  const result = await main(['--operate', folder(t)], { spawn: fixture.spawn, signals: new EventEmitter() });
+  assert.equal(result.status, 'COMPLETE');
+  assert(result.runs.keeper.every(row => row.status === 'RETURNED'));
+  assert.equal(result.rpc.retried, 1); assert.equal(result.rpc.statuses[200], fixture.calls.length);
+});
+
+test('a run whose child summary hides a retry does not return clean', async t => {
+  const fixture = operatingChildren(row => { void row.complete({ requests: 1, retried: row.name === 'keeper' ? 1 : 0, traffic: row.name === 'keeper' ? { retries: { total: 0 } } : {} }); });
+  const result = await main(['--operate', folder(t)], { spawn: fixture.spawn, signals: new EventEmitter() });
+  assert.equal(result.status, 'STOPPED'); assert.equal(result.stopReason, 'keeper:FAILED');
+});
+
+test('a supervised c1 process retries a 503 read through real IPC without stopping the group', { timeout: 10000 }, async t => {
+  const directory = folder(t), script = path.join(directory, 'managed-c1-retry.cjs');
+  fs.writeFileSync(script, `
+    const { createPacing, createManagedAdmission } = require(${JSON.stringify(path.join(__dirname, 'current-dex-rpc-pacing.cjs'))});
+    const { FetchRequest } = require(${JSON.stringify(require.resolve('ethers'))});
+    let sent = 0;
+    const paced = createPacing(async request => ({ statusCode: ++sent === 1 ? 503 : 200, statusMessage: 'x', headers: {},
+      body: new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(new TextDecoder().decode(request.body)).id, result: '0x1' })) }),
+      334, () => {}, createManagedAdmission('c1'), false, { retry: { delaysMs: [10], maximumRetryAfterMs: 0 } });
+    (async () => {
+      for (let id = 1; id <= 2; id++) {
+        const request = new FetchRequest('https://testnet.coti.io/rpc');
+        request.body = JSON.stringify({ jsonrpc: '2.0', id, method: 'eth_getBlockByNumber', params: ['0x1', false] });
+        request.timeout = 5000;
+        await paced.getUrl(request, { checkSignal() {} });
+      }
+      process.send({ type: 'TEST_DONE', stats: paced.stats() });
+    })().catch(() => { process.exitCode = 1; });
+  `);
+  const child = fork(script, [], { windowsHide: true, env: { ...process.env, CHAINWHISPER_RPC_MANAGED_SERVICE: 'c1' },
+    execArgv: ['--require', path.join(__dirname, 'current-dex-service-stop.cjs')], stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(() => { if (child.exitCode === null) child.kill(); });
+  const stops = [], messages = [];
+  const group = createRpcAdmission({ onStop: reason => stops.push(reason) });
+  group.bind('c1', child); child.on('message', message => messages.push(message));
+  const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+  assert.equal(code, 0); assert.deepEqual(stops, []);
+  const done = messages.find(message => message.type === 'TEST_DONE'); assert(done);
+  assert.equal(done.stats.retries.total, 1); assert.equal(done.stats.requests, 3); assert.equal(done.stats.localIntervalMs, 0);
+  assert(messages.some(message => message.type === 'CHAINWHISPER_RPC_REQUEST' && message.read === true));
+  const stats = group.stats();
+  assert.equal(stats.retried, 1); assert.deepEqual(stats.statuses, { 200: 2 }); assert.equal(stats.physicalStarts, 3);
+  assert.equal(stats.physicalSettled, 3); assert.equal(stats.occupiedSlots, 0); group.stop('TEST_COMPLETE');
 });

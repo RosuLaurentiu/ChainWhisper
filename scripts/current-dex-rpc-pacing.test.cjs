@@ -200,7 +200,8 @@ test('concurrent and batched reads use one HTTP request per RPC with at least 50
   assert.equal(paced.stats().requests, 3);
 });
 
-for (const statusCode of [403, 429, 503]) test(`HTTP${statusCode} closes the queue without retry or sending later calls`, async () => {
+// CW-102: a standalone 403 still stops at once; 429 and 5xx reads are retried (see the CW-102 tests below).
+for (const statusCode of [403]) test(`HTTP${statusCode} closes the queue without retry or sending later calls`, async () => {
   let sent = 0;
   const paced = createPacing(async () => { sent++; return { statusCode, statusMessage: 'blocked', headers: {}, body: body({}) }; });
   const results = await Promise.allSettled([1, 2, 3].map(n => paced.getUrl(request(call(n)), signal)));
@@ -273,4 +274,163 @@ test('both installed ethers copies and new providers share the entry-point stop 
   assert.equal(pacing.stats().rpcCalls, 3);
   assert.equal(pacing.stats().intervalMs, 0);
   assert.equal(pacing.stats().localIntervalMs, 0);
+});
+
+// CW-102: one failed read must not stop the group; a broadcast is never retried.
+const fastRetry = { delaysMs: [10, 40, 160], maximumRetryAfterMs: 300000 };
+const reply = (r, statusCode, headers = {}) => statusCode === 200 ? ok(r) : { statusCode, statusMessage: 'x', headers, body: body({}) };
+const transportError = () => Object.assign(Error('PRIVATE_MESSAGE read ECONNRESET'), { code: 'ECONNRESET', syscall: 'read', address: '10.0.0.1' });
+
+for (const [kind, fail] of [['transport error', () => { throw transportError(); }], ['HTTP 503', r => reply(r, 503)],
+  ['HTTP 429', r => reply(r, 429)], ['HTTP 500', r => reply(r, 500)], ['HTTP 504', r => reply(r, 504)]]) {
+  test(`a read ${kind} is retried once after the first backoff and returns the later response`, async () => {
+    let sent = 0; const starts = [];
+    const paced = createPacing(async r => { starts.push(performance.now()); return ++sent === 1 ? fail(r) : ok(r); }, 0, () => {}, null, false, { retry: fastRetry });
+    const result = await paced.getUrl(request(call(1)), signal);
+    assert.equal(result.statusCode, 200); assert.equal(sent, 2); assert(starts[1] - starts[0] >= 9);
+    const stats = paced.stats();
+    assert.equal(stats.stopped, null); assert.equal(stats.lastFailure, undefined);
+    assert.equal(stats.requests, 2); assert.equal(stats.physicalSettled, 2); assert.equal(stats.unresolvedOccupancy, 0);
+    assert.equal(stats.retries.total, 1); assert.equal(Object.values(stats.retries.byCode)[0], 1);
+    assert.equal(stats.retries.last.method, 'eth_blockNumber'); assert.equal(stats.retries.last.attempt, 1);
+    assert(!JSON.stringify(stats).includes('PRIVATE_') && !JSON.stringify(stats).includes('10.0.0.1'));
+    assert.equal((await paced.getUrl(request(call(2)), signal)).statusCode, 200); assert.equal(sent, 3);
+  });
+}
+
+test('a read retry waits at least the Retry-After time and a longer Retry-After stops without retry', async () => {
+  let sent = 0; const starts = [];
+  const paced = createPacing(async r => { starts.push(performance.now()); return ++sent === 1 ? reply(r, 429, { 'Retry-After': '1' }) : ok(r); }, 0, () => {}, null, false, { retry: fastRetry });
+  await paced.getUrl(request(call(1)), signal);
+  assert(starts[1] - starts[0] >= 990, `Retry-After was not honoured: ${Math.round(starts[1] - starts[0])} ms`);
+  assert(paced.stats().retries.last.waitMs >= 1000);
+  let refused = 0;
+  const long = createPacing(async r => { refused++; return reply(r, 503, { 'retry-after': '301' }); }, 0, () => {}, null, false, { retry: fastRetry });
+  await assert.rejects(long.getUrl(request(call(1)), signal), /DEX_RPC_HTTP_503/);
+  assert.equal(refused, 1); assert.equal(long.stats().stopped, 'DEX_RPC_HTTP_503'); assert.equal(long.stats().retries.total, 0);
+});
+
+test('a read that keeps failing is tried four times with growing backoff and then stops as before', async () => {
+  let sent = 0; const starts = [];
+  const paced = createPacing(async r => { starts.push(performance.now()); sent++; return reply(r, 503); }, 0, () => {}, null, false, { retry: fastRetry });
+  await assert.rejects(paced.getUrl(request(call(1)), signal), /DEX_RPC_HTTP_503/);
+  assert.equal(sent, 4);
+  for (const [index, delay] of fastRetry.delaysMs.entries()) assert(starts[index + 1] - starts[index] >= delay - 1);
+  const stats = paced.stats();
+  assert.equal(stats.stopped, 'DEX_RPC_HTTP_503'); assert.equal(stats.retries.total, 3); assert.equal(stats.lastFailure.status, 503);
+  await assert.rejects(paced.getUrl(request(call(2)), signal), /DEX_RPC_HTTP_503/); assert.equal(sent, 4);
+});
+
+for (const [kind, fail] of [['transport error', () => { throw transportError(); }], ['HTTP 503', r => reply(r, 503)], ['HTTP 429', r => reply(r, 429)]]) {
+  test(`a broadcast ${kind} is never retried and stops the queue`, async () => {
+    const methods = [];
+    const paced = createPacing(async r => { const item = JSON.parse(new TextDecoder().decode(r.body)); methods.push(item.method); return fail(r); },
+      0, () => {}, null, true, { retry: fastRetry });
+    await assert.rejects(paced.getUrl(request({ ...call(1), method: 'eth_sendRawTransaction', params: ['0xfake-test-only'] }), signal));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(methods, ['eth_sendRawTransaction']); assert.equal(paced.stats().retries.total, 0);
+    assert.notEqual(paced.stats().stopped, null);
+  });
+}
+
+test('an unknown method, a bad JSON body and a standalone 403 are not retried', async () => {
+  for (const [item, response, expected] of [[{ ...call(1), method: 'eth_newMethod' }, r => reply(r, 503), /DEX_RPC_HTTP_503/],
+    [call(1), () => ({ statusCode: 200, headers: {}, body: new TextEncoder().encode('not json') }), /DEX_RPC_TRANSPORT_STOP/],
+    [call(1), r => reply(r, 403), /DEX_RPC_HTTP_403/]]) {
+    let sent = 0;
+    const paced = createPacing(async r => { sent++; return response(r); }, 0, () => {}, null, false, { retry: fastRetry });
+    await assert.rejects(paced.getUrl(request(item), signal), expected);
+    assert.equal(sent, 1); assert.equal(paced.stats().retries.total, 0);
+  }
+});
+
+// Review H1: ethers leaves a timed-out request open, so a timeout is never retried.
+test('a timed-out read is not retried even when its attempt settles later', async () => {
+  let sent = 0;
+  const paced = createPacing(async r => { sent++; await new Promise(resolve => setTimeout(resolve, 45)); return ok(r); }, 0, () => {}, null, false, { retry: fastRetry });
+  const first = request(call(1)); first.timeout = 30;
+  await assert.rejects(paced.getUrl(first, signal), /DEX_RPC_RESPONSE_TIMEOUT/);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(sent, 1); assert.equal(paced.stats().retries.total, 0); assert.equal(paced.stats().stopped, 'DEX_RPC_RESPONSE_TIMEOUT');
+});
+
+for (const [kind, error] of [['an ethers TIMEOUT', () => Object.assign(Error('request timeout'), { code: 'TIMEOUT' })],
+  ['an ethers CANCELLED', () => Object.assign(Error('request cancelled'), { code: 'CANCELLED' })], ['an error without a code', () => Error('unknown')]])
+  test(`a transport failure from ${kind} may still be in flight and is not retried`, async () => {
+    let sent = 0;
+    const paced = createPacing(async () => { sent++; throw error(); }, 0, () => {}, null, false, { retry: fastRetry });
+    await assert.rejects(paced.getUrl(request(call(1)), signal), /DEX_RPC_TRANSPORT_STOP/);
+    assert.equal(sent, 1); assert.equal(paced.stats().retries.total, 0); assert.equal(paced.stats().unresolvedOccupancy, 1);
+  });
+
+// Review M2: the backoff does not hold the service's FIFO.
+test('a later broadcast of the same service starts during a read retry backoff', async () => {
+  const order = [];
+  const paced = createPacing(async r => {
+    const item = JSON.parse(new TextDecoder().decode(r.body)); order.push(item.method);
+    return item.method === 'eth_blockNumber' && order.length === 1 ? reply(r, 503) : ok(r);
+  }, 0, () => {}, null, false, { retry: { delaysMs: [100], maximumRetryAfterMs: 0 } });
+  const read = paced.getUrl(request(call(1)), signal);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const broadcast = await paced.getUrl(request({ ...call(2), method: 'eth_sendRawTransaction', params: ['0xfake-test-only'] }), signal);
+  assert.equal(broadcast.statusCode, 200); assert.deepEqual(order, ['eth_blockNumber', 'eth_sendRawTransaction']);
+  assert.equal((await read).statusCode, 200); assert.deepEqual(order, ['eth_blockNumber', 'eth_sendRawTransaction', 'eth_blockNumber']);
+});
+
+test('a timed-out read whose first attempt does not settle stops unresolved and is not retried', async () => {
+  let sent = 0, release;
+  const held = new Promise(resolve => { release = resolve; });
+  const paced = createPacing(async r => { sent++; await held; return ok(r); }, 0, () => {}, null, false, { retry: fastRetry });
+  const first = request(call(1)); first.timeout = 20;
+  try {
+    await assert.rejects(paced.getUrl(first, signal), /DEX_RPC_RESPONSE_TIMEOUT/);
+    assert.equal(sent, 1); assert.equal(paced.stats().unresolvedOccupancy, 1); assert.equal(paced.stats().retries.total, 0);
+  } finally { release(); }
+});
+
+test('a transport stop records only the error class, the new-connection flag and the transport time', async () => {
+  let connections = 0;
+  const paced = createPacing(async () => { connections++; throw transportError(); }, 0, () => {}, null, false,
+    { retry: { delaysMs: [], maximumRetryAfterMs: 0 }, connections: () => connections });
+  await assert.rejects(paced.getUrl(request(call(1)), signal), /DEX_RPC_TRANSPORT_STOP/);
+  const failure = paced.stats().lastFailure;
+  assert.equal(failure.code, 'DEX_RPC_TRANSPORT_STOP'); assert.equal(failure.phase, 'transport');
+  assert.equal(failure.cause.code, 'ECONNRESET'); assert.equal(failure.cause.syscall, 'read');
+  assert.equal(failure.cause.newConnection, true); assert(Number.isInteger(failure.cause.transportMs));
+  assert(!JSON.stringify(paced.stats()).includes('PRIVATE_') && !JSON.stringify(paced.stats()).includes('10.0.0.1'));
+  const timeout = createPacing(async () => { throw Object.assign(Error('request timeout'), { code: 'TIMEOUT' }); }, 0, () => {}, null, false,
+    { retry: { delaysMs: [], maximumRetryAfterMs: 0 }, connections: () => 0 });
+  await assert.rejects(timeout.getUrl(request(call(1)), signal));
+  assert.equal(timeout.stats().lastFailure.cause.code, 'TIMEOUT'); assert.equal(timeout.stats().lastFailure.cause.newConnection, false);
+});
+
+test('each read retry passes through a new admission and reports the settled attempt; a send asks as a non-read', async () => {
+  const events = [];
+  const admission = { acquire: async (_expires, _cancel, read, broadcast) => { events.push(['acquire', read, broadcast]); return { id: events.length }; },
+    assertCurrent() {}, started() { events.push(['started']); return true; }, response() { events.push(['response']); }, fail() { events.push(['fail']); },
+    retry(_row, detail) { events.push(['retry', detail.code, detail.statusCode, detail.waitMs]); }, pause: ms => new Promise(resolve => setTimeout(resolve, ms)) };
+  let sent = 0;
+  const paced = createPacing(async r => ++sent === 1 ? reply(r, 502) : ok(r), 0, () => {}, admission, false, { retry: fastRetry });
+  await paced.getUrl(request(call(1)), signal);
+  assert.deepEqual(events, [['acquire', true, false], ['started'], ['retry', 'DEX_RPC_HTTP_502', 502, 10], ['acquire', true, false], ['started'], ['response']]);
+  assert.equal(paced.stats().grants, 2);
+  const before = events.length;
+  await paced.getUrl(request({ ...call(2), method: 'eth_sendRawTransaction' }), signal);
+  assert.deepEqual(events[before], ['acquire', false, true]);
+});
+
+test('the retry policy can be shortened for tests but never lengthened or given more attempts', () => {
+  for (const retry of [{ delaysMs: [1000, 4000, 16000, 16000], maximumRetryAfterMs: 0 }, { delaysMs: [1001], maximumRetryAfterMs: 0 },
+    { delaysMs: [-1], maximumRetryAfterMs: 0 }, { delaysMs: [], maximumRetryAfterMs: 300001 }, { delaysMs: 'x', maximumRetryAfterMs: 0 }])
+    assert.throws(() => createPacing(ok, 0, () => {}, null, false, { retry }), /DEX_RPC_RETRY_POLICY/);
+});
+
+test('installed services use one keep-alive agent that keeps idle connections for 60 s and counts new connections', () => {
+  const { createAgent, keepAliveIdleMs } = require('./current-dex-rpc-pacing.cjs');
+  const { agent, connections } = createAgent();
+  assert.equal(keepAliveIdleMs, 60000); assert.equal(agent.keepAlive, true); assert.equal(agent.options.timeout, 60000);
+  assert.equal(connections(), 0);
+  const socket = agent.createConnection({ host: '127.0.0.1', port: 9, servername: 'localhost' });
+  socket.on('error', () => {}); socket.destroy();
+  assert.equal(connections(), 1);
 });
