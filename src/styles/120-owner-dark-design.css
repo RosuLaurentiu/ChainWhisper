@@ -1457,7 +1457,7 @@
 /* CW-098. Accessibility: fixes from the 17 November audit (APP/reports/accessibility-audit-2026-11-17). */
 /* The P2P tabs lost the shared focus ring: 110 sets outline: 0 and 120 sets box-shadow: none on them. */
 :root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button:focus-visible {
-  outline: 2px solid #c4b5fd;
+  outline: 2px solid var(--ux-focus-ring);
   outline-offset: -2px;
 }
 /* Below 360px the offer list kept 296px of minimum column widths and pushed the Offers panel past a 320px screen. */

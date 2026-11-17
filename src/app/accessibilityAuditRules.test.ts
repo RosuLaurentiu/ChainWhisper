@@ -26,7 +26,7 @@ describe('P2P tab focus ring (WCAG 2.4.7)', () => {
     // 110-approved-trading-design.css sets outline: 0 on these buttons and 120 sets box-shadow: none, so the
     // shared ring needs a rule that outranks both.
     const ring = rule(':root body .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button:focus-visible {');
-    expect(ring).toContain('outline: 2px solid #c4b5fd;');
+    expect(ring).toContain('outline: 2px solid var(--ux-focus-ring);');
     expect(ring).toContain('outline-offset: -2px;');
     const css = block();
     expect(css.lastIndexOf('@media', css.indexOf('.p2p-trade-tabs button:focus-visible'))).toBe(-1);
