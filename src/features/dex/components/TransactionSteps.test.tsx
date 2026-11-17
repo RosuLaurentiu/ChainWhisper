@@ -12,7 +12,7 @@ const html=(model:TransactionStepsModel)=>renderToStaticMarkup(<TransactionSteps
 describe('Swap steps model',()=>{
  it('shows every step as upcoming and only the title before the swap starts',()=>{
   const model=swap();
-  expect(model.outcome).toBe('idle');expect(model.title).toBe('4 signatures · 2 transactions');expect(model.detail).toBe('');
+  expect(model.outcome).toBe('idle');expect(model.title).toBe('4 signatures · 2 transactions · gas applies even with no fill');expect(model.detail).toBe('');
   expect(states(model)).toEqual(['Sign:next','Approve:next','Quote:next','Confirm:next']);
  });
  it('marks the signature request as the step that waits for the wallet',()=>{

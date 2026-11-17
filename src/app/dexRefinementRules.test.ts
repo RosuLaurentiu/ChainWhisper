@@ -76,7 +76,7 @@ describe('compact Liquidity panel', () => {
 
 describe('test-token rows', () => {
   it('shows one row per token and hides an empty status line', () => {
-    expect(rule('.dex-v2-beta-token-card {')).toContain('grid-template-columns: minmax(64px, auto) minmax(0, 1fr);');
+    expect(rule('.dex-v2-beta-token-card {')).toContain('grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;');
     expect(rule('.dex-v2-beta-token-card > .dex-v2-beta-token-status:empty {')).toContain('display: none;');
   });
 

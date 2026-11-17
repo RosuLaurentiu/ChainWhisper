@@ -335,6 +335,9 @@ export function CurrentSwapWorkspace({
   catch (cause) { ownerRecoveryError = cause instanceof Error ? cause.message : 'The saved action is unavailable. Do not resend.'; }
   const inputsLocked = connecting || busy || Boolean(issued) || Boolean(pending) || savedActionPending || fundingRecovery || candidateChanged;
   const unknownOrigin = stage.startsWith('observed-');
+  // Owner decision 2026-11-18: "Check current contracts" shows only while a swap or a recovery is in progress (Get Quote
+  // and Accept run the contract check themselves); "Check current state" moves into a collapsed row while idle.
+  const swapActivity = Boolean(issued || pending || savedActionPending || fundingRecovery || ownerRecovery || ownerRecoveryError || unknownOrigin || stage !== 'idle');
   const displayedSide = resolveDisplayedTradeActionSide(canonicalSide, priceDisplayInverted);
   const displayedBaseIndex = priceDisplayInverted ? 1 : 0;
   const captureTiming = (sender: TrialSubmission, hash: string) => {
@@ -1111,7 +1114,8 @@ export function CurrentSwapWorkspace({
       onClick={() => { try { const target = readOwnerRecovery(); if (target) onInspect(target.view); } catch (cause) { error(cause); } }}>{ownerRecovery.label}</button> : null}
     {ownerRecovery?.alternateView && onInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || busy}
       onClick={() => { try { const target = readOwnerRecovery(); if (target?.alternateView) onInspect(target.alternateView); } catch (cause) { error(cause); } }}>Open top-up recovery</button> : null}
-    {canInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button> : null}
+    {/* While nothing is pending the check still restores an open Quote from chain (another tab or device), so it stays reachable in a collapsed row. */}
+    {canInspect ? swapActivity ? <button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button> : <details className="dex-v2-setup dex-v2-swap-status"><summary>Status and recovery</summary><div><button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button></div></details> : null}
     {issued?.intent.profile === 'fast-pool' && issued.operation.ready && !newQuoteEligible && !pending && !savedActionPending && !fundingRecovery &&
       ['ready', 'expired', 'error'].includes(stage) ? <button type="button" disabled={!enabled || busy || checking}
       onClick={() => { void cancelFastQuote(); }}>Cancel quote</button> : null}
@@ -1133,13 +1137,12 @@ export function CurrentSwapWorkspace({
     {preparedCandidate ? <details className="dex-v2-token-funding" open={fundingRecovery || undefined}><summary>Get test tokens</summary>
       <CurrentSharedTestTokenControls candidateKey={preparedScope!.key} sharedWalletSession={sharedWalletSession} onInspect={onInspect} disabled={busy || checking || walletChanged || Boolean(pending)} />
     </details> : null}
-    {(!preparedCandidate || wallet.address || fundingRecovery || activeJourney) ? <details className="dex-v2-setup" open={fundingRecovery || undefined}><summary>Transaction details</summary><div>
-      <p>Gas applies even when no trade fills.</p>
+    {(!preparedCandidate || fundingRecovery || (!candidateReady && swapActivity) || (import.meta.env.DEV && activeJourney && !walletChanged)) ? <details className="dex-v2-setup" open={fundingRecovery || undefined}><summary>Transaction details</summary><div>
       {!preparedCandidate ? <CurrentTokenFundingControls sharedWalletSession={sharedWalletSession} tokenIndex={inputIndex as 0 | 1} maximumInput={fundingAtoms}
         recoveryRequired={fundingRecovery} recoverFunding={fundingPending ?? undefined}
         onReconciled={status => { setFundingPending(null); setFundingRecovery(false); setStage(issued ? 'ready' : 'idle'); setMessage(status); }}
         disabled={busy || checking || walletChanged || unknownOrigin || Boolean(pending) || (Boolean(issued) && stage !== 'ready')} /> : null}
-    {!candidateReady ? <aside className="dex-v2-current-warning">
+    {!candidateReady && swapActivity ? <aside className="dex-v2-current-warning">
       <ShieldCheck size={19} aria-hidden="true" />
       <div><strong>Contracts not checked yet</strong>
         <button type="button" disabled={!connected || checking || busy || walletChanged} onClick={() => { void checkCandidate(); }}>Check current contracts</button>

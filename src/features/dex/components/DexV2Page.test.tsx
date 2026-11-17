@@ -228,8 +228,9 @@ describe('DexV2Page', () => {
     } as never} />);
     expect(markup).toMatch(/<button[^>]*><span>Get Quote<\/span>/);
     expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*><span>Get Quote<\/span>/);
+    // Owner decision 2026-11-18: while idle, Check current state sits in a collapsed row and the contract check is hidden.
     expect(markup).toContain('Check current state</button>');
-    expect(markup).toContain('Check current contracts');
+    expect(markup).not.toContain('Check current contracts');
     expect(markup).not.toContain('Existing funding transaction hash');
     expect(getCurrentDexQuoteCapability).not.toHaveBeenCalled();
     expect(getCurrentDexSubmissionCapability).not.toHaveBeenCalled();
@@ -325,7 +326,7 @@ describe('DexV2Page', () => {
     expect(markup).not.toContain('one private transaction');
     expect(markup).not.toContain('Testnet ready');
     const source = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
-    expect(markup).toContain('Check current contracts');
+    expect(markup).not.toContain('Check current contracts');
     expect(source).not.toContain("? 'Testnet ready'");
     expect(markup).toContain('You send');
     expect(markup).toContain('Estimated receive');

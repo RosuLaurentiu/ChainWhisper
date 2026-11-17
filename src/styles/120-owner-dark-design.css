@@ -1192,16 +1192,25 @@
 }
 :root body .app-shell-dex-v2 section.dex-v2-current-pool :is(.dex-v2-setup, .dex-v2-current-fields) button:not([class]):disabled { opacity: .5; }
 
-/* Get test tokens: one row per token (symbol, status, Claim or Refill); an empty status line takes no space. */
+/* Get test tokens: one row per token (symbol and balance, status, Claim or Refill with its amount); one Details
+   and one Status and recovery row for the whole panel (owner decision 2026-11-18). */
 :root body .app-shell-dex-v2 .dex-v2-beta-token-grid { border-color: var(--border-subtle); }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card {
   display: grid;
-  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 12px;
-  padding: 4px 12px;
+  min-height: 56px;
+  padding: 6px 12px;
   background: var(--surface-base);
 }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > .dex-v2-beta-token-status { grid-column: 2; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > button { grid-column: 3; white-space: nowrap; }
+:root body .app-shell-dex-v2 :is(.dex-v2-beta-token-details, .dex-v2-beta-token-recovery) { margin-top: 8px; }
+:root body .app-shell-dex-v2 :is(.dex-v2-beta-token-details, .dex-v2-beta-token-recovery) :is(p, dd, dt, label) { color: var(--text-secondary); font-size: .8125rem; overflow-wrap: anywhere; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-details dl { display: grid; gap: 6px; margin: 0; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-details dl > div { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-details dt { color: var(--text-primary); font-weight: 600; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card + .dex-v2-beta-token-card { border-top-color: var(--border-subtle); }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > header { display: grid; gap: 2px; justify-content: start; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > header strong { color: var(--text-primary); font-size: .875rem; }
@@ -1210,7 +1219,6 @@
 :root body .app-shell-dex-v2 .dex-v2-beta-token-action > span { color: var(--text-secondary); font-size: .8125rem; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-action { margin-top: 0; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-action > span strong { color: var(--text-primary); }
-:root body .app-shell-dex-v2 .dex-v2-beta-token-card > :is(.dex-v2-beta-token-status, details) { grid-column: 1 / -1; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > .dex-v2-beta-token-status { margin: 0; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > .dex-v2-beta-token-status:empty { display: none; }
 

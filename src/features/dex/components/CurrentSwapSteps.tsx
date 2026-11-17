@@ -21,7 +21,7 @@ export function currentSwapStepsModel({inputs,restored,privacyReady,approval,quo
   ['Sign',...(approval!=='not-needed'?['Approve']:[]),'Quote','Confirm',...(delivered||stage==='settlement-pending'?['Complete']:[])];
  const title=scopeChanged?'Wallet or inputs changed':cancelledBeforeQuote?'Cancelled':delivered?(stage==='released'?'Refund confirmed':'Swap complete'):stopped?'Swap stopped':
   active==='Token approval'?'Approve token':active==='Request Quote'?'Getting your quote':active==='Prepare Quote'?'Preparing quote':active==='Review Quote'?'Quote ready':active==='Accept'?'Confirm swap':active==='Complete swap'?'Completing swap':
-  inputs.requesting?`Signature ${Math.min(inputs.completed+1,inputs.total)} of ${inputs.total}`:stage==='preparing'?'Preparing quote':restored?'Quote restored':`${inputs.total} signatures · 2 transactions`;
+  inputs.requesting?`Signature ${Math.min(inputs.completed+1,inputs.total)} of ${inputs.total}`:stage==='preparing'?'Preparing quote':restored?'Quote restored':`${inputs.total} signatures · 2 transactions · gas applies even with no fill`;
  // Before the swap starts the title is enough; the track shows the steps.
  const detail=idle||delivered?'':scopeChanged?'Check your wallet and swap status.':cancelledBeforeQuote?'No quote was submitted.':stopped?'Check swap status before continuing.':
   inputs.requesting?'Confirm in your wallet':

@@ -34,10 +34,16 @@ export const sharedTestTokenRefillText = (token: Token) => {
     case 'initial-claim-required': return 'Claim the initial tokens first.';
     case 'expired': return 'Distributor expired.';
     case 'exhausted': return 'Refill quota exhausted.';
-    case 'cooldown': return `Next refill: ${new Date(Number(token.nextClaimAt) * 1000).toISOString()} (UTC).`;
+    case 'cooldown': return `Next refill ${formatRefillTime(token.nextClaimAt)}.`;
     case 'ready': return 'Refill available.';
   }
 };
+// Local date and time of the next refill, for example "Nov 18, 23:56".
+const formatRefillTime = (seconds: bigint) => new Date(Number(seconds) * 1000)
+  .toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+// Display balance: thousands separators and at most two decimals; the exact value stays in the title.
+const formatBalance = (amount: bigint, decimals: number) =>
+  Number(formatUnits(amount, decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const formatPolicyAmount = (amount: bigint) => {
   const [whole, fraction] = formatUnits(amount, 6).split('.');
   return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction ? `.${fraction}` : ''}`;
@@ -92,7 +98,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
     try {
       const value = await readCurrentSharedDexTestTokens({ request: args => provider.request(args), owner, chainId, assertCurrent, candidate: candidateKey });
       assertFundsIdentity(value);
-      assertCurrent(); setResult({ scope: captured, value, message: `Public claim and refill availability checked at block ${value.head.number}.` });
+      assertCurrent(); setResult({ scope: captured, value, message: 'Refills checked. Unlock privacy to see your balances.' });
     } catch (error) {
       if (scope.current === captured) setResult({ scope: captured, message: error instanceof Error ? error.message : 'Test-token availability is unavailable. Check again.' });
     } finally { running.current = false; setBusy(false); }
@@ -109,7 +115,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       if (funds.owner.toLowerCase() !== owner.toLowerCase() || funds.privateFundsVerified !== true || funds.readyToSign !== false) {
         throw new Error('Private beta funds owner changed.');
       }
-      setResult({ scope: captured, value: funds, funds, message: `Private beta funds checked at block ${funds.head.number}. This balance snapshot is not confirmation of a previous claim.` });
+      setResult({ scope: captured, value: funds, funds, message: 'Balances and refills checked.' });
     } catch (error) {
       if (scope.current === captured) setResult({ scope: captured, message: error instanceof Error ? error.message : 'Private beta funds are unavailable.' });
     } finally { running.current = false; setBusy(false); }
@@ -137,7 +143,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       if (!verified.privateAccountingVerified || !verified.funds.privateFundsVerified) throw new Error('Private claim credit is not verified. Do not resend.');
       setPending(null); setBlocked(false);
       setResult({ scope: captured, value: verified.funds, funds: verified.funds, message: verified.fundingOutcome === 'verified'
-        ? 'Confirmed: exact private beta token credit verified.' : 'Claim reverted. Exact private state is unchanged.' });
+        ? 'Claim confirmed. Your private balance is updated.' : 'Claim reverted. Exact private state is unchanged.' });
     } catch (error) {
       const releasedClaim = wasCurrentDexUnsentReleased(error);
       if (scope.current === captured && releasedClaim) setBlocked(false);
@@ -166,12 +172,12 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       const unresolved = Boolean(observed && 'verificationBlocked' in observed && observed.verificationBlocked);
       setPending(null); setBlocked(unresolved); setRecoveryHash('');
       setResult({ scope: captured, value: funds, funds, message: exact ? exact.fundingOutcome === 'verified'
-        ? 'Confirmed: exact private beta token credit verified.' : 'Claim reverted. Exact private state is unchanged.'
+        ? 'Claim confirmed. Your private balance is updated.' : 'Claim reverted. Exact private state is unchanged.'
         : unresolved ? observed && 'privateCreditVerified' in observed && observed.privateCreditVerified
           ? 'Private receipt credit verified. The earlier balance check is unresolved; do not resend.'
           : 'Claim reverted. The earlier balance check is unresolved; do not resend.'
         : observed?.privateAccountingVerified ? observed.status === 'observed-mined'
-          ? 'Confirmed: exact private beta token credit verified.' : 'Claim reverted. Exact private state is unchanged.'
+          ? 'Claim confirmed. Your private balance is updated.' : 'Claim reverted. Exact private state is unchanged.'
           : observed && 'privateCreditVerified' in observed && observed.privateCreditVerified
             ? 'Claim confirmed. Private receipt credit verified; balances are current.'
           : 'Current private funds checked. Reload recovery does not prove the previous private balance change.' });
@@ -184,14 +190,18 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
     : chainId !== 7082400 ? 'Switch your wallet to COTI Testnet.'
       : otherAction || (blocked || pending || hasPending ? 'A previous transaction needs confirmation. Check it below; do not resend.'
         : !admitted ? 'Token signing is held until beta setup is complete.'
-          : !privacyReady ? 'Unlock wallet privacy, then reveal your balances.'
+          : !privacyReady ? 'Unlock privacy to see your balances and claim tokens.'
           : busy || disabled ? 'Wait for the current action to finish.'
             : !getSender ? 'Token funding is unavailable for this wallet session.'
-              : !current?.funds ? 'Reveal your balances before claiming tokens.' : '');
+              : !current?.funds ? 'Check balances and refills before claiming tokens.' : '');
+  // Owner decision 2026-11-18: one check button (private read when privacy is unlocked, else the public read),
+  // one row per token, one Details for the panel, and confirmation tools under Status and recovery.
+  const canReveal = privacyReady && Boolean(getFunds);
+  const checkAll = () => { void (canReveal ? reveal() : check()); };
+  const recoveryOpen = Boolean(!otherAction && (blocked || pending || hasPending));
   return <section className="dex-v2-beta-tokens" aria-label="Beta private test tokens">
     <div className="dex-v2-beta-token-tools">
-      <button type="button" disabled={!connected || busy || disabled} onClick={() => { void check(); }}>Check availability</button>
-      <button type="button" disabled={!connected || !privacyReady || !getFunds || busy || disabled} onClick={() => { void reveal(); }}>Reveal balances</button>
+      <button type="button" disabled={!connected || busy || disabled} onClick={checkAll}>{canReveal ? 'Check balances and refills' : 'Check refills'}</button>
     </div>
     <div className="dex-v2-beta-token-guidance" id="beta-token-setup">
       {setupMessage ? <p>{setupMessage}</p> : null}
@@ -204,48 +214,49 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
       const amount = formatPolicyAmount(action === 'initial' ? policy.initialAmount : policy.refillAmount);
       const allowed = Boolean(funds && (action === 'initial' ? funds.initialClaimAvailability === 'ready' : funds.refillAvailability === 'ready'));
       const held = !connected || !privacyReady || !getSender || !fundingAdmitted({candidate:candidateKey,owner:sharedWalletSession?.walletAddress??'',token:token.address,action}) || !funds || !allowed || busy || disabled || blocked || hasPending;
-      const reason = !publicToken ? 'Check beta test tokens to read public eligibility.'
-        : action === 'initial' ? publicToken.initialClaimAvailability === 'ready' ? 'Initial claim is available.' : 'Initial claim already used.'
+      const reason = !publicToken ? 'Not checked'
+        : action === 'initial' ? publicToken.initialClaimAvailability === 'ready' ? 'Initial claim available.' : 'Initial claim already used.'
           : sharedTestTokenRefillText(publicToken);
       const actionId = `beta-token-action-${token.symbol.toLowerCase()}`;
-      const actionStatus = !publicToken ? 'Availability not checked'
+      const actionStatus = !publicToken ? 'Not checked'
         : availability !== 'ready' ? reason
-          : funds && !allowed ? 'Reveal balances again to check availability.'
+          : funds && !allowed ? 'Check balances again.'
             : action === 'initial' ? 'Initial claim available' : 'Refill available';
       return <article className="dex-v2-beta-token-card" key={token.address}>
-        <header><strong>{token.symbol}</strong>{funds ? <span>Last checked balance: {formatUnits(funds.balance, funds.decimals)} (block {current?.funds?.head.number.toString()})</span> : null}</header>
-        <div className="dex-v2-beta-token-action"><span>{publicToken ? <>{action === 'initial' ? 'One-time claim' : 'Refill'} <strong>{amount}</strong> {token.symbol}</> : 'Not checked'}</span>
-          <button type="button" aria-describedby={`beta-token-setup ${actionId}`} disabled={held || availability !== 'ready'} onClick={() => { void claim(action, token.address); }}>{action === 'initial' ? 'Claim' : 'Refill'} {token.symbol}</button>
-        </div>
-        <p className="dex-v2-beta-token-status" id={actionId} role="status">{publicToken ? actionStatus : ''}</p>
-        <details><summary>Details</summary><dl>
-          <dt>Public eligibility</dt><dd>{reason}</dd>
-          <dt>Initial claim</dt><dd>{formatPolicyAmount(policy.initialAmount)} tokens once per wallet and token</dd>
-          <dt>Refill policy</dt><dd>{formatPolicyAmount(policy.refillAmount)} tokens every 24 hours while quota remains</dd>
-          <dt>Refill quota</dt><dd>{publicToken ? `${formatUnits(publicToken.quota, publicToken.decimals)} tokens` : 'Unavailable until public check'}</dd>
-          <dt>DEX allowance</dt><dd>{funds ? `${formatUnits(funds.allowance, funds.decimals)} tokens` : 'Unknown until private funds are revealed'}</dd>
-          <dt>Distributor expiry</dt><dd>{current?.value ? new Date(Number(current.value.vault.expiresAt) * 1000).toISOString() : 'Unavailable until public check'}</dd>
-          <dt>Checked block</dt><dd>{current?.value?.head.number.toString() ?? 'Unavailable until public check'}</dd>
-          <dt>Token address</dt><dd>{token.address}</dd>
-        </dl></details>
+        <header><strong>{token.symbol}</strong>{funds ? <span title={`${formatUnits(funds.balance, funds.decimals)} ${token.symbol}`}>{formatBalance(funds.balance, funds.decimals)}</span> : null}</header>
+        <p className="dex-v2-beta-token-status" id={actionId} role="status">{actionStatus}</p>
+        <button type="button" aria-describedby={`beta-token-setup ${actionId}`} disabled={held || availability !== 'ready'} onClick={() => { void claim(action, token.address); }}>{action === 'initial' ? 'Claim' : 'Refill'} {amount} {token.symbol}</button>
       </article>;
     })}</div>
+    <details className="dex-v2-beta-token-details"><summary>Details</summary>
+      <p>Initial claim: {formatPolicyAmount(policy.initialAmount)} tokens once per wallet and token. Refill: {formatPolicyAmount(policy.refillAmount)} tokens every 24 hours while quota remains.</p>
+      <p>Distributor expiry: {current?.value ? new Date(Number(current.value.vault.expiresAt) * 1000).toLocaleString() : 'not checked'}{current?.value ? ` · checked at block ${current.value.head.number.toString()}` : ''}</p>
+      <dl>{CURRENT_SHARED_DEX_TOKENS.map(token => {
+        const publicToken = current?.value?.tokens.find(t => t.address.toLowerCase() === token.address.toLowerCase());
+        const funds = current?.funds?.tokens.find(t => t.address.toLowerCase() === token.address.toLowerCase());
+        return <div key={token.address}><dt>{token.symbol}</dt><dd>
+          {publicToken ? `Quota ${formatUnits(publicToken.quota, publicToken.decimals)}` : 'Quota not checked'}
+          {' · '}{funds ? `DEX allowance ${formatUnits(funds.allowance, funds.decimals)}` : 'DEX allowance not checked'}
+          {' · '}{token.address}</dd></div>;
+      })}</dl>
+    </details>
     <div className="dex-v2-beta-token-tools dex-v2-beta-token-footer">{ownerRecovery && onInspect ? <button type="button" disabled={!connected || busy || disabled} onClick={() => {
       try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))); if (target) onInspect(target.view); }
       catch (cause) { setResult({ scope: scope.current, message: cause instanceof Error ? cause.message : 'Saved action unavailable. Do not resend.' }); }
-    }}>{ownerRecovery.label}</button> : <button type="button" disabled={!connected || !privacyReady || !getSender || busy || disabled || Boolean(otherAction)} onClick={() => { void reconcile(); }}>Check confirmation</button>}
+    }}>{ownerRecovery.label}</button> : null}
       {ownerRecovery?.alternateView && onInspect ? <button type="button" disabled={!connected || busy || disabled} onClick={() => {
         try { const target = readOwnerRecovery(readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))); if (target?.alternateView) onInspect(target.alternateView); }
         catch (cause) { setResult({ scope: scope.current, message: cause instanceof Error ? cause.message : 'Saved action unavailable. Do not resend.' }); }
       }}>Open top-up recovery</button> : null}
       <a href={OFFICIAL_COTI_TESTNET_FAUCET_URL} target="_blank" rel="noopener noreferrer">Get Test COTI for gas</a>
     </div>
-    {!otherAction && (blocked || pending || hasPending) ? <details><summary>Beta funding recovery</summary>
-      <label>Existing beta funding transaction hash<input aria-label="Existing beta funding transaction hash" value={recoveryHash}
+    {!(ownerRecovery && onInspect) ? <details className="dex-v2-beta-token-recovery" open={recoveryOpen || undefined}><summary>Status and recovery</summary>
+      <button type="button" disabled={!connected || !privacyReady || !getSender || busy || disabled || Boolean(otherAction)} onClick={() => { void reconcile(); }}>Check confirmation</button>
+      {recoveryOpen ? <><label>Existing beta funding transaction hash<input aria-label="Existing beta funding transaction hash" value={recoveryHash}
         disabled={!connected || busy || disabled} onChange={event => setRecoveryHash(event.target.value)} placeholder="0x…" /></label>
-      <p>Enter the existing claim hash. Do not resend.</p>
+      <p>Enter the existing claim hash. Do not resend.</p></> : null}
     </details> : null}
-    <p role="status">{current?.message || (busy ? 'Checking beta test-token availability…' : '')}</p>
+    <p role="status">{current?.message || (busy ? 'Checking test tokens…' : '')}</p>
     <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} />
   </section>;
 }

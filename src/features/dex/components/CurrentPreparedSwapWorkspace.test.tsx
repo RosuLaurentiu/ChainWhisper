@@ -756,30 +756,12 @@ describe('prepared candidate swap view', () => {
     expect(f.sender.prepareSharedSwapApproval).not.toHaveBeenCalled(); expect(f.sender.submitSharedSwapApproval).not.toHaveBeenCalled();
     expect(f.providerRequest).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
   });
-  it.each(['candidate', 'pair'] as const)('checks only the exact prepared candidate and invalidates readiness when %s changes', async change => {
-    const f = fixture(); f.click('Check current contracts');
-    await vi.waitFor(() => expect(f.status()).toContain('Current test contracts verified'));
-    expect(f.getCapability).toHaveBeenCalledWith(BigInt(prepared.chainId), { candidate: key });
-    expect(f.sender.checkCurrentCheapCandidate).toHaveBeenCalledOnce();
-    expect(f.button('Check current contracts')).toBeUndefined();
-    expect(f.providerRequest).not.toHaveBeenCalled(); expect(f.getQuote).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
-    if (change === 'candidate') f.props.candidateKey = 'cheap-current';
-    else f.props.selectedPair = ['ORBT', 'EMBR'] as TradingPair;
-    expect(f.button('Check current contracts')).toBeDefined();
-  });
-  it.each(['candidate', 'pair'] as const)('rejects an in-flight contract check after %s changes', async change => {
+  // Owner decision 2026-11-18: the manual contract check shows only while a swap or recovery is in progress;
+  // Get Quote and Accept run the same check themselves.
+  it('hides the manual contract check while nothing is pending', () => {
     const f = fixture();
-    let complete!: (value: Awaited<ReturnType<typeof f.sender.checkCurrentCheapCandidate>>) => void;
-    f.sender.checkCurrentCheapCandidate.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
-    f.click('Check current contracts');
-    await vi.waitFor(() => expect(f.sender.checkCurrentCheapCandidate).toHaveBeenCalledOnce());
-    if (change === 'candidate') f.props.candidateKey = 'cheap-current';
-    else f.props.selectedPair = ['ORBT', 'EMBR'] as TradingPair;
-    f.render();
-    complete({ chainId: BigInt(prepared.chainId), owner, core: prepared.core, graph: prepared.graph, readyToSign: false });
-    await vi.waitFor(() => expect(f.status()).toContain('changed during the contract check'));
-    expect(f.button('Check current contracts')).toBeDefined();
-    expect(f.getCapability).toHaveBeenCalledOnce(); expect(f.providerRequest).not.toHaveBeenCalled();
+    expect(f.button('Check current contracts')).toBeUndefined();
+    expect(f.getCapability).not.toHaveBeenCalled(); expect(f.providerRequest).not.toHaveBeenCalled();
   });
   it.each([['EMBR', 'EMBR'], ['unknown', 'ORBT']])('rejects unsupported selected pair %s/%s', (a, b) => {
     const f = fixture(); f.props.selectedPair = [a, b] as TradingPair;
@@ -809,9 +791,7 @@ describe('prepared candidate swap view', () => {
     expect(text(f.render())).toContain('You sendTest token 1');
     expect(text(f.render())).toContain('Estimated receiveTest token 0');
     expect(hooks.balances).toHaveBeenLastCalledWith(f.props.sharedWalletSession, '', { candidate: CURRENT_CHEAP_DEX_CANDIDATE, tokens: CURRENT_CHEAP_DEX_CANDIDATE.tokens.slice(0, 2).map(([address]) => address) }, true);
-    f.sender.checkCurrentCheapCandidate.mockResolvedValueOnce({ chainId: BigInt(CURRENT_CHEAP_DEX_CANDIDATE.chainId), owner, core: CURRENT_CHEAP_DEX_CANDIDATE.core, graph: CURRENT_CHEAP_DEX_CANDIDATE.graph, readyToSign: false });
-    f.click('Check current contracts'); await vi.waitFor(() => expect(f.status()).toContain('verified'));
-    expect(f.getCapability).toHaveBeenCalledWith(BigInt(CURRENT_CHEAP_DEX_CANDIDATE.chainId));
+    expect(f.button('Check current contracts')).toBeUndefined();
   });
   it('rejects read-only candidate identity mismatch without a fallback', async () => {
     const f = fixture(); f.sender.checkCurrentCheapCandidate.mockResolvedValueOnce({ chainId: BigInt(prepared.chainId), owner, core: CURRENT_CHEAP_DEX_CANDIDATE.core, graph: prepared.graph, readyToSign: false });

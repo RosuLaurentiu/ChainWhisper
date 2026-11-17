@@ -55,11 +55,11 @@ describe('four-asset beta funding controls', () => {
         balance: 0n, allowance: 0n, encryptionAddress: owner })) };
     const getSender = vi.fn();
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: async () => ({ read: async () => funds }), getCurrentDexSubmissionCapability: getSender } as never;
-    elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Reveal balances')!.props.onClick!();
+    elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Check balances and refills')!.props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     const writes = elements(f.render()).filter(e => e.type === 'button' && /^(Claim|Refill) /.test(text(e.props.children)));
     expect(writes).toHaveLength(4);
-    expect(text(f.render())).toContain(action === 'initial' ? 'One-time claim 10,000.0' : 'Refill 1,000.0');
+    expect(text(f.render())).toContain(action === 'initial' ? 'Claim 10,000.0' : 'Refill 1,000.0');
     expect(writes.every(button => button.props.disabled === false && text(button.props.children).startsWith(action === 'initial' ? 'Claim' : 'Refill'))).toBe(true);
     expect(text(f.render())).not.toContain('Token signing is held'); expect(getSender).not.toHaveBeenCalled();
   });
@@ -71,7 +71,7 @@ describe('four-asset beta funding controls', () => {
     const funds = { ...snapshot(), owner, core: policy.core, graph: policy.graph, packageSha256: policy.packageSha256, privateFundsVerified: true,
       tokens: snapshot().tokens.map(token => ({ ...token, claimed: true, initialClaimAvailability: 'claimed', refillAvailability: 'ready', balance: 0n, allowance: 0n })) };
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: async () => ({ read: async () => funds }), getCurrentDexSubmissionCapability: vi.fn() } as never;
-    elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Reveal balances')!.props.onClick!();
+    elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Check balances and refills')!.props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     expect(text(f.render())).toContain('Token signing is held');
     expect(elements(f.render()).filter(e => e.type === 'button' && /^Refill /.test(text(e.props.children))).every(button => button.props.disabled)).toBe(true);
@@ -95,7 +95,7 @@ describe('four-asset beta funding controls', () => {
     elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Check confirmation')!.props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     expect(recover).toHaveBeenCalledOnce(); expect(failedRecover).not.toHaveBeenCalled();
-    expect(text(f.render())).toContain('Confirmed: exact private beta token credit verified.');
+    expect(text(f.render())).toContain('Claim confirmed. Your private balance is updated.');
   });
   it.each(['verified', 'reverted', 'pending', 'private-failure'] as const)('checks a known claim automatically and shows %s accurately', async outcome => {
     const f = fixture(), owner = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', policy = resolveCurrentSharedTokenDistribution('cheap-exit');
@@ -120,20 +120,20 @@ describe('four-asset beta funding controls', () => {
       }), waitForCurrentCheapReceipt: vi.fn(async () => outcome === 'pending' ? null : { status: outcome === 'reverted' ? 0 : 1 }) };
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: async () => ({ read: async () => funds }),
       getCurrentDexSubmissionCapability: async () => sender } as never;
-    elements(f.render()).filter(e => e.type === 'button')[1].props.onClick!();
+    elements(f.render()).filter(e => e.type === 'button')[0].props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
-    const claim = () => elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Claim HBR')!;
+    const claim = () => elements(f.render()).find(e => e.type === 'button' && text(e.props.children).startsWith('Claim ') && text(e.props.children).endsWith(' HBR'))!;
     expect(claim().props.disabled).toBe(false); claim().props.onClick!();
     await vi.waitFor(() => expect(sender.submitSharedTokenFunding).toHaveBeenCalledOnce());
     const walletText = text(f.render()); claim().props.onClick!(); finishWallet();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     expect(sender.submitSharedTokenFunding).toHaveBeenCalledOnce();
     if (outcome === 'verified') {
-      expect(text(f.render())).toContain('Confirmed: exact private beta token credit verified.');
-      expect(text(f.render())).toContain('Last checked balance: 10000.0'); expect(recover).toHaveBeenCalledOnce();
+      expect(text(f.render())).toContain('Claim confirmed. Your private balance is updated.');
+      expect(text(f.render())).toContain('HBR10,000'); expect(recover).toHaveBeenCalledOnce();
     } else if (outcome === 'reverted') {
       expect(text(f.render())).toContain('Claim reverted. Exact private state is unchanged.');
-      expect(text(f.render())).not.toContain('Last checked balance: 10000.0'); expect(recover).toHaveBeenCalledOnce();
+      expect(text(f.render())).not.toContain('HBR10,000'); expect(recover).toHaveBeenCalledOnce();
     } else if (outcome === 'private-failure') {
       expect(text(f.render())).toContain('Private claim credit differs. Do not resend.'); expect(claim().props.disabled).toBe(true);
     } else {
@@ -149,18 +149,18 @@ describe('four-asset beta funding controls', () => {
       tokens: snapshot().tokens.map(t => ({ ...t, balance: 987654321n, allowance: 0n })) }) }));
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: getFunds } as never;
     f.session.sessionOnboardInfo = { [f.session.walletAddress.toLowerCase()]: { aesKey: 'synthetic-test-session' } } as never;
-    elements(f.render()).filter(e => e.type === 'button')[1].props.onClick!();
+    elements(f.render()).filter(e => e.type === 'button')[0].props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     expect(getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-exit' });
-    expect(text(f.render())).toContain('987.654321');
-    f.select('cheap-prepared'); expect(text(f.render())).not.toContain('987.654321');
+    expect(text(f.render())).toContain('987.65');
+    f.select('cheap-prepared'); expect(text(f.render())).not.toContain('987.65');
   });
   it('refuses an old-Core private result for the current candidate', async () => {
     const f = fixture(); f.select('cheap-exit');
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: async () => ({ read: async () => ({ ...snapshot(),
       privateFundsVerified: true, tokens: snapshot().tokens.map(t => ({ ...t, balance: 987654321n, allowance: 0n })) }) }) } as never;
     f.session.sessionOnboardInfo = { [f.session.walletAddress.toLowerCase()]: { aesKey: 'synthetic-test-session' } } as never;
-    elements(f.render()).filter(e => e.type === 'button')[1].props.onClick!();
+    elements(f.render()).filter(e => e.type === 'button')[0].props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     expect(text(f.render())).toContain('candidate or owner changed'); expect(text(f.render())).not.toContain('987.654321');
   });
@@ -171,17 +171,17 @@ describe('four-asset beta funding controls', () => {
     expect(html).toContain('1,000.0 tokens every 24 hours while quota remains'); expect(html).toContain('Connect your wallet to check availability.');
     expect(html).toContain('href="https://faucet.testnet.coti.io/" target="_blank" rel="noopener noreferrer"');
     expect(html).toContain('Get Test COTI for gas');
-    expect(html).toMatch(/disabled=""[^>]*>Check availability/);
+    expect(html).toMatch(/disabled=""[^>]*>Check refills/);
   });
   it('shows separate per-token eligibility and exact six-decimal quota', async () => {
     vi.mocked(readCurrentSharedDexTestTokens).mockResolvedValueOnce(snapshot()); const f = fixture(); f.click();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
-    expect(text(f.render())).toContain('999000.0 tokens');
+    expect(text(f.render())).toContain('Quota 999000.0');
     const orbt = elements(f.render()).find(e => e.type === 'article' && text(e).includes('ORBT'))!;
     expect(text(orbt)).toContain('Initial claim available');
     expect(elements(orbt).filter(e => e.type === 'button' && /^(Claim|Refill) /.test(text(e.props.children)))).toHaveLength(1);
-    expect(text(orbt)).toContain('Claim ORBT');
-    expect(text(f.render())).toMatch(/Token signing is held|previous transaction needs confirmation/); expect(elements(f.render()).filter(e => e.type === 'button')).toHaveLength(7);
+    expect(text(orbt)).toMatch(/Claim [\d,.]+ ORBT/);
+    expect(text(f.render())).toMatch(/Token signing is held|previous transaction needs confirmation/); expect(elements(f.render()).filter(e => e.type === 'button')).toHaveLength(6);
     expect(elements(f.render()).filter(e => e.type === 'button' && /^(Claim|Refill) /.test(text(e.props.children)))).toHaveLength(4);
   });
   it('rejects duplicate reads and hides the old result after owner changes', async () => {
@@ -212,28 +212,29 @@ describe('four-asset beta funding controls', () => {
       tokens: snapshot().tokens.map(t => ({ ...t, balance: 123456789n, allowance: 1000000n, encryptionAddress: p.vault.recovery })) }));
     const getFunds = vi.fn(async () => ({ read }));
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: getFunds } as never;
-    const reveal = () => elements(f.render()).filter(e => e.type === 'button')[1];
-    expect(reveal().props.disabled).toBe(true); reveal().props.onClick!(); expect(getFunds).not.toHaveBeenCalled();
+    const reveal = () => elements(f.render()).filter(e => e.type === 'button')[0];
+    // One check button (owner decision 2026-11-18): while privacy is locked it runs only the public read.
+    expect(text(reveal().props.children)).toBe('Check refills'); expect(getFunds).not.toHaveBeenCalled();
     f.session.sessionOnboardInfo = { [f.session.walletAddress.toLowerCase()]: { aesKey: 'synthetic-test-session' } } as never;
     expect(reveal().props.disabled).toBe(false); reveal().props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
-    expect(text(f.render())).toContain('Last checked balance: 123.456789');
-    expect(text(f.render())).toContain('(block 9951288)');
+    expect(text(f.render())).toContain('123.46');
+    expect(text(f.render())).toContain('checked at block 9951288');
     expect(read).toHaveBeenCalledOnce();
-    expect(text(f.render())).toContain('DEX allowance1.0 tokens');
-    expect(text(f.render())).toContain('not confirmation of a previous claim'); expect(getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-prepared' });
-    f.session.sessionOnboardInfo = {}; expect(text(f.render())).not.toContain('123.456789');
-    expect(reveal().props.disabled).toBe(true);
+    expect(text(f.render())).toContain('DEX allowance 1.0');
+    expect(text(f.render())).toContain('Balances and refills checked.'); expect(getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-prepared' });
+    f.session.sessionOnboardInfo = {}; expect(text(f.render())).not.toContain('123.46');
+    expect(text(reveal().props.children)).toBe('Check refills');
   });
   it('discards a private result if the owner changes during the read', async () => {
     const f = fixture(); let finish!: (v: unknown) => void;
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: async () => ({ read: () => new Promise(r => { finish = r; }) }) } as never;
     f.session.sessionOnboardInfo = { [f.session.walletAddress.toLowerCase()]: { aesKey: 'synthetic-test-session' } } as never;
-    elements(f.render()).filter(e => e.type === 'button')[1].props.onClick!();
+    elements(f.render()).filter(e => e.type === 'button')[0].props.onClick!();
     await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     f.session.walletAddress = '0x23aBDe1d22019D52852D6845c9444326Dde1D99e'; f.render();
     finish({ ...snapshot(), privateFundsVerified: true, tokens: snapshot().tokens.map(t => ({ ...t, balance: 1000000n, allowance: 0n })) });
-    await vi.waitFor(() => expect(hooks.states[1]).toBe(false)); expect(text(f.render())).not.toContain('Last checked balance: 1.0');
+    await vi.waitFor(() => expect(hooks.states[1]).toBe(false)); expect(text(f.render())).not.toContain('Balances and refills checked.');
   });
   it('keeps all four-token writes held even with unlocked funds and an available sender', async () => {
     const f = fixture(), sender = vi.fn();
@@ -246,11 +247,11 @@ describe('four-asset beta funding controls', () => {
   });
   it('hides unread private balances and keeps the initial action disabled until verified', () => {
     const html = renderToStaticMarkup(<CurrentSharedTestTokenControls />);
-    expect(html).not.toContain('Last checked balance:');
+    expect(html).not.toMatch(/<span title="[^"]* BCN"/);
     expect(html).toContain('Not checked');
     expect(html.replace(/<[^>]+>/g, '')).not.toContain('Receive 10,000.0 BCN');
-    expect(html).not.toContain('Last checked balance: 0.0');
-    expect(html.match(/>(?:Claim|Refill) (?:BCN|HBR|EMBR|ORBT)<\/button>/g)).toHaveLength(4);
+    expect(html).not.toMatch(/<span title="0\.0 /);
+    expect(html.match(/>(?:Claim|Refill) [\d,.]+ (?:BCN|HBR|EMBR|ORBT)<\/button>/g)).toHaveLength(4);
     expect(html.match(/disabled=""[^>]*>(?:Claim|Refill) /g)).toHaveLength(4);
   });
   it('uses six-decimal claim review and separates allowance from credit', () => {
@@ -274,7 +275,7 @@ describe('four-asset beta funding controls', () => {
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     expect(recover).toHaveBeenCalledWith(undefined); expect(read).toHaveBeenCalledOnce();
     expect(text(f.render())).toContain('Reload recovery does not prove the previous private balance change');
-    expect(text(f.render())).toContain('Last checked balance: 123.456789'); expect(text(f.render())).not.toContain('exact private beta token credit verified');
+    expect(text(f.render())).toContain('123.46'); expect(text(f.render())).not.toContain('Your private balance is updated');
   });
   it.each([false, true])('labels private receipt credit separately from a historical balance delta; blocked=%s', async blocked => {
     const f = fixture();
@@ -298,8 +299,7 @@ describe('four-asset beta funding controls', () => {
     elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Check confirmation')!.props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
     expect(read).not.toHaveBeenCalled(); expect(text(f.render())).toMatch(/do not resend/i);
-    expect(text(f.render())).not.toContain('Last checked balance:');
-    expect(text(f.render())).not.toContain('Last checked balance: 123.456789'); expect(hooks.states[2]).toBe(true);
+    expect(text(f.render())).not.toContain('123.46'); expect(hooks.states[2]).toBe(true);
   });
   it('discards recovery and private funds after owner context changes', async () => {
     const f = fixture(), read = vi.fn(); let finish!: (value: unknown) => void;
