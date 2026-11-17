@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
-import { ChevronDown, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw, Wallet } from 'lucide-react';
+import { ChevronDown, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw, Wallet, X } from 'lucide-react';
 import { resolveWalletStatusTone, type WalletStatusTone } from '../../../lib/walletSession';
 import { moveFocusWithin } from '../../../shared/components/a11y';
 
@@ -25,7 +25,9 @@ type WalletHeaderPanelProps = {
   statusActionLabel?: string;
   statusActionTitle?: string;
   statusLabel?: string;
+  statusMessage?: string;
   statusTone?: WalletStatusTone;
+  onDismissStatusMessage?: () => void;
   onStatusAction?: () => void;
 };
 
@@ -51,7 +53,9 @@ export default function WalletHeaderPanel({
   statusActionLabel,
   statusActionTitle,
   statusLabel,
+  statusMessage,
   statusTone,
+  onDismissStatusMessage,
   onStatusAction
 }: WalletHeaderPanelProps) {
   const resolvedStatusTone = statusTone ?? resolveWalletStatusTone(statusLabel ?? '');
@@ -221,6 +225,16 @@ export default function WalletHeaderPanel({
           ) : null}
           {connected && menuWarning ? <span className="p2p-wallet-menu-warning" aria-hidden="true" /> : null}
         </button>
+        {statusMessage && !menuOpen ? (
+          <div className="wallet-header-status-alert" role="alert">
+            <p>{statusMessage}</p>
+            {onDismissStatusMessage ? (
+              <button type="button" aria-label="Dismiss wallet message" onClick={onDismissStatusMessage}>
+                <X size={15} strokeWidth={2.25} aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {menuOpen ? (
           <div ref={menuRef} id={menuId} className="p2p-wallet-menu" role="menu" aria-label={menuLabel}>
             {menu}

@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import useChatWalletHeaderControl from './useChatWalletHeaderControl';
+import useChatWalletHeaderControl, { getWalletHeaderStatusError } from './useChatWalletHeaderControl';
 
 const OWNER = '0x1000000000000000000000000000000000000001';
 const provider = { request: vi.fn() };
@@ -10,12 +10,18 @@ const renderControl = ({
   connecting = false,
   configured,
   status,
-  connected = true
+  connected = true,
+  ownerAesReady = true,
+  statusErrorMessage,
+  menuOpen = true
 }: {
   connecting?: boolean;
   configured: boolean;
   status: 'disabled' | 'ready';
   connected?: boolean;
+  ownerAesReady?: boolean;
+  statusErrorMessage?: string;
+  menuOpen?: boolean;
 }) => {
   const Component = () => {
     const { chatWalletHeaderControl } = useChatWalletHeaderControl({
@@ -30,7 +36,7 @@ const renderControl = ({
             walletLabel: 'MetaMask'
           }
         : null,
-      chatWalletMenuOpen: true,
+      chatWalletMenuOpen: menuOpen,
       connectingMethod: connecting ? 'metamask' : null,
       connectingWalletLabel: connecting ? 'MetaMask' : '',
       copyWithFeedback: vi.fn(),
@@ -39,12 +45,13 @@ const renderControl = ({
       injectedWalletOptions: [],
       lastCopiedKey: null,
       onToggleReadCursorCloud: vi.fn(),
-      ownerAesReady: true,
+      ownerAesReady,
       preferredBrowserWalletId: 'metamask',
       readCursorCloudConfigured: configured,
       readCursorCloudStatus: status,
       setChatWalletMenuOpen: vi.fn(),
       setError: vi.fn(),
+      statusErrorMessage,
       walletAddress: connected ? OWNER : ''
     });
     return chatWalletHeaderControl;
@@ -96,5 +103,56 @@ describe('useChatWalletHeaderControl cross-device read status', () => {
     expect(markup).toContain('Disable and delete synced read status');
     expect(markup).toContain('Delete this wallet&#x27;s synced read cursors');
     expect(markup).toContain('aria-pressed="true"');
+  });
+});
+
+describe('useChatWalletHeaderControl unlock errors', () => {
+  const message = 'COTI Snap has no AES key for this wallet on COTI Testnet on this device.';
+
+  it('shows the header unlock error as an alert while privacy is locked', () => {
+    const markup = renderControl({
+      configured: false,
+      status: 'disabled',
+      ownerAesReady: false,
+      statusErrorMessage: message,
+      menuOpen: false
+    });
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain(message);
+    expect(markup).toContain('aria-label="Dismiss wallet message"');
+  });
+
+  it('shows a connection error while the wallet is disconnected', () => {
+    const markup = renderControl({
+      configured: false,
+      status: 'disabled',
+      connected: false,
+      statusErrorMessage: 'Wallet connection was not completed.',
+      menuOpen: false
+    });
+
+    expect(markup).toContain('Wallet connection was not completed.');
+  });
+
+  it('does not show an old unlock error after privacy is ready', () => {
+    const markup = renderControl({ configured: false, status: 'disabled', statusErrorMessage: message, menuOpen: false });
+
+    expect(markup).not.toContain(message);
+    expect(markup).not.toContain('role="alert"');
+  });
+
+  it('shows header wallet errors on every header page except Chat, which has its own error area', () => {
+    expect(getWalletHeaderStatusError('dex', message)).toBe(message);
+    expect(getWalletHeaderStatusError('swap', message)).toBe(message);
+    expect(getWalletHeaderStatusError('trades', message)).toBe(message);
+    expect(getWalletHeaderStatusError('treasury', message)).toBe(message);
+    expect(getWalletHeaderStatusError('chat', message)).toBe('');
+  });
+
+  it('hides the alert while the wallet menu is open in the same place', () => {
+    const markup = renderControl({ configured: false, status: 'disabled', ownerAesReady: false, statusErrorMessage: message });
+
+    expect(markup).not.toContain('role="alert"');
   });
 });

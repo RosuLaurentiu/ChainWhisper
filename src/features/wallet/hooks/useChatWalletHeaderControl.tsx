@@ -43,6 +43,7 @@ type UseChatWalletHeaderControlArgs = {
   onToggleReadCursorCloud?: () => Promise<void>;
   setChatWalletMenuOpen: Dispatch<SetStateAction<boolean>>;
   setError: Dispatch<SetStateAction<string>>;
+  statusErrorMessage?: string;
   walletAesHealth?: WalletAesHealthState | null;
   walletAddress: string;
   utilityMenu?: ReactNode;
@@ -55,6 +56,11 @@ type UseChatWalletHeaderControlResult = {
   chatWalletHeaderControl: ReactNode;
   unlockPrivacy: () => void;
 };
+
+// Chat shows wallet errors in its own error area. The other header pages have
+// none, so the header shows them there.
+export const getWalletHeaderStatusError = (activePage: string, error: string): string =>
+  activePage === 'chat' ? '' : error.trim();
 
 const formatHeaderAddress = (address: string, compact: boolean): string =>
   compact
@@ -80,6 +86,7 @@ export default function useChatWalletHeaderControl({
   onToggleReadCursorCloud,
   setChatWalletMenuOpen,
   setError,
+  statusErrorMessage = '',
   walletAesHealth,
   walletAddress,
   utilityMenu,
@@ -124,6 +131,8 @@ export default function useChatWalletHeaderControl({
       : ownerAesReady
         ? 'Privacy ready'
         : 'Privacy locked';
+  const visibleStatusError =
+    statusErrorMessage.trim() && (!connected || !ownerAesReady || privacyNeedsRepair) ? statusErrorMessage.trim() : '';
   const statusTone = !connected ? 'muted' : ownerAesReady && !privacyNeedsRepair ? 'ready' : 'locked';
   const preferredLabel =
     currentInjectedWalletOption?.label ??
@@ -201,6 +210,8 @@ export default function useChatWalletHeaderControl({
       }}
       modeLabel={connected ? preferredLabel : ''}
       statusLabel={statusLabel}
+      statusMessage={visibleStatusError}
+      onDismissStatusMessage={() => setError('')}
       statusTone={statusTone}
       statusActionLabel={connected && (!ownerAesReady || privacyNeedsRepair) ? 'Unlock privacy' : undefined}
       statusActionTitle={connected && (!ownerAesReady || privacyNeedsRepair)

@@ -45,7 +45,7 @@ import useMobileHeaderLinks from './app/hooks/useMobileHeaderLinks';
 import useAccountFundsSigners from './features/wallet/hooks/useAccountFundsSigners';
 import useOwnerWalletBalances from './features/wallet/hooks/useOwnerWalletBalances';
 import useWalletTokenWatchlist from './features/wallet/hooks/useWalletTokenWatchlist';
-import useChatWalletHeaderControl from './features/wallet/hooks/useChatWalletHeaderControl';
+import useChatWalletHeaderControl, { getWalletHeaderStatusError } from './features/wallet/hooks/useChatWalletHeaderControl';
 import useChatReadCursorCloudSync from './features/wallet/hooks/useChatReadCursorCloudSync';
 import useWalletReadiness from './features/wallet/hooks/useWalletReadiness';
 import { mergeLeaseScopedOnboardInfo } from './features/wallet/hooks/useSharedWalletSigner';
@@ -4371,7 +4371,8 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     readCursorCloudConfigured: chatReadCursorCloud.configured,
     readCursorCloudStatus: chatReadCursorCloud.status,
     setChatWalletMenuOpen,
-    setError,
+    setError: setWalletOnboardingError,
+    statusErrorMessage: getWalletHeaderStatusError(activePage, walletConnectionError),
     walletAesHealth: walletAesHealthByAddress[walletAddress.trim().toLowerCase()] ?? null,
     walletAddress,
     utilityMenu: walletUtilityMenu,

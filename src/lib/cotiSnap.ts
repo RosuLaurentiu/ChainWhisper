@@ -2,19 +2,17 @@ import { COTI_NETWORK, normalizeChainId, type Eip1193Provider } from './appShare
 
 const COTI_SNAP_ID = 'npm:@coti-io/coti-snap';
 // Snap 1.0.54 is the first version that reads AES keys by the requested
-// account address. Older versions return the key of the Snap's own connected
-// account. MetaMask's Snap allowlist listed only 1.0.54-8a5cfb on 2026-11-17.
-// COTI publishes only pre-release style versions, so the range carries the
-// suffix; MetaMask resolves Snap ranges with pre-releases included.
-export const COTI_SNAP_MIN_VERSION = '1.0.54-8a5cfb';
-const COTI_SNAP_VERSION_RANGE = `>=${COTI_SNAP_MIN_VERSION}`;
+// account address. Older versions return the key of the Snap's own first
+// permitted account, so the App confirms that account before it reads a key.
+// The App never requests a Snap update: every COTI Snap version clears all of
+// its stored AES keys in its onUpdate handler.
+const COTI_SNAP_ADDRESS_LOOKUP_VERSION = '1.0.54';
 const PASSIVE_SNAP_RPC_TIMEOUT_MS = 1500;
 
 type SnapResponse = Record<string, unknown>;
 type CotiSnapConnectionStatus =
   | 'ready'
   | 'not-installed'
-  | 'outdated'
   | 'unsupported'
   | 'unsupported-mobile'
   | 'rejected'
@@ -41,7 +39,7 @@ export type CotiSnapAesKeyResult =
   | { status: 'ready'; aesKey: string }
   | { status: 'missing-aes' }
   | { status: 'not-installed' }
-  | { status: 'outdated' }
+  | { status: 'snap-account-mismatch' }
   | { status: 'unsupported' }
   | { status: 'unsupported-mobile' }
   | { status: 'wallet-mismatch' }
@@ -52,7 +50,7 @@ export type CotiSnapAesKeyResult =
 export type CotiSnapOwnerAesStatus =
   | 'ready'
   | 'snap-not-installed'
-  | 'snap-outdated'
+  | 'snap-account-mismatch'
   | 'snap-missing-aes'
   | 'unsupported'
   | 'unsupported-mobile'
@@ -144,18 +142,18 @@ const parseSnapVersion = (version: unknown): [number, number, number] | null => 
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 };
 
-const MIN_SNAP_VERSION_PARTS = parseSnapVersion(COTI_SNAP_MIN_VERSION) as [number, number, number];
+const ADDRESS_LOOKUP_VERSION_PARTS = parseSnapVersion(COTI_SNAP_ADDRESS_LOOKUP_VERSION) as [number, number, number];
 
 // COTI version suffixes are build hashes, not ordered pre-release labels, so
 // compare only the numeric release part.
-export const isCotiSnapVersionCurrent = (version: unknown): boolean => {
+export const cotiSnapSupportsAddressLookup = (version: unknown): boolean => {
   const parts = parseSnapVersion(version);
   if (!parts) {
     return false;
   }
   for (let index = 0; index < 3; index += 1) {
-    if (parts[index] !== MIN_SNAP_VERSION_PARTS[index]) {
-      return parts[index] > MIN_SNAP_VERSION_PARTS[index];
+    if (parts[index] !== ADDRESS_LOOKUP_VERSION_PARTS[index]) {
+      return parts[index] > ADDRESS_LOOKUP_VERSION_PARTS[index];
     }
   }
   return true;
@@ -168,9 +166,6 @@ const getSnapEntry = (snaps: unknown): SnapResponse | null => {
   const entry = (snaps as Record<string, unknown>)[COTI_SNAP_ID];
   return entry && typeof entry === 'object' ? (entry as SnapResponse) : {};
 };
-
-const isUsableCurrentSnap = (entry: SnapResponse | null): boolean =>
-  Boolean(entry && isCotiSnapVersionCurrent(entry.version) && entry.enabled !== false && entry.blocked !== true);
 
 const getInstalledSnaps = async (provider: Eip1193Provider): Promise<Record<string, SnapResponse> | null> => {
   try {
@@ -228,48 +223,44 @@ const confirmSnapWalletContext = async (
   }
 };
 
-const requestSnap = async (provider: Eip1193Provider): Promise<CotiSnapConnectionStatus> => {
+type CotiSnapRequestResult =
+  | { status: 'ready'; snap: SnapResponse }
+  | { status: Exclude<CotiSnapConnectionStatus, 'ready'> };
+
+const requestSnap = async (provider: Eip1193Provider): Promise<CotiSnapRequestResult> => {
   const capability = await detectWalletSnapCapability(provider);
   if (capability === 'unsupported-mobile') {
-    return 'unsupported-mobile';
+    return { status: 'unsupported-mobile' };
   }
-  if (capability === 'unsupported') {
-    return 'unsupported';
-  }
-  if (capability === 'unknown') {
-    return 'unsupported';
+  if (capability === 'unsupported' || capability === 'unknown') {
+    return { status: 'unsupported' };
   }
 
-  // Some injected wallets do not expose Snap discovery; requestSnaps below
-  // is the decisive MetaMask-only capability check.
+  // wallet_getSnaps lists only Snaps that this origin may use. Any listed
+  // version is kept: an update would clear the Snap's stored AES keys.
   const installedEntry = getSnapEntry(await getInstalledSnaps(provider));
-  if (isUsableCurrentSnap(installedEntry)) {
-    return 'ready';
+  if (installedEntry) {
+    return { status: 'ready', snap: installedEntry };
   }
 
-  // A version range makes MetaMask install the allowlisted version for a new
-  // user and offer an update when an older Snap is installed. Without the
-  // range MetaMask keeps any installed version.
+  // No version: MetaMask installs its allowlisted version, or only grants this
+  // origin access to an installed Snap without changing its version.
   try {
     const requested = await provider.request({
       method: 'wallet_requestSnaps',
       params: {
-        [COTI_SNAP_ID]: { version: COTI_SNAP_VERSION_RANGE }
+        [COTI_SNAP_ID]: {}
       }
     });
-    const requestedEntry = getSnapEntry(requested) ?? getSnapEntry(await getInstalledSnaps(provider));
-    if (isUsableCurrentSnap(requestedEntry)) {
-      return 'ready';
-    }
-    return requestedEntry ? 'outdated' : 'not-installed';
+    return {
+      status: 'ready',
+      snap: getSnapEntry(requested) ?? getSnapEntry(await getInstalledSnaps(provider)) ?? {}
+    };
   } catch (error) {
     if (isUserRejectedError(error)) {
-      return 'rejected';
+      return { status: 'rejected' };
     }
-    if (installedEntry) {
-      return 'outdated';
-    }
-    return isUnsupportedSnapError(error) ? 'unsupported' : 'not-installed';
+    return { status: isUnsupportedSnapError(error) ? 'unsupported' : 'not-installed' };
   }
 };
 
@@ -292,29 +283,65 @@ const invokeInstalledCotiSnap = async <T>(
   }
 };
 
+// connect-to-wallet only reports whether the Snap has any account access;
+// it shows no prompt. False means the Snap has no account, not a rejection.
 const connectInstalledCotiSnapToWallet = async (
   provider: Eip1193Provider
-): Promise<'ready' | 'rejected' | 'error'> => {
+): Promise<'ready' | 'snap-account-mismatch' | 'rejected' | 'error'> => {
   const connected = await invokeInstalledCotiSnap<unknown>(provider, 'connect-to-wallet');
   if (!connected.ok) {
     return connected.status;
   }
-  return connected.value !== null && connected.value !== false ? 'ready' : 'rejected';
+  return connected.value !== null && connected.value !== false ? 'ready' : 'snap-account-mismatch';
+};
+
+type CotiSnapAccountStatus = 'ready' | 'snap-account-mismatch' | 'rejected' | 'error';
+
+// A Snap older than 1.0.54 ignores `address` and uses its first permitted
+// account. Read that account and refuse another account's key.
+const confirmSnapKeyAccount = async (
+  provider: Eip1193Provider,
+  snap: SnapResponse,
+  context?: CotiSnapWalletContext
+): Promise<CotiSnapAccountStatus> => {
+  const expectedWallet = normalizeWalletAddress(context?.walletAddress);
+  if (!expectedWallet || cotiSnapSupportsAddressLookup(snap.version)) {
+    return 'ready';
+  }
+  const permissions = await invokeInstalledCotiSnap<{ permittedAccounts?: unknown }>(
+    provider,
+    'check-account-permissions'
+  );
+  if (!permissions.ok) {
+    return permissions.status;
+  }
+  const permittedAccounts = permissions.value?.permittedAccounts;
+  const snapAccount = Array.isArray(permittedAccounts) && typeof permittedAccounts[0] === 'string'
+    ? normalizeWalletAddress(permittedAccounts[0])
+    : '';
+  if (!snapAccount) {
+    return 'error';
+  }
+  return snapAccount === expectedWallet ? 'ready' : 'snap-account-mismatch';
 };
 
 const requestAndConnectCotiSnap = async (
-  provider: Eip1193Provider
-): Promise<CotiSnapConnectionStatus> => {
+  provider: Eip1193Provider,
+  context?: CotiSnapWalletContext
+): Promise<CotiSnapConnectionStatus | 'snap-account-mismatch'> => {
   const installed = await requestSnap(provider);
-  if (installed !== 'ready') {
-    return installed;
+  if (installed.status !== 'ready') {
+    return installed.status;
   }
 
-  return connectInstalledCotiSnapToWallet(provider);
+  const connected = await connectInstalledCotiSnapToWallet(provider);
+  if (connected !== 'ready') {
+    return connected;
+  }
+  return confirmSnapKeyAccount(provider, installed.snap, context);
 };
 
-// Snap 1.0.54+ reads the key stored for `address`. Without it the Snap uses
-// its own connected account, which can be a different MetaMask account.
+// Snap 1.0.54+ reads the key stored for `address`. Older Snaps ignore it.
 const buildSnapChainParams = (context?: CotiSnapWalletContext): Record<string, unknown> | undefined => {
   const address = normalizeWalletAddress(context?.walletAddress);
   const chainId = context?.expectedChainId ? String(context.expectedChainId) : undefined;
@@ -365,7 +392,7 @@ export const getCotiSnapAesKeyResult = async (
     return { status: 'unsupported' };
   }
 
-  const connected = await requestAndConnectCotiSnap(provider);
+  const connected = await requestAndConnectCotiSnap(provider, context);
   if (connected !== 'ready') {
     return { status: connected };
   }
@@ -413,9 +440,6 @@ export const getCotiSnapOwnerAesKeyResult = async (
   if (result.status === 'not-installed') {
     return { status: 'snap-not-installed' };
   }
-  if (result.status === 'outdated') {
-    return { status: 'snap-outdated' };
-  }
   if (result.status === 'missing-aes') {
     return { status: 'snap-missing-aes' };
   }
@@ -426,10 +450,10 @@ export const getCotiSnapOwnerAesStatusMessage = (status: Exclude<CotiSnapOwnerAe
   switch (status) {
     case 'snap-not-installed':
       return 'COTI Snap is not installed. Install the COTI Snap in MetaMask desktop, then try again.';
-    case 'snap-outdated':
-      return `Update COTI Snap in MetaMask to version ${COTI_SNAP_MIN_VERSION.split('-')[0]} or later, then try again. Older versions can return the AES key of a different account.`;
+    case 'snap-account-mismatch':
+      return 'COTI Snap does not use this wallet account. In MetaMask, connect only this wallet account to the COTI Snap, then try again.';
     case 'snap-missing-aes':
-      return 'COTI Snap has no AES key for this wallet on this device. Open metamask.coti.io with this wallet selected and onboard it, then try again. Each MetaMask install keeps its own Snap keys.';
+      return `COTI Snap has no AES key for this wallet on ${COTI_NETWORK.shortName} on this device. Onboard this wallet in COTI Snap, then try again. Each MetaMask install keeps its own Snap keys.`;
     case 'unsupported-mobile':
       return 'MetaMask Mobile does not support COTI Snap here. Use MetaMask desktop with COTI Snap for account recovery.';
     case 'unsupported':
@@ -437,7 +461,7 @@ export const getCotiSnapOwnerAesStatusMessage = (status: Exclude<CotiSnapOwnerAe
     case 'wallet-mismatch':
       return 'The active MetaMask account changed. Select the same owner wallet and try again.';
     case 'wrong-network':
-      return 'Switch MetaMask to COTI mainnet before unlocking account recovery.';
+      return `Switch MetaMask to ${COTI_NETWORK.shortName} before unlocking privacy.`;
     case 'rejected':
       return 'The COTI Snap request was rejected.';
     case 'error':
@@ -461,7 +485,7 @@ export const storeCotiSnapAesKeyResult = async (
   if (walletContext !== 'ready') {
     return walletContext;
   }
-  const connected = await requestAndConnectCotiSnap(provider);
+  const connected = await requestAndConnectCotiSnap(provider, context);
   if (connected !== 'ready') {
     return connected;
   }
@@ -488,7 +512,7 @@ export const deleteCotiSnapAesKeyResult = async (
   if (walletContext !== 'ready') {
     return walletContext;
   }
-  const connected = await requestAndConnectCotiSnap(provider);
+  const connected = await requestAndConnectCotiSnap(provider, context);
   if (connected !== 'ready') {
     return connected;
   }
