@@ -30,6 +30,12 @@ const TokenMark = ({ symbol, className }: { symbol: string; className?: string }
   <span className={className ? `trading-token-mark ${className}` : 'trading-token-mark'} data-token-tone={TOKEN_TONES[symbol] ?? 'other'}
     aria-hidden="true">{symbol.slice(0, 1).toUpperCase()}</span>;
 const samePool = (a: TradingPair, b: TradingPair) => a[0] === b[0] && a[1] === b[1] || a[0] === b[1] && a[1] === b[0];
+// Owner decision 2026-11-18: the P2P market picker shows the plain symbol. Private is the normal case and needs no
+// text; a public or native token keeps its kind so a public leg stays visible. The shared option labels are unchanged.
+const p2pOptionLabel = (option: { label: string; kindLabel?: string }) => {
+  const symbol = option.label.replace(/^✓\s*/u, '').replace(/\s*\((?:private|ecosystem|public|native)\)\s*$/iu, '').trim();
+  return option.kindLabel && option.kindLabel !== 'Private' ? `${symbol} · ${option.kindLabel}` : symbol;
+};
 
 type TradingProductSwitchProps = {
   onNavigate: (product: 'dex' | 'p2p') => void;
@@ -82,7 +88,7 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
         if (!p2pMarket.disabled && option && option.value !== otherSelection) p2pMarket.onTokenSelectionChange(side, option.value);
       }}>
       {p2pMarket.tokenOptions.map(option => <option key={option.value} value={option.value} disabled={option.value === otherSelection}
-        title={option.addressLabel ?? option.value}>{option.label}{option.kindLabel ? ` · ${option.kindLabel}` : ''}</option>)}
+        title={option.addressLabel ?? option.value}>{p2pOptionLabel(option)}</option>)}
     </select></label> : null;
 
   return (
@@ -124,7 +130,7 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
               <details className="trading-market-token-details"><summary>Token contracts</summary>
                 {(dexDisplay?.tokens ?? CURRENT_DEX_DISPLAY_TOKENS).map(token => <p className="dex-token-identity" key={token.address}><strong>{token.label}</strong><small>{token.address}</small></p>)}
               </details>
-            </section> : p2pMarket ? <section className="trading-market-catalog trading-market-catalog-single">
+            </section> : p2pMarket ? <section className="trading-market-catalog trading-market-catalog-single trading-market-catalog-p2p">
               <header><span>Market pair</span><small>Current network tokens</small></header>
               {p2pTokenSelect('buy', 'Base token', p2pMarket.baseSelection, p2pMarket.quoteSelection)}
               {p2pTokenSelect('sell', 'Quote token', p2pMarket.quoteSelection, p2pMarket.baseSelection)}

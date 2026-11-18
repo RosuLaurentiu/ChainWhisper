@@ -1545,3 +1545,9 @@
 :root body .app-shell .trading-market-pair-option-name strong { font-weight: 600; }
 :root body .app-shell .trading-market-pair-option-name small { margin-left: 3px; color: var(--text-secondary); font-size: .85rem; font-weight: 500; }
 :root body .app-shell .trading-market-pair-option-check { color: var(--brand-strong); }
+/* P2P market picker: Base and Quote side by side in a compact menu (owner decision 2026-11-18). */
+:root body .app-shell .trading-market-token-menu:has(> .trading-market-catalog-p2p) { width: min(360px, calc(100vw - 16px)); padding: 10px; }
+:root body .app-shell .trading-market-catalog.trading-market-catalog-p2p { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0; }
+:root body .app-shell .trading-market-catalog-p2p > header { grid-column: 1 / -1; }
+:root body .app-shell .trading-market-catalog-p2p .trading-market-token-choice { gap: 4px; color: var(--text-secondary); font-size: .75rem; }
+:root body .app-shell .trading-market-catalog-p2p .trading-market-token-choice select { width: 100%; min-width: 0; min-height: 44px; }

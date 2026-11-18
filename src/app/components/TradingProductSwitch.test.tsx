@@ -177,6 +177,21 @@ describe('TradingProductSwitch', () => {
     expect(market.quoteSelection).toBe(`0x${'22'.repeat(20)}`);
   });
 
+  // Owner decision 2026-11-18: private tokens show only the symbol; a public or native token keeps its kind.
+  it('shows plain private symbols and keeps the public and native kinds in the P2P picker', () => {
+    const market = { ...p2pMarket(), tokenOptions: [
+      { value: `0x${'11'.repeat(20)}`, label: '✓ BCN (private)', kindLabel: 'Private' as const },
+      { value: `0x${'22'.repeat(20)}`, label: 'HBR (ecosystem)', kindLabel: 'Private' as const },
+      { value: `0x${'33'.repeat(20)}`, label: 'cwPTA', kindLabel: 'Public' as const },
+      { value: 'native', label: 'COTI (native)', kindLabel: 'Native' as const }] };
+    const markup = renderToStaticMarkup(createElement(TradingProductSwitch, { activeProduct: 'p2p', p2pMarket: market,
+      onNavigate: vi.fn(), priceDisplayInverted: false, onPriceDisplayInvertedChange: vi.fn() }));
+    expect(markup).not.toMatch(/Private|\(private\)|✓/u);
+    expect(markup).toMatch(/>BCN<\/option>/); expect(markup).toMatch(/>HBR<\/option>/);
+    expect(markup).toContain('>cwPTA · Public</option>'); expect(markup).toContain('>COTI · Native</option>');
+    expect(markup).toContain('trading-market-catalog-p2p');
+  });
+
   it('keeps pair changes disabled during a reviewed or pending action', () => {
     const market = { ...p2pMarket(), disabled: true };
     const elements = controls(TradingProductSwitch({ activeProduct: 'p2p', p2pMarket: market, onNavigate: vi.fn(),
