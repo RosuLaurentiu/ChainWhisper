@@ -21,6 +21,7 @@ import TradeActionConfirmModal from '../../trading/components/TradeActionConfirm
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
 import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import './CurrentPoolWorkspace.css';
+import './TransactionSteps.css';
 
 export const CURRENT_POOL_SPREADS = ['0.1', '0.3', '0.5', '1', '2', '5', '10'] as const;
 const spreadFractions = [[1001n, 1000n], [1003n, 1000n], [201n, 200n], [101n, 100n], [51n, 50n], [21n, 20n], [11n, 10n]];
@@ -622,10 +623,13 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   return <>
     <section className="dex-v2-pool-composer dex-v2-current-pool" aria-label="Current private Pool creation">
       <header className="dex-v2-composer-heading"><h2>Add liquidity</h2><span className="dex-v2-pool-privacy-label"><LockKeyhole size={18} aria-hidden="true" />Private position</span></header>
-      <ol className="dex-v2-pool-steps" aria-label="Add liquidity steps">{steps.map((label, index) => <li key={index}
-        aria-current={index === step ? 'step' : undefined} data-complete={index < step || (index === 3 && ready) || undefined}>
-        <span className="dex-v2-pool-step-number" aria-hidden="true">{index < step || (index === 3 && ready) ? <Check size={14} /> : index + 1}</span>
-        <span>{label}</span>{index < step || (index === 3 && ready) ? <span className="sr-only"> · Complete</span> : null}</li>)}</ol>
+      {/* Owner decision 2026-11-18: the same step track as Swap (TransactionSteps markup and styles). */}
+      <section className="tx-steps dex-v2-pool-tx-steps" aria-label="Add liquidity steps"><ol className="tx-steps-track">{steps.map((label, index) => {
+        const done = index < step || (index === 3 && ready);
+        return <li key={index} data-state={done ? 'done' : index === step ? 'active' : 'next'} aria-current={index === step ? 'step' : undefined}>
+          <span className="tx-steps-node" aria-hidden="true">{done ? <Check size={10} strokeWidth={3.5} /> : index + 1}</span>
+          <span className="tx-steps-label">{label}</span>{done ? <span className="sr-only"> · Complete</span> : null}</li>;
+      })}</ol></section>
       {stopped ? <p role="status">Deposit stopped. Unused approvals cleared.</p> : null}
       {nativeTrial ? <p className="dex-v2-activation-note">This Testnet join uses 100 of each token, 0.1% spread and 0.5% funding tolerance.</p> : null}
       {/* Owner decision 2026-11-18: the price comes first; it and one amount fill the other amount. */}

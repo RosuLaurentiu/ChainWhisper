@@ -29,7 +29,7 @@ export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',se
   },[scope,visible,connected,refresh,refreshToken]);
   const current=visible&&privacyReady&&view?.scope===scope?view:null;
   return<section className="dex-owner-list" aria-label="Owned Limit orders" aria-busy={current?.state==='loading'}>
-    <div className="dex-owner-list-toolbar">{managementNavigation?<div className="dex-owner-index-header"><h2>My trades</h2><p>Orders, positions and activity</p></div>:null}<span>{current?.inventory ? `${current.inventory.orders.length} orders` : null}</span>
+    <div className="dex-owner-list-toolbar">{managementNavigation?<div className="dex-owner-index-header"><h2>Manage</h2><p>Orders, positions and activity</p></div>:null}<span>{current?.inventory ? `${current.inventory.orders.length} orders` : null}</span>
     <button type="button" aria-label="Refresh owned Limit orders" disabled={!connected||!privacyReady||disabled||current?.state==='loading'} onClick={()=>setRefresh(v=>v+1)}>{current?.state==='loading'?'Loading…':'Refresh orders'}</button></div>
     {managementNavigation}
     {!connected?<p>Connect your wallet on COTI Testnet to see your orders.</p>:!privacyReady?<PrivacyLockedNotice message="Your orders are locked." disabled={disabled} onUnlock={session?.actions?.unlockPrivacy?()=>session.actions!.unlockPrivacy():undefined}/>:

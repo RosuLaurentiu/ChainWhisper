@@ -61,11 +61,11 @@ function completedSwapRows(pair: readonly [string, string], inputIndex: 0 | 1, r
 }
 
 describe('read-only private Activity view', () => {
-  it('places the existing Manage navigation inside My trades', () => {
+  it('places the existing Manage navigation under the Manage heading', () => {
     const f=fixture();
     const html=renderToStaticMarkup(<CurrentDexActivity {...f.props} managementNavigation={<nav aria-label="Manage views">Orders Positions History</nav>}/>);
-    expect(html).toContain('My trades');
-    expect(html.indexOf('My trades')).toBeLessThan(html.indexOf('aria-label="Manage views"'));
+    expect(html).toContain('<h2>Manage</h2>');
+    expect(html.indexOf('<h2>Manage</h2>')).toBeLessThan(html.indexOf('aria-label="Manage views"'));
     expect(hooks.read).not.toHaveBeenCalled();
   });
   it('shows the average execution price from authenticated terminal amounts', async () => {

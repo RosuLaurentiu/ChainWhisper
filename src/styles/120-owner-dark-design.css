@@ -1585,4 +1585,32 @@
   :root body .app-shell-dex-v2 .dex-v2-current-limit .dex-v2-review-button { font-size: .9rem; font-weight: 750; }
   :root body .app-shell :is(.dex-v2-beta-token-footer a, .trade-token-select-state a) { display: inline-block; padding-block: 15px; margin-block: -15px; }
   :root body .app-shell .p2p-agent-prompt textarea { font-size: 1rem; }
+
+  /* 7. (Owner, 2026-11-18) Manage on phones: with no order or position selected, the detail card shows only its
+     "Status and recovery" disclosure; the empty heading and placeholder hide. Desktop keeps the split placeholder. */
+  :root body .app-shell-dex-v2 .dex-owner-detail:has(> .dex-owner-selection-empty) > :is(.dex-owner-heading, .dex-owner-selection-empty) { display: none; }
+  :root body .app-shell-dex-v2 .dex-owner-detail:has(> .dex-owner-selection-empty) > details.dex-owner-footer { border-top: 0; }
+  /* The Manage market chart disclosure uses the one DEX chevron and the summary text style. */
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host > summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 12px;
+    list-style: none;
+    color: var(--text-secondary);
+    font-size: .8125rem;
+    font-weight: 600;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host > summary::-webkit-details-marker { display: none; }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host > summary::after {
+    content: "";
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    margin: 0 4px 0 auto;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+  }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host[open] > summary::after { transform: translateY(2px) rotate(225deg); }
 }

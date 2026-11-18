@@ -24,7 +24,7 @@ afterEach(()=>{hooks.states=[];hooks.refs=[];hooks.effect=null;vi.clearAllMocks(
 describe('Your Positions automatic owner list',()=>{
   it('places management navigation between the toolbar and items',async()=>{
     const f=fixture();f.props.managementNavigation=<nav>Manage navigation</nav>;await f.load();const html=f.render();
-    expect(html).toContain('My trades');expect(html).toContain('Orders, positions and activity');
+    expect(html).toContain('<h2>Manage</h2>');expect(html).toContain('Orders, positions and activity');
     expect(html.indexOf('Refresh ')).toBeLessThan(html.indexOf('Manage navigation'));expect(html.indexOf('Manage navigation')).toBeLessThan(html.indexOf('dex-owner-list-items'));
   });
   it('loads current-owned and received claims without an NFT ID or producer input',async()=>{

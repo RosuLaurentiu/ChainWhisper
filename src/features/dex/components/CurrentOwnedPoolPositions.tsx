@@ -33,7 +33,7 @@ export default function CurrentOwnedPoolPositions({session,candidateKey='cheap-e
   },[scope,visible,connected,refresh,refreshToken]);
   const current=visible&&privacyReady&&view?.scope===scope?view:null;
   return <section className="dex-owner-list" aria-label="Owned liquidity positions" aria-busy={current?.state==='loading'}>
-    <div className="dex-owner-list-toolbar">{managementNavigation?<div className="dex-owner-index-header"><h2>My trades</h2><p>Orders, positions and activity</p></div>:null}<span>{current?.inventory ? `${current.inventory.positions.length} positions` : null}</span>
+    <div className="dex-owner-list-toolbar">{managementNavigation?<div className="dex-owner-index-header"><h2>Manage</h2><p>Orders, positions and activity</p></div>:null}<span>{current?.inventory ? `${current.inventory.positions.length} positions` : null}</span>
     <button type="button" aria-label="Refresh owned liquidity positions" disabled={!connected||!privacyReady||disabled||current?.state==='loading'} onClick={()=>setRefresh(value=>value+1)}>{current?.state==='loading'?'Loading…':'Refresh positions'}</button></div>
     {managementNavigation}
     {!connected?<p>Connect your wallet on COTI Testnet to see your positions.</p>:!privacyReady?<PrivacyLockedNotice message="Your positions are locked." disabled={disabled} onUnlock={session?.actions?.unlockPrivacy?()=>session.actions!.unlockPrivacy():undefined}/>:

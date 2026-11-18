@@ -129,6 +129,12 @@ describe('mobile refinement (owner decision 2026-11-18, audit items 1-5)', () =>
     expect(rule(':root body .app-shell .p2p-agent-composer {', mobileBlock())).toContain('position: sticky; bottom: 0;');
     expect(mobileBlock()).toContain('details.p2p-offers-chart) { border-style: solid; }');
   });
+
+  it('item 7: hides only the empty Manage heading and placeholder, never the recovery disclosure', () => {
+    const hide = rule(':root body .app-shell-dex-v2 .dex-owner-detail:has(> .dex-owner-selection-empty) > :is(.dex-owner-heading, .dex-owner-selection-empty) {', mobileBlock());
+    expect(hide).toContain('display: none;');
+    expect(hide).not.toContain('dex-owner-footer');
+  });
 });
 
 describe('mobile Trading shell on DEX pages', () => {

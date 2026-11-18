@@ -23,7 +23,7 @@ afterEach(()=>{hooks.states=[];hooks.refs=[];hooks.effect=null;vi.clearAllMocks(
 describe('My Orders current wallet list',()=>{
   it('places management navigation between the toolbar and items',async()=>{
     const f=fixture();f.props.managementNavigation=<nav>Manage navigation</nav>;await f.load();const html=f.render();
-    expect(html).toContain('My trades');expect(html).toContain('Orders, positions and activity');
+    expect(html).toContain('<h2>Manage</h2>');expect(html).toContain('Orders, positions and activity');
     expect(html.indexOf('Refresh ')).toBeLessThan(html.indexOf('Manage navigation'));expect(html.indexOf('Manage navigation')).toBeLessThan(html.indexOf('dex-owner-list-items'));
   });
   it('lists owned orders with their pair and no private amount or routine ID input',async()=>{

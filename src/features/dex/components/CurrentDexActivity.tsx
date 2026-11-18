@@ -163,7 +163,7 @@ export default function CurrentDexActivity({ sharedWalletSession, candidateKey, 
   const shown = entries.filter(row => filter === 'All' || group(row.action) === filter);
   return <section className="dex-v2-activity-card" aria-label="Trade history"
     data-dex-activity-state={currentView?.state} data-dex-activity-phase={currentView?.phase} data-dex-activity-phase-at={currentView?.phaseAt}>
-    <header className="dex-owner-heading"><div><h2>{managementNavigation ? 'My trades' : 'History'}</h2><p>Your DEX activity. Open a row for details.</p>{currentView?.checkedAt?<p>Last checked {new Date(currentView.checkedAt).toLocaleTimeString()} · Refresh for new activity.</p>:null}</div><button type="button" disabled={!connected || !privacyReady || currentView?.state === 'loading'} onClick={() => setRefresh(value => value + 1)}>{currentView?.state === 'loading' ? 'Checking…' : 'Refresh history'}</button></header>
+    <header className="dex-owner-heading"><div><h2>{managementNavigation ? 'Manage' : 'History'}</h2><p>Your DEX activity. Open a row for details.</p>{currentView?.checkedAt?<p>Last checked {new Date(currentView.checkedAt).toLocaleTimeString()} · Refresh for new activity.</p>:null}</div><button type="button" disabled={!connected || !privacyReady || currentView?.state === 'loading'} onClick={() => setRefresh(value => value + 1)}>{currentView?.state === 'loading' ? 'Checking…' : 'Refresh history'}</button></header>
     {managementNavigation}
     {storageError ? <p role="alert">{storageError}</p> : null}
     {pending ? <aside className="dex-v2-pending-card"><h3>Action needs a status check</h3>
