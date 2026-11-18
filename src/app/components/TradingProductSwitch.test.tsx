@@ -49,7 +49,7 @@ describe('TradingProductSwitch', () => {
       }));
       expect(markup).toContain(inverted ? '0.5 BCN/ORBT' : '2 ORBT/BCN');
       expect(markup).toContain('Rounded Pool reference · excludes Limits');
-      expect(markup).toContain('COTI Testnet · Live Pool reference');
+      expect(markup).toContain('COTI Testnet<span class="trading-market-change-detail"> · Live Pool reference</span>');
       expect(markup).toContain('title="Expires after 120s">25s ago');
       expect(markup).toContain('Market pair');
       expect(markup).not.toContain('Test token 0');

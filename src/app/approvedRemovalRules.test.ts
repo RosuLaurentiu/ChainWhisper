@@ -45,7 +45,8 @@ describe('owner-approved removals (CW-097)', () => {
     const block = css.slice(css.indexOf('/* CW-097. P2P:'));
     const desktop = block.slice(block.indexOf('@media (min-width: 920.02px)'), block.indexOf('@media (max-width: 920px)'));
     expect(desktop).toContain(':root body .app-shell-trades .p2p-offers-private-link-tool { display: none; }');
-    expect(block.slice(block.indexOf('@media (max-width: 920px)'))).not.toContain('p2p-offers-private-link-tool');
+    // Small screens keep the button: no phone rule hides it (the 2026-11-18 mobile block only gives it a solid frame).
+    expect(block.slice(block.indexOf('@media (max-width: 920px)'))).not.toMatch(/p2p-offers-private-link-tool[^{]*\{[^}]*display:\s*none/u);
   });
 });
 

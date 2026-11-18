@@ -159,7 +159,8 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
           </div>
         </div>
         <div className="trading-market-change" data-price-state={activeProduct === 'dex' ? marketReference?.status ?? 'unavailable' : p2pMarket?.reference ? 'available' : 'unavailable'}>
-          <span>{activeProduct === 'dex' ? lastKnown ? 'COTI Testnet · Last Pool price' : 'COTI Testnet · Live Pool reference' : 'Market reference'}</span>
+          {/* Owner decision 2026-11-18: on phones the live detail hides so the line fits one row; "Last Pool price" stays. */}
+          <span>{activeProduct === 'dex' ? <>COTI Testnet<span className="trading-market-change-detail">{lastKnown ? ' · Last Pool price' : ' · Live Pool reference'}</span></> : 'Market reference'}</span>
           <strong title={activeProduct === 'dex' ? 'Rounded Pool reference · excludes Limits' : p2pMarket?.reference?.title}>{activeProduct === 'dex' ? marketLabel : p2pMarket?.reference?.label ?? 'Price unavailable'}</strong>
           {activeProduct === 'dex' && lastSampleTime ? <small title={`${lastSampleTime} · Last recorded public Pool price. Current market price is not verified.`}>{`Recorded ${lastSampleLabel}`}</small> : activeProduct === 'dex' && sampleAge !== null ? <small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'} title={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}>{sampleAge}s ago</small> : null}
         </div>

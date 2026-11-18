@@ -232,6 +232,10 @@ const parseTokenLabel = (option?: TradeComposerTokenOption): { symbol: string; k
   };
 };
 
+// Owner decision 2026-11-18: private is the normal token kind and shows no label; public, native and other kinds
+// keep theirs so a public leg stays visible.
+const shownKindLabel = (kindLabel: string): string | null => kindLabel === 'Private' ? null : kindLabel;
+
 const resolveTokenOptionScope = (option?: TradeComposerTokenOption): TradeTokenScope => {
   if (!option) return 'public';
   const label = option.label.toLowerCase();
@@ -371,7 +375,7 @@ export function TradeTokenSelect({
       >
         <span className="trade-token-select-trigger-copy">
           <strong>{selectedDisplay.symbol}</strong>
-          <small>{selectedDisplay.kindLabel}</small>
+          {shownKindLabel(selectedDisplay.kindLabel) ? <small>{selectedDisplay.kindLabel}</small> : null}
         </span>
         <ChevronIcon />
       </button>
@@ -468,7 +472,7 @@ export function TradeTokenSelect({
                       <strong>{display.symbol}</strong>
                       <small>{resolveTokenAddressLabel(option)}</small>
                     </span>
-                    <span className="trade-token-select-option-kind">{display.kindLabel}</span>
+                    {shownKindLabel(display.kindLabel) ? <span className="trade-token-select-option-kind">{display.kindLabel}</span> : null}
                   </li>
                 );
               })
@@ -986,7 +990,7 @@ export default function TradeComposerPanel({
                 disabled={sending}
                 aria-invalid={showOfferAmountError ? 'true' : 'false'}
               />
-              {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedOfferDisplay.symbol}</strong><small>{selectedOfferDisplay.kindLabel}</small></span> : null}
+              {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedOfferDisplay.symbol}</strong>{shownKindLabel(selectedOfferDisplay.kindLabel) ? <small>{selectedOfferDisplay.kindLabel}</small> : null}</span> : null}
             </div>
           </label>
           {showOfferAmountError ? <p className="trade-compose-field-error">{offerAmountError}</p> : null}
@@ -1097,7 +1101,7 @@ export default function TradeComposerPanel({
                 disabled={sending}
                 aria-invalid={showRequestAmountError ? 'true' : 'false'}
               />
-              {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedRequestDisplay.symbol}</strong><small>{selectedRequestDisplay.kindLabel}</small></span> : null}
+              {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedRequestDisplay.symbol}</strong>{shownKindLabel(selectedRequestDisplay.kindLabel) ? <small>{selectedRequestDisplay.kindLabel}</small> : null}</span> : null}
             </div>
           </label>
           {showRequestAmountError ? <p className="trade-compose-field-error">{requestAmountError}</p> : null}

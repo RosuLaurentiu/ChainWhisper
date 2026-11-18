@@ -1528,3 +1528,61 @@
 :root body .app-shell .trading-market-catalog-pair > :is(header, .trading-market-token-details) { grid-column: 1 / -1; }
 :root body .app-shell .trading-market-catalog-pair .trading-market-token-choice { gap: 4px; color: var(--text-secondary); font-size: .75rem; }
 :root body .app-shell .trading-market-catalog-pair .trading-market-token-choice select { width: 100%; min-width: 0; min-height: 44px; }
+/* CW-097. Mobile refinement: owner decision 2026-11-18 (mobile audit items 1-5). Phone layout only; the bottom
+   navigation is unchanged by owner choice. */
+@media (max-width: 920px) {
+  /* 1. Market line in one row: "COTI Testnet", price and age. The live detail hides; "Last Pool price" stays and
+     may wrap inside the 36 px row. */
+  :root body .app-shell-dex-v2 .trading-market-change { flex-wrap: nowrap; gap: 8px; padding: 0 2px; }
+  :root body .app-shell-dex-v2 .trading-market-change > span { flex: 1 1 auto; min-width: 0; line-height: 1.2; }
+  :root body .app-shell-dex-v2 .trading-market-change > :is(strong, small) { flex: 0 0 auto; white-space: nowrap; }
+  :root body .app-shell-dex-v2 .trading-market-change:not([data-price-state="last-known"]) .trading-market-change-detail { display: none; }
+  :root body .app-shell-dex-v2 .trading-market-change small { font-size: .75rem; }
+
+  /* 2. 12 px text floor (the bottom navigation keeps its size). Measured at 390 px on every page. */
+  :root body .app-shell :is(.app-header-nav button, .connect-btn.wallet-inline-btn.wallet-primary-action span, .trading-ratio-value,
+    .trading-product-switch button, .dex-market-chart-legend small, .dex-market-chart-actions button,
+    .dex-market-history-data :is(caption, th, td), .tx-steps-node, .tx-steps-label, .dex-v2-pool-step-number, .dex-v2-pool-steps span,
+    .p2p-agent-mode-toggle button, .p2p-agent-empty-state span, .p2p-agent-context-heading :is(span, strong), .p2p-agent-context :is(span, small),
+    .p2p-agent-quick-actions small, .p2p-offers-filter-toggle :is(span, small), .p2p-offers-list-head span, .p2p-offers-empty.is-note button,
+    .p2p-offers-market-row :is(span, strong), .p2p-offers-chart span, .p2p-offers-chart-empty, .standalone-trade-visibility strong,
+    .trade-compose-field-label, .trade-compose-field-value, .trade-compose-max, .trade-compose-advanced-options :is(span, small),
+    .trade-compose-privacy-copy span, .trade-compose-expiry label, .trade-compose-expiry-toggle, .trade-compose-warning :is(p, strong),
+    .trade-compose-submit-context :is(span, strong), .trade-compose-readiness, .p2p-my-trades-wallet-card p,
+    .p2p-my-trades-empty-slot :is(strong, p)) {
+    font-size: .75rem;
+  }
+
+  /* 3. The Agent prompt stays in view above the bottom navigation while the conversation scrolls. */
+  :root body .app-shell .p2p-agent-composer { position: sticky; bottom: 0; z-index: 2; }
+
+  /* 4. P2P matches DEX: solid frames, sentence case, the DEX pair text size and the DEX Buy / Sell weight. */
+  :root body .app-shell-trades :is(.p2p-offers-filter-tool, .p2p-offers-empty.is-note, .p2p-offers-private-link-tool, details.p2p-offers-chart) { border-style: solid; }
+  :root body .app-shell-trades :is(.trade-compose-section-header strong, .trade-compose-privacy-copy span) { text-transform: none; letter-spacing: 0; }
+  :root body .app-shell .trading-market-pair strong { font-size: .85rem; }
+  :root body .app-shell-trades .p2p-swap-side-switch button { font-size: .8125rem; font-weight: 600; }
+
+  /* 5. Top menu labels on one line; the Portal title shows; "Pools only" stays next to the mode toggle; one frame on
+     the header Connect control; one main-button style on Swap and Limit; 44 px tap areas on two small links. */
+  :root body .app-shell .app-header-nav button { white-space: nowrap; padding-inline: 4px; }
+  :root body .app-shell .swap-page-heading h1.swap-page-title.swap-label-sr {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 4px 0 6px;
+    padding: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+    font-size: 1.25rem;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice { flex-wrap: nowrap; gap: 8px; }
+  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice > span { white-space: nowrap; }
+  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-mode-toggle button { padding-inline: 10px; }
+  /* The shared secondary-button rule scores (0,7,3) from its longest :is() item; this selector scores (0,8,2). */
+  :root body .app-shell .top-header .wallet-header-panel-disconnected.p2p-wallet-panel button.p2p-wallet-menu-trigger.p2p-wallet-menu-trigger.p2p-wallet-menu-trigger { border-color: transparent; }
+  :root body .app-shell-dex-v2 .dex-v2-current-limit .dex-v2-review-button { font-size: .9rem; font-weight: 750; }
+  :root body .app-shell :is(.dex-v2-beta-token-footer a, .trade-token-select-state a) { display: inline-block; padding-block: 15px; margin-block: -15px; }
+  :root body .app-shell .p2p-agent-prompt textarea { font-size: 1rem; }
+}

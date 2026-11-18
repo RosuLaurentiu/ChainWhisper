@@ -105,6 +105,32 @@ describe('pair selector', () => {
   });
 });
 
+describe('mobile refinement (owner decision 2026-11-18, audit items 1-5)', () => {
+  const mobileBlock = () => {
+    const all = css();
+    const at = all.indexOf('/* CW-097. Mobile refinement:');
+    expect(at).toBeGreaterThan(-1);
+    return all.slice(at);
+  };
+
+  it('is phone-only and leaves the bottom navigation unchanged', () => {
+    expect(mobileBlock()).toContain('@media (max-width: 920px) {');
+    expect(mobileBlock()).not.toMatch(/p2p-secondary-nav|dex-view-navigation/u);
+    expect(mobileBlock()).not.toMatch(HEX);
+  });
+
+  it('keeps the market line in one row and keeps the Last Pool price detail', () => {
+    expect(rule(':root body .app-shell-dex-v2 .trading-market-change:not([data-price-state="last-known"]) .trading-market-change-detail {', mobileBlock())).toContain('display: none;');
+  });
+
+  it('sets the 12 px floor, keeps the Agent prompt in view and makes P2P frames solid', () => {
+    expect(mobileBlock()).toContain('.p2p-offers-list-head span');
+    expect(mobileBlock()).toContain('font-size: .75rem;');
+    expect(rule(':root body .app-shell .p2p-agent-composer {', mobileBlock())).toContain('position: sticky; bottom: 0;');
+    expect(mobileBlock()).toContain('details.p2p-offers-chart) { border-style: solid; }');
+  });
+});
+
 describe('mobile Trading shell on DEX pages', () => {
   const mobile = () => block().slice(block().indexOf('@media (max-width: 920px)'));
 
