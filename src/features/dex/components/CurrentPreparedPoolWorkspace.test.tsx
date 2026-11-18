@@ -217,6 +217,31 @@ describe('prepared Pool creation view', () => {
     expect(text(f.render())).toContain(`Starting price *${pair.tokens[1].label}/${pair.tokens[0].label}`);
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
   });
+  // Owner decision 2026-11-18: the price and one amount fill the other amount; two amounts with no price fill the price.
+  it('links the starting price and the two budgets in the displayed units', () => {
+    const f = fixture(), pair = readCurrentDexDisplay(candidate).pairs[0];
+    f.props.selectedPair = [pair.tokens[1].label, pair.tokens[0].label];
+    const field = (label: string) => elements(f.render()).find(element => element.type === 'input' && element.props['aria-label'] === label)!.props as
+      Props & { value: string; onChange: (event: { target: { value: string } }) => void };
+    const [quote, base] = [`${pair.tokens[0].label} Pool budget`, `${pair.tokens[1].label} Pool budget`];
+    const order = elements(f.render()).filter(element => element.type === 'input').map(element => element.props['aria-label']);
+    expect(order.indexOf('Pool starting price')).toBeLessThan(order.indexOf(quote));
+    field('Pool starting price').onChange({ target: { value: '2' } });
+    field(base).onChange({ target: { value: '10' } });
+    expect(field(quote).value).toBe('20.0');
+    field('Pool starting price').onChange({ target: { value: '2.5' } });
+    expect(field(quote).value).toBe('25.0');
+    field(quote).onChange({ target: { value: '5' } });
+    expect(field(base).value).toBe('2.0');
+    field('Pool starting price').onChange({ target: { value: '' } }); field(base).onChange({ target: { value: '' } });
+    field(quote).onChange({ target: { value: '30' } }); field(base).onChange({ target: { value: '10' } });
+    expect(field('Pool starting price').value).toBe('3');
+    f.props.priceDisplayInverted = true;
+    // Inverted units: 0.5 of the second token per first token. The last edited budget (10 of the second token) fills 20.
+    field('Pool starting price').onChange({ target: { value: '0.5' } });
+    expect(field(quote).value).toBe('20.0');
+    expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
+  });
   it('requires live submission capability before provider or private input prompts', async () => {
     const f = fixture(); hooks.states[0] = '1'; hooks.states[1] = '1'; hooks.states[2] = '2';
     if (key === 'cheap-history') f.getSender.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));

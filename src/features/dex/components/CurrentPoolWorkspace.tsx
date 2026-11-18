@@ -70,6 +70,20 @@ export const currentPoolIntent = (budget0: string, budget1: string, price: strin
     terms: [...currentPoolFractionWitness(p.numerator, p.denominator), ...currentPoolFractionWitness(...spreadFractions[classId] as [bigint, bigint]), tn, td] as
       [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint] };
 };
+// A positive decimal price as an exact fraction, or null while the field is empty or incomplete.
+const decimalRatio = (value: string): readonly [bigint, bigint] | null => {
+  const match = /^\s*(\d*)(?:\.(\d*))?\s*$/.exec(value);
+  if (!match || (!match[1] && !match[2])) return null;
+  const fraction = (match[2] ?? '').slice(0, 18);
+  const numerator = BigInt((match[1] || '0') + fraction);
+  return numerator > 0n ? [numerator, 10n ** BigInt(fraction.length)] : null;
+};
+// A filled price: 6 significant digits, in plain decimal form (no exponent).
+const priceText = (value: number): string | null => {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const rounded = Number(value.toPrecision(6));
+  return rounded >= 1e-6 ? String(rounded).includes('e') ? rounded.toFixed(12).replace(/\.?0+$/u, '') : String(rounded) : null;
+};
 const amountRows = (a: Amounts, tokenLabels = CURRENT_DEX_POOL_LABELS,
   format: (amount: bigint, index: 0 | 1) => string = formatCurrentDexTokenAmount) => [
   { label: 'Action', value: a.operation === 'initialize' ? 'Initialize this Pool' : 'Add to this Pool' },
@@ -143,6 +157,43 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   const displayQuote = pair ? (priceDisplayInverted ? pair.tokenIn : pair.tokenOut) : null;
   const priceUnits = pair ? `${displayQuote!.label}/${(priceDisplayInverted ? pair.tokenOut : pair.tokenIn).label}` :
     `${tokenLabels[priceDisplayInverted ? 1 : 0]}/${tokenLabels[priceDisplayInverted ? 0 : 1]}`;
+  // Owner decision 2026-11-18: the price and one amount fill the other amount; two amounts with no price fill the price.
+  // The price reads displayed quote per displayed base, as the preview uses it. Filled amounts are budgets (rounded
+  // down); the private preview still shows the exact deposit.
+  const quoteIndex: 0 | 1 = pair ? (displayQuote!.address === poolTokens[0] ? 0 : 1) : (priceDisplayInverted ? 1 : 0);
+  const baseUnits = (value: string, index: 0 | 1) => { try { const amount = parse(value, index); return amount > 0n ? amount : null; } catch { return null; } };
+  const oneToken = (index: 0 | 1) => parse('1', index);
+  const linkedAmount = (from: 0 | 1, amountText: string, priceText: string): string | null => {
+    const amount = baseUnits(amountText, from); const ratio = decimalRatio(priceText);
+    if (amount === null || !ratio) return null;
+    const to: 0 | 1 = from === 0 ? 1 : 0; const [numerator, denominator] = ratio;
+    const out = from === quoteIndex ? amount * denominator * oneToken(to) / (numerator * oneToken(from))
+      : amount * numerator * oneToken(to) / (denominator * oneToken(from));
+    return out > 0n ? format(out, to) : null;
+  };
+  const linkedPrice = (text0: string, text1: string): string | null => {
+    const amounts = [baseUnits(text0, 0), baseUnits(text1, 1)] as const;
+    if (amounts[0] === null || amounts[1] === null) return null;
+    const base: 0 | 1 = quoteIndex === 0 ? 1 : 0;
+    const value = (Number(amounts[quoteIndex]) / Number(oneToken(quoteIndex))) / (Number(amounts[base]) / Number(oneToken(base)));
+    return priceText(value);
+  };
+  const [lastAmount, setLastAmount] = useState<0 | 1 | null>(null);
+  const editAmount = (index: 0 | 1, value: string) => {
+    const other: 0 | 1 = index === 0 ? 1 : 0;
+    const setOther = other === 0 ? setBudget0 : setBudget1;
+    (index === 0 ? setBudget0 : setBudget1)(value); setLastAmount(index);
+    const filled = linkedAmount(index, value, price);
+    if (filled !== null) { setOther(filled); return; }
+    if (!decimalRatio(price)) { const next = linkedPrice(index === 0 ? value : budget0, index === 1 ? value : budget1); if (next !== null) setPrice(next); }
+  };
+  const editPrice = (value: string) => {
+    setPrice(value);
+    const from = lastAmount ?? (baseUnits(budget0, 0) !== null ? 0 : baseUnits(budget1, 1) !== null ? 1 : null);
+    if (from === null) return;
+    const filled = linkedAmount(from, from === 0 ? budget0 : budget1, value);
+    if (filled !== null) (from === 0 ? setBudget1 : setBudget0)(filled);
+  };
   const assertScope = (captured: object) => { if (scope.current !== captured) throw new Error('Pool terms or wallet session changed. Request a new preview.'); };
   const setMessage = (text: string) => { messageScope.current = scope.current; setStoredMessage(text); };
   const setNftId = (value: bigint | null) => { nftScope.current = scope.current; setStoredNftId(value); };
@@ -566,23 +617,24 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         <span>{label}</span>{index < step || (index === 3 && ready) ? <span className="sr-only"> · Complete</span> : null}</li>)}</ol>
       {stopped ? <p role="status">Deposit stopped. Unused approvals cleared.</p> : null}
       {nativeTrial ? <p className="dex-v2-activation-note">This Testnet join uses 100 of each token, 0.1% spread and 0.5% funding tolerance.</p> : null}
+      {/* Owner decision 2026-11-18: the price comes first; it and one amount fill the other amount. */}
+      <section className="dex-v2-pool-section dex-v2-pool-price-section">
+          <label><span><strong>Starting price <span aria-hidden="true">*</span></strong><small>{priceUnits}</small></span><input aria-label="Pool starting price" inputMode="decimal" placeholder="0.00" required
+            value={price} disabled={fieldsDisabled || nativeTrial} onChange={event => editPrice(event.target.value)} /></label>
+          <p>Used only if the Pool is empty.</p>
+      </section>
       <section className="dex-v2-pool-section dex-v2-pool-amounts-section">
         <header><h3>Deposit amounts</h3></header>
         <div className="dex-v2-current-fields">
-          <label><span>{tokenLabels[0]}</span><input aria-label={`${tokenLabels[0]} Pool budget`} inputMode="decimal" placeholder="0" value={budget0} disabled={fieldsDisabled || nativeTrial} onChange={event => setBudget0(event.target.value)} /></label>
-          <label><span>{tokenLabels[1]}</span><input aria-label={`${tokenLabels[1]} Pool budget`} inputMode="decimal" placeholder="0" value={budget1} disabled={fieldsDisabled || nativeTrial} onChange={event => setBudget1(event.target.value)} /></label>
+          <label><span>{tokenLabels[0]}</span><input aria-label={`${tokenLabels[0]} Pool budget`} inputMode="decimal" placeholder="0" value={budget0} disabled={fieldsDisabled || nativeTrial} onChange={event => editAmount(0, event.target.value)} /></label>
+          <label><span>{tokenLabels[1]}</span><input aria-label={`${tokenLabels[1]} Pool budget`} inputMode="decimal" placeholder="0" value={budget1} disabled={fieldsDisabled || nativeTrial} onChange={event => editAmount(1, event.target.value)} /></label>
         </div>
-        <p className="dex-v2-activation-note">Unused amounts stay in your wallet.</p>
+        <p className="dex-v2-activation-note">Enter one amount and the price, or both amounts. Unused amounts stay in your wallet.</p>
       </section>
       <section className="dex-v2-pool-section dex-v2-pool-fee-section">
         <header><h3>Pool spread</h3><details className="dex-v2-pool-spread-info"><summary aria-label="About Pool spread"><Info size={17} aria-hidden="true" /></summary><p>Fixed for this Pool. The protocol fee is separate. To change spread, withdraw and deposit again.</p></details></header>
         <label className="dex-v2-pool-custom-fee"><span className="sr-only">Pool spread</span><select aria-label="Pool spread" value={classId} disabled={fieldsDisabled || nativeTrial}
           onChange={event => setClassId(Number(event.target.value))}>{CURRENT_POOL_SPREADS.map((spread, i) => <option key={spread} value={i}>{spread}%</option>)}</select></label>
-      </section>
-      <section className="dex-v2-pool-section dex-v2-pool-price-section">
-          <label><span><strong>Starting price <span aria-hidden="true">*</span></strong><small>{priceUnits}</small></span><input aria-label="Pool starting price" inputMode="decimal" placeholder="0.00" required
-            value={price} disabled={fieldsDisabled || nativeTrial} onChange={event => setPrice(event.target.value)} /></label>
-          <p>Used only if the Pool is empty.</p>
       </section>
       <details className="dex-v2-setup dex-v2-pool-settings"><summary><Settings2 size={18} aria-hidden="true" /><strong>Settings</strong><span>Tolerance {tolerance}%</span><ChevronDown size={16} aria-hidden="true" /></summary><div>
           <label><span>Funding tolerance (%)</span><input aria-label="Pool funding tolerance" inputMode="decimal" value={tolerance} disabled={fieldsDisabled || nativeTrial} onChange={event => setTolerance(event.target.value)} /></label>
