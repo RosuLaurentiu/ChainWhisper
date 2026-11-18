@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Check, ChevronDown } from 'lucide-react';
+import { ArrowLeftRight, ChevronDown } from 'lucide-react';
 import type { P2PTradingHeaderContext } from '../../features/trading/components/P2PTradingPage.helpers';
 import { CURRENT_DEX_DISPLAY_PAIR, CURRENT_DEX_DISPLAY_TOKENS, readCurrentDexDisplay } from '../../lib/currentDexDisplay';
 import type { CurrentCheapDexIdentity } from '../../lib/dexV2Deployment';
@@ -90,6 +90,21 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
       {p2pMarket.tokenOptions.map(option => <option key={option.value} value={option.value} disabled={option.value === otherSelection}
         title={option.addressLabel ?? option.value}>{p2pOptionLabel(option)}</option>)}
     </select></label> : null;
+  // Owner decision 2026-11-18: the DEX picker uses the same Base and Quote dropdowns as P2P. A token is offered only when
+  // it forms a listed current-contract Pool with the other side, so every choice stays inside the selected candidate.
+  const dexTokens = dexDisplay?.tokens.map(token => token.label) ?? [];
+  const dexPairListed = (base: string, quote: string) => base !== quote &&
+    Boolean(dexDisplay?.pairs.some(({ tokens }) => samePool([tokens[0].label, tokens[1].label], [base, quote])));
+  const dexTokenSelect = (side: 0 | 1, label: string) => dexDisplay ?
+    <label className="trading-market-token-choice">{label}<select aria-label={label} value={selectedPair[side]}
+      onChange={event => {
+        const value = event.currentTarget.value;
+        const next: TradingPair = side === 0 ? [value, selectedPair[1]] : [selectedPair[0], value];
+        if (dexPairListed(next[0], next[1])) onSelectedPairChange?.(next);
+      }}>
+      {dexTokens.map(symbol => <option key={symbol} value={symbol}
+        disabled={!dexPairListed(side === 0 ? symbol : selectedPair[0], side === 0 ? selectedPair[1] : symbol)}>{symbol}</option>)}
+    </select></label> : null;
 
   return (
     <nav className="trading-product-bar" aria-label="Trading product">
@@ -103,34 +118,18 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
           <summary className="trading-market-pair" aria-label={`Selected displayed pair ${baseSymbol} and ${quoteSymbol}`}>
             <TokenMark symbol={baseSymbol} className="trading-market-token trading-market-token-base" />
             <TokenMark symbol={quoteSymbol} className="trading-market-token trading-market-token-quote" />
-            <strong>{baseSymbol}{activeProduct === 'dex' ? <small>/ {quoteSymbol}</small> : <> / {quoteSymbol}</>}</strong>
+            <strong>{baseSymbol} / {quoteSymbol}</strong>
             <ChevronDown size={18} aria-hidden="true" />
           </summary>
           <div className="trading-market-token-menu">
-            {activeProduct === 'dex' ? <section className="trading-market-catalog trading-market-catalog-single">
-              <header><span>{dexDisplay ? 'Select a pair' : 'Current Testnet pair'}</span><small>COTI Testnet</small></header>
-              {dexDisplay ? <div className="trading-market-catalog-list">{dexDisplay.pairs.map(({ tokens }) => {
-                // The current Pool keeps its orientation; another Pool is selected in its listed order. Each row shows the
-                // pair the way the button will show it after the choice (display inversion included).
-                const listed = [tokens[0].label, tokens[1].label] as const;
-                const selected = samePool(listed, selectedPair);
-                const choice: TradingPair = selected ? selectedPair : listed;
-                const shown = priceDisplayInverted ? [choice[1], choice[0]] : [choice[0], choice[1]];
-                return <button key={listed.join('/')} type="button" className="trading-market-pair-option" aria-pressed={selected}
-                  aria-label={`${shown[0]}/${shown[1]}`}
-                  onClick={event => {
-                    if (!selected) onSelectedPairChange?.(choice);
-                    event?.currentTarget?.closest('details')?.removeAttribute('open');
-                  }}>
-                  <span className="trading-token-marks"><TokenMark symbol={shown[0]} /><TokenMark symbol={shown[1]} /></span>
-                  <span className="trading-market-pair-option-name"><strong>{shown[0]}</strong><small>/ {shown[1]}</small></span>
-                  {selected ? <Check size={16} aria-hidden="true" className="trading-market-pair-option-check" /> : null}
-                </button>;
-              })}</div> : null}
+            {activeProduct === 'dex' ? <section className="trading-market-catalog trading-market-catalog-single trading-market-catalog-pair">
+              <header><span>{dexDisplay ? 'Market pair' : 'Current Testnet pair'}</span><small>COTI Testnet</small></header>
+              {dexTokenSelect(0, 'Base token')}
+              {dexTokenSelect(1, 'Quote token')}
               <details className="trading-market-token-details"><summary>Token contracts</summary>
                 {(dexDisplay?.tokens ?? CURRENT_DEX_DISPLAY_TOKENS).map(token => <p className="dex-token-identity" key={token.address}><strong>{token.label}</strong><small>{token.address}</small></p>)}
               </details>
-            </section> : p2pMarket ? <section className="trading-market-catalog trading-market-catalog-single trading-market-catalog-p2p">
+            </section> : p2pMarket ? <section className="trading-market-catalog trading-market-catalog-single trading-market-catalog-pair">
               <header><span>Market pair</span><small>Current network tokens</small></header>
               {p2pTokenSelect('buy', 'Base token', p2pMarket.baseSelection, p2pMarket.quoteSelection)}
               {p2pTokenSelect('sell', 'Quote token', p2pMarket.quoteSelection, p2pMarket.baseSelection)}

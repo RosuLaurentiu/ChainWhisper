@@ -97,9 +97,9 @@ describe('DEX column divider', () => {
 });
 
 describe('pair selector', () => {
-  it('shows one column of 44 px rows with token-colour circles (owner decision 2026-11-18)', () => {
-    expect(rule(':root body .app-shell .trading-market-catalog-single .trading-market-catalog-list {')).toContain('display: grid; grid-template-columns: minmax(0, 1fr);');
-    expect(rule(':root body .app-shell .trading-market-catalog-list > button.trading-market-pair-option {')).toContain('min-height: 44px;');
+  it('puts Base and Quote side by side at 44 px with token-colour circles (owner decision 2026-11-18)', () => {
+    expect(rule(':root body .app-shell .trading-market-catalog.trading-market-catalog-pair {')).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));');
+    expect(rule(':root body .app-shell .trading-market-catalog-pair .trading-market-token-choice select {')).toContain('min-height: 44px;');
     expect(rule(':root body .app-shell [data-token-tone="bcn"] {')).toContain('var(--info)');
     expect(rule(':root body .app-shell .trading-token-mark {')).not.toMatch(HEX);
   });

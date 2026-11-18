@@ -34,7 +34,8 @@ describe('TradingProductSwitch', () => {
   it('uses the new deployment token labels and all six markets without a market-price substitute',()=>{
     const markup=renderToStaticMarkup(createElement(TradingProductSwitch,{activeProduct:'dex',dexCandidate:STAGED_SHARED_HISTORY_DEX_CANDIDATE,
       onNavigate:()=>{},selectedPair:['BCN','HBR'],onSelectedPairChange:()=>{},priceDisplayInverted:false,onPriceDisplayInvertedChange:()=>{}}));
-    expect(markup).toContain('BCN');expect(markup).toContain('HBR');expect(markup).toContain('ORBT/EMBR');
+    expect(markup).toContain('BCN');expect(markup).toContain('HBR');
+    for(const symbol of ['BCN','HBR','EMBR','ORBT'])expect(markup.match(new RegExp(`>${symbol}</option>`,'g'))).toHaveLength(2);
     expect(markup).toContain('Price unavailable');expect(markup).not.toContain('Test token 0');
   });
   it.each([false, true])('binds current-candidate labels and reference units with inversion=%s', inverted => {
@@ -50,7 +51,7 @@ describe('TradingProductSwitch', () => {
       expect(markup).toContain('Rounded Pool reference · excludes Limits');
       expect(markup).toContain('COTI Testnet · Live Pool reference');
       expect(markup).toContain('title="Expires after 120s">25s ago');
-      expect(markup).toContain('Select a pair');
+      expect(markup).toContain('Market pair');
       expect(markup).not.toContain('Test token 0');
     } finally { clock.mockRestore(); }
   });
@@ -64,21 +65,25 @@ describe('TradingProductSwitch', () => {
     expect(markup).toContain(globalInverted ? 'Selected displayed pair ORBT and BCN' : 'Selected displayed pair BCN and ORBT');
     expect(markup).toContain(globalInverted ? '0.5 BCN/ORBT' : '2 ORBT/BCN');
   });
-  // Owner decision 2026-11-18: the pair selector marks the current Pool in either token order, shows each row the way
-  // the button will show it, keeps the current orientation on a click of the current row and selects another Pool once.
-  it.each([false, true])('marks the current Pool and matches the button order (inverted=%s)', inverted => {
+  // Owner decision 2026-11-18: the DEX picker uses Base and Quote dropdowns like P2P. Each side offers only tokens that
+  // form a listed Pool with the other side, and a choice outside the candidate is refused.
+  it('selects the DEX pair with Base and Quote dropdowns inside the candidate', () => {
     const change = vi.fn();
     const props = { activeProduct: 'dex' as const, dexCandidate: STAGED_SHARED_HISTORY_DEX_CANDIDATE, onNavigate: vi.fn(),
-      selectedPair: ['BCN', 'HBR'] as const, onSelectedPairChange: change, priceDisplayInverted: inverted, onPriceDisplayInvertedChange: vi.fn() };
+      selectedPair: ['BCN', 'HBR'] as const, onSelectedPairChange: change, priceDisplayInverted: false, onPriceDisplayInvertedChange: vi.fn() };
     const markup = renderToStaticMarkup(createElement(TradingProductSwitch, props));
-    expect(markup.match(/aria-pressed="true"/g)).toHaveLength(1);
-    expect(markup).toContain(inverted ? 'aria-pressed="true" aria-label="HBR/BCN"' : 'aria-pressed="true" aria-label="BCN/HBR"');
-    expect(markup).toContain(inverted ? 'aria-label="BCN/EMBR"' : 'aria-label="EMBR/BCN"');
-    expect(markup).toContain('data-token-tone="bcn"'); expect(markup).toContain('data-token-tone="orbt"');
-    const rows = controls(TradingProductSwitch(props)).filter(element => (element.props as { className?: string }).className === 'trading-market-pair-option');
-    expect(rows).toHaveLength(6);
-    rows[0].props.onClick!(); expect(change).not.toHaveBeenCalled();
-    rows[1].props.onClick!(); expect(change).toHaveBeenCalledExactlyOnceWith(['EMBR', 'BCN']);
+    expect(markup).toContain('>BCN / HBR</strong>');
+    expect(markup).toContain('data-token-tone="bcn"'); expect(markup).toContain('data-token-tone="hbr"');
+    expect(markup).toMatch(/<option value="HBR" disabled="">HBR<\/option>/);
+    const selects = controls(TradingProductSwitch(props)).filter(element => element.type === 'select');
+    expect(selects.map(select => select.props['aria-label'])).toEqual(['Base token', 'Quote token']);
+    selects[1].props.onChange!({ currentTarget: { value: 'BCN' } });
+    selects[1].props.onChange!({ currentTarget: { value: 'unknown' } });
+    expect(change).not.toHaveBeenCalled();
+    selects[1].props.onChange!({ currentTarget: { value: 'ORBT' } });
+    expect(change).toHaveBeenCalledExactlyOnceWith(['BCN', 'ORBT']);
+    selects[0].props.onChange!({ currentTarget: { value: 'EMBR' } });
+    expect(change).toHaveBeenLastCalledWith(['EMBR', 'HBR']);
   });
 
   it('rejects a pair outside the explicitly selected candidate', () => {
@@ -189,7 +194,7 @@ describe('TradingProductSwitch', () => {
     expect(markup).not.toMatch(/Private|\(private\)|✓/u);
     expect(markup).toMatch(/>BCN<\/option>/); expect(markup).toMatch(/>HBR<\/option>/);
     expect(markup).toContain('>cwPTA · Public</option>'); expect(markup).toContain('>COTI · Native</option>');
-    expect(markup).toContain('trading-market-catalog-p2p');
+    expect(markup).toContain('trading-market-catalog-pair');
   });
 
   it('keeps pair changes disabled during a reviewed or pending action', () => {
