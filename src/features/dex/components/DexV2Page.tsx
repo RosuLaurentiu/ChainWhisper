@@ -336,7 +336,7 @@ export function CurrentSwapWorkspace({
   const inputsLocked = connecting || busy || Boolean(issued) || Boolean(pending) || savedActionPending || fundingRecovery || candidateChanged;
   const unknownOrigin = stage.startsWith('observed-');
   // Owner decision 2026-11-18: "Check current contracts" shows only while a swap or a recovery is in progress (Get Quote
-  // and Accept run the contract check themselves); "Check current state" moves into a collapsed row while idle.
+  // and Accept run the contract check themselves). "Check current state" is one compact button at all times.
   const swapActivity = Boolean(issued || pending || savedActionPending || fundingRecovery || ownerRecovery || ownerRecoveryError || unknownOrigin || stage !== 'idle');
   const displayedSide = resolveDisplayedTradeActionSide(canonicalSide, priceDisplayInverted);
   const displayedBaseIndex = priceDisplayInverted ? 1 : 0;
@@ -1050,7 +1050,7 @@ export function CurrentSwapWorkspace({
         <button type="button" aria-pressed={displayedProfile === 'fast-pool'} disabled={inputsLocked} onClick={() => setProfile('fast-pool')}>Fast</button>
         <button type="button" aria-pressed={displayedProfile === 'cheap-async'} disabled={inputsLocked} onClick={() => setProfile('cheap-async')}>Multi-source</button>
       </div>
-      <span>{displayedProfile === 'fast-pool' ? 'Pools only' : 'Pools and Limits · asynchronous'}</span>
+      <span>{displayedProfile === 'fast-pool' ? 'Pools only' : 'Pools + Limits · async'}</span>
     </div>
     <details className="dex-v2-current-advanced">
       <summary><strong>{quoteProtocol ? 'Slippage' : 'Price protection'}</strong><span>{quoteProtocol ? `${displayedSlippage}%` : priceLimit || 'Set price limit · Required'}</span></summary>
@@ -1114,8 +1114,9 @@ export function CurrentSwapWorkspace({
       onClick={() => { try { const target = readOwnerRecovery(); if (target) onInspect(target.view); } catch (cause) { error(cause); } }}>{ownerRecovery.label}</button> : null}
     {ownerRecovery?.alternateView && onInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || busy}
       onClick={() => { try { const target = readOwnerRecovery(); if (target?.alternateView) onInspect(target.alternateView); } catch (cause) { error(cause); } }}>Open top-up recovery</button> : null}
-    {/* While nothing is pending the check still restores an open Quote from chain (another tab or device), so it stays reachable in a collapsed row. */}
-    {canInspect ? swapActivity ? <button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button> : <details className="dex-v2-setup dex-v2-swap-status"><summary>Status and recovery</summary><div><button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button></div></details> : null}
+    {/* Owner decision 2026-11-18: one compact button. While nothing is pending it still restores an open Quote from chain
+        (another tab or device), so it stays visible. */}
+    {canInspect ? <button type="button" disabled={walletChanged || candidateChanged || checking || (busy && !pending)} onClick={() => { void refresh(); }}><RefreshCw size={15} aria-hidden="true" />Check current state</button> : null}
     {issued?.intent.profile === 'fast-pool' && issued.operation.ready && !newQuoteEligible && !pending && !savedActionPending && !fundingRecovery &&
       ['ready', 'expired', 'error'].includes(stage) ? <button type="button" disabled={!enabled || busy || checking}
       onClick={() => { void cancelFastQuote(); }}>Cancel quote</button> : null}

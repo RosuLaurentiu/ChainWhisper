@@ -56,6 +56,17 @@ describe('one settings row', () => {
     expect(rule('.dex-v2-swap-settings > .dex-v2-current-advanced[open] {')).toContain('flex-basis: 100%;');
   });
 
+  // Owner decision 2026-11-18: a mode change must not move the layout. The hint stays inline on desktop and takes one
+  // line under the toggle on a phone, in both modes.
+  it('keeps the mode hint inline on desktop and on its own line on a phone, in both modes', () => {
+    expect(rule('.dex-v2-swap-settings > .dex-v2-execution-choice {')).toContain('flex-wrap: nowrap;');
+    expect(rule('.dex-v2-execution-choice > .dex-v2-swap-mode-toggle {')).toContain('grid-template-columns: auto auto;');
+    const css = read('styles/120-owner-dark-design.css');
+    const mobile = css.slice(css.indexOf('/* On a phone the row has no room beside the toggle'));
+    expect(mobile).toContain('@media (max-width: 920px)');
+    expect(mobile.slice(0, mobile.indexOf('}\n}') + 3)).toContain('flex-basis: 100%;');
+  });
+
   it('gives the Slippage summary the segmented control height', () => {
     expect(rule('.dex-v2-swap-settings > .dex-v2-current-advanced > summary {')).toContain('height: 50px;');
   });
