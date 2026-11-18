@@ -7,6 +7,9 @@ import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } fro
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY } from '../../../lib/currentDexC1SwapPolicy';
 import type { SharedWalletSession } from '../../../lib/walletSession';
+import { currentDexMarketReference, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
+import { readCurrentDexDailyPrice } from '../../../lib/currentDexDailyPrice';
+import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../../../tests/fixtures/history.fixture';
 
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[], confirm: vi.fn(), allowNative: false }));
 // Only local capability wiring tests may pass the hold. The default uses the real gate.
@@ -240,6 +243,38 @@ describe('prepared Pool creation view', () => {
     // Inverted units: 0.5 of the second token per first token. The last edited budget (10 of the second token) fills 20.
     field('Pool starting price').onChange({ target: { value: '0.5' } });
     expect(field(quote).value).toBe('20.0');
+    expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
+  });
+  // Owner decision 2026-11-18: an untouched price shows the live Pool price for this pair; the first entry fixes it.
+  it('prefills the starting price from the verified live Pool price until the first entry', async () => {
+    const f = fixture(), pair = readCurrentDexDisplay(candidate).pairs[0];
+    const selected = [pair.tokens[1].label, pair.tokens[0].label] as const;
+    f.props.selectedPair = selected;
+    const history = makeHistoryFixture('empty'), now = HISTORY_FIXTURE_DAY * 86400n + 100n;
+    const snapshot = await readCurrentDexDailyPrice({ provider: history.provider, manifest: { ...history.manifest, symbols: selected }, finalityLagBlocks: 0, count: 1 });
+    const reference = currentDexMarketReference({ status: 'empty', snapshot }, selected, now);
+    expect(reference.status).toBe('available');
+    const live = (reference as { price: number }).price;
+    const field = (label: string) => elements(f.render()).find(element => element.type === 'input' && element.props['aria-label'] === label)!.props as
+      Props & { value: string; onChange: (event: { target: { value: string } }) => void };
+    expect(field('Pool starting price').value).toBe('');
+    (f.props as { marketReference?: CurrentDexMarketReference }).marketReference = reference;
+    expect(field('Pool starting price').value).toBe(String(Number(live.toPrecision(6))));
+    f.props.priceDisplayInverted = true;
+    expect(field('Pool starting price').value).toBe(String(Number((1 / live).toPrecision(6))));
+    f.props.priceDisplayInverted = false;
+    expect(text(f.render())).toContain('Live Pool price, rounded.');
+    // A reference for another pair is not used.
+    (f.props as { marketReference?: CurrentDexMarketReference }).marketReference =
+      currentDexMarketReference({ status: 'empty', snapshot: await readCurrentDexDailyPrice({ provider: history.provider,
+        manifest: { ...history.manifest, symbols: [selected[1], selected[0]] }, finalityLagBlocks: 0, count: 1 }) }, [selected[1], selected[0]], now);
+    expect(field('Pool starting price').value).toBe('');
+    (f.props as { marketReference?: CurrentDexMarketReference }).marketReference = reference;
+    field(`${selected[0]} Pool budget`).onChange({ target: { value: '10' } });
+    const fixed = field('Pool starting price').value;
+    expect(fixed).toBe(String(Number(live.toPrecision(6))));
+    (f.props as { marketReference?: CurrentDexMarketReference }).marketReference = { status: 'unavailable' };
+    expect(field('Pool starting price').value).toBe(fixed);
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
   });
   it('requires live submission capability before provider or private input prompts', async () => {

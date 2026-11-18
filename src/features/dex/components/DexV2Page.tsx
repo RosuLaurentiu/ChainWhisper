@@ -1268,7 +1268,7 @@ export default function DexV2Page({
             <CurrentLimitWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted} candidateKey={swapCandidate} selectedPair={selectedPair} managementNavigation={managementTabs('dex-desktop-management-navigation')} view={activeMode === 'activity' ? 'manage' : 'create'} visible={activeMode === 'limit' || activeMode === 'activity' && activityView === 'orders'} />
           </div>
           <div className="dex-v2-workspace-panel" hidden={!liquidity || activeMode === 'positions'}><CurrentPoolWorkspace sharedWalletSession={sharedWalletSession} priceDisplayInverted={priceDisplayInverted}
-            candidateKey={swapCandidate} selectedPair={selectedPair} /></div>
+            candidateKey={swapCandidate} selectedPair={selectedPair} marketReference={marketReference} /></div>
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'positions'}><CurrentPoolPositionsWorkspace selectedPair={selectedPair} priceDisplayInverted={priceDisplayInverted} sharedWalletSession={sharedWalletSession} candidateKey={swapCandidate} managementNavigation={managementTabs('dex-desktop-management-navigation')} visible={activeMode === 'positions'} /></div>
           <div className="dex-v2-workspace-panel" hidden={activeMode !== 'activity' || activityView !== 'history'}><CurrentDexActivity sharedWalletSession={sharedWalletSession} candidateKey={swapCandidate} managementNavigation={managementTabs('dex-desktop-management-navigation')} visible={activeMode === 'activity' && activityView === 'history'} priceDisplayInverted={priceDisplayInverted} onInspect={inspect} /></div>
         </div>

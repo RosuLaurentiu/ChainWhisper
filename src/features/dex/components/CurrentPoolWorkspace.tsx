@@ -15,6 +15,7 @@ import { CURRENT_DEX_POOL_LABELS, currentDexTokenLabel, formatCurrentDexTokenAmo
   readCurrentDexDisplay, currentDexDisplayPair, formatDexCandidateTokenAmount, parseDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
+import { isVerifiedCurrentDexMarketReference, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import type { CurrentPoolPreparedPreview } from '../../wallet/currentDexPoolFundingCapability';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
@@ -93,8 +94,9 @@ const amountRows = (a: Amounts, tokenLabels = CURRENT_DEX_POOL_LABELS,
   { label: 'Funding tolerance', value: `${a.toleranceN}/${a.toleranceD}` }
 ];
 
-export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplayInverted = false, candidateKey = 'cheap-current', selectedPair }: {
-  sharedWalletSession?: SharedWalletSession; priceDisplayInverted?: boolean; candidateKey?: CurrentCheapDexCandidateKey; selectedPair?: readonly [string, string]
+export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplayInverted = false, candidateKey = 'cheap-current', selectedPair, marketReference }: {
+  sharedWalletSession?: SharedWalletSession; priceDisplayInverted?: boolean; candidateKey?: CurrentCheapDexCandidateKey; selectedPair?: readonly [string, string];
+  marketReference?: CurrentDexMarketReference
 }) {
   const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
   const candidate = preparedScope?.candidate ?? resolveCurrentCheapDexCandidate(candidateKey), chain = BigInt(candidate.chainId);
@@ -130,11 +132,19 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   const [attemptComplete, setAttemptComplete] = useState(false);
   const [originalPreview, setOriginalPreview] = useState<{ value: CurrentPoolPreparedPreview; scope: object } | null>(null);
   const [unfundedAbandonEligible, setUnfundedAbandonEligible] = useState(false);
+  // Owner decision 2026-11-18: while the price is untouched it shows the live Pool price (verified public reference for
+  // this pair, rounded). It is fixed into the field at the first price or amount entry, so a later reference update
+  // cannot change entered terms or a preview.
+  const [priceTouched, setPriceTouched] = useState(nativeTrial);
+  const livePoolPrice = !priceTouched && marketReference?.status === 'available' && isVerifiedCurrentDexMarketReference(marketReference) &&
+    selectedPair && marketReference.pair[0] === selectedPair[0] && marketReference.pair[1] === selectedPair[1]
+    ? priceText(priceDisplayInverted ? 1 / marketReference.price : marketReference.price) : null;
+  const effectivePrice = livePoolPrice ?? price;
   const getPool = sharedWalletSession?.actions?.getCurrentDexPoolFundingCapability;
   const getSender = sharedWalletSession?.actions?.getCurrentDexSubmissionCapability;
   const privacyReady = sharedWalletSession ? resolveBrowserWalletPrivacyState({ browserWalletAddress: sharedWalletSession.walletAddress,
     sessionOnboardInfo: sharedWalletSession.sessionOnboardInfo ?? {}, walletAesHealthByAddress: sharedWalletSession.walletAesHealthByAddress }).ownerAesReady : false;
-  const context = { terms: [budget0, budget1, price, classId, tolerance, priceDisplayInverted].join(':'), owner: sharedWalletSession?.walletAddress.toLowerCase(),
+  const context = { terms: [budget0, budget1, effectivePrice, classId, tolerance, priceDisplayInverted].join(':'), owner: sharedWalletSession?.walletAddress.toLowerCase(),
     candidateKey, graph: candidate.graph, core: candidate.core, marketId: pair?.marketId ?? candidate.marketId, pair: poolTokens.join(':'),
     chainId: sharedWalletSession?.chainId, provider: sharedWalletSession?.browserProvider, getPool, getSender,
     walletId: sharedWalletSession?.browserWalletId, source: sharedWalletSession?.activeSignerSource,
@@ -183,12 +193,13 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     const other: 0 | 1 = index === 0 ? 1 : 0;
     const setOther = other === 0 ? setBudget0 : setBudget1;
     (index === 0 ? setBudget0 : setBudget1)(value); setLastAmount(index);
-    const filled = linkedAmount(index, value, price);
+    if (livePoolPrice !== null) { setPrice(livePoolPrice); setPriceTouched(true); }
+    const filled = linkedAmount(index, value, effectivePrice);
     if (filled !== null) { setOther(filled); return; }
-    if (!decimalRatio(price)) { const next = linkedPrice(index === 0 ? value : budget0, index === 1 ? value : budget1); if (next !== null) setPrice(next); }
+    if (!decimalRatio(effectivePrice)) { const next = linkedPrice(index === 0 ? value : budget0, index === 1 ? value : budget1); if (next !== null) setPrice(next); }
   };
   const editPrice = (value: string) => {
-    setPrice(value);
+    setPrice(value); setPriceTouched(true);
     const from = lastAmount ?? (baseUnits(budget0, 0) !== null ? 0 : baseUnits(budget1, 1) !== null ? 1 : null);
     if (from === null) return;
     const filled = linkedAmount(from, from === 0 ? budget0 : budget1, value);
@@ -222,7 +233,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     inFlight.current = true; setBusy(true); setPreview(null); setFunding(null); setApprovals([false, false]); setClears([false, false]); setNftId(null);
     try {
       if (preparedCandidate) assertCurrentPoolFundingNativeAdmission(candidate);
-      const intent = currentPoolIntent(parse(budget0, 0).toString(), parse(budget1, 1).toString(), price, classId, tolerance);
+      const intent = currentPoolIntent(parse(budget0, 0).toString(), parse(budget1, 1).toString(), effectivePrice, classId, tolerance);
       if (preparedCandidate) assertPoolAuthority('create', intent);
       // Pool initialization stores canonical token1/token0. Match the displayed ratio.
       if (pair ? displayQuote!.address === poolTokens[0] : !priceDisplayInverted) {
@@ -578,7 +589,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     finally { inFlight.current = false; setBusy(false); }
   };
   const previewInputsValid = (() => {
-    try { currentPoolIntent(parse(budget0, 0).toString(), parse(budget1, 1).toString(), price, classId, tolerance); return true; }
+    try { currentPoolIntent(parse(budget0, 0).toString(), parse(budget1, 1).toString(), effectivePrice, classId, tolerance); return true; }
     catch { return false; }
   })();
   const fieldsDisabled = busy || blocked || validFunding;
@@ -620,8 +631,8 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       {/* Owner decision 2026-11-18: the price comes first; it and one amount fill the other amount. */}
       <section className="dex-v2-pool-section dex-v2-pool-price-section">
           <label><span><strong>Starting price <span aria-hidden="true">*</span></strong><small>{priceUnits}</small></span><input aria-label="Pool starting price" inputMode="decimal" placeholder="0.00" required
-            value={price} disabled={fieldsDisabled || nativeTrial} onChange={event => editPrice(event.target.value)} /></label>
-          <p>Used only if the Pool is empty.</p>
+            value={effectivePrice} disabled={fieldsDisabled || nativeTrial} onChange={event => editPrice(event.target.value)} /></label>
+          <p>{livePoolPrice !== null ? 'Live Pool price, rounded. The deposit follows the Pool price; this one is used only if the Pool is empty.' : 'Used only if the Pool is empty.'}</p>
       </section>
       <section className="dex-v2-pool-section dex-v2-pool-amounts-section">
         <header><h3>Deposit amounts</h3></header>
