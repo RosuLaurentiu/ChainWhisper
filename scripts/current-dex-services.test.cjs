@@ -1018,7 +1018,7 @@ test('a start held by the aggregate limit still expires at its queue deadline an
   assert.deepEqual(stops, []);
 });
 
-test('a group stop rejects a start held by the aggregate limit and grants nothing later', { timeout: 5000 }, async t => {
+test('a group stop rejects a start held by the aggregate limit and grants nothing later', { timeout: 5000 }, async () => {
   const child = new EventEmitter(), stops = [], sent = [];
   child.connected = true; child.send = (message, callback) => { sent.push(message); callback?.(null); };
   const group = createRpcAdmission({ onStop: reason => stops.push(reason), startLimit: { burstStarts: 1, startsPerSecond: 10 } });
