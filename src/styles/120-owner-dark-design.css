@@ -1484,3 +1484,64 @@
   }
   :root body .app-shell-trades :is(.p2p-offers-list-head, .p2p-offer-rate-row) > * { min-width: 0; overflow-wrap: anywhere; }
 }
+/* CW-097. Pair selector: owner decision 2026-11-18. One column of 44 px pair rows with two token circles, the
+   pair in the button's order and a check on the selected row. Each token has one colour from the App tokens; other
+   symbols use the neutral tone. The pair button uses the same circles. */
+:root body .app-shell [data-token-tone] { --token-tone: var(--surface-interactive); --token-ink: var(--text-primary); }
+:root body .app-shell [data-token-tone="bcn"] { --token-tone: var(--info); --token-ink: var(--surface-canvas); }
+:root body .app-shell [data-token-tone="hbr"] { --token-tone: var(--success); --token-ink: var(--surface-canvas); }
+:root body .app-shell [data-token-tone="embr"] { --token-tone: var(--warning); --token-ink: var(--surface-canvas); }
+:root body .app-shell [data-token-tone="orbt"] { --token-tone: var(--brand-strong); --token-ink: var(--surface-canvas); }
+:root body .app-shell .trading-token-mark {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--token-tone);
+  color: var(--token-ink);
+  font-size: .72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+:root body .app-shell .trading-market-pair .trading-token-mark.trading-market-token {
+  width: 30px;
+  height: 30px;
+  background: var(--token-tone);
+  font-size: .85rem;
+  box-shadow: 0 0 0 2px var(--surface-canvas);
+}
+:root body .app-shell .trading-market-pair .trading-token-mark.trading-market-token-quote { margin-left: -6px; }
+:root body .app-shell .trading-token-marks { display: inline-flex; align-items: center; }
+:root body .app-shell .trading-token-marks > .trading-token-mark { box-shadow: 0 0 0 2px var(--surface-overlay); }
+:root body .app-shell .trading-token-marks > .trading-token-mark + .trading-token-mark { margin-left: -6px; }
+:root body .app-shell .trading-market-catalog > header span { color: var(--text-secondary); font-size: .8rem; font-weight: 600; text-transform: none; letter-spacing: 0; }
+:root body .app-shell .trading-market-catalog-single .trading-market-catalog-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+:root body .app-shell .trading-market-catalog-list > button.trading-market-pair-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: .9rem;
+  text-align: left;
+}
+:root body .app-shell .trading-market-catalog-list > button.trading-market-pair-option:hover,
+:root body .app-shell .trading-market-catalog-list > button.trading-market-pair-option[aria-pressed="true"] {
+  border: 0;
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+}
+:root body .app-shell .trading-market-catalog-list > button.trading-market-pair-option:focus-visible {
+  outline: 2px solid var(--ux-focus-ring);
+  outline-offset: -2px;
+}
+:root body .app-shell .trading-market-pair-option-name strong { font-weight: 600; }
+:root body .app-shell .trading-market-pair-option-name small { margin-left: 3px; color: var(--text-secondary); font-size: .85rem; font-weight: 500; }
+:root body .app-shell .trading-market-pair-option-check { color: var(--brand-strong); }

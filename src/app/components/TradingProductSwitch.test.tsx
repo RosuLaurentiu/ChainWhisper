@@ -50,7 +50,7 @@ describe('TradingProductSwitch', () => {
       expect(markup).toContain('Rounded Pool reference · excludes Limits');
       expect(markup).toContain('COTI Testnet · Live Pool reference');
       expect(markup).toContain('title="Expires after 120s">25s ago');
-      expect(markup).toContain('Current Testnet pairs');
+      expect(markup).toContain('Select a pair');
       expect(markup).not.toContain('Test token 0');
     } finally { clock.mockRestore(); }
   });
@@ -64,6 +64,23 @@ describe('TradingProductSwitch', () => {
     expect(markup).toContain(globalInverted ? 'Selected displayed pair ORBT and BCN' : 'Selected displayed pair BCN and ORBT');
     expect(markup).toContain(globalInverted ? '0.5 BCN/ORBT' : '2 ORBT/BCN');
   });
+  // Owner decision 2026-11-18: the pair selector marks the current Pool in either token order, shows each row the way
+  // the button will show it, keeps the current orientation on a click of the current row and selects another Pool once.
+  it.each([false, true])('marks the current Pool and matches the button order (inverted=%s)', inverted => {
+    const change = vi.fn();
+    const props = { activeProduct: 'dex' as const, dexCandidate: STAGED_SHARED_HISTORY_DEX_CANDIDATE, onNavigate: vi.fn(),
+      selectedPair: ['BCN', 'HBR'] as const, onSelectedPairChange: change, priceDisplayInverted: inverted, onPriceDisplayInvertedChange: vi.fn() };
+    const markup = renderToStaticMarkup(createElement(TradingProductSwitch, props));
+    expect(markup.match(/aria-pressed="true"/g)).toHaveLength(1);
+    expect(markup).toContain(inverted ? 'aria-pressed="true" aria-label="HBR/BCN"' : 'aria-pressed="true" aria-label="BCN/HBR"');
+    expect(markup).toContain(inverted ? 'aria-label="BCN/EMBR"' : 'aria-label="EMBR/BCN"');
+    expect(markup).toContain('data-token-tone="bcn"'); expect(markup).toContain('data-token-tone="orbt"');
+    const rows = controls(TradingProductSwitch(props)).filter(element => (element.props as { className?: string }).className === 'trading-market-pair-option');
+    expect(rows).toHaveLength(6);
+    rows[0].props.onClick!(); expect(change).not.toHaveBeenCalled();
+    rows[1].props.onClick!(); expect(change).toHaveBeenCalledExactlyOnceWith(['EMBR', 'BCN']);
+  });
+
   it('rejects a pair outside the explicitly selected candidate', () => {
     expect(() => renderToStaticMarkup(createElement(TradingProductSwitch, {
       activeProduct: 'dex', dexCandidate: STAGED_EXIT_PREVIEW_DEX_CANDIDATE,

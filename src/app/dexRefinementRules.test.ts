@@ -96,6 +96,15 @@ describe('DEX column divider', () => {
   });
 });
 
+describe('pair selector', () => {
+  it('shows one column of 44 px rows with token-colour circles (owner decision 2026-11-18)', () => {
+    expect(rule(':root body .app-shell .trading-market-catalog-single .trading-market-catalog-list {')).toContain('display: grid; grid-template-columns: minmax(0, 1fr);');
+    expect(rule(':root body .app-shell .trading-market-catalog-list > button.trading-market-pair-option {')).toContain('min-height: 44px;');
+    expect(rule(':root body .app-shell [data-token-tone="bcn"] {')).toContain('var(--info)');
+    expect(rule(':root body .app-shell .trading-token-mark {')).not.toMatch(HEX);
+  });
+});
+
 describe('mobile Trading shell on DEX pages', () => {
   const mobile = () => block().slice(block().indexOf('@media (max-width: 920px)'));
 

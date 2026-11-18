@@ -1,4 +1,4 @@
-import { ArrowLeftRight, ChevronDown, CircleDollarSign, Coins } from 'lucide-react';
+import { ArrowLeftRight, Check, ChevronDown } from 'lucide-react';
 import type { P2PTradingHeaderContext } from '../../features/trading/components/P2PTradingPage.helpers';
 import { CURRENT_DEX_DISPLAY_PAIR, CURRENT_DEX_DISPLAY_TOKENS, readCurrentDexDisplay } from '../../lib/currentDexDisplay';
 import type { CurrentCheapDexIdentity } from '../../lib/dexV2Deployment';
@@ -22,6 +22,14 @@ const SUCCESSOR_REFERENCE_VALUES: Readonly<Record<string, number>> = Object.free
 
 export const successorPairReferencePrice = ([base, quote]: TradingPair): number =>
   SUCCESSOR_REFERENCE_VALUES[quote] / SUCCESSOR_REFERENCE_VALUES[base];
+
+// Owner decision 2026-11-18: one lettered circle per token in its own colour (CSS tones), on the pair button and in
+// each pair row. Other symbols (P2P tokens) use the neutral tone.
+const TOKEN_TONES: Readonly<Record<string, string>> = Object.freeze({ BCN: 'bcn', HBR: 'hbr', EMBR: 'embr', ORBT: 'orbt' });
+const TokenMark = ({ symbol, className }: { symbol: string; className?: string }) =>
+  <span className={className ? `trading-token-mark ${className}` : 'trading-token-mark'} data-token-tone={TOKEN_TONES[symbol] ?? 'other'}
+    aria-hidden="true">{symbol.slice(0, 1).toUpperCase()}</span>;
+const samePool = (a: TradingPair, b: TradingPair) => a[0] === b[0] && a[1] === b[1] || a[0] === b[1] && a[1] === b[0];
 
 type TradingProductSwitchProps = {
   onNavigate: (product: 'dex' | 'p2p') => void;
@@ -87,18 +95,31 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
           event.currentTarget.querySelector('summary')?.focus();
         }}>
           <summary className="trading-market-pair" aria-label={`Selected displayed pair ${baseSymbol} and ${quoteSymbol}`}>
-            <span className="trading-market-token trading-market-token-base"><CircleDollarSign size={19} aria-hidden="true" /></span>
-            <span className="trading-market-token trading-market-token-quote"><Coins size={18} aria-hidden="true" /></span>
+            <TokenMark symbol={baseSymbol} className="trading-market-token trading-market-token-base" />
+            <TokenMark symbol={quoteSymbol} className="trading-market-token trading-market-token-quote" />
             <strong>{baseSymbol}{activeProduct === 'dex' ? <small>/ {quoteSymbol}</small> : <> / {quoteSymbol}</>}</strong>
             <ChevronDown size={18} aria-hidden="true" />
           </summary>
           <div className="trading-market-token-menu">
             {activeProduct === 'dex' ? <section className="trading-market-catalog trading-market-catalog-single">
-              <header><span>{dexDisplay ? 'Current Testnet pairs' : 'Current Testnet pair'}</span><small>Contract-bound tokens</small></header>
+              <header><span>{dexDisplay ? 'Select a pair' : 'Current Testnet pair'}</span><small>COTI Testnet</small></header>
               {dexDisplay ? <div className="trading-market-catalog-list">{dexDisplay.pairs.map(({ tokens }) => {
-                const pair = [tokens[0].label, tokens[1].label] as const;
-                return <button key={pair.join('/')} type="button" aria-pressed={pair[0] === selectedPair[0] && pair[1] === selectedPair[1]}
-                  onClick={() => onSelectedPairChange?.(pair)}>{pair.join('/')}</button>;
+                // The current Pool keeps its orientation; another Pool is selected in its listed order. Each row shows the
+                // pair the way the button will show it after the choice (display inversion included).
+                const listed = [tokens[0].label, tokens[1].label] as const;
+                const selected = samePool(listed, selectedPair);
+                const choice: TradingPair = selected ? selectedPair : listed;
+                const shown = priceDisplayInverted ? [choice[1], choice[0]] : [choice[0], choice[1]];
+                return <button key={listed.join('/')} type="button" className="trading-market-pair-option" aria-pressed={selected}
+                  aria-label={`${shown[0]}/${shown[1]}`}
+                  onClick={event => {
+                    if (!selected) onSelectedPairChange?.(choice);
+                    event?.currentTarget?.closest('details')?.removeAttribute('open');
+                  }}>
+                  <span className="trading-token-marks"><TokenMark symbol={shown[0]} /><TokenMark symbol={shown[1]} /></span>
+                  <span className="trading-market-pair-option-name"><strong>{shown[0]}</strong><small>/ {shown[1]}</small></span>
+                  {selected ? <Check size={16} aria-hidden="true" className="trading-market-pair-option-check" /> : null}
+                </button>;
               })}</div> : null}
               <details className="trading-market-token-details"><summary>Token contracts</summary>
                 {(dexDisplay?.tokens ?? CURRENT_DEX_DISPLAY_TOKENS).map(token => <p className="dex-token-identity" key={token.address}><strong>{token.label}</strong><small>{token.address}</small></p>)}
