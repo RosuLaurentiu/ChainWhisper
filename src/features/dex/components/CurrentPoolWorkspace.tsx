@@ -2,6 +2,7 @@ import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSubmission';
 import { CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
 import { MAX_TOKEN_ALLOWANCE } from '../../../lib/tokenAllowance';
+import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
 import { useRef, useState } from 'react';
 import { ArrowRight, Check, ChevronDown, Info, LockKeyhole, Settings2 } from 'lucide-react';
 import { resolveCurrentCheapDexCandidate, STAGED_NATIVE_DEX_CANDIDATE, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
@@ -94,6 +95,23 @@ const amountRows = (a: Amounts, tokenLabels = CURRENT_DEX_POOL_LABELS,
   { label: 'New private shares', value: a.mintedShares.toString() }, { label: 'Position shares after funding', value: a.ownedShares.toString() },
   { label: 'Funding tolerance', value: `${a.toleranceN}/${a.toleranceD}` }
 ];
+// Owner decision 2026-11-18: display amounts drop trailing zeros and group thousands (1,000 · 625). Exact values are
+// unchanged; the funding review window keeps its full rows.
+const trimAmount = (text: string): string => text.includes('.') ? text.replace(/\.?0+$/u, '') : text;
+const displayAmount = (text: string): string => {
+  const [whole, fraction] = trimAmount(text).split('.');
+  return whole.replace(/\B(?=(\d{3})+(?!\d))/gu, ',') + (fraction ? `.${fraction}` : '');
+};
+// The preview card shows the debits, unused amounts above zero and one shares row when minted and owned are equal.
+// The title already names the action; Settings shows the tolerance.
+const previewCardRows = (a: Amounts, tokenLabels = CURRENT_DEX_POOL_LABELS,
+  format: (amount: bigint, index: 0 | 1) => string = formatCurrentDexTokenAmount) => [
+  { label: `${tokenLabels[0]} debit`, value: displayAmount(format(a.used0, 0)) }, { label: `${tokenLabels[1]} debit`, value: displayAmount(format(a.used1, 1)) },
+  ...(a.unused0 > 0n ? [{ label: `${tokenLabels[0]} unused`, value: displayAmount(format(a.unused0, 0)) }] : []),
+  ...(a.unused1 > 0n ? [{ label: `${tokenLabels[1]} unused`, value: displayAmount(format(a.unused1, 1)) }] : []),
+  ...(a.mintedShares === a.ownedShares ? [{ label: 'Private shares', value: displayAmount(a.mintedShares.toString()) }]
+    : [{ label: 'New private shares', value: displayAmount(a.mintedShares.toString()) }, { label: 'Position shares after funding', value: displayAmount(a.ownedShares.toString()) }])
+];
 
 export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplayInverted = false, candidateKey = 'cheap-current', selectedPair, marketReference }: {
   sharedWalletSession?: SharedWalletSession; priceDisplayInverted?: boolean; candidateKey?: CurrentCheapDexCandidateKey; selectedPair?: readonly [string, string];
@@ -117,6 +135,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   const parse = (value: string, index: 0 | 1) => preparedCandidate ?
     parseDexCandidateTokenAmount(candidate, poolTokens[index], value, tokenLabels[index], true) : parseCurrentDexTokenAmount(value, tokenLabels[index], true);
   const rows = (a: Amounts) => amountRows(a, tokenLabels, format);
+  const cardRows = (a: Amounts) => previewCardRows(a, tokenLabels, format);
   const nativeTrial = candidate.graph === STAGED_NATIVE_DEX_CANDIDATE.graph;
   const [budget0, setBudget0] = useState(nativeTrial ? '100' : ''); const [budget1, setBudget1] = useState(nativeTrial ? '100' : '');
   const [price, setPrice] = useState(nativeTrial ? (priceDisplayInverted ? '0.5' : '2') : '');
@@ -180,7 +199,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     const to: 0 | 1 = from === 0 ? 1 : 0; const [numerator, denominator] = ratio;
     const out = from === quoteIndex ? amount * denominator * oneToken(to) / (numerator * oneToken(from))
       : amount * numerator * oneToken(to) / (denominator * oneToken(from));
-    return out > 0n ? format(out, to) : null;
+    return out > 0n ? trimAmount(format(out, to)) : null;
   };
   const linkedPrice = (text0: string, text1: string): string | null => {
     const amounts = [baseUnits(text0, 0), baseUnits(text1, 1)] as const;
@@ -656,7 +675,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       </div></details>
       {preview && previewWalletCurrent ? <aside className="dex-v2-strategy-preview" aria-label="Authenticated Pool preview">
         <header><span>PRIVATE PREVIEW</span><h2>{preview.value.amounts.operation === 'initialize' ? 'Initialize this Pool' : 'Add to this Pool'}</h2></header>
-        <dl>{rows(preview.value.amounts).map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
+        <dl>{cardRows(preview.value.amounts).map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
         {!validPreview ? <p role="alert">Pool terms or wallet session changed. Request a new preview.</p> : null}
       </aside> : null}
       {preparedCandidate ? <>
@@ -691,7 +710,9 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         ? <PrivacyLockedNotice message="Your deposit preview is locked." disabled={busy}
           onUnlock={sharedWalletSession?.actions?.unlockPrivacy ? () => sharedWalletSession.actions!.unlockPrivacy() : undefined} />
         : <p className="dex-v2-activation-note" role="status">{(messageScope.current === scope.current && message) || (connected ? !previewInputsValid ? 'Enter both deposit amounts and a valid price and tolerance.' : 'Review your deposit before any tokens move.' : 'Connect your wallet on COTI Testnet to prepare this Pool.')}</p>}
-      {transactionHash ? <p className="dex-v2-activation-note" style={{ overflowWrap: 'anywhere' }}>Transaction {transactionHash}</p> : null}
+      {transactionHash ? <p className="dex-v2-activation-note dex-v2-pool-transaction">Transaction <a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${transactionHash}`}
+        target="_blank" rel="noreferrer" title={transactionHash} aria-label={`View transaction ${transactionHash}`}>{transactionHash.slice(0, 6)}…{transactionHash.slice(-4)}</a>
+        <button type="button" onClick={() => { void navigator.clipboard?.writeText(transactionHash); }} aria-label="Copy transaction hash">Copy</button></p> : null}
       {nftId !== null && nftScope.current === scope.current ? <p className="dex-v2-activation-note">Verified position NFT ID: {nftId.toString()}. {attemptComplete ? 'The claim exit is complete.' : 'Use this ID and funding transaction in Your liquidity to refresh and exit the claim.'}</p> : null}
     </section>
     <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)}

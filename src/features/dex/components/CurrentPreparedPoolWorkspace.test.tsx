@@ -231,18 +231,18 @@ describe('prepared Pool creation view', () => {
     expect(order.indexOf('Pool starting price')).toBeLessThan(order.indexOf(quote));
     field('Pool starting price').onChange({ target: { value: '2' } });
     field(base).onChange({ target: { value: '10' } });
-    expect(field(quote).value).toBe('20.0');
+    expect(field(quote).value).toBe('20');
     field('Pool starting price').onChange({ target: { value: '2.5' } });
-    expect(field(quote).value).toBe('25.0');
+    expect(field(quote).value).toBe('25');
     field(quote).onChange({ target: { value: '5' } });
-    expect(field(base).value).toBe('2.0');
+    expect(field(base).value).toBe('2');
     field('Pool starting price').onChange({ target: { value: '' } }); field(base).onChange({ target: { value: '' } });
     field(quote).onChange({ target: { value: '30' } }); field(base).onChange({ target: { value: '10' } });
     expect(field('Pool starting price').value).toBe('3');
     f.props.priceDisplayInverted = true;
     // Inverted units: 0.5 of the second token per first token. The last edited budget (10 of the second token) fills 20.
     field('Pool starting price').onChange({ target: { value: '0.5' } });
-    expect(field(quote).value).toBe('20.0');
+    expect(field(quote).value).toBe('20');
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
   });
   // Owner decision 2026-11-18: an untouched price shows the live Pool price for this pair; the first entry fixes it.

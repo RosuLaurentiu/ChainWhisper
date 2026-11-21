@@ -137,6 +137,30 @@ describe('mobile refinement (owner decision 2026-11-18, audit items 1-5)', () =>
   });
 });
 
+describe('Pool form compact (owner decision 2026-11-21)', () => {
+  const pool = () => read('features/dex/components/CurrentPoolWorkspace.tsx');
+
+  it('keeps the full rows, with the funding tolerance, in the funding review window', () => {
+    expect(pool()).toContain("{ label: 'Funding tolerance', value: `${a.toleranceN}/${a.toleranceD}` }");
+    expect(pool()).toMatch(/confirm\(values\.operation === 'initialize' \? 'Initialize this Pool' : 'Add to this Pool', \[\.\.\.rows\(values\)/u);
+  });
+
+  it('uses the compact rows only in the preview card', () => {
+    expect(pool()).toContain('<dl>{cardRows(preview.value.amounts).map(row =>');
+    expect(pool()).toContain("...(a.unused0 > 0n ?");
+  });
+
+  it('frames the spread select, aligns helpers left and shows a full-width card', () => {
+    const all = css(); const at = all.indexOf('/* CW-097. Pool form compact:');
+    expect(at).toBeGreaterThan(-1);
+    const block = all.slice(at, all.indexOf('/* CW-097. Mobile refinement:'));
+    expect(block).toContain('select[aria-label="Pool spread"] { border: 1px solid var(--border-default);');
+    expect(block).toContain('.dex-v2-pool-amounts-section .dex-v2-activation-note { text-align: left; }');
+    expect(block).toContain('> aside.dex-v2-strategy-preview { align-self: stretch; width: 100%;');
+    expect(block).not.toMatch(HEX);
+  });
+});
+
 describe('mobile Trading shell on DEX pages', () => {
   const mobile = () => block().slice(block().indexOf('@media (max-width: 920px)'));
 
