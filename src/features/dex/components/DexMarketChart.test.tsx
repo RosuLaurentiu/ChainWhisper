@@ -3,7 +3,7 @@ import { describe,expect,it,vi } from 'vitest';
 import { readCurrentDexDailyPrice,type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { currentDexMarketReference } from '../../../lib/currentDexMarketReference';
-import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles,buildCurrentDexChartCarryLines,wrapExpandedChartFocus} from './DexMarketChart';
+import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles,buildCurrentDexChartCarryPoints,wrapExpandedChartFocus} from './DexMarketChart';
 describe('DexMarketChart actual daily sample display',()=>{
   it('adds only a verified, fresh, matching live point after the last saved sample',async()=>{
     const f=makeHistoryFixture(),snapshot=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
@@ -130,11 +130,11 @@ describe('Expanded chart keyboard focus (CW-098, WCAG 2.4.3)',()=>{
     expect(wrapExpandedChartFocus(items,null,true)).toBe('details');
     expect(wrapExpandedChartFocus([],'swap',false)).toBeNull();
   });
-  // Owner decision 2026-11-21: dotted lines carry the last saved price across days without a saved sample.
+  // Owner decision 2026-11-21: dotted candle-wide marks show the last saved price on days without a saved sample.
   it('carries the last saved price only across missing days, up to the next candle or the last visible day',()=>{
-    const lines=buildCurrentDexChartCarryLines([{day:'10',price:1},{day:'11',price:1.1},{day:'14',price:1.2},{day:'15',price:1.3}],18);
-    expect(lines).toEqual([{fromDay:11,toDay:14,price:1.1},{fromDay:15,toDay:18,price:1.3}]);
-    expect(buildCurrentDexChartCarryLines([{day:'10',price:1},{day:'11',price:1}],11)).toEqual([]);
-    expect(buildCurrentDexChartCarryLines([],5)).toEqual([]);
+    const points=buildCurrentDexChartCarryPoints([{day:'10',price:1},{day:'11',price:1.1},{day:'14',price:1.2},{day:'15',price:1.3}],17);
+    expect(points.map(p=>[p.day,p.price,p.carry])).toEqual([['12',1.1,true],['13',1.1,true],['16',1.3,true],['17',1.3,true]]);
+    expect(buildCurrentDexChartCarryPoints([{day:'10',price:1},{day:'11',price:1}],11)).toEqual([]);
+    expect(buildCurrentDexChartCarryPoints([],5)).toEqual([]);
   });
 });

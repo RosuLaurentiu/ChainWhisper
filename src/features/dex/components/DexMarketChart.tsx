@@ -27,7 +27,7 @@ export function buildCurrentDexChartLivePoint(reference:CurrentDexMarketReferenc
   return {timestamp,price:inverted?1/reference.price:reference.price};
 }
 type Sample = Readonly<{day:string;timestamp:number;price:number;recordedAt?:string;sourceBlock?:string;recordBlock?:string;
-  openingPrice?:number;openingTimestamp?:number;openingSourceBlock?:string;body?:[number,number];live?:boolean;recorded?:boolean}>;
+  openingPrice?:number;openingTimestamp?:number;openingSourceBlock?:string;body?:[number,number];live?:boolean;recorded?:boolean;carry?:boolean}>;
 const tailNote=(point:Pick<Sample,'live'|'recorded'>)=>point.live?' · Live, not saved':point.recorded?' · Last recorded, not saved':'';
 export function buildCurrentDexChartCandles(saved:readonly Sample[],live:{timestamp:number;price:number;recorded?:boolean}|null):readonly Sample[]{
   const latest=saved[saved.length-1];
@@ -37,18 +37,25 @@ export function buildCurrentDexChartCandles(saved:readonly Sample[],live:{timest
   const current:Sample={day,timestamp:live.timestamp,price:live.price,...(live.recorded?{recorded:true}:{live:true}),...(openingPrice===undefined?{}:{openingPrice,body:[openingPrice,live.price]})};
   return [...saved.filter(point=>point.day!==day),current];
 }
-/** Owner decision 2026-11-21: across days with no saved sample, a dotted line carries the last saved price to the next
- * candle (or to the last visible day). It marks "no saved sample", not a record or a verified unchanged price. */
-export function buildCurrentDexChartCarryLines(candles:readonly Pick<Sample,'day'|'price'>[],endingDay:number):readonly {fromDay:number;toDay:number;price:number}[]{
-  const lines:{fromDay:number;toDay:number;price:number}[]=[];
+/** Owner decision 2026-11-21: each day with no saved sample after a candle shows a dotted mark, candle-wide, at the last
+ * saved price, up to the next candle (or the last visible day). It marks "no saved sample", not a record or a verified
+ * unchanged price. */
+export function buildCurrentDexChartCarryPoints(candles:readonly Pick<Sample,'day'|'price'>[],endingDay:number):readonly Sample[]{
+  const points:Sample[]=[];
   candles.forEach((point,index)=>{
-    const day=Number(point.day),next=candles[index+1],toDay=next?Number(next.day):endingDay;
-    if(toDay-day>1)lines.push({fromDay:day,toDay,price:point.price});
+    const day=Number(point.day),next=candles[index+1],toDay=next?Number(next.day):endingDay+1;
+    for(let missing=day+1;missing<toDay;missing++)points.push({day:String(missing),timestamp:missing*DAY,price:point.price,carry:true});
   });
-  return lines;
+  return points;
 }
 export function CandleMark({x=0,y=0,width=0,height=0,payload}:{x?:number;y?:number;width?:number;height?:number;payload?:Sample}){
   if(!payload)return null;
+  if(payload.carry){
+    const markWidth=Math.min(width,8),mid=height<0?y+height/2:y+height/2;
+    return <g role="img" aria-label={`${formatDay(payload.timestamp)}: no saved sample, last saved price ${formatPrice(payload.price)}`}>
+      <line x1={x+(width-markWidth)/2} x2={x+(width+markWidth)/2} y1={mid} y2={mid} stroke="rgba(190,195,215,0.85)" strokeWidth={2} strokeDasharray="1.5 1.5"/>
+    </g>;
+  }
   const label=`${formatDay(payload.timestamp)}${tailNote(payload)}: ${payload.openingPrice===undefined?'single observed price':`open ${formatPrice(payload.openingPrice)}, close`} ${formatPrice(payload.price)}`;
   const color=payload.price>=(payload.openingPrice??payload.price)?'#26d6a0':'#ef49c1';
   const bodyHeight=payload.body?Math.max(Math.abs(height),2):2,bodyWidth=Math.min(width,8);
@@ -67,9 +74,9 @@ const stateMessage = (history: CurrentDexDailyPriceView) => {
 export function SampleTooltip({active,payload,preview,ratioLabel}:{active?:boolean;payload?:readonly {payload:Sample}[];preview:boolean;ratioLabel:string}){
   const point=payload?.[0]?.payload;if(!active||!point)return null;
   return <div className="dex-market-chart-tooltip"><strong>{formatDay(Number(point.day)*DAY)} UTC</strong>
-    <small>{ratioLabel}{preview?' · Illustrative preview':''}{tailNote(point)}</small>
+    <small>{ratioLabel}{preview?' · Illustrative preview':''}{point.carry?' · No saved sample':tailNote(point)}</small>
     {point.openingPrice===undefined?null:<div>Open <b>{formatPrice(point.openingPrice)}</b></div>}
-    <div>{point.openingPrice===undefined?'Price':'Close'} <b>{formatPrice(point.price)}</b></div></div>;
+    <div>{point.carry?'Last saved price':point.openingPrice===undefined?'Price':'Close'} <b>{formatPrice(point.price)}</b></div></div>;
 }
 /** CW-098: while the chart covers the page, Tab must not reach the hidden controls behind it. Returns the control to focus, or null to let the browser move focus. */
 export function wrapExpandedChartFocus<T>(items:readonly T[],active:T|null,backward:boolean):T|null{
@@ -125,7 +132,8 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
   const latest=visible[visible.length-1];
   const live=showMarketSeries&&!preview&&snapshot?buildCurrentDexChartLivePoint(marketReference,[baseSymbol,quoteSymbol],priceDisplayInverted,latest?.timestamp):null;
   const candles=buildCurrentDexChartCandles(visible,live);
-  const carryLines=showMarketSeries?buildCurrentDexChartCarryLines(candles,endingDay):[];
+  const carryPoints=showMarketSeries?buildCurrentDexChartCarryPoints(candles,endingDay):[];
+  const chartData=[...candles,...carryPoints].sort((a,b)=>Number(a.day)-Number(b.day));
   const prices=[...visible.flatMap(p=>[p.price,p.openingPrice]),live?.price,limitPrice,rangeLower,rangeUpper,recurringBuyPrice,recurringSellPrice].filter((n):n is number=>n!==undefined&&n!==null);
   const minimum=prices.length?Math.min(...prices):0.99,maximum=prices.length?Math.max(...prices):1.01;
   const padding=Math.max((maximum-minimum)*0.1,Math.abs(maximum)*0.005,0.000001);
@@ -158,13 +166,11 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       {expanded?<Minimize2 size={18} aria-hidden="true"/>:<Maximize2 size={18} aria-hidden="true"/>}</button></div></header>
     <div className="dex-market-chart-plot">
       {showMarketSeries&&visible.length===0?<div className="dex-market-chart-empty"><strong>{message[0]}</strong></div>
-      :<ResponsiveContainer width="100%" height="100%"><ComposedChart data={[...candles]} margin={{top:28,right:18,bottom:8,left:0}}>
+      :<ResponsiveContainer width="100%" height="100%"><ComposedChart data={chartData} margin={{top:28,right:18,bottom:8,left:0}}>
         <CartesianGrid stroke="rgba(140,145,175,0.14)" strokeDasharray="5 6" vertical={false}/>
         <XAxis type="number" dataKey={(point:Sample)=>(Number(point.day)+0.5)*DAY} scale="time" ticks={timeTicks} domain={visibleSlots.length?[(Number(visibleSlots[0].day)-0.5)*DAY,Math.max((endingDay+1)*DAY,live?(Math.floor(live.timestamp/DAY)+1)*DAY:0)]:['dataMin','dataMax']} hide={!showMarketSeries} tickFormatter={v=>formatDay(Number(v))} tick={{fill:'#918da5',fontSize:11}} tickLine={false} axisLine={false} minTickGap={48} dy={12}/>
         <YAxis domain={[minimum-padding,maximum+padding]} orientation="right" tickFormatter={v=>formatPrice(Number(v))} tick={{fill:'#918da5',fontSize:11}} tickLine={false} axisLine={false} width={64}/>
         {showMarketSeries?<Tooltip content={<SampleTooltip preview={preview} ratioLabel={ratioLabel}/>}/>:null}
-        {carryLines.map(line=><ReferenceLine key={`carry-${line.fromDay}`} segment={[{x:(line.fromDay+0.5)*DAY,y:line.price},{x:(line.toDay+0.5)*DAY,y:line.price}]}
-          stroke="rgba(170,175,200,0.55)" strokeWidth={1.5} strokeDasharray="2 4" ifOverflow="hidden"/>)}
         {rangeLower===undefined||rangeUpper===undefined?null:<ReferenceArea y1={rangeLower} y2={rangeUpper} fill="#8b5cf6" fillOpacity={0.07} strokeOpacity={0}/>}
         {rangeLower===undefined?null:<ReferenceLine y={rangeLower} stroke="#8b5cf6" strokeWidth={1.6}/>}
         {rangeUpper===undefined?null:<ReferenceLine y={rangeUpper} stroke="#8b5cf6" strokeWidth={1.6}/>}
@@ -181,7 +187,7 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
         {visible.length?<p>Body: previous recorded close → latest recorded price. No intraday high/low or final day close.</p>:null}
         {live?<p>{live.recorded?'The current UTC day shows the last recorded Pool price; the current price is not verified. It is not a saved daily record.'
           :'The current UTC day updates from the live price; it is not a saved daily record.'} A single observation is a flat mark.</p>:null}
-        {carryLines.length?<p>Dotted lines carry the last saved price across days without a saved sample. They are not records and do not prove the price was unchanged.</p>:null}
+        {carryPoints.length?<p>Dotted marks show the last saved price on days without a saved sample. They are not records and do not prove the price was unchanged.</p>:null}
         {snapshot?<p>{visible.length} saved days · {gaps.length} days without data · block {snapshot.atBlock.number}. The chart shows at most 32 days.</p>:null}
       </details>
     </div>:null}
