@@ -44,7 +44,7 @@ export const packedLimitAbi=new Interface([
   `function createPrivateOrder(bytes32 selectedMarket,${wide} encryptedFunding,${wide}[3] encryptedTerms) returns(uint256 positionId)`,
   `function repricePrivateOrder(uint256 id,uint256 expectedTermsRevision,${wide}[3] encryptedTerms)`
 ]);
-export const PACKED_LIMIT_INPUT_GRAPH='9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e';
+export const PACKED_LIMIT_INPUT_GRAPH='5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239';
 // Encoding profile only; exact deployment and native signing admission are separate.
 export const usesPackedLimitInputs=(candidate:Readonly<{graph:string}>)=>candidate.graph===PACKED_LIMIT_INPUT_GRAPH;
 export const currentLimitAbiForCandidate=(key:CurrentCheapDexCandidateKey='cheap-current')=>key==='cheap-history'&&usesPackedLimitInputs(resolveCurrentCheapDexCandidate(key))?packedLimitAbi:key==='cheap-exit'||key==='cheap-history'?exitLimitAbi:key==='cheap-prepared'?preparedLimitAbi:currentLimitAbi;

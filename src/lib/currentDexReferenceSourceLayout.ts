@@ -170,9 +170,9 @@ export const CURRENT_DEX_REFERENCE_SOURCE_LAYOUT = {
 } as const;
 
 export const PACKED_DEX_REFERENCE_SOURCE_IDENTITY = {
-  graph: '9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e',
-  buildInfoSha256: 'b93a6b411db1bd018b8593aafa67e4f91b8f8c6d13caf313c3927c356b991b0f',
-  coreArtifactSha256: '18aa3ca956aa3537f6edc71d3411e3965ee0b24311ebf9796363e670e1b1e398'
+  graph: '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239',
+  buildInfoSha256: '3e1352c040cb6b4a822f2d5b1ee26ca9e8de5ba01cb5d30ee8a35226e6d03abe',
+  coreArtifactSha256: '959e65766905e59c651c80798bb5d8696987b3235f394acdcd5fbe16abd3e15b'
 } as const;
 
 export const hasCurrentReferenceSourceLayout = (graph: string): boolean =>

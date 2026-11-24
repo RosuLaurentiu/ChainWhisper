@@ -8,11 +8,11 @@ import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 
 describe('main App DEX scope', () => {
   it('pins the public Testnet build and its deploy check to the selected current graph', () => {
-    const env = readFileSync(new URL('../../.env.coti-testnet-candidate', import.meta.url), 'utf8');
     const graph = selectCurrentDexCandidate(undefined).graph;
-    expect(env.split(/\r?\n/)).toContain(`VITE_LOW_RPC_TRIAL=${graph}`);
-    // The deploy workflow stops when the build graph differs from its value (PAGES_BUILD_IDENTITY_MISMATCH).
-    expect(readFileSync(new URL('../../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8')).toContain(`--graph ${graph} `);
+    const workflow = readFileSync(new URL('../../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8');
+    expect(workflow.split(/\r?\n/)).toContain(`      VITE_LOW_RPC_TRIAL: '${graph}'`);
+    expect(workflow).toContain('run: npm run build:pages');
+    expect(workflow).toContain('--graph "$VITE_LOW_RPC_TRIAL" ');
   });
   it('allows the exact shared-history Testnet scope while App swap signing remains held', () => {
     const scope=resolveCurrentDexAppCandidate('coti-testnet-candidate','cheap-history');

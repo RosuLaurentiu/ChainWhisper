@@ -4,8 +4,7 @@ import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../tests/fixtures/hi
 import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE as CURRENT_DEX_DAILY_PRICE_SOURCE, readCurrentDexDailyPrice, readCurrentDexPublicReference } from './currentDexDailyPrice';
 import { currentDexMarketReference, currentDexEstimatedReceive } from './currentDexMarketReference';
 import type { CurrentCheapDexCandidate } from './dexV2Deployment';
-import { STAGED_GAP_DEX_CANDIDATE as candidate } from './currentDexGapCandidate';
-vi.mock('./selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('./selectedCurrentDexCandidate')>();const current=await import('./currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});
+import { STAGED_BUILD13_DEX_CANDIDATE as candidate } from './currentDexBuild13Candidate';
 
 import { readCurrentDexDisplay } from './currentDexDisplay';
 import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT as CURRENT_HISTORY_DEX_DAILY_PRICE_ARTIFACT } from './packedInputDexDailyPriceArtifact';
@@ -325,7 +324,7 @@ describe('authenticated public market reference',()=>{
 });
 
 describe('Core-backed public market reference', () => {
-  it('reads the exact7bed HBR/BCN pair and preserves forward and reverse display orientation', async () => {
+  it('reads the build 13 HBR/BCN pair and preserves forward and reverse display orientation', async () => {
     const f = referenceFixture(), snapshot = await readCurrentDexPublicReference({ provider: f.provider, candidate, pair: ['HBR', 'BCN'], finalityLagBlocks: 0 });
     const now = f.headTimestamp;
     expect(snapshot).toMatchObject({ symbols: ['HBR', 'BCN'], currentReference: 'available', currentObservation: { priceE18: '2000000000000000000', sampledBlock: '199', revision: '3' } });

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ARCHIVED_CHEAP_DEX_CANDIDATE, type CurrentCheapDexCandidate } from './dexV2Deployment';
-import { STAGED_GAP_DEX_CANDIDATE as native } from './currentDexGapCandidate';
+import { STAGED_BUILD13_DEX_CANDIDATE as native } from './currentDexBuild13Candidate';
 import { CURRENT_DEX_DAILY_PRICE_CONFIG, type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
 import { COTI_TESTNET_NETWORK } from './chainWhisperNetworks';
 import { currentNativeDexDailyPriceConfig } from './currentDexNativeDailyPriceTestnet';
@@ -10,7 +10,7 @@ const manifest=HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS[0];
 
 describe('current native history read binding', () => {
   it('copies every accepted manifest field except safe canonical display labels', () => {
-    const accepted = JSON.parse(readFileSync('reports/c1-gap-adoption-2026-11-15/recorder-deploy-1-1-export.json', 'utf8')).manifest as CurrentDexDailyPriceManifest;
+    const accepted = JSON.parse(readFileSync('reports/c1-build13-app-cutover/recorder-market-1.json', 'utf8')).manifest as CurrentDexDailyPriceManifest;
     expect(manifest).toEqual(accepted);
     expect(manifest.decimals0).toBe(6); expect(manifest.decimals1).toBe(6);
     expect(Object.isFrozen(manifest)).toBe(true); expect(Object.isFrozen(manifest.symbols)).toBe(true);
@@ -63,4 +63,3 @@ describe('current native history read binding', () => {
   });
 });
 
-vi.mock('./selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('./selectedCurrentDexCandidate')>();const current=await import('./currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});

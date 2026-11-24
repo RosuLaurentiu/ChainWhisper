@@ -18,6 +18,8 @@ jobs:
   build:
     environment: github-pages
     runs-on: ubuntu-latest
+    env:
+      VITE_LOW_RPC_TRIAL: '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +38,7 @@ jobs:
 
       - name: Preserve immutable assets used by open tabs
         run: |
-          node scripts/prepare-pages-static-site.cjs --build dist --output pages-site --graph 9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e --previous-url https://chainwhisper.app
+          node scripts/prepare-pages-static-site.cjs --build dist --output pages-site --graph "$VITE_LOW_RPC_TRIAL" --previous-url https://chainwhisper.app
 
       - name: Preserve custom domain
         run: |

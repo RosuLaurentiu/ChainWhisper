@@ -32,7 +32,7 @@ export type PoolFundingInput = Readonly<{
 }>;
 // Encoding profile only; deployment admission and wallet authority remain separate.
 export const usesPackedPoolInputs = (candidate: Readonly<{ graph: string }>) =>
-  candidate.graph === '9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e';
+  candidate.graph === '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239';
 export const packPoolInputPair = (high: bigint, low: bigint) => {
   for (const value of [high, low]) {
     if (typeof value !== 'bigint' || value < 0n || value >= 1n << 128n) throw new Error('Invalid Pool input lane.');

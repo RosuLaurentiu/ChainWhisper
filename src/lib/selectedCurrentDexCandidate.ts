@@ -1,4 +1,4 @@
-import { STAGED_GAP_DEX_CANDIDATE as current } from './currentDexGapCandidate';
+import { STAGED_BUILD13_DEX_CANDIDATE as current } from './currentDexBuild13Candidate';
 
 export const selectCurrentDexCandidate = (target: unknown) => {
   if (target === undefined) return current;

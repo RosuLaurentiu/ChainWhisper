@@ -7,7 +7,7 @@ import { createPrivateLiquidityHttpProvider } from './privateLiquidityRpc';
 import { readCurrentReferenceSource } from './currentDexReferenceSource';
 
 export const PACKED_INPUT_DEX_DAILY_PRICE_SOURCE = Object.freeze({
-  graph: '9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e',
+  graph: '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239',
   recorderArtifact: PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT.artifactSha256,
   schema: keccak256(toUtf8Bytes('chainwhisper.dex.pool-reference.observation.v1')),
   policy: '0x74c9b7057b20b742b3f0aa5b9ffe142c6a9b78e5ac94963c005a1cad23ac16b1'

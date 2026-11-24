@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { STAGED_GAP_DEX_CANDIDATE as current } from './currentDexGapCandidate';
+import { STAGED_GAP_DEX_CANDIDATE as previous } from './currentDexGapCandidate';
+import { STAGED_BUILD13_DEX_CANDIDATE as current } from './currentDexBuild13Candidate';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as oldHistory } from './currentDexHistoryCandidate';
 import { STAGED_LOW_RPC_DEX_CANDIDATE as trial } from './lowRpcDexTrialCandidate';
 import { STAGED_REFERENCE_DEX_CANDIDATE as reference } from './currentDexReferenceCandidate';
@@ -32,7 +33,7 @@ describe('fixed current App candidate selection', () => {
   });
   it('uses only an unset default or the exact current graph', () => {
     expect(selectCurrentDexCandidate(undefined)).toBe(current); expect(selectCurrentDexCandidate(current.graph)).toBe(current);
-    for (const candidate of [oldHistory, trial, reference, poolInputs, limitInputs])
+    for (const candidate of [previous, oldHistory, trial, reference, poolInputs, limitInputs])
       expect(() => selectCurrentDexCandidate(candidate.graph)).toThrow('Unknown current DEX target');
     for (const target of ['', 'unknown', null, true]) expect(() => selectCurrentDexCandidate(target)).toThrow('Unknown current DEX target');
     expect(isFixedCurrentDexCandidate(current)).toBe(true);
@@ -60,7 +61,7 @@ describe('fixed current App candidate selection', () => {
       for (const field of ['graph', 'packageSha256', 'core'] as const)
         expect(isFixedCurrentDexCandidate({ ...c, [field]: field === 'core' ? '0x' + '00'.repeat(20) : '00'.repeat(32) })).toBe(false);
     }
-    for (const c of [oldHistory, trial, reference, poolInputs, limitInputs]) expect(isFixedCurrentDexCandidate(c)).toBe(false);
+    for (const c of [previous, oldHistory, trial, reference, poolInputs, limitInputs]) expect(isFixedCurrentDexCandidate(c)).toBe(false);
     expect(isFixedCurrentDexCandidate({ ...current, packageSha256: trial.packageSha256 })).toBe(false);
   });
   it('admits proved packed Pool actions only when their exact candidate is selected', () => {

@@ -1,0 +1,47 @@
+{
+  "status": "CURRENT_RECORDER_CANONICAL_EXPORT",
+  "manifest": {
+    "sourceGraph": "5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239",
+    "recorderArtifact": "44731a0f1b9dcdba867b17e165bc139c3e0f2cbfd7c55de7d82b60333bf06efb",
+    "chainId": "7082400",
+    "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+    "address": "0x0f9Db4dD93dFF234aFfEbC15c416D6da50eCb7af",
+    "runtimeHash": "0x57bb24be23a3c6c6b484605977bcdc1f39660756b22b20c10d8555c5ce8fd756",
+    "deployer": "0x8b749251CF1f712D4e39FD048C53394af03E10bE",
+    "deploymentBlock": "10790253",
+    "deploymentBlockHash": "0xc863528f670c4a3f6a7c89f8f37621ef26475a95b0fe4156ee93adc08fcd3899",
+    "deploymentTransactionHash": "0x16dce9dec9b8b691d668f2300b20ea9c4cfd171de459fef2bec1d4f4b37a52d4",
+    "source": "0xbbe7fc39f326fdebc018476cde9b46bf71af90b1",
+    "sourceRuntimeHash": "0x3f42c901c1e7f8cd20095801a685c23c4ac61ce0921822b29c08a3d974c94807",
+    "releaseId": "0x9c94cf3cde6ae7a5cc913484e46d654f86db4d1ef942b9c4b42736cf9d59494b",
+    "market": "0xb70b7746d3e5fad7401f768a6c3916d7c5865d8f551f3c91d17e4a48b72e6769",
+    "pair": "0x3717864b0bdf813c3d0e34112b351fa40fb4661f8cdf6af296e7afb581ba8736",
+    "canonicalId": "1",
+    "token0": "0x5181B25e7AD744E635fe048D388Fd820f943e582",
+    "token1": "0xe595F63789D1D31B4b7c0Bee69062Daf5BE81ac8",
+    "decimals0": 6,
+    "decimals1": 6,
+    "token0RuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+    "token1RuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+    "symbols": [
+      "HBR",
+      "BCN"
+    ]
+  },
+  "proof": {
+    "kind": "verified",
+    "index": 0,
+    "hash": "0x16dce9dec9b8b691d668f2300b20ea9c4cfd171de459fef2bec1d4f4b37a52d4",
+    "address": "0x0f9Db4dD93dFF234aFfEbC15c416D6da50eCb7af",
+    "blockNumber": "10790253",
+    "blockHash": "0xc863528f670c4a3f6a7c89f8f37621ef26475a95b0fe4156ee93adc08fcd3899",
+    "transactionIndex": "0",
+    "status": 1,
+    "gasUsed": "1650990",
+    "gasPriceWei": "50000000",
+    "runtimeHash": "0x57bb24be23a3c6c6b484605977bcdc1f39660756b22b20c10d8555c5ce8fd756",
+    "finishedAt": "2026-11-24T19:44:10.215Z"
+  },
+  "noCredentials": true,
+  "noSend": true
+}
