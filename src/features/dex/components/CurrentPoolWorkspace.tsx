@@ -640,6 +640,14 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   })();
   const fieldsDisabled = busy || blocked || validFunding;
   const scopedNft = nftId !== null && nftScope.current === scope.current;
+  const canStartNewDeposit = candidateKey === 'cheap-history' && nftId !== null && !unfundedFailed && !attemptComplete;
+  const newDepositDisabled = !connected || busy || blocked || Boolean(pending) || savedActionPending;
+  const startNewDeposit = () => {
+    if (!canStartNewDeposit || newDepositDisabled || inFlight.current || hasCurrentDexPendingAction(recordScope)) return;
+    setNftId(null); setTransactionHash(''); setMessage('');
+    setBudget0(''); setBudget1(''); setPrice(''); setPriceTouched(false); setLastAmount(null);
+    setSender(null); setApprovals([false, false]); setClears([false, false]); setUnfundedAbandonEligible(false);
+  };
   const ready = scopedNft && !busy && !blocked && !savedActionPending && !pending && !unfundedFailed && !attemptComplete;
   const stopped = validFunding && unfundedFailed && attemptComplete;
   const approvalCount = ready ? 2 : validFunding && !unfundedFailed && !attemptComplete ? approvals.filter(Boolean).length : 0;
@@ -704,7 +712,9 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         {!validPreview ? <p role="alert">Pool terms or wallet session changed. Request a new preview.</p> : null}
       </aside> : null}
       {preparedCandidate ? <>
-        {!validPreview && !validFunding && !scopedNft ? <button className="dex-v2-review-button" type="button"
+        {canStartNewDeposit ? <button className="dex-v2-review-button" type="button" disabled={newDepositDisabled}
+          onClick={startNewDeposit}>New deposit<ArrowRight size={21} aria-hidden="true" /></button> : null}
+        {!canStartNewDeposit && !validPreview && !validFunding && !scopedNft ? <button className="dex-v2-review-button" type="button"
           disabled={!connected || !privacyReady || !previewInputsValid || busy || blocked || savedActionPending || Boolean(funding) || nftId !== null}
           onClick={() => { void prepare(); }}>Preview deposit<ArrowRight size={21} aria-hidden="true" /></button> : null}
         {validPreview && !validFunding ? <button className="dex-v2-review-button" type="button"

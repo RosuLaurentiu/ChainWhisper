@@ -70,13 +70,39 @@ function fundingFixture() {
     prepareSharedPoolApproval: vi.fn(async () => prepared), prepareSharedPoolAllowanceCleanup: vi.fn(async () => prepared),
     submitSharedPoolApproval: vi.fn(async () => ({ transactionHash: 'test-only-hash', recover })),
     waitForCurrentCheapReceipt: vi.fn(async () => false),
-    submitPoolFunding: vi.fn(), recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null),
+    submitPoolFunding: vi.fn(), recoverCurrentPreparedPoolFundingResult: vi.fn(async (): Promise<{ positionId: bigint } | null> => null),
     recoverPendingSharedPoolApproval: vi.fn(async () => ({ status: 'observed-mined', privateAccountingVerified: false })),
     recoverPendingPoolAttempt: vi.fn(async () => null) };
   f.getSender.mockResolvedValue(sender);
   return { ...f, scope, pair, funding, sender, prepared, recover, outcome, tokens };
 }
 describe('prepared Pool creation view', () => {
+  if(key==='cheap-history')it('starts a fresh deposit after verified funding and preserves a late pending action', async () => {
+    const f = fundingFixture();
+    hooks.states[0] = '1'; hooks.states[1] = '1'; hooks.states[2] = '2'; hooks.states[10] = null;
+    f.sender.recoverCurrentPreparedPoolFundingResult.mockResolvedValue({ positionId: 57n });
+    f.button('Check Pool status').props.onClick!();
+    await vi.waitFor(() => expect(text(f.render())).toContain('Verified position NFT ID: 57.'));
+    const startNew = f.button('New deposit');
+    expect(startNew.props.disabled).toBe(false);
+    const pendingRecord = JSON.stringify({version:1,chainId:String(candidate.chainId),owner,core:candidate.core.toLowerCase(),
+      graph:'0x'+candidate.graph,phase:'pool-owner',nonce:12,txHash:'0x'+'33'.repeat(32),callHash:'0x'+'44'.repeat(32)});
+    vi.stubGlobal('window',{sessionStorage:{getItem:(k:string)=>k===CURRENT_DEX_PENDING_ATTEMPT_KEY?pendingRecord:null}});
+    startNew.props.onClick!();
+    expect(text(f.render())).toContain('Verified position NFT ID: 57.');
+    expect(f.button('New deposit').props.disabled).toBe(true);
+    vi.stubGlobal('window',{sessionStorage:{getItem:()=>null}});
+
+    f.getSender.mockClear();
+    hooks.states[0] = '3';
+    f.button('New deposit').props.onClick!();
+    expect(text(f.render())).not.toContain('Verified position NFT ID: 57.');
+    expect(f.button('Preview deposit').props.disabled).toBe(true);
+    expect(hooks.states.slice(0, 3)).toEqual(['', '', '']);
+    hooks.states[0] = '2'; hooks.states[1] = '2'; hooks.states[2] = '2';
+    expect(f.button('Preview deposit').props.disabled).toBe(false);
+    expect(f.getSender).not.toHaveBeenCalled(); expect(f.getPool).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled();
+  });
   if(key==='cheap-history')it('opens position recovery for a saved owner action and enables deposit preview after reconciliation',()=>{
     const f=fixture(), open=vi.fn();
     Object.assign(f.props,{onOpenPositions:open});
