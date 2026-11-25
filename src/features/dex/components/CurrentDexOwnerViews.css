@@ -49,6 +49,22 @@
 .app-shell-dex-v2 :is(.dex-owner-action, .dex-owner-footer)[open] > summary { color: #eee8f6; }
 .app-shell-dex-v2 .dex-owner-actions { min-width: 0; display: grid; gap: 4px; padding: 0; margin: 0; border: 0; }
 .app-shell-dex-v2 .dex-owner-actions > .dex-owner-action { width: 100%; }
+.app-shell-dex-v2 .dex-owner-top-up {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--approved-border-soft);
+  border-radius: 7px;
+}
+.app-shell-dex-v2 .dex-owner-top-up > fieldset:not([hidden]) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: 10px;
+}
+.app-shell-dex-v2 .dex-owner-top-up > fieldset[hidden] { display: none; }
+.app-shell-dex-v2 .dex-owner-top-up fieldset > button { grid-column: 1 / -1; }
+.app-shell-dex-v2 .dex-owner-top-up > p { margin: 0; }
 .app-shell-dex-v2 .dex-owner-summary { padding: 10px; }
 .app-shell-dex-v2 .dex-owner-workspace .dex-owner-summary > header { min-height: 0; padding: 0 0 8px; border: 0; background: transparent; }
 .app-shell-dex-v2 .dex-owner-workspace .dex-owner-summary h2 { margin: 0; font-size: .875rem; color: #eee8f6; }

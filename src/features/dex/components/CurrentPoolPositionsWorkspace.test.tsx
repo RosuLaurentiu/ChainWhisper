@@ -25,6 +25,20 @@ afterEach(()=>{hooks.enabled=false;hooks.states=[];hooks.refs=[];vi.restoreAllMo
 const elements=(node:ReactNode):ReactElement<{children?:ReactNode;disabled?:boolean;onClick?:()=>void}>[]=>Array.isArray(node)?node.flatMap(elements):isValidElement<{children?:ReactNode}>(node)?[node,...elements(node.props.children)]:[];
 const text=(node:ReactNode):string=>Array.isArray(node)?node.map(text).join(''):isValidElement<{children?:ReactNode}>(node)?text(node.props.children):typeof node==='string'||typeof node==='number'?String(node):'';
 describe('current liquidity NFT controls',()=>{
+  it('directs a saved Pool preview to its funding form instead of position recovery',()=>{
+    const c=STAGED_SHARED_HISTORY_DEX_CANDIDATE,owner=`0x${'22'.repeat(20)}`;
+    const saved=JSON.stringify({version:1,chainId:c.chainId,owner,core:c.core,graph:`0x${c.graph}`,
+      phase:'pool-preview',callHash:`0x${'88'.repeat(32)}`,nonce:508,txHash:null});
+    const records=new Map([[CURRENT_DEX_PENDING_ATTEMPT_KEY,saved]]);
+    vi.stubGlobal('window',{sessionStorage:{getItem:(key:string)=>records.get(key)??null,
+      setItem:(key:string,value:string)=>records.set(key,value),removeItem:(key:string)=>records.delete(key)}});
+    const session={walletAddress:owner,chainId:Number(c.chainId),browserProvider:{request:vi.fn()},
+      actions:{getCurrentDexPoolPositionCapability:vi.fn(),getCurrentDexSubmissionCapability:vi.fn()}} as unknown as SharedWalletSession;
+    const html=renderToStaticMarkup(<CurrentPoolPositionsWorkspace sharedWalletSession={session} candidateKey="cheap-history"/>);
+    expect(html).toContain('For a top-up, select its position and open Add liquidity.');
+    expect(html).not.toContain('Check position status');
+    expect(records.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);
+  });
   // The snapshot recovery check is admitted for the selected graph (CW-089): its snapshot path is the same contract code
   // as on graph 7bed. The 7bed cases stay in CurrentPoolPositionsSnapshotRecovery.test.tsx.
   it.each(['success','error','missing-latest','other-hold'] as const)('checks the old saved hash with the current discovered snapshot: %s',async fault=>{

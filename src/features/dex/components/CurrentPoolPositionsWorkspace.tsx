@@ -78,6 +78,13 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const connected=Boolean(context.owner&&context.chain===Number(candidate.chainId)&&getPositions&&getSender&&context.provider);
   const savedActionPending=hasCurrentDexPendingAction(recordScope);
   const topUpOpen=topUpManagement?.scope===scope.current&&topUpManagement.id===id;
+  const poolFundingPending=(()=>{
+    if(!preparedCandidate||!savedActionPending)return false;
+    try{
+      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
+      return saved?.phase==='pool-preview'||saved?.phase==='pool-fund';
+    }catch{return false;}
+  })();
   const independentRefresh=(()=>{try{
     const storage=currentDexPendingStorage(recordScope);
     return candidateKey==='cheap-history'&&current&&snapshot.value.status===1n&&
@@ -265,6 +272,9 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     if(!getSender||inFlight.current||busy||topUpOpen||context.chain!==Number(candidate.chainId))return;inFlight.current = true; setBusy(true);const captured=scope.current;
     try{
       const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
+      if(preparedCandidate&&(saved?.phase==='pool-preview'||saved?.phase==='pool-fund')){
+        setMessage('Check the saved liquidity attempt in the form where you started it.');return;
+      }
       if(saved?.txHash)setTransactionHash(saved.txHash);
       const snapshotHeld=saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&currentDexPendingStorage(recordScope)?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null;
       const ownerHeld=saved?.phase==='pool-owner'&&saved.verificationBlocked===true;
@@ -343,13 +353,15 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       {signedSnapshot?<label>Verified funding or snapshot transaction (optional)<input aria-label="Liquidity snapshot transaction" value={producerHash} disabled={busy||topUpOpen} onChange={event=>setProducerHash(event.target.value)}/></label>:null}
       <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
     </section><section className="dex-owner-detail" aria-label="Position details">
-    <header className="dex-owner-heading"><h2>{managementNavigation&&id?`Position #${id}`:'Position details'}</h2></header>
-    {blocked||savedActionPending?<p role="note">{value?.status===4n?'Position closed. Use Check position status to reconcile the outstanding transaction before another verification request.':independentRefresh?'The old verification hold remains. You may review a new paid private refresh; spending actions stay locked. The old transaction will not be resent.':'A transaction is pending or needs verification. Viewing does not complete transaction verification. Actions remain locked. Do not resend.'}</p>:null}
+    <header className="dex-owner-heading"><h2>{current?`Position #${id}`:'Position details'}</h2></header>
+    {poolFundingPending&&!topUpOpen?<p className="dex-owner-progress" role="note">A saved liquidity attempt needs a status check. For a top-up, select its position and open Add liquidity. For a new position, return to the pool creation form.</p>:
+      (blocked||savedActionPending)&&!topUpOpen?<p role="note">{value?.status===4n?'Position closed. Use Check position status to reconcile the outstanding transaction before another verification request.':independentRefresh?'The old verification hold remains. You may review a new paid private refresh; spending actions stay locked. The old transaction will not be resent.':'A transaction is pending or needs verification. Actions remain locked. Do not resend.'}</p>:null}
     {!id?<p className="dex-owner-selection-empty">Select a position to see its details.</p>:null}
     {signedSnapshot&&(!ownedDiscovery||id)?<>{!ownedDiscovery?<p>{preparedCandidate?'Use an owned claim NFT and its confirmed funding or snapshot transaction. Private reads require its current owner proof.':'Use the new NFT ID from Add liquidity. Only that admitted claim can refresh or exit in this trial.'}</p>:null}
       <button type="button" disabled={!connected||busy||(blocked||savedActionPending)&&!independentRefresh||topUpOpen||!id||(current&&(snapshot?.value.status===3n||snapshot?.value.status===4n&&!!snapshot.value.amounts))} onClick={()=>{void produceSnapshot();}}>
         {current&&snapshot?.value.status===4n?'Review closed-claim verification':exitCandidate&&current&&snapshot?.value.status===1n&&!snapshot.value.amounts?'Review private amount verification':'Review paid private refresh'}</button></>:null}
-    {value&&!topUpOpen?<aside className="dex-v2-strategy-preview dex-owner-summary" aria-label="Owner private liquidity claim"><header><h2>Position #{value.positionId.toString()}</h2></header>
+    {value?<aside className="dex-v2-strategy-preview dex-owner-summary" aria-label="Owner private liquidity claim">
+      {topUpOpen&&value.amounts?<p>Amounts from the last verified snapshot</p>:null}
       <dl>{tokens?<div><dt>Token pair</dt><dd>{labels[0]} / {labels[1]}</dd></div>:null}
         <div><dt>Status</dt><dd>{['None','Active','Paused','Awaiting privacy activation','Closed'][Number(value.status)]}</dd></div>
         {value.status===4n?<div><dt>Private verification</dt><dd>{!value.amounts?'Closed-claim snapshot pending':snapshot?.closePayoutVerified?'Payout and zero remaining shares verified':'Closed snapshot verified. Original payout not independently verified in this session.'}</dd></div>:null}
@@ -371,7 +383,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
         const fresh=await cap.readPosition(value.positionId,{producerHash:hash});assertScope(captured);
         setProducerHash(hash);setSnapshot({value:fresh,scope:captured});setTopUpManagement(null);
         setMessage('Top-up complete. Exact private debits and fresh position shares verified.');}}/></details>:null}
-    {topUpOpen?<p>{topUpManagement?.managed?'Top-up debits are checked. Use its verification snapshot before another position action.':
+    {topUpOpen&&!savedActionPending?<p>{topUpManagement?.managed?'Top-up debits are checked. Use its verification snapshot before another position action.':
       'Top-up is in progress. Complete it, or stop and clear its approvals before another position action.'}</p>:null}
     {value ? <fieldset className="dex-v2-panel-fields dex-owner-actions" disabled={busy||blocked||savedActionPending||topUpOpen}><details className="dex-owner-action" name="pool-owner-actions"><summary>Withdraw liquidity</summary><div className="dex-v2-panel-fields">
     {!nativeTrial?<>{!preparedCandidate||exitCandidate?<label>Withdrawal (%)<input aria-label="Liquidity withdrawal percentage" inputMode="decimal" value={percentage} disabled={busy||blocked} onChange={event=>setPercentage(event.target.value)}/></label>:null}
@@ -403,11 +415,11 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     </fieldset> : null}
     {busy?<p role="status" className="dex-owner-progress">{pending?'Checking the submitted position transaction and private result. No new request is being sent.':'Checking your position… If MetaMask opens, complete its request there. Keep this attempt open.'}</p>:null}
     {!busy?<p role="status" className="dex-owner-progress">{message&&messageScope.current===scope.current?(/another owner or adapter/.test(message)?'Another DEX action needs a status check. Open History for its recovery.':message):''}</p>:null}
-    <details className="dex-owner-footer" open={blocked||savedActionPending||!!pending||undefined}><summary>Status and recovery</summary>
+    {!topUpOpen&&!poolFundingPending?<details className="dex-owner-footer" open={blocked||savedActionPending||!!pending||undefined}><summary>Status and recovery</summary>
     {connected ? <button type="button" disabled={!getSender||busy||topUpOpen||context.chain!==Number(candidate.chainId)} onClick={()=>{void refresh();}}>Check position status</button> : null}
     {message&&messageScope.current===scope.current&&/another owner or adapter/.test(message)?<p>{message}</p>:null}
     {transactionHash?<p style={{overflowWrap:'anywhere'}}>Transaction {transactionHash}</p>:null}
-    </details>    </section></div>
+    </details>:null}    </section></div>
     <TradeActionConfirmModal confirmation={confirmation} onCancel={()=>resolveConfirmation(false)} onConfirm={()=>resolveConfirmation(true)}/>
   </section>;
 }

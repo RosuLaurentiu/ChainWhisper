@@ -333,10 +333,21 @@ describe('prepared Pool top-up money flow', () => {
   });
   it('keeps an uncertain preview send pending and prevents a second send', async () => {
     const f = fixture(); hooks.allowNative = true; f.enter();
-    f.submitPreview.mockImplementation(async () => { f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, '{}'); throw new Error('Unknown wallet result'); });
+    const saved = JSON.stringify({ version: 1, chainId: candidate.chainId, owner, core: candidate.core,
+      graph: `0x${candidate.graph}`, phase: 'pool-preview', nonce: 508, txHash: null, callHash: hash });
+    f.submitPreview.mockImplementation(async () => {
+      f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, saved);
+      throw new Error('Unknown wallet result with raw RPC payload');
+    });
     await f.click('Review top-up preview');
-    expect(text(f.render())).toContain('Unknown wallet result'); expect(f.submitPreview).toHaveBeenCalledOnce();
+    expect(text(f.render())).toContain('The wallet did not confirm submission.');
+    expect(text(f.render())).not.toContain('raw RPC payload');
     expect(f.button('Review top-up preview')!.disabled).toBe(true); expect(f.props.onReleased).not.toHaveBeenCalled();
+    f.sender.recoverPendingPoolAttempt.mockResolvedValue({ status: 'manual-reconciliation-required' } as never);
+    await f.click('Check top-up status');
+    expect(text(f.render())).toContain('Keep this record and do not resend.');
+    expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);
+    expect(f.submitPreview).toHaveBeenCalledOnce();
   });
   it.each(['token', 'unknown-allowance', 'duplicate-wallet', 'unverified'] as const)('does not unlock funding after approval %s proof failure', async reason => {
     const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.click(`Approve ${f.pair.tokens[0].label} top-up amount`);

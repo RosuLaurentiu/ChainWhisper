@@ -21,6 +21,7 @@ import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionC
 type Preview = NonNullable<Awaited<ReturnType<CurrentPoolPreparedTopUpPreview['readPreview']>>>;
 type Managed = NonNullable<Awaited<ReturnType<CurrentPoolPreparedTopUpFunding['readFunding']>>>;
 type Sender = Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexSubmissionCapability']>>>;
+const unknownSendMessage = 'The wallet did not confirm submission. Check the attempt in your wallet activity. Keep this record and do not resend.';
 export type PreparedTopUpPosition = Readonly<{ positionId: bigint; context: string; producerHash: string;
   poolTokens: readonly [string, string]; block: Readonly<{ number: bigint; hash: string }> }>;
 
@@ -99,8 +100,19 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     const captured = scope.current; inFlight.current = true; setBusy(true);
     try { if (!recovery) { assertCurrentPoolFundingNativeAdmission(candidate, 'top-up'); if(key!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph, authority!()); } await work(captured); }
     catch (error) {
-      if (captured === scope.current && !hasCurrentDexPendingAction(recordScope) && !current(preview) && !current(funding) && !current(managed)) onReleased();
-      show(captured === scope.current && wasCurrentDexUnsentReleased(error) ? CURRENT_UNSENT_RELEASED_MESSAGE : captured === scope.current && error instanceof Error ? error.message : 'Top-up session changed. Recover the pending action before another request.');
+      if (captured === scope.current) {
+        const held = hasCurrentDexPendingAction(recordScope);
+        if (!held && !current(preview) && !current(funding) && !current(managed)) onReleased();
+        if (wasCurrentDexUnsentReleased(error)) show(CURRENT_UNSENT_RELEASED_MESSAGE);
+        else if (!recovery && held) {
+          let notice = 'Check the saved liquidity attempt before continuing. Do not resend.';
+          try {
+            const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
+            if (saved && !saved.txHash && !saved.walletRejected) notice = unknownSendMessage;
+          } catch { /* Keep the hold when the saved record cannot be read. */ }
+          show(notice);
+        } else show(error instanceof Error ? error.message : 'Top-up failed.');
+      } else show('Top-up session changed. Recover the pending action before another request.');
     }
     finally { inFlight.current = false; setBusy(false); }
   };
@@ -212,6 +224,8 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
       } else if (observed.status === 'observed-mined-verification-held' || observed.status === 'observed-reverted-verification-held') {
         const action = saved.phase === 'pool-fund' ? 'Top-up deposit' : saved.phase === 'pool-snapshot' ? 'Top-up verification snapshot' : 'Transaction';
         show(`${action} ${observed.status === 'observed-mined-verification-held' ? 'mined' : 'reverted'}, but verification remains on hold. ${observed.poolTopUpHash && !observed.verificationFailure ? 'Final top-up accounting has not completed.' : currentPoolVerificationMessage(observed.verificationFailure)} Keep the saved record. Do not resend.`);
+      } else if (observed.status === 'manual-reconciliation-required' && !saved.txHash && !saved.walletRejected) {
+        show(unknownSendMessage);
       } else show('Transaction is pending or needs a status check. Do not resend it.');
       return;
     }
@@ -248,11 +262,11 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
     }
     setPending(null);
   }, true);
-  const locked = busy || !!pending || disabled || hasCurrentDexPendingAction(recordScope), funded = !!current(managed), approvedFunding = current(funding);
-  return <section className="dex-v2-test-form" aria-label="Top up owned liquidity" aria-busy={busy}>
-    <h3>Top up this position</h3>
+  const held = hasCurrentDexPendingAction(recordScope);
+  const locked = busy || !!pending || disabled || held, funded = !!current(managed), approvedFunding = current(funding);
+  return <section className="dex-owner-top-up" aria-label="Top up owned liquidity" aria-busy={busy}>
     {busy ? <p className="dex-owner-progress" role="status">Preparing or checking your top-up… If MetaMask opens, complete its request there. Keep this attempt open.</p> : null}
-    <fieldset hidden={!!current(preview) || funded || stopped} disabled={locked || !!current(preview) || !!approvedFunding || funded || stopped}>
+    <fieldset className="dex-v2-panel-fields" hidden={held || !!current(preview) || funded || stopped} disabled={locked || !!current(preview) || !!approvedFunding || funded || stopped}>
       <label>{labels[0]} maximum<input aria-label={`${labels[0]} top-up maximum`} value={budget0} inputMode="decimal" onChange={e => setBudget0(e.target.value)}/></label>
       <label>{labels[1]} maximum<input aria-label={`${labels[1]} top-up maximum`} value={budget1} inputMode="decimal" onChange={e => setBudget1(e.target.value)}/></label>
       <label>Funding tolerance (%)<input aria-label="Top-up funding tolerance" value={tolerance} inputMode="decimal" onChange={e => setTolerance(e.target.value)}/></label>
@@ -275,8 +289,9 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
       setStopState(null); setApprovalState(null); setPreview(null); setFunding(null); setManaged(null);
       show('Unfunded top-up ended with no remaining approvals. Review a new preview.');
     }}>Start another top-up</button> : null}
+    <p role="status">{messageScope.current === scope.current ? message : held ? 'Check the saved liquidity attempt before continuing.' :
+      'Top-up keeps the current Pool spread. Only the exact previewed amounts can be charged.'}</p>
     <button type="button" disabled={busy} onClick={() => { void recover(); }}>Check top-up status</button>
-    <p role="status">{messageScope.current === scope.current ? message : 'Top-up keeps the current Pool spread. Only the exact previewed amounts can be charged.'}</p>
     <TradeActionConfirmModal confirmation={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)}
       details={confirmation?.title==='Approve top-up token'?<TokenApprovalChoice token={labels[approvalIndex]} spender={candidate.core}
         value={approvalIndex===0?approvalMode0:approvalMode1} onChange={approvalIndex===0?setApprovalMode0:setApprovalMode1}/>:null}/>
