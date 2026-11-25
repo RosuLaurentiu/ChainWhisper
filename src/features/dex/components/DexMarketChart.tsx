@@ -169,7 +169,7 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       :<ResponsiveContainer width="100%" height="100%"><ComposedChart data={chartData} margin={{top:28,right:18,bottom:8,left:0}}>
         <CartesianGrid stroke="rgba(140,145,175,0.14)" strokeDasharray="5 6" vertical={false}/>
         <XAxis type="number" dataKey={(point:Sample)=>(Number(point.day)+0.5)*DAY} scale="time" ticks={timeTicks} domain={visibleSlots.length?[(Number(visibleSlots[0].day)-0.5)*DAY,Math.max((endingDay+1)*DAY,live?(Math.floor(live.timestamp/DAY)+1)*DAY:0)]:['dataMin','dataMax']} hide={!showMarketSeries} tickFormatter={v=>formatDay(Number(v))} tick={{fill:'#918da5',fontSize:11}} tickLine={false} axisLine={false} minTickGap={48} dy={12}/>
-        <YAxis domain={[minimum-padding,maximum+padding]} orientation="right" tickFormatter={v=>formatPrice(Number(v))} tick={{fill:'#918da5',fontSize:11}} tickLine={false} axisLine={false} width={64}/>
+        <YAxis domain={[Math.max(0,minimum-padding),maximum+padding]} orientation="right" tickFormatter={v=>formatPrice(Number(v))} tick={{fill:'#918da5',fontSize:11}} tickLine={false} axisLine={false} width={64}/>
         {showMarketSeries?<Tooltip content={<SampleTooltip preview={preview} ratioLabel={ratioLabel}/>}/>:null}
         {rangeLower===undefined||rangeUpper===undefined?null:<ReferenceArea y1={rangeLower} y2={rangeUpper} fill="#8b5cf6" fillOpacity={0.07} strokeOpacity={0}/>}
         {rangeLower===undefined?null:<ReferenceLine y={rangeLower} stroke="#8b5cf6" strokeWidth={1.6}/>}
