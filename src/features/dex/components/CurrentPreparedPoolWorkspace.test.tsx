@@ -200,7 +200,13 @@ describe('prepared Pool creation view', () => {
     let finish!: (value: unknown) => void;
     f.sender.submitPoolFunding.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     f.button('Review and fund Pool').props.onClick!();
-    await vi.waitFor(() => expect(text(f.render())).toContain('Preparing the Pool deposit. Complete wallet requests when they appear.'));
+    await vi.waitFor(() => expect(f.sender.submitPoolFunding).toHaveBeenCalledOnce());
+    expect(text(f.render())).toContain('Checking the deposit before requesting a wallet transaction.');
+    const progress = f.sender.submitPoolFunding.mock.calls[0][1];
+    progress.walletRequested();
+    expect(text(f.render())).toContain('Open your wallet to review or reject the deposit request.');
+    progress.transactionHashReturned('test-funding-hash');
+    expect(text(f.render())).toContain('Wallet returned a deposit transaction hash.');
     f.button('Review and fund Pool').props.onClick!();
     expect(f.sender.submitPoolFunding).toHaveBeenCalledOnce();
     const recover = vi.fn(); finish({ transactionHash: 'test-funding-hash', recover });
@@ -208,6 +214,7 @@ describe('prepared Pool creation view', () => {
     expect(recover).not.toHaveBeenCalled();
     expect(hooks.states[6]).toBe(true);
     expect(hooks.states[13]).not.toBeNull();
+    expect(f.button('Check Pool status').props.disabled).toBe(false);
   });
   it.each([0, 1, 2, 3, 4, 5])('shows only canonical token budgets for selected market %i', index => {
     const f = fixture(), pair = readCurrentDexDisplay(candidate).pairs[index];
@@ -365,7 +372,8 @@ describe('prepared Pool creation view', () => {
     const recovery = elements(f.render()).find(element => element.type === 'details' &&
       elements(element).some(child => child.type === 'summary' && text(child) === 'Status and recovery'));
     expect(recovery).toBeDefined();
-    expect(elements(recovery).some(child => child.type === 'button' && text(child) === 'Check Pool status')).toBe(true);
+    expect(elements(recovery).some(child => child.type === 'button' && text(child) === 'Check Pool status')).toBe(false);
+    expect(f.button('Check Pool status').props.disabled).toBe(false);
     expect(f.button(`Approve exact ${f.pair.tokens[1].label}`)).toBeUndefined();
     hooks.states[5] = true;
     expect(f.button(`Approve exact ${f.pair.tokens[0].label}`).props.disabled).toBe(true);

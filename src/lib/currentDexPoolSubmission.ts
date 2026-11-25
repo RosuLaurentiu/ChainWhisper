@@ -1,7 +1,7 @@
 import { AbiCoder, Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type CurrentPoolPreparedFunding,
   type CurrentPoolPreparedTopUpPreview, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
-import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentTransport } from './currentDexSubmission';
+import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentDexSendProgress, type CurrentTransport } from './currentDexSubmission';
 import { blockCurrentPoolVerification, clearCurrentDexPendingAttempt, currentDexPendingStorage } from './currentDexPendingAttempt';
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, encodePreparedPoolTopUp, usesPackedPoolInputs } from './currentDexPoolFunding';
 import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, currentCheapDexCandidateKey, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
@@ -117,7 +117,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         throw new Error('This adapter releases current Pool preview and funding actions only.');
       reservations.get(signer)?.delete(`${attempt.phase}:${attempt.callHash}`);
     } });
-  const submit = async <T extends Prepared, R>(phase: Phase, prepared: T, read: (hash: string) => Promise<R | null>, mode: Mode = 'creation') => {
+  const submit = async <T extends Prepared, R>(phase: Phase, prepared: T, read: (hash: string) => Promise<R | null>, mode: Mode = 'creation', progress?: CurrentDexSendProgress) => {
     const validate = async () => {
       assertCurrentPoolFundingPrepared(prepared, signer);
       await prepared.assertCurrent();
@@ -177,7 +177,11 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         if (phase === 'pool-fund') {if(financialProof)await (prepared as Funding).assertBeforeFunding();
           await requireFunding(prepared as Funding, await boundary.currentHead(undefined, gasCap));}
         await validate(); admission();
-      }, () => { signing = true; }, undefined, gasCap, undefined,
+      }, () => { signing = true; }, undefined, gasCap, progress && {
+        sendStarted: () => progress.walletRequested?.(),
+        hashReturned: hash => progress.transactionHashReturned?.(hash),
+        submissionReturned: () => {}
+      },
       async request => { await validateProfile();
         if (mode === 'top-up') {
           admission(); await validate();
@@ -234,7 +238,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
   };
   return Object.freeze({
     submitPoolPreview: (prepared: CurrentPoolPreparedPreview) => submit('pool-preview', prepared, prepared.readPreview),
-    submitPoolFunding: (prepared: CurrentPoolPreparedFunding) => submit('pool-fund', prepared, prepared.readFunding),
+    submitPoolFunding: (prepared: CurrentPoolPreparedFunding, progress?: CurrentDexSendProgress) => submit('pool-fund', prepared, prepared.readFunding, 'creation', progress),
     submitPoolTopUpPreview: (prepared: CurrentPoolPreparedTopUpPreview) => submit('pool-preview', prepared, prepared.readPreview, 'top-up'),
     submitPoolTopUpFunding: (prepared: CurrentPoolPreparedTopUpFunding) => submit('pool-fund', prepared, prepared.readFunding, 'top-up'),
     recoverCurrentPreparedPoolFundingResult: async () => {

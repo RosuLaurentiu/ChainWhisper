@@ -169,7 +169,10 @@ describe('current Pool submission adapter', () => {
 
   it('checks funding admission twice and clears its journal only after private funding verification', async () => {
     const f = fixture(); f.receipt.logs = mintLogs();
-    const submission = await f.make().submitPoolFunding(f.funding as never);
+    const walletRequested = vi.fn();
+    const submission = await f.make().submitPoolFunding(f.funding as never, { walletRequested });
+    expect(walletRequested).toHaveBeenCalledOnce();
+    expect(walletRequested.mock.invocationCallOrder[0]).toBeLessThan(f.transport.send.mock.invocationCallOrder[0]);
     expect(f.requireFunding).toHaveBeenCalledTimes(2);
     expect(f.transport.send).toHaveBeenCalledWith(expect.objectContaining({ data: fundingData, gasLimit: 100_000_000n }), expect.any(Function));
     expect(JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!)).toMatchObject({ phase: 'pool-fund' });
@@ -220,7 +223,9 @@ describe('current Pool submission adapter', () => {
   it('rechecks funding admission after the first successful check', async () => {
     const f = fixture();
     f.requireFunding.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Funding changed'));
-    await expect(f.make().submitPoolFunding(f.funding as never)).rejects.toThrow('Funding changed');
+    const walletRequested = vi.fn();
+    await expect(f.make().submitPoolFunding(f.funding as never, { walletRequested })).rejects.toThrow('Funding changed');
+    expect(walletRequested).not.toHaveBeenCalled();
     expect(f.requireFunding).toHaveBeenCalledTimes(2);
     expect(f.transport.send).not.toHaveBeenCalled();
     expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
