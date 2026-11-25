@@ -295,7 +295,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       if(!observed){setBlocked(false);setMessage('No pending position attempt was found.');return;}
       if('transactionHash' in observed&&observed.transactionHash)setTransactionHash(observed.transactionHash);
       if(observed.status==='manual-reconciliation-required'&&'verificationBlocked' in observed&&observed.verificationBlocked){
-        setBlocked(true);setMessage(`Private accounting needs manual reconciliation before a new deposit. ${currentPoolVerificationMessage(observed.verificationFailure)}`);return;
+        setBlocked(true);setMessage(`Private accounting needs manual reconciliation before a new deposit. ${currentPoolVerificationMessage(saved?.verificationFailure)}`);return;
       }
       if('closedPositionId' in observed&&observed.closedPositionId!==undefined&&getPositions&&preparedScope){
         const positionId=observed.closedPositionId;
