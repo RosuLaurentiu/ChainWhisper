@@ -453,7 +453,7 @@ export const getCotiSnapOwnerAesStatusMessage = (status: Exclude<CotiSnapOwnerAe
     case 'snap-account-mismatch':
       return 'COTI Snap does not use this wallet account. In MetaMask, connect only this wallet account to the COTI Snap, then try again.';
     case 'snap-missing-aes':
-      return `COTI Snap has no AES key for this wallet on ${COTI_NETWORK.shortName} on this device. Onboard this wallet in COTI Snap, then try again. Each MetaMask install keeps its own Snap keys.`;
+      return `COTI Snap has no AES key for this wallet on ${COTI_NETWORK.shortName} in this MetaMask profile. Use COTI’s Snap setup page with the same account. If the page requests an older version, keep your installed Snap and use the profile where privacy already works.`;
     case 'unsupported-mobile':
       return 'MetaMask Mobile does not support COTI Snap here. Use MetaMask desktop with COTI Snap for account recovery.';
     case 'unsupported':

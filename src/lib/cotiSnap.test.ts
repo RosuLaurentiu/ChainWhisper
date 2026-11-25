@@ -389,7 +389,9 @@ describe('getCotiSnapOwnerAesKeyResult', () => {
       )
     ).resolves.toEqual({ status: 'snap-missing-aes' });
 
-    expect(getCotiSnapOwnerAesStatusMessage('snap-missing-aes')).toContain('Each MetaMask install keeps its own Snap keys');
+    const message = getCotiSnapOwnerAesStatusMessage('snap-missing-aes');
+    expect(message).toContain('this MetaMask profile');
+    expect(message).toContain('keep your installed Snap');
   });
 });
 
