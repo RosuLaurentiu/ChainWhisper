@@ -28,7 +28,7 @@ describe('Account Onboarding transaction recovery', () => {
   it('holds a submission with an unknown hash across a reload', async () => {
     const { create, request, records } = createFixture();
     request.mockRejectedValueOnce(new Error('Wallet connection interrupted'));
-    await expect(create().send(sendRequest)).rejects.toThrow('Wallet connection interrupted');
+    await expect(create().request(sendRequest, { request })).rejects.toThrow('Wallet connection interrupted');
     expect(request).toHaveBeenLastCalledWith({
       method: 'eth_sendTransaction',
       params: [{ from: owner, chainId: '0x6c11a0' }]
@@ -37,14 +37,14 @@ describe('Account Onboarding transaction recovery', () => {
     const reloaded = create();
     await expect(reloaded.reconcile()).rejects.toThrow('earlier Account Onboarding transaction is unresolved');
     expect(records.size).toBe(1);
-    await expect(reloaded.send(sendRequest)).rejects.toThrow('earlier Account Onboarding transaction is unresolved');
+    await expect(reloaded.request(sendRequest, { request })).rejects.toThrow('earlier Account Onboarding transaction is unresolved');
     expect(request).toHaveBeenCalledOnce();
   });
 
   it('requires a mined Testnet receipt and the same wallet before clearing the recorded transaction', async () => {
     const { create, request, records, hasMinedReceipt, assertSnapshotCurrent } = createFixture();
     request.mockResolvedValueOnce(hash);
-    await expect(create().send(sendRequest)).resolves.toBe(hash);
+    await expect(create().request(sendRequest, { request })).resolves.toBe(hash);
     await expect(create().reconcile()).rejects.toThrow('earlier Account Onboarding transaction is unresolved');
     hasMinedReceipt.mockResolvedValue(true);
     assertSnapshotCurrent.mockImplementationOnce(() => { throw new Error('Wallet changed'); });
@@ -59,7 +59,7 @@ describe('Account Onboarding transaction recovery', () => {
     const { create, request, records } = createFixture();
     const submission = create();
     request.mockResolvedValueOnce(hash);
-    await submission.send(sendRequest);
+    await submission.request(sendRequest, { request });
     expect(records.size).toBe(1);
     submission.complete();
     expect(records.size).toBe(0);
@@ -68,13 +68,45 @@ describe('Account Onboarding transaction recovery', () => {
   it('keeps the transaction available after a wallet rejection and sends nothing after a lease switch', async () => {
     const { create, request, assertSnapshotCurrent, records } = createFixture();
     request.mockRejectedValueOnce({ code: 4001 });
-    await expect(create().send(sendRequest)).rejects.toMatchObject({ code: 4001 });
+    await expect(create().request(sendRequest, { request })).rejects.toMatchObject({ code: 4001 });
     expect(records.size).toBe(0);
 
     request.mockClear();
     assertSnapshotCurrent.mockImplementationOnce(() => { throw new Error('Wallet changed'); });
-    await expect(create().send(sendRequest)).rejects.toThrow('Wallet changed');
+    await expect(create().request(sendRequest, { request })).rejects.toThrow('Wallet changed');
     expect(request).not.toHaveBeenCalled();
     expect(records.size).toBe(0);
+  });
+});
+
+describe('Account Onboarding errors hidden by the COTI SDK', () => {
+  it('keeps a permission failure from the signature request without recording a transaction', async () => {
+    const { create, request, records } = createFixture();
+    const submission = create();
+    const provider = { request };
+    request.mockRejectedValueOnce({ code: 4100, message: 'Private wallet response' });
+    await expect(submission.request({ method: 'personal_sign' }, provider)).rejects.toMatchObject({ code: 4100 });
+    expect(submission.getFailureMessage()).toBe(
+      'MetaMask denied the Account Onboarding signature request. Reconnect this account to ChainWhisper and retry.'
+    );
+    expect(records.size).toBe(0);
+  });
+
+  it('reports a definite transaction validation failure and lets the owner retry', async () => {
+    const { create, request, records } = createFixture();
+    const submission = create();
+    request.mockRejectedValueOnce({ code: -32602 });
+    await expect(submission.request(sendRequest, { request })).rejects.toMatchObject({ code: -32602 });
+    expect(submission.getFailureMessage()).toContain('MetaMask rejected the Account Onboarding transaction parameters');
+    expect(records.size).toBe(0);
+  });
+
+  it('retains the retry hold and reports an attempted send when MetaMask returns no usable hash', async () => {
+    const { create, request, records } = createFixture();
+    const submission = create();
+    request.mockResolvedValueOnce(null);
+    await expect(submission.request(sendRequest, { request })).rejects.toThrow('usable Account Onboarding transaction hash');
+    expect(submission.getFailureMessage()).toContain('Check MetaMask Activity for the submission');
+    expect([...records.values()]).toEqual(['unknown']);
   });
 });

@@ -1281,11 +1281,7 @@ export function useWalletOnboarding({
         assertOnboardingCurrent();
       }
       const guardedPromptProvider: Eip1193Provider = submission
-        ? {
-            request: (request) => request.method === 'eth_sendTransaction'
-              ? submission.send(request)
-              : guardedWalletProvider.request(request)
-          }
+        ? { request: (request) => submission.request(request, guardedWalletProvider) }
         : guardedWalletProvider;
       const browserProvider = await createCotiBrowserProvider(guardedPromptProvider);
       const cacheKey = address.toLowerCase();
@@ -1362,18 +1358,18 @@ export function useWalletOnboarding({
             privacyError,
             'Owner privacy onboarding was not completed.'
           );
+          if (submission) {
+            if (providerMessage.toLowerCase().includes('account balance is 0')) {
+              throw new Error('Add COTI Testnet funds for gas, then select Retrieve key with Account Onboarding again.');
+            }
+            throw new Error(providerMessage.toLowerCase().includes('unable to onboard user')
+              ? submission.getFailureMessage()
+              : providerMessage);
+          }
           const ownerBalanceWei = await loadCotiReadProvider(true)
             .then((readProvider) => readProvider.getBalance(address))
             .catch(() => null);
           assertOnboardingCurrent();
-          if (accountOnboardingLease) {
-            if (ownerBalanceWei !== null && ownerBalanceWei <= 0n) {
-              throw new Error('Add COTI Testnet funds for gas, then select Retrieve key with Account Onboarding again.');
-            }
-            if (providerMessage.toLowerCase().includes('unable to onboard user')) {
-              throw new Error('Account Onboarding did not complete. Check MetaMask Activity for the onboarding transaction before you retry.');
-            }
-          }
           throw new Error(resolveOwnerPrivacyOnboardingErrorMessage(providerMessage, ownerBalanceWei));
         }
         if (!isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
