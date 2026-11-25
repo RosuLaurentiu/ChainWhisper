@@ -16,6 +16,7 @@ type UnlockArgs = {
   allowLegacyFallback?: boolean;
   allowUnrecoverableReset?: boolean;
   assertCurrent?: () => void | Promise<void>;
+  cacheFallbackAes?: boolean;
   forceFreshAes?: boolean;
   forceLegacyRefresh?: boolean;
   forceRefresh?: boolean;
@@ -535,6 +536,7 @@ const getOrRecoverAesForWalletResultWithinSignerLock = async (
     allowLegacyFallback = true,
     allowUnrecoverableReset = false,
     assertCurrent,
+    cacheFallbackAes = true,
     forceFreshAes = false,
     forceLegacyRefresh = false,
     forceRefresh = false,
@@ -704,11 +706,13 @@ const getOrRecoverAesForWalletResultWithinSignerLock = async (
     try {
       return await runIfUnlockCurrent(() => {
         fallbackCommitStarted = true;
-        lifecycleState.fallbackStorageCommitted = storeFallbackAesSessionOnboardInfo(
-          walletAddress,
-          provider,
-          recoveredOnboardInfo
-        );
+        if (cacheFallbackAes) {
+          lifecycleState.fallbackStorageCommitted = storeFallbackAesSessionOnboardInfo(
+            walletAddress,
+            provider,
+            recoveredOnboardInfo
+          );
+        }
         return {
           status: 'ready' as const,
           onboardInfo: recoveredOnboardInfo,

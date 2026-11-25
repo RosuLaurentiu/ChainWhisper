@@ -37,6 +37,7 @@ type UseChatWalletHeaderControlArgs = {
   isMobileLayout?: boolean;
   lastCopiedKey: string | null;
   ownerAesReady: boolean;
+  onAccountOnboarding?: () => Promise<void>;
   preferredBrowserWalletId: string;
   readCursorCloudConfigured?: boolean;
   readCursorCloudStatus?: ChatReadCursorCloudSyncStatus;
@@ -80,6 +81,7 @@ export default function useChatWalletHeaderControl({
   isMobileLayout = false,
   lastCopiedKey,
   ownerAesReady,
+  onAccountOnboarding,
   preferredBrowserWalletId,
   readCursorCloudConfigured = false,
   readCursorCloudStatus = 'unavailable',
@@ -228,6 +230,26 @@ export default function useChatWalletHeaderControl({
       menuDisabled={busy}
       menu={
         connected ? <>
+          {onAccountOnboarding && !ownerAesReady && !privacyNeedsRepair ? (
+            <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">
+              <button
+                type="button"
+                className="p2p-wallet-action"
+                role="menuitem"
+                disabled={busy}
+                onClick={() => {
+                  setChatWalletMenuOpen(false);
+                  setError('');
+                  void onAccountOnboarding().catch((error) => {
+                    setError(getProviderErrorMessage(error, 'Account Onboarding did not complete.'));
+                  });
+                }}
+              >
+                Retrieve key with Account Onboarding
+              </button>
+              <span>May require a signature and a Testnet transaction. The key stays in this tab.</span>
+            </div>
+          ) : null}
           {utilityMenu}
           {readCursorCloudConfigured && onToggleReadCursorCloud ? (
             <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">

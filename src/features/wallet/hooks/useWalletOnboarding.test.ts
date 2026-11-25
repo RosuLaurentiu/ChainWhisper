@@ -723,6 +723,19 @@ describe('owner privacy unlock policy', () => {
     });
   });
 
+  it('allows an explicit MetaMask Account Onboarding action without using or resetting the Snap', () => {
+    expect(buildOwnerPrivacyUnlockOptions(true, true, true)).toEqual({
+      allowLegacyFallback: true,
+      allowUnrecoverableReset: false,
+      forceFreshAes: false,
+      forceLegacyRefresh: false,
+      forceRefresh: false,
+      preferSnapAes: false,
+      probeSnapAes: false,
+      requireSnapAes: false
+    });
+  });
+
   it('destroys every unique cached COTI provider exactly once', () => {
     const destroy = vi.fn();
     const sharedProvider = { destroy };

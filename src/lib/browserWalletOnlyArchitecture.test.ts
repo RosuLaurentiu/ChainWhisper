@@ -303,7 +303,7 @@ describe('browser-wallet-only architecture boundary', () => {
     expect(ownerSignerFactory).toContain('issueOwnerCotiMetaMaskCapability<JsonRpcSigner>({');
     expect(ownerSignerFactory).not.toMatch(/new JsonRpcSigner|createCotiBrowserProvider/u);
     expect(walletOnboarding).toMatch(
-      /const browserProvider = await createCotiBrowserProvider[\s\S]*?try \{[\s\S]*?return onboardInfo;[\s\S]*?finally \{[\s\S]*?destroyCotiSignerProviderOnce\(browserProvider\);/u
+      /const browserProvider = await createCotiBrowserProvider[\s\S]*?const stopOnboardingProvider = \(\) => \{[\s\S]*?destroyCotiSignerProviderOnce\(browserProvider\);[\s\S]*?try \{[\s\S]*?return onboardInfo;[\s\S]*?finally \{[\s\S]*?stopOnboardingProvider\(\);/u
     );
     expect(p2pSigner).not.toMatch(/createCotiBrowserProvider|eth_accounts|eth_chainId|getOrRecoverAesForWallet/u);
     expect(p2pSigner).toContain('sharedGetSigner(requireAes, options)');

@@ -18,7 +18,8 @@ import { saveWalletPreference } from '../../../lib/appStorage';
 import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption,
-  isCypherTradeWalletOption
+  isCypherTradeWalletOption,
+  isPreferredMetaMaskWalletOption
 } from '../../../lib/walletOptions';
 import {
   buildWalletAesHealthState,
@@ -68,14 +69,15 @@ import {
   shouldIgnoreBrowserWalletRefreshDuringFlow
 } from '../../../lib/walletTransactionFlow';
 import useInjectedWalletOptions from './useInjectedWalletOptions';
-import { createLeaseGuardedEip1193Provider } from './useSharedWalletSigner';
+import { createLeaseGuardedEip1193Provider, mergeLeaseScopedOnboardInfo } from './useSharedWalletSigner';
+import { createAccountOnboardingSubmission } from '../accountOnboardingSubmission';
 
 type UseWalletOnboardingArgs = {
   allowPassiveBrowserRestore?: boolean;
   loadMyNicknameFromChainRef: MutableRefObject<(address: string) => Promise<string>>;
   setError: Dispatch<SetStateAction<string>>;
   setMyNickname: Dispatch<SetStateAction<string>>;
-  onWalletAesHealthChange?: (walletAddress: string, health: WalletAesHealthState) => void;
+  onWalletAesHealthChange?: (walletAddress: string, health: WalletAesHealthState, shouldCommit?: () => boolean) => void;
   walletAesHealthByAddress?: Record<string, WalletAesHealthState>;
 };
 
@@ -86,6 +88,17 @@ export type BrowserWalletSession = {
   source?: 'injected' | 'metamask-connect-mobile' | 'walletconnect';
   walletId: string;
   walletLabel: string;
+};
+
+export const canUseAccountOnboarding = (session: BrowserWalletSession): boolean => {
+  if (COTI_NETWORK.environment !== 'testnet' || session.chainId !== COTI_NETWORK.chainIdDecimal) return false;
+  const option = {
+    id: session.walletId,
+    label: session.walletLabel,
+    provider: session.provider as InjectedWalletOption['provider']
+  };
+  return !isCypherTradeWalletOption(option) &&
+    (session.source === 'metamask-connect-mobile' || isPreferredMetaMaskWalletOption(option));
 };
 
 export type BrowserWalletSignerLease = Readonly<{
@@ -247,20 +260,26 @@ type BrowserWalletActivationOptions = {
   forceFreshPrivacy?: boolean;
   preparePrivacy?: boolean;
 };
+const ACCOUNT_ONBOARDING_TIMEOUT_MS = 120_000;
 
 export const buildOwnerPrivacyUnlockOptions = (
   refreshMismatch: boolean,
-  walletRequiresSnap = true
-) => ({
-  allowLegacyFallback: !walletRequiresSnap,
-  allowUnrecoverableReset: refreshMismatch,
-  forceFreshAes: refreshMismatch,
-  forceLegacyRefresh: refreshMismatch,
-  forceRefresh: refreshMismatch,
-  preferSnapAes: walletRequiresSnap,
-  probeSnapAes: walletRequiresSnap,
-  requireSnapAes: walletRequiresSnap
-});
+  walletRequiresSnap = true,
+  accountOnboarding = false
+) => {
+  const useSnap = walletRequiresSnap && !accountOnboarding;
+  const refresh = refreshMismatch && !accountOnboarding;
+  return {
+    allowLegacyFallback: !useSnap,
+    allowUnrecoverableReset: refresh,
+    forceFreshAes: refresh,
+    forceLegacyRefresh: refresh,
+    forceRefresh: refresh,
+    preferSnapAes: useSnap,
+    probeSnapAes: useSnap,
+    requireSnapAes: useSnap
+  };
+};
 
 const destroyedCotiSignerProviders = new WeakSet<object>();
 
@@ -1208,52 +1227,84 @@ export function useWalletOnboarding({
       address: string,
       provider: Eip1193Provider,
       options?: BrowserWalletActivationOptions,
-      expectedEpoch?: number
+      expectedEpoch?: number,
+      accountOnboarding?: { lease: BrowserWalletSignerLease; signal: AbortSignal }
     ): Promise<OnboardInfo> => {
+      const accountOnboardingLease = accountOnboarding?.lease;
       if (!provider) {
         throw new Error('Wallet provider is not available.');
       }
       const operationEpoch = expectedEpoch ?? beginWalletLifecycleOperation();
-      if (!isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
-        throw new StaleWalletLifecycleError();
-      }
+      const assertOnboardingCurrent = () => {
+        if (accountOnboarding?.signal.aborted || !isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
+          throw new StaleWalletLifecycleError();
+        }
+        if (accountOnboardingLease) assertBrowserWalletSignerLeaseSnapshotCurrent(accountOnboardingLease);
+      };
+      assertOnboardingCurrent();
 
       const promptProvider = await resolveWalletPromptProvider(provider, address);
-      if (!isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
-        throw new StaleWalletLifecycleError();
-      }
+      assertOnboardingCurrent();
       if (!promptProvider) {
         throw new Error('Wallet provider is not available.');
       }
 
       setOnboardStatus('Onboarding...');
-      await ensureCotiNetwork(promptProvider);
-      if (!isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
-        throw new StaleWalletLifecycleError();
-      }
+      if (!accountOnboardingLease) await ensureCotiNetwork(promptProvider);
+      assertOnboardingCurrent();
 
-      const assertOnboardingCurrent = () => {
-        if (!isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
-          throw new StaleWalletLifecycleError();
-        }
-      };
-      const guardedPromptProvider = createLeaseGuardedEip1193Provider(
+      const assertLiveOnboardingCurrent = accountOnboardingLease
+        ? () => assertLiveBrowserWalletSignerLease(
+            { ...accountOnboardingLease, signingProvider: promptProvider },
+            assertOnboardingCurrent
+          )
+        : async () => assertOnboardingCurrent();
+      const guardedWalletProvider = createLeaseGuardedEip1193Provider(
         promptProvider,
-        assertOnboardingCurrent,
+        assertLiveOnboardingCurrent,
         assertOnboardingCurrent
       );
+      const submission = accountOnboardingLease
+        ? createAccountOnboardingSubmission(
+            promptProvider, COTI_NETWORK.chainIdDecimal, address.toLowerCase(),
+            assertLiveOnboardingCurrent, assertOnboardingCurrent,
+            async (hash) => {
+              const receipt = await (await loadCotiReadProvider()).getTransactionReceipt(hash);
+              return receipt?.hash.toLowerCase() === hash.toLowerCase();
+            },
+            window.localStorage
+          )
+        : null;
+      if (submission) {
+        await assertLiveOnboardingCurrent();
+        await submission.reconcile();
+        assertOnboardingCurrent();
+      }
+      const guardedPromptProvider: Eip1193Provider = submission
+        ? {
+            request: (request) => request.method === 'eth_sendTransaction'
+              ? submission.send(request)
+              : guardedWalletProvider.request(request)
+          }
+        : guardedWalletProvider;
       const browserProvider = await createCotiBrowserProvider(guardedPromptProvider);
       const cacheKey = address.toLowerCase();
       let temporarySigner: JsonRpcSigner | null = null;
-      try {
-        if (!isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
-          throw new StaleWalletLifecycleError();
+      const stopOnboardingProvider = () => {
+        if (temporarySigner && signerCacheRef.current[cacheKey] === temporarySigner) {
+          delete signerCacheRef.current[cacheKey];
+          delete signerProviderCacheRef.current[cacheKey];
         }
+        destroyCotiSignerProviderOnce(browserProvider);
+      };
+      accountOnboarding?.signal.addEventListener('abort', stopOnboardingProvider, { once: true });
+      try {
+        assertOnboardingCurrent();
 
         const currentAesHealth = walletAesHealthByAddress[cacheKey]?.status;
         const forceFreshPrivacy = Boolean(options?.forceFreshPrivacy);
-        const refreshMismatch =
-          forceFreshPrivacy || currentAesHealth === 'key-mismatch' || currentAesHealth === 'repair-needed';
+        const refreshMismatch = !accountOnboardingLease &&
+          (forceFreshPrivacy || currentAesHealth === 'key-mismatch' || currentAesHealth === 'repair-needed');
         if (refreshMismatch) {
           clearCotiAesUnlockRequest(address, promptProvider);
           setSessionOnboardInfo((previous) => {
@@ -1284,17 +1335,18 @@ export function useWalletOnboarding({
             })
           );
         }
+        const ownerSession = browserWalletSessionRef.current;
+        const walletRequiresSnap = !ownerSession || !isCypherTradeWalletOption({
+          id: ownerSession.walletId,
+          label: ownerSession.walletLabel,
+          provider: ownerSession.provider as InjectedWalletOption['provider']
+        });
         let unlockResult: PrivacyUnlockResult;
         try {
-          const ownerSession = browserWalletSessionRef.current;
-          const walletRequiresSnap = !ownerSession || !isCypherTradeWalletOption({
-            id: ownerSession.walletId,
-            label: ownerSession.walletLabel,
-            provider: ownerSession.provider as InjectedWalletOption['provider']
-          });
           unlockResult = await getOrRecoverAesForWalletResult({
-            ...buildOwnerPrivacyUnlockOptions(refreshMismatch, walletRequiresSnap),
+            ...buildOwnerPrivacyUnlockOptions(refreshMismatch, walletRequiresSnap, Boolean(accountOnboardingLease)),
             assertCurrent: assertOnboardingCurrent,
+            cacheFallbackAes: !accountOnboardingLease,
             provider: guardedPromptProvider,
             signer,
             walletAddress: address
@@ -1313,8 +1365,14 @@ export function useWalletOnboarding({
           const ownerBalanceWei = await loadCotiReadProvider(true)
             .then((readProvider) => readProvider.getBalance(address))
             .catch(() => null);
-          if (!isCurrentBrowserWalletSession(operationEpoch, provider, address)) {
-            throw new StaleWalletLifecycleError();
+          assertOnboardingCurrent();
+          if (accountOnboardingLease) {
+            if (ownerBalanceWei !== null && ownerBalanceWei <= 0n) {
+              throw new Error('Add COTI Testnet funds for gas, then select Retrieve key with Account Onboarding again.');
+            }
+            if (providerMessage.toLowerCase().includes('unable to onboard user')) {
+              throw new Error('Account Onboarding did not complete. Check MetaMask Activity for the onboarding transaction before you retry.');
+            }
           }
           throw new Error(resolveOwnerPrivacyOnboardingErrorMessage(providerMessage, ownerBalanceWei));
         }
@@ -1322,6 +1380,10 @@ export function useWalletOnboarding({
           throw new StaleWalletLifecycleError();
         }
         if (unlockResult.status !== 'ready') {
+          if (ownerSession && !refreshMismatch && canUseAccountOnboarding(ownerSession) &&
+            ['missing-aes', 'not-installed', 'unsupported', 'unsupported-mobile'].includes(unlockResult.reason)) {
+            throw new Error('COTI Snap could not provide this wallet’s Testnet key. Open the Wallet menu and select Retrieve key with Account Onboarding.');
+          }
           throw new Error(getPrivacyFallbackUnavailableMessage(unlockResult.reason));
         }
 
@@ -1331,16 +1393,26 @@ export function useWalletOnboarding({
           throw new Error('Privacy unlock was not returned during onboarding.');
         }
 
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: refreshMismatch ? onboardInfo : mergeOnboardInfo(previous[cacheKey], onboardInfo)
-        }));
+        if (submission) {
+          await assertLiveOnboardingCurrent();
+          assertOnboardingCurrent();
+          submission.complete();
+        }
+        setSessionOnboardInfo((previous) => accountOnboardingLease
+          ? mergeLeaseScopedOnboardInfo(previous, cacheKey, onboardInfo, assertOnboardingCurrent)
+          : {
+              ...previous,
+              [cacheKey]: refreshMismatch ? onboardInfo : mergeOnboardInfo(previous[cacheKey], onboardInfo)
+            });
         onWalletAesHealthChange?.(
           address,
           buildWalletAesHealthState({
             status: 'ready-unverified',
             walletAddress: address
-          })
+          }),
+          accountOnboardingLease
+            ? () => !accountOnboarding?.signal.aborted && isCurrentBrowserWalletSession(operationEpoch, provider, address)
+            : undefined
         );
 
         setOnboardStatus('Owner privacy ready');
@@ -1351,15 +1423,13 @@ export function useWalletOnboarding({
         // Retaining this signer created a second long-lived MetaMask stream.
         // This also covers getSigner and lifecycle failures before the signer
         // reached the temporary cache.
-        if (temporarySigner && signerCacheRef.current[cacheKey] === temporarySigner) {
-          delete signerCacheRef.current[cacheKey];
-          delete signerProviderCacheRef.current[cacheKey];
-        }
-        destroyCotiSignerProviderOnce(browserProvider);
+        accountOnboarding?.signal.removeEventListener('abort', stopOnboardingProvider);
+        stopOnboardingProvider();
       }
     },
     [
       beginWalletLifecycleOperation,
+      assertBrowserWalletSignerLeaseSnapshotCurrent,
       clearCachedSigner,
       ensureCotiNetwork,
       isCurrentBrowserWalletSession,
@@ -1369,6 +1439,49 @@ export function useWalletOnboarding({
       walletAesHealthByAddress
     ]
   );
+
+  const [accountOnboardingWalletLabel, setAccountOnboardingWalletLabel] = useState('');
+  const accountOnboardingInProgressRef = useRef(false);
+  const onboardMetaMaskPrivacy = useCallback(async (expectedSession: BrowserWalletSession): Promise<void> => {
+    if (accountOnboardingInProgressRef.current) return;
+    const lease = captureBrowserWalletSignerLease();
+    if (lease.session !== expectedSession || !canUseAccountOnboarding(lease.session)) {
+      throw new Error('Reconnect the intended MetaMask account on COTI Testnet.');
+    }
+    if (sessionOnboardInfo[lease.address]?.aesKey) return;
+
+    const epoch = beginWalletLifecycleOperation();
+    accountOnboardingInProgressRef.current = true;
+    setAccountOnboardingWalletLabel(lease.session.walletLabel);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), ACCOUNT_ONBOARDING_TIMEOUT_MS);
+    const timedOut = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(new Error(
+        'Account Onboarding timed out. Check MetaMask Activity before you retry.'
+      )), { once: true });
+    });
+    try {
+      await Promise.race([
+        onboardAddressAes(lease.address, lease.sessionProvider, undefined, epoch, { lease, signal: controller.signal }),
+        timedOut
+      ]);
+    } catch (error) {
+      if (isStaleWalletLifecycleError(error) ||
+        !isCurrentBrowserWalletSession(epoch, lease.sessionProvider, lease.address)) return;
+      setOnboardStatus('Privacy locked');
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+      accountOnboardingInProgressRef.current = false;
+      setAccountOnboardingWalletLabel('');
+    }
+  }, [
+    beginWalletLifecycleOperation,
+    captureBrowserWalletSignerLease,
+    isCurrentBrowserWalletSession,
+    onboardAddressAes,
+    sessionOnboardInfo
+  ]);
 
   const onboardAddressAesAfterConnect = useCallback(
     async (
@@ -2147,8 +2260,8 @@ export function useWalletOnboarding({
     captureBrowserWalletSignerLease,
     chainId,
     connectAndOnboard,
-    connectingMethod,
-    connectingWalletLabel,
+    connectingMethod: accountOnboardingWalletLabel ? 'metamask' as const : connectingMethod,
+    connectingWalletLabel: accountOnboardingWalletLabel || connectingWalletLabel,
     connectionMethod,
     currentInjectedWalletOption,
     currentWalletKeyRef,
@@ -2158,6 +2271,7 @@ export function useWalletOnboarding({
     getConnectedProvider,
     injectedWalletOptions,
     onboardAddressAes,
+    onboardMetaMaskPrivacy,
     onboardStatus,
     preferredInjectedWalletOption,
     refreshWalletState,

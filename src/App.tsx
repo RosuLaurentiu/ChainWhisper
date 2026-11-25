@@ -123,7 +123,7 @@ import type {
   GroupChatV2ReadCursorScope
 } from './lib/groupChatV2ReadCursor';
 import { useStoredWalletPreference } from './features/wallet/hooks/useStoredWalletPreference';
-import { useWalletOnboarding } from './features/wallet/hooks/useWalletOnboarding';
+import { canUseAccountOnboarding, useWalletOnboarding } from './features/wallet/hooks/useWalletOnboarding';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
   getOnChainFailureMessage,
@@ -572,7 +572,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     ensureCotiNetwork,
     getConnectedProvider,
     injectedWalletOptions,
+    onboardMetaMaskPrivacy,
     preferredInjectedWalletOption,
+    refreshWalletState,
     resolveWalletPromptProvider,
     sessionOnboardInfo,
     setChainId,
@@ -4366,6 +4368,15 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     isMobileLayout: isMobileNav,
     lastCopiedKey,
     ownerAesReady,
+    onAccountOnboarding: browserWalletSession && canUseAccountOnboarding(browserWalletSession)
+      ? async () => {
+          try {
+            await runSharedWalletTransactionFlow(() => onboardMetaMaskPrivacy(browserWalletSession));
+          } finally {
+            await refreshWalletState(browserWalletSession.provider).catch(() => undefined);
+          }
+        }
+      : undefined,
     onToggleReadCursorCloud: toggleChatReadCursorCloud,
     preferredBrowserWalletId,
     readCursorCloudConfigured: chatReadCursorCloud.configured,

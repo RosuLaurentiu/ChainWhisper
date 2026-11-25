@@ -12,6 +12,7 @@ const renderControl = ({
   status,
   connected = true,
   ownerAesReady = true,
+  onAccountOnboarding,
   statusErrorMessage,
   menuOpen = true
 }: {
@@ -20,6 +21,7 @@ const renderControl = ({
   status: 'disabled' | 'ready';
   connected?: boolean;
   ownerAesReady?: boolean;
+  onAccountOnboarding?: () => Promise<void>;
   statusErrorMessage?: string;
   menuOpen?: boolean;
 }) => {
@@ -46,6 +48,7 @@ const renderControl = ({
       lastCopiedKey: null,
       onToggleReadCursorCloud: vi.fn(),
       ownerAesReady,
+      onAccountOnboarding,
       preferredBrowserWalletId: 'metamask',
       readCursorCloudConfigured: configured,
       readCursorCloudStatus: status,
@@ -108,6 +111,14 @@ describe('useChatWalletHeaderControl cross-device read status', () => {
 
 describe('useChatWalletHeaderControl unlock errors', () => {
   const message = 'COTI Snap has no AES key for this wallet on COTI Testnet on this device.';
+
+  it('offers account onboarding to an eligible locked wallet and explains the wallet prompts', () => {
+    const props = { configured: false, status: 'disabled' as const, onAccountOnboarding: vi.fn() };
+    const locked = renderControl({ ...props, ownerAesReady: false });
+    expect(locked).toContain('Retrieve key with Account Onboarding');
+    expect(locked).toContain('May require a signature and a Testnet transaction. The key stays in this tab.');
+    expect(renderControl(props)).not.toContain('Retrieve key with Account Onboarding');
+  });
 
   it('shows the header unlock error as an alert while privacy is locked', () => {
     const markup = renderControl({

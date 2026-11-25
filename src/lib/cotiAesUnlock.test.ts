@@ -929,6 +929,21 @@ describe('getOrRecoverAesForWallet', () => {
     expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
   });
 
+  it('returns the owner key without leaving a second copy in the fallback cache', async () => {
+    const activeProvider = metaMaskProvider();
+    const activeSigner = signer();
+
+    await expect(getOrRecoverAesForWalletResult({
+      cacheFallbackAes: false,
+      probeSnapAes: false,
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    })).resolves.toMatchObject({ status: 'ready', onboardInfo: { aesKey: 'fallback-aes' } });
+
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+  });
+
   it('clears every fallback AES provider session for one wallet when no provider is supplied', () => {
     const activeProvider = metaMaskProvider();
     const otherProvider = provider();
