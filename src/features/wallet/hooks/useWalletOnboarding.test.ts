@@ -3,6 +3,7 @@ import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import type { Eip1193Provider, InjectedWalletOption } from '../../../lib/appShared';
 import { COTI_NETWORK } from '../../../lib/appShared';
 import {
+  getOrRecoverAesForWalletResult,
   readFallbackAesSessionOnboardInfo,
   storeFallbackAesSessionOnboardInfo
 } from '../../../lib/cotiAesUnlock';
@@ -697,6 +698,59 @@ describe('owner privacy onboarding errors', () => {
 });
 
 describe('owner privacy unlock policy', () => {
+  it.each([
+    { snapState: 'missing key', source: 'fallback' },
+    { snapState: 'version conflict', source: 'fallback' },
+    { snapState: 'ready', source: 'snap' },
+    { snapState: 'declined', reason: 'rejected' },
+    { snapState: 'changed owner', reason: 'wallet-mismatch' },
+    { snapState: 'changed chain', reason: 'wrong-network' }
+  ])('handles $snapState before starting automatic Account Onboarding', async ({ snapState, source, reason }) => {
+    const walletAddress = '0x1111111111111111111111111111111111111111';
+    const snapId = 'npm:@coti-io/coti-snap';
+    const provider = {
+      isMetaMask: true,
+      request: async ({ method, params }: { method: string; params?: { request?: { method: string } } }) => {
+        if (method === 'eth_accounts') return snapState === 'changed owner' ? [] : [walletAddress];
+        if (method === 'eth_chainId') return snapState === 'changed chain' ? '0x1' : COTI_NETWORK.chainIdHex;
+        if (method === 'wallet_getSnaps') {
+          return snapState === 'version conflict' || snapState === 'declined'
+            ? {} : { [snapId]: { version: '1.0.54-8a5cfb' } };
+        }
+        if (method === 'wallet_requestSnaps') {
+          if (snapState === 'declined') throw Object.assign(new Error('User rejected the request'), { code: 4001 });
+          throw new Error("Couldn't update to the requested Snap version range");
+        }
+        if (params?.request?.method === 'connect-to-wallet') return true;
+        if (params?.request?.method === 'has-aes-key') return snapState !== 'missing key';
+        if (params?.request?.method === 'get-aes-key') return 'snap-aes';
+        throw new Error(`Unexpected wallet RPC: ${method}`);
+      }
+    } as unknown as Eip1193Provider;
+    let onboardInfo: OnboardInfo | undefined;
+    const beforeFallback = vi.fn(async () => undefined);
+    const signer = {
+      generateOrRecoverAes: vi.fn(async () => {
+        expect(beforeFallback).toHaveBeenCalledOnce();
+        onboardInfo = { aesKey: 'retrieved-aes' };
+      }),
+      getUserOnboardInfo: () => onboardInfo,
+      setUserOnboardInfo: (info: OnboardInfo) => { onboardInfo = info; }
+    };
+
+    await expect(getOrRecoverAesForWalletResult({
+      ...buildOwnerPrivacyUnlockOptions(false, true, true, true),
+      beforeFallback,
+      cacheFallbackAes: false,
+      provider,
+      signer,
+      walletAddress
+    })).resolves.toMatchObject(reason ? { status: 'fallback-unavailable', reason } : { status: 'ready', source });
+    const expectedCalls = source === 'fallback' ? 1 : 0;
+    expect(beforeFallback).toHaveBeenCalledTimes(expectedCalls);
+    expect(signer.generateOrRecoverAes).toHaveBeenCalledTimes(expectedCalls);
+  });
+
   it('requires the wallet-controlled Snap key and never auto-submits legacy onboarding', () => {
     expect(buildOwnerPrivacyUnlockOptions(false)).toEqual({
       allowLegacyFallback: false,

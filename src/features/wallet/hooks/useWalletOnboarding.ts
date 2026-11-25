@@ -19,6 +19,7 @@ import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption,
   isCypherTradeWalletOption,
+  isMobileBrowserUserAgent,
   isPreferredMetaMaskWalletOption
 } from '../../../lib/walletOptions';
 import {
@@ -100,6 +101,9 @@ export const canUseAccountOnboarding = (session: BrowserWalletSession): boolean 
   return !isCypherTradeWalletOption(option) &&
     (session.source === 'metamask-connect-mobile' || isPreferredMetaMaskWalletOption(option));
 };
+
+export const canAutomaticallyOnboardPrivacy = (session: BrowserWalletSession): boolean =>
+  session.source === 'injected' && !isMobileBrowserUserAgent() && canUseAccountOnboarding(session);
 
 export type BrowserWalletSignerLease = Readonly<{
   activeAddress: string;
@@ -265,7 +269,8 @@ const ACCOUNT_ONBOARDING_TIMEOUT_MS = 120_000;
 export const buildOwnerPrivacyUnlockOptions = (
   refreshMismatch: boolean,
   walletRequiresSnap = true,
-  accountOnboarding = false
+  accountOnboarding = false,
+  trySnapFirst = false
 ) => {
   const useSnap = walletRequiresSnap && !accountOnboarding;
   const refresh = refreshMismatch && !accountOnboarding;
@@ -275,8 +280,8 @@ export const buildOwnerPrivacyUnlockOptions = (
     forceFreshAes: refresh,
     forceLegacyRefresh: refresh,
     forceRefresh: refresh,
-    preferSnapAes: useSnap,
-    probeSnapAes: useSnap,
+    preferSnapAes: useSnap || trySnapFirst,
+    probeSnapAes: useSnap || trySnapFirst,
     requireSnapAes: useSnap
   };
 };
@@ -1228,7 +1233,7 @@ export function useWalletOnboarding({
       provider: Eip1193Provider,
       options?: BrowserWalletActivationOptions,
       expectedEpoch?: number,
-      accountOnboarding?: { lease: BrowserWalletSignerLease; signal: AbortSignal }
+      accountOnboarding?: { lease: BrowserWalletSignerLease; signal: AbortSignal; trySnapFirst?: boolean }
     ): Promise<OnboardInfo> => {
       const accountOnboardingLease = accountOnboarding?.lease;
       if (!provider) {
@@ -1275,7 +1280,7 @@ export function useWalletOnboarding({
             window.localStorage
           )
         : null;
-      if (submission) {
+      if (submission && !accountOnboarding?.trySnapFirst) {
         await assertLiveOnboardingCurrent();
         await submission.reconcile();
         assertOnboardingCurrent();
@@ -1340,10 +1345,16 @@ export function useWalletOnboarding({
         let unlockResult: PrivacyUnlockResult;
         try {
           unlockResult = await getOrRecoverAesForWalletResult({
-            ...buildOwnerPrivacyUnlockOptions(refreshMismatch, walletRequiresSnap, Boolean(accountOnboardingLease)),
+            ...buildOwnerPrivacyUnlockOptions(
+              refreshMismatch, walletRequiresSnap, Boolean(accountOnboardingLease), accountOnboarding?.trySnapFirst
+            ),
             assertCurrent: assertOnboardingCurrent,
+            beforeFallback: submission && accountOnboarding?.trySnapFirst ? async () => {
+              await assertLiveOnboardingCurrent();
+              await submission.reconcile();
+            } : undefined,
             cacheFallbackAes: !accountOnboardingLease,
-            provider: guardedPromptProvider,
+            provider: guardedWalletProvider,
             signer,
             walletAddress: address
           });
@@ -1360,7 +1371,7 @@ export function useWalletOnboarding({
           );
           if (submission) {
             if (providerMessage.toLowerCase().includes('account balance is 0')) {
-              throw new Error('Add COTI Testnet funds for gas, then select Retrieve key with Account Onboarding again.');
+              throw new Error('Add COTI Testnet funds for gas, then try unlocking privacy again.');
             }
             throw new Error(providerMessage.toLowerCase().includes('unable to onboard user')
               ? submission.getFailureMessage()
@@ -1438,15 +1449,19 @@ export function useWalletOnboarding({
 
   const [accountOnboardingWalletLabel, setAccountOnboardingWalletLabel] = useState('');
   const accountOnboardingInProgressRef = useRef(false);
-  const onboardMetaMaskPrivacy = useCallback(async (expectedSession: BrowserWalletSession): Promise<void> => {
-    if (accountOnboardingInProgressRef.current) return;
+  const onboardMetaMaskPrivacy = useCallback(async (
+    expectedSession: BrowserWalletSession,
+    options?: { trySnapFirst?: boolean; expectedEpoch?: number }
+  ): Promise<OnboardInfo | null> => {
+    if (accountOnboardingInProgressRef.current) return null;
     const lease = captureBrowserWalletSignerLease();
     if (lease.session !== expectedSession || !canUseAccountOnboarding(lease.session)) {
       throw new Error('Reconnect the intended MetaMask account on COTI Testnet.');
     }
-    if (sessionOnboardInfo[lease.address]?.aesKey) return;
+    const cached = sessionOnboardInfo[lease.address];
+    if (cached?.aesKey) return cached;
 
-    const epoch = beginWalletLifecycleOperation();
+    const epoch = options?.expectedEpoch ?? beginWalletLifecycleOperation();
     accountOnboardingInProgressRef.current = true;
     setAccountOnboardingWalletLabel(lease.session.walletLabel);
     const controller = new AbortController();
@@ -1457,13 +1472,15 @@ export function useWalletOnboarding({
       )), { once: true });
     });
     try {
-      await Promise.race([
-        onboardAddressAes(lease.address, lease.sessionProvider, undefined, epoch, { lease, signal: controller.signal }),
+      return await Promise.race([
+        onboardAddressAes(lease.address, lease.sessionProvider, undefined, epoch, {
+          lease, signal: controller.signal, trySnapFirst: options?.trySnapFirst
+        }),
         timedOut
       ]);
     } catch (error) {
       if (isStaleWalletLifecycleError(error) ||
-        !isCurrentBrowserWalletSession(epoch, lease.sessionProvider, lease.address)) return;
+        !isCurrentBrowserWalletSession(epoch, lease.sessionProvider, lease.address)) return null;
       setOnboardStatus('Privacy locked');
       throw error;
     } finally {
@@ -1485,12 +1502,18 @@ export function useWalletOnboarding({
       provider: Eip1193Provider,
       options: BrowserWalletActivationOptions | undefined,
       expectedEpoch: number
-    ): Promise<OnboardInfo> => {
+    ): Promise<OnboardInfo | null> => {
       await waitForPrivacyPromptAfterConnect();
       assertWalletLifecycleOperationCurrent(expectedEpoch);
+      const session = browserWalletSessionRef.current;
+      const health = walletAesHealthByAddress[address.toLowerCase()]?.status;
+      if (session && !options?.forceFreshPrivacy && health !== 'key-mismatch' && health !== 'repair-needed' &&
+        canAutomaticallyOnboardPrivacy(session)) {
+        return onboardMetaMaskPrivacy(session, { trySnapFirst: true, expectedEpoch });
+      }
       return onboardAddressAes(address, provider, options, expectedEpoch);
     },
-    [assertWalletLifecycleOperationCurrent, onboardAddressAes]
+    [assertWalletLifecycleOperationCurrent, onboardAddressAes, onboardMetaMaskPrivacy, walletAesHealthByAddress]
   );
 
   const preparePrivacyAfterConnect = useCallback(

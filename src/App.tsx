@@ -123,7 +123,9 @@ import type {
   GroupChatV2ReadCursorScope
 } from './lib/groupChatV2ReadCursor';
 import { useStoredWalletPreference } from './features/wallet/hooks/useStoredWalletPreference';
-import { canUseAccountOnboarding, useWalletOnboarding } from './features/wallet/hooks/useWalletOnboarding';
+import {
+  canAutomaticallyOnboardPrivacy, canUseAccountOnboarding, useWalletOnboarding
+} from './features/wallet/hooks/useWalletOnboarding';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
   getOnChainFailureMessage,
@@ -4670,14 +4672,18 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       getPrivateLiquidityCapability,
       getSigner: getSharedWalletSigner,
       runWalletTransactionFlow: runSharedWalletTransactionFlow,
-      unlockPrivacy: (options = {}) => runSharedWalletTransactionFlow(() =>
-        getSharedWalletSigner(true, {
-          refreshAes: options.forceFreshPrivacy
-        })
+      unlockPrivacy: (options = {}) => runSharedWalletTransactionFlow(async () =>
+        browserWalletSession && !options.forceFreshPrivacy &&
+        canAutomaticallyOnboardPrivacy(browserWalletSession) &&
+        walletAesHealthByAddress[browserWalletSession.address.toLowerCase()]?.status !== 'key-mismatch' &&
+        walletAesHealthByAddress[browserWalletSession.address.toLowerCase()]?.status !== 'repair-needed'
+          ? onboardMetaMaskPrivacy(browserWalletSession, { trySnapFirst: true })
+          : getSharedWalletSigner(true, { refreshAes: options.forceFreshPrivacy })
       )
     }),
     [
       activateBrowserWalletSessionWithBootstrap,
+      browserWalletSession,
       disconnectWallet,
       getOwnerFundsSigner,
       getOtcV2Capability,
@@ -4690,7 +4696,9 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
       getCurrentDexPoolPositionCapability,
       getCurrentDexLimitCapability,
       getSharedWalletSigner,
-      runSharedWalletTransactionFlow
+      onboardMetaMaskPrivacy,
+      runSharedWalletTransactionFlow,
+      walletAesHealthByAddress
     ]
   );
   const sharedTradeWalletSession = useMemo<SharedWalletSession>(
