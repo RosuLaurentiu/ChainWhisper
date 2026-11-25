@@ -113,9 +113,9 @@ const previewCardRows = (a: Amounts, tokenLabels = CURRENT_DEX_POOL_LABELS,
     : [{ label: 'New private shares', value: displayAmount(a.mintedShares.toString()) }, { label: 'Position shares after funding', value: displayAmount(a.ownedShares.toString()) }])
 ];
 
-export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplayInverted = false, candidateKey = 'cheap-current', selectedPair, marketReference }: {
+export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplayInverted = false, candidateKey = 'cheap-current', selectedPair, marketReference, onOpenPositions }: {
   sharedWalletSession?: SharedWalletSession; priceDisplayInverted?: boolean; candidateKey?: CurrentCheapDexCandidateKey; selectedPair?: readonly [string, string];
-  marketReference?: CurrentDexMarketReference
+  marketReference?: CurrentDexMarketReference; onOpenPositions?: () => void
 }) {
   const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
   const candidate = preparedScope?.candidate ?? resolveCurrentCheapDexCandidate(candidateKey), chain = BigInt(candidate.chainId);
@@ -184,6 +184,15 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     key => (preview.scope as Record<string, unknown>)[key] === (context as Record<string, unknown>)[key]);
   const connected = Boolean(context.owner && context.chainId === Number(chain) && context.provider && getPool && getSender);
   const savedActionPending = hasCurrentDexPendingAction(recordScope);
+  const hasPositionAttempt = () => {
+    try {
+      const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
+      return !!saved && saved.chainId === String(chain) && saved.owner.toLowerCase() === context.owner &&
+        saved.graph === '0x'+candidate.graph && saved.core.toLowerCase() === candidate.core.toLowerCase() &&
+        ['pool-owner','pool-transfer','pool-snapshot'].includes(saved.phase);
+    } catch { return false; }
+  };
+  const positionPending = savedActionPending && hasPositionAttempt();
   const displayQuote = pair ? (priceDisplayInverted ? pair.tokenIn : pair.tokenOut) : null;
   const priceUnits = pair ? `${displayQuote!.label}/${(priceDisplayInverted ? pair.tokenOut : pair.tokenIn).label}` :
     `${tokenLabels[priceDisplayInverted ? 1 : 0]}/${tokenLabels[priceDisplayInverted ? 0 : 1]}`;
@@ -538,6 +547,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   };
   const refresh = async () => {
     if (!getSender || context.chainId !== Number(chain) || inFlight.current || busy) return;
+    if(hasPositionAttempt()){onOpenPositions?.();return;}
     inFlight.current = true; setBusy(true); const captured = scope.current;
     const currentPending = pending?.scope === captured ? pending : null;
     setMessage('Checking Pool status.');
@@ -718,14 +728,14 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         ? <PrivacyLockedNotice message="Your deposit preview is locked." disabled={busy}
           onUnlock={sharedWalletSession?.actions?.unlockPrivacy ? () => sharedWalletSession.actions!.unlockPrivacy() : undefined} />
         : <p className="dex-v2-activation-note" role="status">{(messageScope.current === scope.current && message) || (connected ? !previewInputsValid ? 'Enter both deposit amounts and a valid price and tolerance.' : 'Review your deposit before any tokens move.' : 'Connect your wallet on COTI Testnet to prepare this Pool.')}</p>}
-      {connected ? <button className="dex-v2-current-pool-status" type="button" disabled={busy} onClick={() => { void refresh(); }}>Check Pool status</button> : null}
+      {connected ? <button className="dex-v2-current-pool-status" type="button" disabled={busy} onClick={() => { void refresh(); }}>{positionPending?'Open position recovery':'Check Pool status'}</button> : null}
       <details className="dex-v2-pool-help"><summary>How liquidity works<ChevronDown size={16} aria-hidden="true" /></summary><div>
         <p>Shared Full Range Pool. Your shares belong to a position NFT, not an LP token.</p>
         <p>Preview costs network gas but moves no tokens and creates no position. Deposit needs separate review, private balances and token approvals for both tokens.</p>
         <p>A starting price is required for preview. An existing Pool uses its reserve ratio.</p>
       </div></details>
       {preparedCandidate ? <details className="dex-v2-setup"><summary>Status and recovery</summary>{recovery}</details> : recovery}
-      {savedActionPending ? <p role="alert">A saved action needs a status check. Open its status and recovery in History before a new deposit.</p> : null}
+      {savedActionPending ? <p role="alert">{positionPending?'A saved position transaction needs a status check before you can preview another deposit. Open position recovery, then select Check position status.':'A saved action needs a status check. Open its status and recovery in History before a new deposit.'}</p> : null}
       {transactionHash ? <p className="dex-v2-activation-note dex-v2-pool-transaction">Transaction <a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${transactionHash}`}
         target="_blank" rel="noreferrer" title={transactionHash} aria-label={`View transaction ${transactionHash}`}>{transactionHash.slice(0, 6)}…{transactionHash.slice(-4)}</a>
         <button type="button" onClick={() => { void navigator.clipboard?.writeText(transactionHash); }} aria-label="Copy transaction hash">Copy</button></p> : null}

@@ -351,10 +351,10 @@ describe('prepared Positions owner snapshot view',()=>{
       expect(request).toMatchObject({action:'close',producerHash:hash,minimums:[1_000_001n,2_000_002n]});
       expect(await request.confirm({recipient:null,minimums:request.minimums})).toBe(true);return prepared;
     });
-    const submit=vi.fn(async()=>({transactionHash:hash,recover:closeRecover}));f.getSender.mockResolvedValue({submitPoolPositionAction:submit});
+    const submit=vi.fn(async()=>({transactionHash:hash,recover:closeRecover}));f.getSender.mockResolvedValue({submitPoolPositionAction:submit,waitForCurrentCheapReceipt:vi.fn(async()=>true)});
     f.button('Close and withdraw all').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId),{candidate:key});
-    f.button('Check position status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
+    expect(text(f.render())).toContain('StatusClosed');
     expect(text(f.render())).toContain('Close mined and payouts checked');expect(text(f.render())).not.toContain('Close complete');
     if(key!=='cheap-prepared'){
       const list=elements(f.render()).find(item=>item.type===CurrentOwnedPoolPositions)!;
@@ -374,6 +374,20 @@ describe('prepared Positions owner snapshot view',()=>{
         snapshot:{...f.value,status:4n,amounts:{...f.value.amounts,shares:0n}}})})});
     f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(text(f.render())).toContain('no independent verification of the original payout');expect(text(f.render())).not.toContain('Close complete');
+  });
+  if(key==='cheap-history')it('keeps a closed position visible when private payout verification fails',async()=>{
+    const f=fixture();hooks.allowNative=true;await f.load();
+    f.prepareAction.mockResolvedValue({action:'close'});
+    f.readPosition.mockResolvedValue({...f.value,status:4n,amounts:null} as never);
+    const recover=vi.fn(async()=>{throw new Error('Private payout verification failed.');});
+    const submit=vi.fn(async()=>({transactionHash:hash,recover}));
+    f.getSender.mockResolvedValue({submitPoolPositionAction:submit,waitForCurrentCheapReceipt:async()=>true});
+    f.button('Close and withdraw all').props.onClick!();
+    await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
+    expect(text(f.render())).toContain('StatusClosed');
+    expect(text(f.render())).toContain('Private payout verification failed');
+    expect(f.button('Review closed-claim verification').props.disabled).toBe(true);
+    expect(submit).toHaveBeenCalledOnce();
   });
 });
 

@@ -476,6 +476,23 @@ describe('current owner Pool inventory capability',()=>{
     expect(result.complete).toBe(true);expect(result.positions).toMatchObject([{positionId:43n,status:1n,context}]);
     expect(mocks.decrypt).not.toHaveBeenCalled();expect(mocks.reader).not.toHaveBeenCalled();expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
   });
+  it('lists a burned claim as closed only for the owner in the burn event',async()=>{
+    const f=await inventoryFixture('cheap-history'),candidate=resolvePreparedDexScope('cheap-history').candidate;
+    const nft=candidate.companions.find(([name])=>name==='ChainWhisperDexPositionNFT')![1];
+    const height=Number(candidate.attestationBlock.number)+1,original=f.provider.send.getMockImplementation()!;
+    f.provider.send.mockImplementation(async(method,params)=>{
+      if(method==='eth_getBlockByNumber')return {number:'0x'+height.toString(16),hash};
+      if(method==='eth_call'&&params[0].to===candidate.core&&abi.parseTransaction({data:params[0].data})?.args[0]===55n)
+        return abi.encodeFunctionResult('poolPublicState',[{...f.state,status:4n}]);
+      return original(method,params);
+    });
+    const burn=(from:string)=>({...nftAbi.encodeEventLog(nftAbi.getEvent('Transfer')!,[from,'0x'+'00'.repeat(20),55n]),
+      address:nft,blockNumber:height,removed:false});
+    f.provider.getLogs.mockResolvedValue([burn(owner)]);
+    expect((await f.cap.readOwnedPositions()).positions).toMatchObject([{positionId:43n,status:1n},{positionId:55n,status:4n}]);
+    f.provider.getLogs.mockResolvedValue([burn(recipient)]);
+    await expect(f.cap.readOwnedPositions()).rejects.toThrow();
+  });
   it.each(['ownership','pool-state','reorg','privacy'] as const)('rejects %s change and returns no stale owner list',async fault=>{
     const f=await inventoryFixture(),original=f.provider.send.getMockImplementation()!;
     if(fault==='ownership')f.owner(recipient);

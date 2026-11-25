@@ -183,6 +183,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
           return metadata();
         }
         let producerHash = options?.producerHash, discovered=false;
+        if (pub.status === 4n && preparedProducers.get(id)?.status !== 4n) preparedProducers.delete(id);
         if (!producerHash && !preparedProducers.has(id)) {
           const logs = await readProvider.getLogs({address:candidate.core,
             fromBlock:Number(preparedScope!.candidate.attestationBlock.number),toBlock:Number(block.number),
@@ -217,6 +218,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
               managed?.name === 'managePoolPosition' && managed.args[2] === 5n ? 'resume' : 'fund';
           // This authenticates stored envelopes, not independent funding accounting.
           const issued = await reader.issue(id, kind, producerHash, kind !== 'snapshot' ? proof.data : undefined);
+          if (pub.status === 4n && issued.status !== 4n) return metadata();
           const snapshot = await readPreparedAt(id, issued.block, issued, onVerifiedState);
           preparedProducers.set(id, issued); return snapshot;
         }
@@ -531,21 +533,37 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         const block=await head(), inventory=await readCurrentDexOwnedPositionIds({candidate:candidateKey,owner:ownerAddress,block,
           rpc:(method,params)=>readProvider.send(method,[...params]),assertCurrent:guard});
         const positions:Readonly<{positionId:bigint;status:bigint;context:string}>[]=[];
-        for(const positionId of inventory.positionIds){
+        const burned=new Set<bigint>();
+        let complete=inventory.complete;
+        if(candidateKey==='cheap-history'){
+          const fromBlock=Number(preparedScope!.candidate.attestationBlock.number);
+          const logs=await readProvider.getLogs({address:nft,fromBlock,toBlock:Number(block.number),
+            topics:nftAbi.encodeFilterTopics('Transfer',[ownerAddress,zeroAddress])}).catch(()=>null);
+          await guard();
+          if(!logs||logs.length>256)complete=false;
+          else for(const log of logs){
+            if(log.removed||log.blockNumber<fromBlock||log.blockNumber>Number(block.number))throw new Error('Position burn history changed.');
+            const id=BigInt(log.topics[3]);
+            decodeCurrentPoolNftTransfer([log],nft,ownerAddress,zeroAddress,id);
+            burned.add(id);
+          }
+        }
+        for(const positionId of [...inventory.positionIds,...burned]){
           const state=(await call(abi,candidate.core,'poolPublicState',[positionId],block))[0];
           if(state.status===0n){
             if([state.sourceId,state.bucket0Id,state.bucket1Id,state.positionRevision,state.ownershipRevision,state.lifecycleRevision,state.termsRevision].some(value=>value!==0n))
               throw new Error('Unsupported owner position state.');
             continue;
           }
-          const verified=await publicState(positionId,block);
+          const verified=await publicState(positionId,block,burned.has(positionId));
+          if(burned.has(positionId)&&verified.status!==4n)throw new Error('Burned Pool position is not closed at the selected block.');
           positions.push(Object.freeze({positionId,status:verified.status,context:verified.context}));
         }
         await guard();
         const canonical=await readProvider.send('eth_getBlockByNumber',[`0x${block.number.toString(16)}`,false]);await guard();
         if(!canonical||BigInt(canonical.number)!==block.number||!same(canonical.hash,block.hash))throw new Error('Position inventory chain head changed. Refresh positions.');
         await checkGraph(block);
-        return Object.freeze({positions:Object.freeze(positions),block,complete:inventory.complete,readyToSign:false as const});
+        return Object.freeze({positions:Object.freeze(positions),block,complete,readyToSign:false as const});
       }, prepareAction: async (request: {
       positionId:bigint;expectedContext:string;action:CurrentPoolOwnerAction;
       producerHash?:string;

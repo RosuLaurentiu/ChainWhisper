@@ -260,12 +260,13 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       return result;
     }
     // A public receipt cannot clear a prior private-proof failure or recreate its baseline.
+    const closed=canonical.status===1&&action==='close'?{closedPositionId:decoded[0] as bigint}:{};
     if(retain||pending.verificationBlocked||pending.poolTopUpHash)return Object.freeze({status:canonical.status===0?'observed-reverted-verification-held' as const:'observed-mined-verification-held' as const,
-      transactionHash:pending.txHash,positionId:decoded[0] as bigint,independentRefresh:retain,phase:pending.phase,poolTopUpHash:pending.poolTopUpHash,verificationFailure:pending.verificationFailure,verificationBlocked:true as const,privateAccountingVerified:false as const,readyToSign:false as const});
+      ...closed,transactionHash:pending.txHash,positionId:decoded[0] as bigint,independentRefresh:retain,phase:pending.phase,poolTopUpHash:pending.poolTopUpHash,verificationFailure:pending.verificationFailure,verificationBlocked:true as const,privateAccountingVerified:false as const,readyToSign:false as const});
     clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,pending.txHash));
     const key=`${pending.phase}:${pending.callHash}`;if(canonical.status===0)keys!.delete(key);else keys!.add(key);
     return Object.freeze({status:canonical.status===0?'observed-reverted' as const:'observed-mined' as const,
-      transactionHash:pending.txHash,phase:pending.phase,privateAccountingVerified:false as const,readyToSign:false as const});
+      ...closed,transactionHash:pending.txHash,phase:pending.phase,privateAccountingVerified:false as const,readyToSign:false as const});
   };
   return Object.freeze({submitPoolPositionAction,recoverCurrentPreparedPoolPositionResult,recoverCurrentNativePoolPositionResult,
     recoverPendingPoolPositionAttempt:async(verifySnapshot?:SnapshotVerifier)=>{

@@ -47,7 +47,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const [id,setId]=useState(''),[percentage,setPercentage]=useState('50'),[minimum0,setMinimum0]=useState('0'),[minimum1,setMinimum1]=useState('0'),[recipient,setRecipient]=useState('');
   const [busy,setBusy]=useState(false),[blocked,setBlocked]=useState(false),[message,setStoredMessage]=useState('');
   const messageScope=useRef<object|null>(null);
-  const [snapshot,setSnapshot]=useState<{value:Snapshot;scope:object}|null>(null);
+  const [snapshot,setSnapshot]=useState<{value:Snapshot;scope:object;closePayoutVerified?:boolean}|null>(null);
   const [pending,setPending]=useState<{recover:()=>Promise<PositionResult>;scope:object;snapshot?:boolean}|null>(null);
   const [transactionHash,setTransactionHash]=useState('');
   const [producerHash,setProducerHash]=useState('');
@@ -99,7 +99,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       const value=await capability.readPosition(selectedId??parseCurrentTrialAtoms(id,true),selectedId?undefined:
         signedSnapshot&&producerHash.trim()?{producerHash:producerHash.trim()}:undefined);assertScope(captured);
       if('producerHash'in value&&typeof value.producerHash==='string')setProducerHash(value.producerHash);
-      setSnapshot({value,scope:captured});setMessage(value.status===3n?'Activate privacy to manage this received position.':
+      setSnapshot({value,scope:captured});setMessage(value.status===4n?'Position closed.':value.status===3n?'Activate privacy to manage this received position.':
         value.amounts?'Owner private claim verified at the canonical block.':'Refresh private state to see your amounts.');
     }catch(error){fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
   };
@@ -210,13 +210,25 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       if(!prepared){setMessage('Position action cancelled.');return;}
       const sender:Sender=await getSender!(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:nativeTrial?{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE}:undefined);assertScope(captured);setBlocked(true);
       const sent=await sender.submitPoolPositionAction(prepared);
+      assertScope(captured);
       setPending({recover:sent.recover,scope:captured});setTransactionHash(sent.transactionHash);setMessage('Position action submitted. Check its authenticated result before another action.');
+      if(action==='close'&&preparedCandidate){
+        setMessage('Close submitted. Checking confirmation.');
+        const mined=await sender.waitForCurrentCheapReceipt(sent.transactionHash);assertScope(captured);
+        if(!mined){setMessage('Close confirmation is pending. Check position status.');return;}
+        const metadata=await capability.readPosition(before.positionId,{metadataOnly:true});assertScope(captured);
+        if(metadata.status===4n){
+          setSnapshot({value:metadata,scope:captured});setOwnedRefresh(sent.transactionHash);setProducerHash('');
+        }
+        const result=await sent.recover();assertScope(captured);
+        if(!acceptPrivateResult(result,captured))setMessage('Check position status to finish verifying the transaction.');
+      }
     }catch(error){fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
   };
   const acceptPrivateResult=(result:PositionResult|null,captured:object)=>{
     if(!result)return false;
     assertScope(captured);setPending(null);setBlocked(false);
-    if('snapshot' in result&&result.snapshot)setSnapshot({value:result.snapshot,scope:captured});else setSnapshot(null);
+    if('snapshot' in result&&result.snapshot)setSnapshot({value:result.snapshot,scope:captured,closePayoutVerified:'status' in result&&result.status==='closed-proof-verified'});else setSnapshot(null);
     setId(result.positionId.toString());
     if(result.action==='close')setOwnedRefresh(result.transactionHash);
     if('status' in result&&result.status==='exit-preview-verified'){
@@ -255,13 +267,14 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
       if(saved?.txHash)setTransactionHash(saved.txHash);
       const snapshotHeld=saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&currentDexPendingStorage(recordScope)?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null;
-      if(!snapshotHeld&&pending&&pending.scope===scope.current){
+      const ownerHeld=saved?.phase==='pool-owner'&&saved.verificationBlocked===true;
+      if(!snapshotHeld&&!ownerHeld&&pending&&pending.scope===scope.current){
         const result=await pending.recover();
         if(!result)throw new Error('Private position result is not available yet.');
         acceptPrivateResult(result,pending.scope);return;
       }
       const sender=await getSender(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:nativeTrial?{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE}:undefined);assertScope(captured);
-      if(!snapshotHeld&&preparedCandidate){const result=await sender.recoverCurrentPreparedPoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
+      if(!snapshotHeld&&!ownerHeld&&preparedCandidate){const result=await sender.recoverCurrentPreparedPoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
       if(!snapshotHeld&&nativeTrial){const result=await sender.recoverCurrentNativePoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
       const verifySnapshot=privacyReady&&getPositions&&usesTransactionScopedPoolSnapshots(candidate)?
         async(positionId:bigint,hash:string)=>{assertScope(captured);setTransactionHash(hash);
@@ -281,6 +294,20 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       if(observed&&'action'in observed){if(acceptPrivateResult(observed,captured))return;}
       if(!observed){setBlocked(false);setMessage('No pending position attempt was found.');return;}
       if('transactionHash' in observed&&observed.transactionHash)setTransactionHash(observed.transactionHash);
+      if(observed.status==='manual-reconciliation-required'&&'verificationBlocked' in observed&&observed.verificationBlocked){
+        setBlocked(true);setMessage(`Private accounting needs manual reconciliation before a new deposit. ${currentPoolVerificationMessage(observed.verificationFailure)}`);return;
+      }
+      if('closedPositionId' in observed&&observed.closedPositionId!==undefined&&getPositions&&preparedScope){
+        const positionId=observed.closedPositionId;
+        const held=observed.status==='observed-mined-verification-held';
+        setId(positionId.toString());setOwnedRefresh(observed.transactionHash);setPending(null);setBlocked(held);setProducerHash('');setSnapshot(null);
+        const capability=await getPositions(BigInt(candidate.chainId),{candidate:preparedScope.key});assertScope(captured);
+        const closed=await capability.readPosition(positionId,{metadataOnly:true});assertScope(captured);
+        if(closed.status!==4n)throw new Error('Close receipt and current position status differ.');
+        setSnapshot({value:closed,scope:captured});
+        setMessage(held?'Position closed. An earlier verification failure still needs reconciliation.':'Position closed. The original private payout has not been independently verified in this session.');
+        return;
+      }
       if(observed.status==='observed-mined-verification-held'||observed.status==='observed-reverted-verification-held'){
         setBlocked(true);
         if(observed.independentRefresh){setMessage('The new refresh needs private verification. Both saved records remain. Do not resend or request another refresh.');return;}
@@ -317,7 +344,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
     </section><section className="dex-owner-detail" aria-label="Position details">
     <header className="dex-owner-heading"><h2>{managementNavigation&&id?`Position #${id}`:'Position details'}</h2></header>
-    {blocked||savedActionPending?<p role="note">{independentRefresh?'The old verification hold remains. You may review a new paid private refresh; spending actions stay locked. The old transaction will not be resent.':'A transaction is pending or needs verification. Viewing does not complete transaction verification. Actions remain locked. Do not resend.'}</p>:null}
+    {blocked||savedActionPending?<p role="note">{value?.status===4n?'Position closed. Use Check position status to reconcile the outstanding transaction before another verification request.':independentRefresh?'The old verification hold remains. You may review a new paid private refresh; spending actions stay locked. The old transaction will not be resent.':'A transaction is pending or needs verification. Viewing does not complete transaction verification. Actions remain locked. Do not resend.'}</p>:null}
     {!id?<p className="dex-owner-selection-empty">Select a position to see its details.</p>:null}
     {signedSnapshot&&(!ownedDiscovery||id)?<>{!ownedDiscovery?<p>{preparedCandidate?'Use an owned claim NFT and its confirmed funding or snapshot transaction. Private reads require its current owner proof.':'Use the new NFT ID from Add liquidity. Only that admitted claim can refresh or exit in this trial.'}</p>:null}
       <button type="button" disabled={!connected||busy||(blocked||savedActionPending)&&!independentRefresh||topUpOpen||!id||(current&&(snapshot?.value.status===3n||snapshot?.value.status===4n&&!!snapshot.value.amounts))} onClick={()=>{void produceSnapshot();}}>
@@ -325,11 +352,12 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     {value&&!topUpOpen?<aside className="dex-v2-strategy-preview dex-owner-summary" aria-label="Owner private liquidity claim"><header><h2>Position #{value.positionId.toString()}</h2></header>
       <dl>{tokens?<div><dt>Token pair</dt><dd>{labels[0]} / {labels[1]}</dd></div>:null}
         <div><dt>Status</dt><dd>{['None','Active','Paused','Awaiting privacy activation','Closed'][Number(value.status)]}</dd></div>
+        {value.status===4n?<div><dt>Private verification</dt><dd>{!value.amounts?'Closed-claim snapshot pending':snapshot?.closePayoutVerified?'Payout and zero remaining shares verified':'Closed snapshot verified. Original payout not independently verified in this session.'}</dd></div>:null}
         {value.amounts?<><div><dt>Pool spread</dt><dd>{CURRENT_POOL_SPREADS[Number(value.amounts.classId)]}%</dd></div>
           <div><dt>Private shares</dt><dd>{value.amounts.shares.toString()}</dd></div>
           <div><dt>{labels[0]} {value.status===4n?'paid out':'entitlement'}</dt><dd>{format(value.amounts.amount0,0)}</dd></div><div><dt>{labels[1]} {value.status===4n?'paid out':'entitlement'}</dt><dd>{format(value.amounts.amount1,1)}</dd></div>
           {rate!==null?<div><dt>Approximate Pool rate (snapshot)</dt><dd>{rate}</dd></div>:null}
-          </>:null}</dl>{rate!==null?<p>Derived from your private entitlements at the last verified snapshot. Integer rounding can affect this rate. It excludes spread, fees and price impact and is not a live quote.</p>:null}{!value.amounts?<p>Private amounts are unavailable. {pending?.scope===scope.current&&pending.snapshot?'The submitted snapshot is pending verification. Do not request another.':value.status===3n?'Activate claim privacy to continue.':'Review a paid private refresh to verify them.'}</p>:null}</aside>:null}
+          </>:null}</dl>{rate!==null?<p>Derived from your private entitlements at the last verified snapshot. Integer rounding can affect this rate. It excludes spread, fees and price impact and is not a live quote.</p>:null}{!value.amounts?<p>{pending?.scope===scope.current&&pending.snapshot?'The submitted snapshot is pending verification. Do not request another.':value.status===4n?'Private verification is pending. A separate paid snapshot checks the closed claim and zero remaining shares. It does not withdraw funds again.':value.status===3n?'Activate claim privacy to continue.':'Private amounts are unavailable. Review a paid private refresh to verify them.'}</p>:null}</aside>:null}
     {value&&preparedCandidate&&!exitCandidate?<p>{
       'Partial withdrawal and transfer integration is incomplete.'} Close and top-up require exact accounting checks and a separate paid snapshot.</p>:null}
     {value&&preparedCandidate&&value.status===1n&&value.amounts&&producerHash&&value.poolTokens&&sharedWalletSession?<details className="dex-owner-action" name="pool-owner-actions" open={topUpOpen||undefined}><summary>Add liquidity</summary><CurrentPreparedPoolTopUpWorkspace

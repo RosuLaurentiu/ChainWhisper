@@ -7,6 +7,7 @@ import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } fro
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY } from '../../../lib/currentDexC1SwapPolicy';
 import type { SharedWalletSession } from '../../../lib/walletSession';
+import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 import { currentDexMarketReference, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import { readCurrentDexDailyPrice } from '../../../lib/currentDexDailyPrice';
 import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../../../tests/fixtures/history.fixture';
@@ -76,6 +77,19 @@ function fundingFixture() {
   return { ...f, scope, pair, funding, sender, prepared, recover, outcome, tokens };
 }
 describe('prepared Pool creation view', () => {
+  if(key==='cheap-history')it('opens position recovery for a saved owner action and enables deposit preview after reconciliation',()=>{
+    const f=fixture(), open=vi.fn();
+    Object.assign(f.props,{onOpenPositions:open});
+    hooks.states[0]='1';hooks.states[1]='1';hooks.states[2]='2';
+    let saved:string|null=JSON.stringify({version:1,chainId:String(candidate.chainId),owner,core:candidate.core.toLowerCase(),
+      graph:'0x'+candidate.graph,phase:'pool-owner',nonce:12,txHash:'0x'+'33'.repeat(32),callHash:'0x'+'44'.repeat(32)});
+    vi.stubGlobal('window',{sessionStorage:{getItem:(k:string)=>k===CURRENT_DEX_PENDING_ATTEMPT_KEY?saved:null}});
+    expect(f.button('Preview deposit').props.disabled).toBe(true);
+    f.button('Open position recovery').props.onClick!();
+    expect(open).toHaveBeenCalledOnce();expect(f.getSender).not.toHaveBeenCalled();
+    saved=null;
+    expect(f.button('Preview deposit').props.disabled).toBe(false);
+  });
   it('keeps blank and locked deposit reviews disabled without wallet calls', () => {
     const f = fixture();
     expect(f.button('Preview deposit').props.disabled).toBe(true);
