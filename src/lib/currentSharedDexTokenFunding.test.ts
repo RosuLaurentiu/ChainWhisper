@@ -4,7 +4,10 @@ import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { getAddress, keccak256, toBeHex } from '@coti-io/coti-ethers';
 import { createCurrentSharedDexTokenFundingAdapter, assertCurrentSharedTokenFundingAppAuthority, currentSharedTokenFundingAbi as abi,
   assertCurrentSharedPoolApprovalPrepared, type CurrentSharedTokenFundingAction } from './currentSharedDexTokenFunding';
-import { CURRENT_SHARED_TOKEN_DISTRIBUTION as policy, CURRENT_SHARED_DEX_TOKENS, resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
+import { CURRENT_SHARED_TOKEN_DISTRIBUTION, CURRENT_SHARED_DEX_TOKENS, resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
+// An earlier Core identity with the same vault and token rules. Until decision-034 the module defaults were the
+// 85767 prepared Core; a changed identity now stands for it.
+const policy = { ...CURRENT_SHARED_TOKEN_DISTRIBUTION, core: `0x${'5a'.repeat(20)}`, graph: '5b'.repeat(32), packageSha256: '5c'.repeat(32) };
 import { readCurrentDexPendingAttempt, reserveCurrentDexPendingAttempt, CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY, currentDexScopedRecordKey } from './currentDexPendingAttempt';
 import { currentTokenFundingAbi as approvalAbi } from './currentDexTokenFunding';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './dexV2Deployment';

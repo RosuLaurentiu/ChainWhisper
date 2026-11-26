@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import CurrentSharedTestTokenControls, { sharedTokenFundingConfirmation } from './CurrentSharedTestTokenControls';
 import { readCurrentSharedDexTestTokens } from '../../../lib/appChain';
 import type { SharedWalletSession } from '../../../lib/walletSession';
-import { CURRENT_SHARED_DEX_TOKENS, CURRENT_SHARED_TOKEN_DISTRIBUTION as p, resolveCurrentSharedTokenDistribution } from '../../../lib/currentSharedDexTokenDistribution';
+import { CURRENT_SHARED_DEX_TOKENS, CURRENT_SHARED_TOKEN_DISTRIBUTION, resolveCurrentSharedTokenDistribution } from '../../../lib/currentSharedDexTokenDistribution';
+// An earlier Core identity with the same vault and token rules. Until decision-034 the module defaults were the
+// 85767 prepared Core; a changed identity now stands for it.
+const p = { ...CURRENT_SHARED_TOKEN_DISTRIBUTION, core: `0x${'5a'.repeat(20)}`, graph: '5b'.repeat(32), packageSha256: '5c'.repeat(32) };
 import type { CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 const hooks = vi.hoisted(() => ({ enabled: false, stateIndex: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[] }));
 vi.mock('react', async original => { const actual = await original<typeof import('react')>(); return { ...actual,

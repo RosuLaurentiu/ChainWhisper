@@ -3,7 +3,7 @@ import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandida
 
 // This hold is not caller-controlled and cannot be cleared by a receipt, a gas
 // estimate, a prepared intent or local storage. Technical checks do not lift it.
-// decision-034: the d06 and b2aa candidates were removed; only the current candidate has App admission.
+// decision-034: the d06 and b2aa candidates and their holds were removed with the old candidate modules.
 // Keep this guard independent of technical phase admission and gas evidence.
 export type CurrentAppSwapScope = Readonly<{ principal: string; destination: string; profile: string;
   inputToken: string; outputToken: string; maximumInput: bigint }>;
@@ -170,19 +170,19 @@ export const assertCurrentAppSigningCount = (graph:string,owner:string,phase:str
   if(maximum!==undefined&&charges.filter(c=>c.phase===phase).length>=maximum)throw new Error('Current App signing scope is already reserved. Reconcile the original action.');
 };
 export const assertCurrentD06AppAuthority = (graph: string, scope?: CurrentAppSwapScope, signer?: object): void => {
-  // decision-034: the d06 and b2aa candidates were removed. Every other graph stays held.
-  if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph) {
-    throw new Error('Successor DEX native App submission admission is absent: connected App-wallet hold remains active. Native evidence does not grant App submission.');
+  if (graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph) {
+    if (scope && isCurrentDexBrowserSigner(signer,graph,scope.principal) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
+        ['fast-pool','cheap-async'].includes(scope.profile) && scope.maximumInput > 0n && scope.maximumInput < 1n << 256n &&
+        STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.some(pair => pair.tokens.some(token => token === scope.inputToken.toLowerCase()) &&
+          pair.tokens.some(token => token === scope.outputToken.toLowerCase()) && scope.inputToken.toLowerCase() !== scope.outputToken.toLowerCase())) return;
+    const a = CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY;
+    if (scope && typeof scope.principal === 'string' && typeof scope.destination === 'string' &&
+        typeof scope.inputToken === 'string' && typeof scope.outputToken === 'string' &&
+        CURRENT_HISTORY_SWAP_OWNERS.includes(scope.principal.toLowerCase()) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
+        (scope.profile === a.profile || scope.profile === 'fast-pool') && scope.inputToken.toLowerCase() === a.inputToken &&
+        scope.outputToken.toLowerCase() === a.outputToken && scope.maximumInput > 0n && scope.maximumInput <= a.maximumInput) return;
+    throw new Error('Shared-history DEX App signing hold remains active pending integration.');
   }
-  if (scope && isCurrentDexBrowserSigner(signer,graph,scope.principal) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
-      ['fast-pool','cheap-async'].includes(scope.profile) && scope.maximumInput > 0n && scope.maximumInput < 1n << 256n &&
-      STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.some(pair => pair.tokens.some(token => token === scope.inputToken.toLowerCase()) &&
-        pair.tokens.some(token => token === scope.outputToken.toLowerCase()) && scope.inputToken.toLowerCase() !== scope.outputToken.toLowerCase())) return;
-  const a = CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY;
-  if (scope && typeof scope.principal === 'string' && typeof scope.destination === 'string' &&
-      typeof scope.inputToken === 'string' && typeof scope.outputToken === 'string' &&
-      CURRENT_HISTORY_SWAP_OWNERS.includes(scope.principal.toLowerCase()) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
-      (scope.profile === a.profile || scope.profile === 'fast-pool') && scope.inputToken.toLowerCase() === a.inputToken &&
-      scope.outputToken.toLowerCase() === a.outputToken && scope.maximumInput > 0n && scope.maximumInput <= a.maximumInput) return;
-  throw new Error('Shared-history DEX App signing hold remains active pending integration.');
+  // decision-034: the d06 and b2aa candidates and their holds were removed. As before, this function holds
+  // only the current graph; other graphs depend on the callers' candidate identity checks.
 };

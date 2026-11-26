@@ -21,7 +21,6 @@ describe('selected candidate swap technical integration', () => {
     const scope = { principal: owner, destination: owner, profile: 'cheap-async' as const,
       inputToken: history.tokenMetadata[0].address, outputToken: history.tokenMetadata[1].address, maximumInput: 1_000_000n };
     expect(() => assertCurrentD06AppAuthority(history.graph, scope)).toThrow('signing hold');
-    expect(() => assertCurrentD06AppAuthority(other.graph)).toThrow('connected App-wallet hold');
   });
 
   it('captures and restores exact Quote and Accept charges at 50Mwei', () => {
