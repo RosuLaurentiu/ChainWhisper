@@ -25,6 +25,34 @@ afterEach(()=>{hooks.enabled=false;hooks.states=[];hooks.refs=[];vi.restoreAllMo
 const elements=(node:ReactNode):ReactElement<{children?:ReactNode;disabled?:boolean;onClick?:()=>void}>[]=>Array.isArray(node)?node.flatMap(elements):isValidElement<{children?:ReactNode}>(node)?[node,...elements(node.props.children)]:[];
 const text=(node:ReactNode):string=>Array.isArray(node)?node.map(text).join(''):isValidElement<{children?:ReactNode}>(node)?text(node.props.children):typeof node==='string'||typeof node==='number'?String(node):'';
 describe('current liquidity NFT controls',()=>{
+  it('shows the owner review for the exact held preview without loading a position',async()=>{
+    hooks.enabled=true;
+    const c=STAGED_SHARED_HISTORY_DEX_CANDIDATE,owner='0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d';
+    const saved=JSON.stringify({version:1,chainId:c.chainId,owner,core:c.core,graph:`0x${c.graph}`,
+      phase:'pool-preview',callHash:'0x7d97428b902a35aac58e004dc55f6e436d008001883e547dbfc10f8ed19456c0',nonce:508,txHash:null});
+    const records=new Map([[CURRENT_DEX_PENDING_ATTEMPT_KEY,saved]]);
+    vi.stubGlobal('window',{sessionStorage:{getItem:(key:string)=>records.get(key)??null,
+      setItem:(key:string,value:string)=>records.set(key,value),removeItem:(key:string)=>records.delete(key)}});
+    const releaseReviewedPoolPreview=vi.fn(async(confirm:()=>Promise<boolean>)=>{
+      if(!await confirm())return false;
+      records.delete(CURRENT_DEX_PENDING_ATTEMPT_KEY);
+      return true;
+    });
+    const getPositions=vi.fn();
+    const session={walletAddress:owner,chainId:Number(c.chainId),browserProvider:{request:vi.fn()},
+      sessionOnboardInfo:{[owner]:{aesKey:'synthetic-only'}},walletAesHealthByAddress:{[owner]:{status:'ready-unverified',updatedAt:0,walletKey:owner}},
+      actions:{getCurrentDexPoolPositionCapability:getPositions,getCurrentDexSubmissionCapability:async()=>({releaseReviewedPoolPreview})}
+    } as unknown as SharedWalletSession;
+    const render=()=>{hooks.index=0;hooks.refIndex=0;return CurrentPoolPositionsWorkspace({sharedWalletSession:session,candidateKey:'cheap-history'});};
+    const review=elements(render()).find(x=>x.type==='button'&&text(x.props.children)==='Review one-time recovery');
+    expect(review?.props.disabled).toBe(false);
+    expect(releaseReviewedPoolPreview).not.toHaveBeenCalled();
+    review!.props.onClick!();
+    await vi.waitFor(()=>expect(text(render())).toContain('Failed preview released.'));
+    expect(getPositions).not.toHaveBeenCalled();
+    expect(releaseReviewedPoolPreview).toHaveBeenCalledOnce();
+    expect(text(render())).not.toContain('Review one-time recovery');
+  });
   it('directs a saved Pool preview to its funding form instead of position recovery',()=>{
     const c=STAGED_SHARED_HISTORY_DEX_CANDIDATE,owner=`0x${'22'.repeat(20)}`;
     const saved=JSON.stringify({version:1,chainId:c.chainId,owner,core:c.core,graph:`0x${c.graph}`,

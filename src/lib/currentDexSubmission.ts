@@ -49,7 +49,8 @@ import { assertCurrentSharedPoolIssuedQuote, assertCurrentSharedPoolPreparedQuot
 import { blockCurrentSwapVerification, blockCurrentDexOperationVerification, clearCurrentDexOperationLookup,
   readCurrentDexOperationLookups, recordCurrentDexOperationLookup,
   clearCurrentDexPendingAttempt, currentDexPendingStorage, readCurrentDexPendingAttempt,
-  recordCurrentDexPendingHash, reserveCurrentDexPendingAttempt, advanceCurrentPoolTopUpAttempt, heldPoolSnapshotRefreshEligible, markCurrentDexPendingWalletRejected, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
+  recordCurrentDexPendingHash, reserveCurrentDexPendingAttempt, advanceCurrentPoolTopUpAttempt, heldPoolSnapshotRefreshEligible, markCurrentDexPendingWalletRejected,
+  archiveReviewedPoolPreview, isReviewedPoolPreview, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
 import { readCurrentDexNativeReload, writeCurrentDexNativeReload, type CurrentDexNativeReloadRecord } from './currentDexNativeReload';
 import { recoverCurrentPartialLedger, releaseCurrentNativeSwapCharge } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY, CURRENT_APP_PARTIAL_REFUND_TRIAL, currentPartialLedgerRecoveryAllowed, hasCurrentPartialRefundProof } from './currentDexC1SwapPolicy';
@@ -500,16 +501,18 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     }
     return resources;
   };
-  // decision-033. Runs only for a saved record that carries the wallet rejection fact and no hash.
+  // decision-033 and CW-129. Both paths require the current browser wallet and a fresh nonce check.
   // It signs nothing and sends nothing. Any failed check leaves the record in place.
-  const releaseUnsent = async (browserSigner: object | undefined): Promise<boolean> => {
+  const releaseUnsent = async (browserSigner: object | undefined, review?: () => Promise<boolean>): Promise<boolean> => {
     const saved = pending();
-    if (!saved || saved.txHash !== null || saved.walletRejected !== true) return false;
+    if (review && !isReviewedPoolPreview(saved)) throw new Error('The saved preview does not match the one-time recovery.');
+    if (!saved || saved.txHash !== null || (!review && saved.walletRejected !== true)) return false;
     if (saved.chainId !== chainId.toString() || saved.owner !== owner.toLowerCase() || saved.core !== core.toLowerCase() ||
         saved.graph !== `0x${c.graph}`.toLowerCase())
       throw new Error('The saved action belongs to another wallet, network or contract. Restore that session to check it. Do not resend.');
-    if (!releaseReservation || heldSnapshot || saved.poolTopUpHash !== undefined || !isCurrentDexBrowserSigner(browserSigner, c.graph, owner) ||
+    if (!storage || !releaseReservation || heldSnapshot || saved.poolTopUpHash !== undefined || !isCurrentDexBrowserSigner(browserSigner, c.graph, owner) ||
         !transport.readNativeResources) throw new Error('Release of an unsent action needs the current browser wallet session.');
+    if (review && !await review()) return false;
     const head = await currentHead(undefined, UNSENT_RELEASE_HEAD_GAS_CAP);
     const resources = await transport.readNativeResources(head);
     await transport.assertCurrent();
@@ -522,7 +525,8 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     await transport.assertCurrent();
     const current = pending();
     if (!current || JSON.stringify(current) !== JSON.stringify(saved)) throw new Error('Current DEX pending attempt changed; reconcile manually.');
-    clearCurrentDexPendingAttempt(storage, current);
+    if (review) archiveReviewedPoolPreview(storage, current);
+    else clearCurrentDexPendingAttempt(storage, current);
     return true;
   };
   const sendCurrent = async (phase: CurrentDexPendingAttempt['phase'], call: UnsignedTransaction, deadline: bigint | undefined,

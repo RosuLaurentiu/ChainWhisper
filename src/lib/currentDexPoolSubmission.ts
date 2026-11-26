@@ -254,6 +254,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         !['pool-preview','pool-fund'].includes(pending.phase))return null;
       const recover=fundingRecoveries.get(signer)?.get(`${pending.phase}:${pending.callHash}`);return recover?recover():null;
     },
+    releaseReviewedPoolPreview: (confirm: () => Promise<boolean>) => boundary.releaseUnsent(signer, confirm),
     recoverPendingPoolAttempt: async () => {
       await transport.assertCurrent();
       const pending = boundary.pending();

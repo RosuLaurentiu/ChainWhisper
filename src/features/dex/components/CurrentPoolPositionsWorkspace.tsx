@@ -23,7 +23,7 @@ import CurrentPreparedPoolTopUpWorkspace from './CurrentPreparedPoolTopUpWorkspa
 import CurrentOwnedPoolPositions from './CurrentOwnedPoolPositions';
 import { currentPoolVerificationMessage } from '../../../lib/currentDexPoolProofError';
 import { usesTransactionScopedPoolSnapshots } from '../../../lib/currentDexSnapshotAdmission';
-import { currentDexPendingStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
+import { currentDexPendingStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, isReviewedPoolPreview, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 type Capability=Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
 type Sender=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexSubmissionCapability']>>>;
 type PositionResult=Awaited<ReturnType<Awaited<ReturnType<Sender['submitPoolPositionAction']>>['recover']>>;
@@ -78,13 +78,15 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   const connected=Boolean(context.owner&&context.chain===Number(candidate.chainId)&&getPositions&&getSender&&context.provider);
   const savedActionPending=hasCurrentDexPendingAction(recordScope);
   const topUpOpen=topUpManagement?.scope===scope.current&&topUpManagement.id===id;
-  const poolFundingPending=(()=>{
-    if(!preparedCandidate||!savedActionPending)return false;
+  const savedFunding=(()=>{
+    if(!preparedCandidate||!savedActionPending)return null;
     try{
       const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
-      return saved?.phase==='pool-preview'||saved?.phase==='pool-fund';
-    }catch{return false;}
+      return saved?.phase==='pool-preview'||saved?.phase==='pool-fund'?saved:null;
+    }catch{return null;}
   })();
+  const poolFundingPending=!!savedFunding;
+  const reviewablePreview=isReviewedPoolPreview(savedFunding);
   const independentRefresh=(()=>{try{
     const storage=currentDexPendingStorage(recordScope);
     return candidateKey==='cheap-history'&&current&&snapshot.value.status===1n&&
@@ -268,6 +270,29 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     setMessage('payouts' in result&&result.payouts?.length?`Private payouts verified: ${CURRENT_DEX_POOL_LABELS[0]} ${formatCurrentDexTokenAmount(result.payouts[0])}; ${CURRENT_DEX_POOL_LABELS[1]} ${formatCurrentDexTokenAmount(result.payouts[1])}.`:
         `Position ${result.action} verified. Refresh before another action.`);return true;
   };
+  const reviewFailedPreview=async()=>{
+    if(!reviewablePreview||!privacyReady||!connected||!getSender||inFlight.current||busy)return;
+    const captured=scope.current;
+    inFlight.current=true;setBusy(true);setMessage('');
+    try{
+      const sender=await getSender(BigInt(candidate.chainId),{candidate:preparedScope!.key});assertScope(captured);
+      const released=await sender.releaseReviewedPoolPreview(async()=>{
+        assertScope(captured);
+        const confirmed=await requestConfirmation({
+          title:'Release the failed top-up preview',primaryLabel:'Release saved preview',fundingMoves:[],stats:[],
+          summaryRows:[{label:'Wallet nonce',value:String(savedFunding!.nonce)}],
+          message:'Continue only if MetaMask shows Failed with no transaction hash. The App checks the nonce again and preserves the original record. Release sends no transaction. A late wallet broadcast is still possible.'
+        });
+        assertScope(captured);
+        return confirmed;
+      });
+      assertScope(captured);
+      if(released){
+        setBlocked(hasCurrentDexPendingAction(recordScope));setTopUpManagement(null);
+        setMessage('Failed preview released. The original record is preserved. No transaction was sent.');
+      }
+    }catch(error){fail(error,captured);}finally{inFlight.current=false;setBusy(false);}
+  };
   const refresh=async()=>{
     if(!getSender||inFlight.current||busy||topUpOpen||context.chain!==Number(candidate.chainId))return;inFlight.current = true; setBusy(true);const captured=scope.current;
     try{
@@ -354,7 +379,10 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
     </section><section className="dex-owner-detail" aria-label="Position details">
     <header className="dex-owner-heading"><h2>{current?`Position #${id}`:'Position details'}</h2></header>
-    {poolFundingPending&&!topUpOpen?<p className="dex-owner-progress" role="note">A saved liquidity attempt needs a status check. For a top-up, select its position and open Add liquidity. For a new position, return to the pool creation form.</p>:
+    {reviewablePreview?<div className="dex-owner-progress">
+      <p>{privacyReady?'One-time recovery is available for the failed top-up preview.':'Unlock privacy to review the failed top-up preview.'}</p>
+      <button type="button" disabled={!connected||!privacyReady||busy} onClick={()=>{void reviewFailedPreview();}}>Review one-time recovery</button>
+    </div>:poolFundingPending&&!topUpOpen?<p className="dex-owner-progress" role="note">A saved liquidity attempt needs a status check. For a top-up, select its position and open Add liquidity. For a new position, return to the pool creation form.</p>:
       (blocked||savedActionPending)&&!topUpOpen?<p role="note">{value?.status===4n?'Position closed. Use Check position status to reconcile the outstanding transaction before another verification request.':independentRefresh?'The old verification hold remains. You may review a new paid private refresh; spending actions stay locked. The old transaction will not be resent.':'A transaction is pending or needs verification. Actions remain locked. Do not resend.'}</p>:null}
     {!id?<p className="dex-owner-selection-empty">Select a position to see its details.</p>:null}
     {signedSnapshot&&(!ownedDiscovery||id)?<>{!ownedDiscovery?<p>{preparedCandidate?'Use an owned claim NFT and its confirmed funding or snapshot transaction. Private reads require its current owner proof.':'Use the new NFT ID from Add liquidity. Only that admitted claim can refresh or exit in this trial.'}</p>:null}
