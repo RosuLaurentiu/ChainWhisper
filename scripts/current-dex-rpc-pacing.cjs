@@ -8,6 +8,9 @@ const { createRequire } = require('node:module');
 const endpoint = 'https://testnet.coti.io/rpc';
 const encode = value => new TextEncoder().encode(JSON.stringify(value));
 const decode = value => JSON.parse(new TextDecoder().decode(value));
+const c1BroadcastHeld = 'DEX_RPC_C1_BROADCAST_HELD';
+const c1Denials = new WeakMap(), c1BeforeTransport = new WeakSet(), c1Unbroadcast = new WeakMap();
+const c1BytesDigest = raw => createHash('sha256').update(raw.toLowerCase()).digest('hex');
 const managedServices = new WeakMap();
 // The platform default is the supported managed response ceiling, not each service's timeout.
 const managedResponseCeilingMs = new (require('ethers').FetchRequest)(endpoint).timeout;
@@ -185,6 +188,8 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
   assert.equal(typeof readBatches, 'boolean', 'DEX_RPC_BATCH_POLICY');
   const retry = checkRetryPolicy(options.retry ?? readRetry);
   const connections = typeof options.connections === 'function' ? options.connections : null;
+  const authorizeBroadcast = options.authorizeBroadcast;
+  assert(authorizeBroadcast===undefined||typeof authorizeBroadcast==='function','DEX_RPC_WRITE_POLICY');
   const managed = managedServices.has(admission);
   if (managed) gapMs = 0;
   let outstanding = 0;
@@ -261,6 +266,21 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
           const single = request.clone(); single.body = JSON.stringify(item);
           // Admission expiry does not consume the physical request's finite response budget.
           single.timeout = responseTimeoutMs;
+          if (broadcast && authorizeBroadcast) {
+            try {
+              const {params}=items[0];
+              assert(Array.isArray(params)&&params.length===1&&authorizeBroadcast(params[0])===true,c1BroadcastHeld);
+            } catch (error) {
+              const ticket=c1Denials.get(error);
+              if(ticket){
+                c1Denials.delete(error);
+                c1BeforeTransport.add(ticket);
+              }
+              throw Error(c1BroadcastHeld);
+            }
+            check();
+            admission?.assertCurrent(lease);
+          }
           const now = performance.now();
           if (last !== null) minimumGapMs = Math.min(minimumGapMs ?? Infinity, now - last);
           last = now; requests++; rpcCalls += items.length;
@@ -339,9 +359,9 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
       } catch (error) {
         const reason = code(error);
         if (!stopped) lastFailure = { code: reason, ...details(), ...cause() };
-        if (!invoked && ['DEX_RPC_QUEUE_TIMEOUT', 'DEX_RPC_CANCELLED'].includes(reason)) {
+        if (!invoked && ['DEX_RPC_QUEUE_TIMEOUT', 'DEX_RPC_CANCELLED', c1BroadcastHeld].includes(reason)) {
           if (reason === 'DEX_RPC_QUEUE_TIMEOUT' && !queueCounted) { expired++; queueCounted = true; }
-          if (reason === 'DEX_RPC_CANCELLED') cancelled++;
+          if (reason !== 'DEX_RPC_QUEUE_TIMEOUT') cancelled++;
           if (lease) admission.cancel(lease, reason === 'DEX_RPC_QUEUE_TIMEOUT');
           throw Error(reason);
         }
@@ -390,6 +410,42 @@ function createPacing(getUrl, gapMs = 500, checkSource = () => {}, admission = n
   };
 }
 
+function createC1BroadcastFence(){
+  let pending;
+  const digest=raw=>{
+    assert(typeof raw==='string'&&/^0x(?:[a-f0-9]{2})+$/i.test(raw),c1BroadcastHeld);
+    return c1BytesDigest(raw);
+  };
+  return {
+    async submit(raw, send, check){
+      assert(!pending&&typeof send==='function'&&typeof check==='function',c1BroadcastHeld);
+      const ticket={hash:digest(raw),check,used:false,authorized:false};
+      pending=ticket;
+      try{
+        const result=await send();
+        assert(ticket.authorized,c1BroadcastHeld);
+        return result;
+      }catch(error){
+        if(!c1BeforeTransport.has(ticket))throw error;
+        const refusal=Error(c1BroadcastHeld);
+        c1Unbroadcast.set(refusal,ticket.hash);
+        throw refusal;
+      }finally{pending=null;}
+    },
+    authorize(raw){
+      assert(pending&&!pending.used&&pending.hash===digest(raw),c1BroadcastHeld);
+      pending.used=true;
+      try{
+        pending.authorized=pending.check()===true;
+        if(pending.authorized)return true;
+      }catch{/* Publish a one-shot pre-transport mark for the exact ticket only. */}
+      const refusal=Error(c1BroadcastHeld);
+      c1Denials.set(refusal,pending);
+      throw refusal;
+    }
+  };
+}
+
 // CW-102: one keep-alive agent per service process. It counts new connections for the traffic record.
 function createAgent() {
   let created = 0;
@@ -399,13 +455,17 @@ function createAgent() {
   return { agent: new CountingAgent({ keepAlive: true, keepAliveMsecs: 1000, timeout: keepAliveIdleMs }), connections: () => created };
 }
 
-let active;
-function install(service) {
+let active, managedC1Queue;
+function install(service, rehearsal = false) {
   assert(['keeper', 'prices', 'matching', 'c1'].includes(service), 'DEX_RPC_SERVICE');
+  if (rehearsal) assert(service === 'c1' && process.connected && process.env.CHAINWHISPER_RPC_MANAGED_SERVICE === 'c1',
+    'DEX_RPC_CHILD_IDENTITY');
   if (active) { assert.equal(active.service, service, 'DEX_RPC_ONE_SERVICE_PER_PROCESS'); return; }
   const entry = path.join(__dirname, `current-dex-${service}.cjs`);
   const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-  const pins = [__filename, entry].map(file => [file, hash(file)]);
+  const sources = [__filename, entry];
+  if (rehearsal) sources.push(path.join(__dirname, 'current-dex-c1-rehearsal.cjs'));
+  const pins = sources.map(file => [file, hash(file)]);
   const check = () => pins.forEach(([file, digest]) => assert.equal(hash(file), digest, 'DEX_RPC_SOURCE_DRIFT'));
   const contractsRequire = createRequire(path.resolve(__dirname, '../../ChainWhisper Contracts V2/validation/package.json'));
   const classes = new Set([require('ethers').FetchRequest, contractsRequire('ethers').FetchRequest]);
@@ -418,19 +478,42 @@ function install(service) {
   const readUrl = FetchRequest.createGetUrlFunc({ agent }), sendUrl = FetchRequest.createGetUrlFunc();
   // Review L4: a broadcast never reuses a long-idle socket; it keeps the previous default agent.
   const getUrl = (request, signal) => (decode(request.body)?.method === 'eth_sendRawTransaction' ? sendUrl : readUrl)(request, signal);
+  let c1Fence;
   const pacing = createPacing(getUrl, service === 'keeper' ? 0 : service === 'c1' ? 334 : 500, check, admission,
-    service === 'keeper', { connections });
+    service === 'keeper', { connections, ...(service==='c1'?{authorizeBroadcast:raw=>!c1Fence||c1Fence.authorize(raw)}:{}) });
   // Process-wide: includes separate provider instances, polling and broadcasts.
   for (const cls of classes) cls.registerGetUrl(pacing.getUrl);
-  active = { service, pacing };
+  active = { service, pacing, bindC1Broadcast:()=>{
+    assert(service==='c1'&&managed==='c1'&&process.connected&&!c1Fence,'DEX_RPC_C1_MANAGED_REQUIRED');
+    c1Fence=createC1BroadcastFence();
+    return c1Fence.submit;
+  }};
 }
 const stats = () => active ? { service: active.service, ...active.pacing.stats() } : null;
-module.exports = { createPacing, createManagedAdmission, createAgent, install, stats, readRetry, keepAliveIdleMs };
+function bindC1Broadcast(){
+  assert(active&&!managedC1Queue,'DEX_RPC_C1_MANAGED_REQUIRED');
+  managedC1Queue=active.bindC1Broadcast();
+  return managedC1Queue;
+}
+const isManagedC1Broadcast=queue=>managedC1Queue!==undefined&&queue===managedC1Queue;
+function c1DispatchDenied(error,raw){
+  const hash=c1Unbroadcast.get(error);
+  if(hash===undefined||typeof raw!=='string'||hash!==c1BytesDigest(raw))return false;
+  c1Unbroadcast.delete(error);
+  return true;
+}
+module.exports = { createPacing, createManagedAdmission, createAgent, createC1BroadcastFence, bindC1Broadcast,
+  isManagedC1Broadcast, c1DispatchDenied, install, stats, readRetry, keepAliveIdleMs };
 
 // Node --require keeps historical, source-bound service entries unchanged.
-const selected = /^current-dex-(keeper|prices|matching|c1)\.cjs$/.exec(path.basename(process.argv[1] ?? ''));
+const selected = /^current-dex-(keeper|prices|matching|c1|c1-rehearsal)\.cjs$/.exec(path.basename(process.argv[1] ?? ''));
 if (selected && !['--check', '--inspect'].includes(process.argv[2])) {
   assert.equal(path.resolve(process.argv[1]), path.join(__dirname, `current-dex-${selected[1]}.cjs`), 'DEX_RPC_ENTRY');
-  install(selected[1]);
-  process.once('exit', () => console.log(JSON.stringify({ status: 'DEX_RPC_PACING_SUMMARY', ...stats() })));
+  const rehearsal = selected[1] === 'c1-rehearsal';
+  const bootstrap = rehearsal && ['--claim','--supervise','--supervise-standing'].includes(process.argv[2]);
+  if (!bootstrap) {
+    if (rehearsal) assert(['--rehearse','--stand'].includes(process.argv[2]), 'DEX_RPC_ENTRY');
+    install(rehearsal ? 'c1' : selected[1], rehearsal);
+    process.once('exit', () => console.log(JSON.stringify({ status: 'DEX_RPC_PACING_SUMMARY', ...stats() })));
+  }
 }

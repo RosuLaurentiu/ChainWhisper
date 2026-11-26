@@ -7,8 +7,7 @@ const pacing = require('./current-dex-rpc-pacing.cjs');
 const root = path.resolve(__dirname, '../..');
 const service = path.join(root, 'ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/app-async-service');
 const cli = require(path.join(service, 'runtime/app-host-cli.cjs'));
-const { loadPublicBinding, captureFile, GRAPH } = require(path.join(service, 'public-binding.cjs'));
-const hostFile = path.join(service, `app-host-${GRAPH.slice(0, 8)}-23abde1d22019d52852d6845c9444326dde1d99e/HOST.json`);
+const { loadPublicBinding, captureFile, GRAPH, CORE } = require(path.join(service, 'public-binding.cjs'));
 const operatorField = 'CHAINWHISPER_TEST_DEX_MALLORY_PRIVATE_KEY';
 
 function readKey() {
@@ -20,7 +19,9 @@ function readKey() {
   return parseEnv(entries[0])[operatorField];
 }
 
-function hostConfiguration(requireSaved = false) {
+function hostConfiguration(requireSaved = false, graph = GRAPH) {
+  assert(/^[a-f0-9]{64}$/.test(graph) && (requireSaved || graph === GRAPH),'CURRENT_DEX_KEEPER_HOST_GRAPH');
+  const hostFile = path.join(service, `app-host-${graph.slice(0, 8)}-23abde1d22019d52852d6845c9444326dde1d99e/HOST.json`);
   if (!fs.existsSync(hostFile)) {
     assert(!fs.existsSync(path.dirname(hostFile)), 'CURRENT_DEX_KEEPER_HOST_RECOVERY_REQUIRED');
     if(requireSaved)return null;
@@ -40,7 +41,7 @@ function hostConfiguration(requireSaved = false) {
 async function main(args, onHost) {
   assert(Array.isArray(args) && args.length === 1 &&
     ['--check', '--start', '--once', '--reconcile'].includes(args[0]), 'CURRENT_DEX_KEEPER_USAGE');
-  if (args[0] === '--check') return cli.runCli(args);
+  if (args[0] === '--check') return { ...await cli.runCli(args), graph: GRAPH, core: CORE };
   const host = hostConfiguration();
   return cli.runCli([args[0], host.operator, host.startBlock.number, host.startBlock.hash],
     { readKey, ...(onHost ? { onHost } : {}) });

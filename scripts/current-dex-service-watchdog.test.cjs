@@ -3,7 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { CONFIG, classifyStop, checkGroupTraffic, restartDecision, feeCarry, buildApproval, seedState, tick, selfCheck } = require('./current-dex-service-watchdog.cjs');
+const fs = require('node:fs'), path = require('node:path');
+const { CONFIG, classifyStop, checkGroupTraffic, restartDecision, feeCarry, buildApproval, seedState, tick, selfCheck,
+  reconcileRehearsalStop, createWatchdog } = require('./current-dex-service-watchdog.cjs');
 
 const MIN = 60000, T0 = Date.parse('2026-11-18T10:00:00.000Z');
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
@@ -35,7 +37,7 @@ const cleanFacts = () => ({ locks: [], c1: { pendingHash: null, hashless: false,
   deltas: { keeper: '0', prices: '100', matching: '0', c1: '70' }, feeError: null,
   binding: { genesis: 'genesis', core: 'core', tokens: ['t1', 't2'], codeHashes: { core: 'hash:core', t1: 'hash:t1', t2: 'hash:t2' } } });
 
-function harness(change = {}) {
+function harness(change = {}, config = CONFIG) {
   const writes = [], calls = [];
   const h = {
     now: T0, unit: { ActiveState: 'failed', MainPID: '0', Restart: 'no' }, approvalText, group: stoppedGroup(),
@@ -49,16 +51,17 @@ function harness(change = {}) {
     disabled: () => Boolean(h.disabled),
     unitState: () => (h.unitAfterFirst && h.unitReads++ > 0 ? h.unitAfterFirst : h.unit),
     readBytes: file => {
-      if (file === CONFIG.approvalFile) return h.approvalReads !== undefined && h.approvalReads++ > 0 ? h.approvalLater : h.approvalText;
-      if (file === CONFIG.ownerApprovalFile) return JSON.stringify(h.owner);
-      if (file === CONFIG.installApprovalFile) return JSON.stringify(h.install);
-      if (file === groupPath) { if (!h.group) throw Object.assign(Error('missing'), { code: 'ENOENT' }); return h.groupReads !== undefined && h.groupReads++ > 0 ? JSON.stringify(h.groupLater) : JSON.stringify(h.group); }
+      if (file === config.approvalFile) return h.approvalReads !== undefined && h.approvalReads++ > 0 ? h.approvalLater : h.approvalText;
+      if (file === config.ownerApprovalFile) return JSON.stringify(h.owner);
+      if (file === config.installApprovalFile) return JSON.stringify(h.install);
+      if (file === config.standingFile && h.scopeText) return h.scopeReads++ > 0 && h.scopeLater ? h.scopeLater : h.scopeText;
+      if (file === config.runParent + '/server-beta-run-a/group.json') { if (!h.group) throw Object.assign(Error('missing'), { code: 'ENOENT' }); return h.groupReads !== undefined && h.groupReads++ > 0 ? JSON.stringify(h.groupLater) : JSON.stringify(h.group); }
       throw Error('unexpected read ' + file);
     },
     exists: file => h.existing.has(file),
     selfSha: () => 'watchdog-sha',
-    pinned: () => h.pinnedDrift ? { [CONFIG.runtimeRoot + '/runtime-public.json']: 'changed' } : {},
-    facts: input => { assert.deepEqual(input, { feesAfter: h.state.baselines['server-beta-run-a']?.feesAfter }); h.factCalls++; return structuredClone(h.factCalls > 1 && h.factsSecond ? h.factsSecond : h.facts); },
+    pinned: () => h.pinnedDrift ? { [config.runtimeRoot + '/runtime-public.json']: 'changed' } : {},
+    facts: input => { assert.deepEqual(input, { feesAfter: h.state.baselines['server-beta-run-a']?.feesAfter, ...(h.scope ? {scope: h.scope} : {}) }); h.factCalls++; return structuredClone(h.factCalls > 1 && h.factsSecond ? h.factsSecond : h.facts); },
     recheck: input => { h.rechecks = (h.rechecks ?? 0) + 1; const f = h.recheckFacts ?? h.facts; return structuredClone({ locks: f.locks, c1: f.c1, price: f.price, journals: input.journals.map(j => ({ ...j, sha256: h.journalChange?.[j.path] ?? j.sha256 })) }); },
     keccak: codes => codes.map(code => 'hash:' + code.replace('code:', '')),
     rpc: async (method, params) => {
@@ -67,16 +70,18 @@ function harness(change = {}) {
       if (method === 'eth_gasPrice') return '0x' + h.gasPrice.toString(16);
       if (method === 'eth_getBlockByNumber') return params[0] === '0x0' ? { hash: h.genesis ?? 'genesis' } : { number: '0x10', hash: 'head', timestamp: '0x' + Math.floor((h.headTime ?? h.now) / 1000).toString(16), baseFeePerGas: '0x7' };
       if (method === 'eth_getCode') return 'code:' + (h.codeSwap?.[params[0]] ?? params[0]);
-      const actor = Object.entries(CONFIG.actors).find(([, a]) => a.address === params[0]);
+      const actor = Object.entries(config.actors).find(([, a]) => a.address === params[0]);
       const [latest, pending, balance] = h.chain[actor[0]];
       if (method === 'eth_getTransactionCount') return '0x' + BigInt(params[1] === 'pending' ? pending : latest).toString(16);
-      if (method === 'eth_getBalance') return '0x' + (BigInt(CONFIG.actors[actor[0]].reserveFloorWei) + BigInt(balance)).toString(16);
+      if (method === 'eth_getBalance') return '0x' + (BigInt(config.actors[actor[0]].reserveFloorWei) + BigInt(balance)).toString(16);
       throw Error('unexpected rpc ' + method);
     },
     saveApprovalBefore: (runName, bytes) => { writes.push(['approval-before', runName, bytes]); },
     writeApproval: value => { writes.push(['approval', value]); },
-    readiness: () => h.readiness ?? { verifiedFiles: CONFIG.runtimeFiles, operatingApprovalValid: true, graph: CONFIG.graph, runtimeManifestSha256: CONFIG.runtimeManifestSha256,
-      runName: writes.findLast(w => w[0] === 'approval')?.[1].runName, priorSpentFeeWei: writes.findLast(w => w[0] === 'approval')?.[1].priorSpentFeeWei, issues: ['Private credentials are checked only inside the service credential namespace.'] },
+    readiness: () => h.readiness ?? { verifiedFiles: config.runtimeFiles, operatingApprovalValid: true, graph: config.graph, runtimeManifestSha256: config.runtimeManifestSha256,
+      runName: writes.findLast(w => w[0] === 'approval')?.[1].runName, priorSpentFeeWei: writes.findLast(w => w[0] === 'approval')?.[1].priorSpentFeeWei,
+      c1StandingSha256: h.scope?.approvalSha256, replacementBindingSha256: config.replacementBindingSha256,
+      issues: ['Private credentials are checked only inside the service credential namespace.'] },
     startUnit: () => { if (h.startThrows) throw Error('systemctl timeout'); writes.push(['start']); },
     readState: () => structuredClone(h.state),
     writeState: value => { h.state = structuredClone(value); writes.push(['state']); },
@@ -85,6 +90,169 @@ function harness(change = {}) {
   return { h, io };
 }
 const started = h => h.writes.some(w => w[0] === 'start');
+
+function standingHarness(profile = true) {
+  const watchdog = createWatchdog(profile), config = watchdog.CONFIG;
+  const {graph, replacementBindingSha256, runtimeManifestSha256} = config;
+  const operator = config.actors.c1.address, stream = '7082400:' + operator + ':' + graph;
+  const senderLock = {directory: '/test/lock', device: '1', inode: '2'};
+  const first = {senderLock, manifest: {operator, replacementBindingSha256, binding: {graph}, policy: {stream, totalWei: '323200000000000000'}}};
+  const initialBundleHash = sha(JSON.stringify(first)), standingInitialOperatorNonce = '40';
+  const scopeText = JSON.stringify({schema: 'CHAINWHISPER_C1_STANDING_APPROVAL_V1',
+    approvedByOwner: true, graph, runtimeManifestSha256, bindingSha256: replacementBindingSha256,
+    standingInitialOperatorNonce, firstBundle: {...first, hash: initialBundleHash}});
+  const c1StandingSha256 = sha(scopeText);
+  const approvalText = JSON.stringify({...oldApproval, graph, runtimeManifestSha256, c1StandingSha256});
+  const group = stoppedGroup({period: {graph, runtimeManifestSha256, c1StandingSha256, replacementBindingSha256,
+    approvalSha256: sha(approvalText), priorSpentFeeWei: '1000'}});
+  const {h, io} = harness({group, approvalText, scopeText, scopeReads: 0,
+    scope: {approvalSha256: c1StandingSha256, standingInitialOperatorNonce, stream, initialBundleHash, senderLock}}, config);
+  for (const [service, snapshot] of Object.entries(h.facts.accounting)) {
+    Object.assign(snapshot, {runtimeRoot: config.runtimeRoot, graph, replacementBindingSha256: service === 'c1' ? replacementBindingSha256 : config.peerBindingSha256,
+      ...(service === 'c1' ? {standingInitialOperatorNonce} : {})});
+    h.state.baselines['server-beta-run-a'].feesAfter[service] = structuredClone(snapshot);
+  }
+  return {h, io, watchdog};
+}
+
+test('build 13 restarts with the dedicated price payer and the correct binding for each worker', async () => {
+  const {h,io,watchdog}=standingHarness('build13');
+  const c=watchdog.CONFIG;
+  assert.notEqual(c.peerBindingSha256,c.replacementBindingSha256);
+  assert.equal(c.actors.prices.address,'0x3783e8ea60e37a6faddeb1578971d93ccbf29d0e');
+  assert.equal(c.runtimeFiles,1196);
+  const result=await watchdog.tick(io);
+  assert.equal(result.status,'WATCHDOG_RESTART_STARTED');
+  assert.equal(h.factCalls,2);
+});
+
+test('standing recovery keeps the sealed graph, reads accounting twice and carries one restart forward', async () => {
+  const {h, io, watchdog} = standingHarness();
+  const result = await watchdog.tick(io);
+  assert.equal(result.status, 'WATCHDOG_RESTART_STARTED');
+  assert.equal(result.carry, '1170');
+  assert.equal(h.factCalls, 2);
+  assert.equal(h.scopeReads, 2);
+  assert.equal(h.writes.filter(([kind]) => kind === 'start').length, 1);
+  const next = h.writes.find(([kind]) => kind === 'approval')[1];
+  assert.equal(next.c1StandingSha256, h.scope.approvalSha256);
+  assert.deepEqual(h.state.baselines[next.runName].nonces, {keeper: '10', prices: '23', matching: '30', c1: '44'});
+});
+
+test('standing recovery holds a wrong fee scope, a changed scope or a new journal before any start', async () => {
+  for (const [mutate, guard] of [
+    [h => {h.state.baselines['server-beta-run-a'].feesAfter.c1.standingInitialOperatorNonce = '41';}, 'WATCHDOG_C1_STANDING_FEES'],
+    [h => {h.scopeLater = h.scopeText + '\n';}, 'WATCHDOG_C1_STANDING_SCOPE'],
+    [h => {h.factsSecond = structuredClone(h.facts); h.factsSecond.accounting.c1.journals.push({path: 'new'});}, 'WATCHDOG_FACTS_CHANGED'],
+  ]) {
+    const {h, io, watchdog} = standingHarness();
+    mutate(h);
+    const result = await watchdog.tick(io);
+    assert.equal(result.status, 'WATCHDOG_HOLD');
+    assert.equal(result.guard, guard);
+    assert.equal(started(h), false);
+    assert.equal(h.writes.some(([kind]) => kind === 'approval'), false);
+  }
+});
+
+test('standing recovery pins the exact replacement controller and full window reserves', () => {
+  const {CONFIG: config} = createWatchdog(true);
+  const root = path.resolve(__dirname, '../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21');
+  const controller = path.join(root, 'window-b', 'controller');
+  const pins = config.pinnedFiles;
+  for (const file of ['readiness.js','launch.js','prices-only.conf']) {
+    const match = Object.entries(pins).find(([name]) => path.basename(name) === file);
+    assert.equal(match?.[1], sha(fs.readFileSync(path.join(controller, file))));
+  }
+  const manifest = fs.readFileSync(path.join(root, 'standing-wide-first-runtime-8/runtime-public.json'));
+  assert.equal(config.runtimeManifestSha256, sha(manifest));
+  assert.equal(config.graph,JSON.parse(manifest).graph);
+  assert.equal(config.replacementBindingSha256,JSON.parse(manifest).replacementBindingSha256);
+  assert.equal(JSON.parse(manifest).files['APP/scripts/current-dex-service-watchdog.cjs'], undefined);
+  assert.equal(config.actors.prices.reserveFloorWei, '322000000000000000');
+  assert.equal(config.actors.c1.reserveFloorWei, '333200000000000000');
+  const unit = fs.readFileSync(path.join(controller, 'chainwhisper-beta-watchdog.service'), 'utf8');
+  assert(unit.split(/\r?\n/).includes('ExecStart=/usr/bin/node /opt/server-dashboard/modules/chainwhisper-beta/watchdog.cjs --tick --standing'));
+});
+
+function rehearsalStopHarness() {
+  const { h, io } = harness();
+  const priorRun = oldApproval.runName, nextRun = 'server-beta-rehearsal-a';
+  h.group.stopReason = 'OPERATOR_STOP';
+  h.group.noAutomaticRestart = true;
+  h.group.period.mode = 'standing';
+  Object.assign(h.group.rpc, { unknownInFlight: 0, unresolvedOccupancy: 0 });
+  h.group.runs.keeper[0].traffic = traffic();
+  h.existing.add(`${CONFIG.runParent}/${priorRun}/stop-request.json`);
+  for (const snapshot of Object.values(h.facts.accounting)) {
+    for (const row of snapshot.journals) row.sha256 = sha(row.path);
+  }
+  const request = { priorRun, nextRun, priorGroupSha256: sha(JSON.stringify(h.group)), priorApprovalSha256: sha(approvalText) };
+  return { h, io, request };
+}
+
+test('the rehearsal stop check reconciles the exact current operator stop without RPC or writes', () => {
+  const { h, io, request } = rehearsalStopHarness();
+  const out = reconcileRehearsalStop(request, io);
+  assert.equal(out.status, 'STOPPED_SERVICES_RECONCILED');
+  assert.equal(out.priorRun, request.priorRun);
+  assert.equal(out.groupSha256, request.priorGroupSha256);
+  assert.equal(out.approvalSha256, request.priorApprovalSha256);
+  assert.equal(out.runtimeManifestSha256, CONFIG.runtimeManifestSha256);
+  assert.equal(out.carry, '1170');
+  assert.deepEqual(out.sends, { keeper: 0, prices: 3, matching: 0, c1: 4 });
+  assert.deepEqual(out.baselineNonces, baseline.nonces);
+  assert.deepEqual(out.deltas, h.facts.deltas);
+  assert.equal(out.journals, 4);
+  assert.equal(out.locks, 0);
+  assert.equal(out.c1Clean && out.pricesClean, true);
+  assert.equal(h.factCalls, 2);
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.writes, []);
+});
+
+for (const [name, change, guard] of [
+  ['an old start approval', h => { h.approvalText = JSON.stringify({ ...oldApproval, runName: 'server-beta-successor' }); }, 'REHEARSAL_STOP_APPROVAL'],
+  ['a recorded successor', h => { h.state.restarts.push({ fromRun: oldApproval.runName, runName: 'server-beta-successor' }); }, 'REHEARSAL_STOP_SUCCESSOR'],
+  ['a pre-existing next run', (h, request) => { h.existing.add(`${CONFIG.runParent}/${request.nextRun}`); }, 'REHEARSAL_STOP_SUCCESSOR'],
+  ['an absent stop request', h => { h.existing.clear(); }, 'REHEARSAL_STOP_GROUP'],
+  ['an unresolved request', (h, request) => {
+    Object.assign(h.group.runs.c1[0].traffic, { unresolvedOccupancy: 1, lastFailure: { method: 'eth_call', phase: 'transport' } });
+    request.priorGroupSha256 = sha(JSON.stringify(h.group));
+  }, 'REHEARSAL_STOP_TRAFFIC'],
+  ['a pending C1 send', h => { h.facts.c1.pendingHash = 'pending'; }, 'WATCHDOG_C1_UNRESOLVED'],
+  ['an incomplete price record', h => { h.facts.price.pendingRecordMarket = 2; }, 'WATCHDOG_PRICE_UNRESOLVED'],
+  ['a changed journal', h => {
+    h.factsSecond = structuredClone(h.facts);
+    h.factsSecond.accounting.prices.journals[0].sha256 = sha('drift');
+  }, 'REHEARSAL_STOP_FACTS_CHANGED'],
+  ['a newly discovered journal', h => {
+    h.factsSecond = structuredClone(h.facts);
+    h.factsSecond.accounting.matching.journals.push({ path: 'j/new-matching.jsonl', sha256: sha('new') });
+  }, 'REHEARSAL_STOP_FACTS_CHANGED'],
+  ['a changed stop record', h => { h.groupReads = 0; h.groupLater = { ...h.group, settledFeeWei: '1090' }; }, 'REHEARSAL_STOP_GROUP'],
+  ['a unit started during replay', h => { h.unitReads = 0; h.unitAfterFirst = { ...h.unit, ActiveState: 'active', MainPID: '20' }; }, 'REHEARSAL_STOP_UNIT']
+]) {
+  test(`the rehearsal stop check holds for ${name}`, () => {
+    const { h, io, request } = rehearsalStopHarness();
+    change(h, request);
+    assert.throws(() => reconcileRehearsalStop(request, io), { message: guard });
+    assert.deepEqual(h.calls, []);
+    assert.deepEqual(h.writes, []);
+  });
+}
+
+test('the rehearsal stop check rereads the start approval after the last unit check', () => {
+  const { h, io, request } = rehearsalStopHarness();
+  let unitChecks = 0;
+  io.unitState = () => {
+    if (++unitChecks === 2) h.approvalText = JSON.stringify({ ...oldApproval, runName: 'server-beta-successor' });
+    return h.unit;
+  };
+  assert.throws(() => reconcileRehearsalStop(request, io), { message: 'REHEARSAL_STOP_APPROVAL' });
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.writes, []);
+});
 
 test('classifyStop admits only RPC stop codes', () => {
   assert.deepEqual(classifyStop(stoppedGroup()), { kind: 'rpc', rpcClass: 'transport' });
@@ -307,8 +475,34 @@ test('selfCheck reads only and reports the binding', () => {
   assert.deepEqual(out.pinnedDrift, {}); assert.equal(h.writes.length, 0); assert.equal(h.calls.length, 0); assert.equal(h.factCalls, 0);
 });
 
-// CW-102: one owner-approved restart after the read-retry install. The stopped group ran on the previous manifest.
-const installApproval = { task: 'CW-102', approvedByOwner: true, fromRun: 'server-beta-run-a', watchdogSha256: 'watchdog-sha',
+// CW-116: the supervisor records a C1 window whose read-only build passed its time bound as SKIPPED, with zero fees.
+const skippedC1 = () => ({ ...run(traffic({ eth_getCode: 3 }), 'SKIPPED', '79'), code: 1, skipReason: 'C1_CURRENT_HEAD_AGE', consecutiveSkips: 1, actualFeeWei: '0',
+  result: { status: 'CURRENT_C1_STOP', guard: 'C1_CURRENT_HEAD_AGE', code: 'ERR_ASSERTION', noAutomaticRetry: true } });
+test('a skipped C1 window adds no send and no unsettled fee limit', () => {
+  const group = stoppedGroup(); group.runs.c1 = [run(traffic({ eth_sendRawTransaction: 4 })), skippedC1()];
+  const { sends, failedFeeLimitWei } = checkGroupTraffic(group);
+  assert.equal(sends.c1, 4); assert.equal(failedFeeLimitWei, 880n + 300n + 66n);
+  group.runs.c1[1].traffic.methods.eth_sendRawTransaction = 1;
+  assert.equal(checkGroupTraffic(group).sends.c1, 5);
+});
+test('tick restarts after an RPC stop when the last C1 run was a skipped window', async () => {
+  const { h, io } = harness();
+  h.group.runs.c1 = [run(traffic({ eth_sendRawTransaction: 4 })), skippedC1()]; h.group.settledFeeWei = '1130';
+  const result = await tick(io);
+  assert.equal(result.status, 'WATCHDOG_RESTART_STARTED', JSON.stringify(result)); assert.equal(result.carry, '1170'); assert(started(h));
+});
+test('a skipped C1 window whose journal fee is not settled holds the restart', async () => {
+  // A SKIPPED row carries no fee limit, so an unsettled C1 journal fee after it is not covered and must hold.
+  const { h, io } = harness();
+  h.group.runs.c1 = [skippedC1()]; h.group.runs.prices = [run(traffic({ eth_sendRawTransaction: 3 }))]; h.group.runs.matching = [run(traffic())];
+  h.group.runs.keeper = [run(traffic({}, { unresolvedOccupancy: 1, lastFailure: { code: 'DEX_RPC_TRANSPORT_STOP', method: 'eth_chainId', methods: ['eth_chainId'], phase: 'transport', status: null } }), 'RETURNED', '880')];
+  h.chain.c1 = ['40', '40', '9']; h.group.settledFeeWei = '1100';
+  const result = await tick(io);
+  assert.equal(result.status, 'WATCHDOG_HOLD', JSON.stringify(result)); assert.equal(result.guard, 'WATCHDOG_FEE_CARRY'); assert(!started(h));
+});
+
+// One owner-approved restart after the reviewed peer repair. The stopped group ran on the previous manifest.
+const installApproval = { task: 'CW-120', approvedByOwner: true, startApprovedByOwner: true, fromRun: 'server-beta-run-a', watchdogSha256: 'watchdog-sha',
   previousRuntimeManifestSha256: CONFIG.previousRuntimeManifestSha256, runtimeManifestSha256: CONFIG.runtimeManifestSha256 };
 function installHarness(change = {}) {
   const previous = { ...oldApproval, runtimeManifestSha256: CONFIG.previousRuntimeManifestSha256 }, text = JSON.stringify(previous);
@@ -321,8 +515,8 @@ function installHarness(change = {}) {
 }
 
 test('the rebind pins the new runtime manifest and keeps the previous one only for the install restart', () => {
-  assert.equal(CONFIG.runtimeManifestSha256, '8dc239e69f29000c95660b1ceb38c4c549e22f484c172a305a6ffdc51a058f48');
-  assert.equal(CONFIG.previousRuntimeManifestSha256, '5f793459a7141eaf13e54939469a7555eb2a2e813ceaf60005e8273c4af1b9df');
+  assert.equal(CONFIG.runtimeManifestSha256, '04388584b9e948fbdd198bbcc115bf8580aeacabd677277078aa2fd126cc49b7');
+  assert.equal(CONFIG.previousRuntimeManifestSha256, '0bb237cf9da4add3c68f0c3dd06c55821e8c08c66b713a1756313e3ffcee34a5');
   assert.equal(CONFIG.pinnedFiles[CONFIG.runtimeRoot + '/runtime-public.json'], CONFIG.runtimeManifestSha256);
 });
 
@@ -331,7 +525,7 @@ test('tick restarts once after an owner-approved install with the new manifest i
   const result = await tick(io);
   assert.equal(result.status, 'WATCHDOG_RESTART_STARTED', JSON.stringify(result));
   const approval = h.writes.find(w => w[0] === 'approval')[1];
-  assert.equal(approval.runtimeManifestSha256, CONFIG.runtimeManifestSha256); assert.equal(approval.runName, 'server-beta-20261118-cw102-install');
+  assert.equal(approval.runtimeManifestSha256, CONFIG.runtimeManifestSha256); assert.equal(approval.runName, 'server-beta-20261118-cw120-peer-install');
   assert.equal(approval.autoRestart.installApprovalSha256, sha(JSON.stringify(installApproval))); assert.equal(approval.priorSpentFeeWei, '1170');
   assert(started(h)); assert.equal(h.state.decisions['server-beta-run-a'].decision, 'RESTARTED');
   const again = await tick(io); assert.equal(again.status, 'WATCHDOG_ALREADY_DECIDED');
@@ -339,10 +533,12 @@ test('tick restarts once after an owner-approved install with the new manifest i
 
 for (const [name, change, guard] of [
   ['another run', h => { h.install.fromRun = 'server-beta-run-b'; }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
+  ['installation with no separate start approval', h => { delete h.install.startApprovedByOwner; }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
   ['another watchdog', h => { h.install.watchdogSha256 = 'other'; }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
   ['another manifest', h => { h.install.runtimeManifestSha256 = 'f'.repeat(64); }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
   ['no owner approval', h => { h.install.approvedByOwner = false; }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
   ['a missing approval file', h => { h.existing.delete(CONFIG.installApprovalFile); }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
+  ['the consumed CW-102 approval', h => { h.install.task = 'CW-102'; }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
   ['a service failure stop', h => { h.group.stopReason = 'c1:FAILED'; }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
   ['a group on the new manifest', h => { h.group.period.runtimeManifestSha256 = CONFIG.runtimeManifestSha256; }, 'WATCHDOG_OPERATOR_STOP_REQUEST'],
   ['an unresolved request', h => { h.group.rpc.physicalInFlight = 1; }, 'WATCHDOG_IN_FLIGHT'],
@@ -368,7 +564,11 @@ test('a normal RPC stop of a group on the previous manifest holds without an ins
   assert.equal(result.status, 'WATCHDOG_HOLD'); assert.equal(result.guard, 'WATCHDOG_APPROVAL_TERMS'); assert(!started(h));
 });
 
-test('the owner approval of the rebound watchdog may name CW-102', async () => {
-  const { h, io } = harness({ owner: { task: 'CW-102', approvedByOwner: true, watchdogSha256: 'watchdog-sha' } });
+for (const task of ['CW-102', 'CW-116']) test(`the owner approval of the rebound watchdog may name ${task}`, async () => {
+  const { h, io } = harness({ owner: { task, approvedByOwner: true, watchdogSha256: 'watchdog-sha' } });
   const result = await tick(io); assert.equal(result.status, 'WATCHDOG_RESTART_STARTED', JSON.stringify(result)); assert(started(h));
+});
+test('an owner approval that names another task holds', async () => {
+  const { h, io } = harness({ owner: { task: 'CW-999', approvedByOwner: true, watchdogSha256: 'watchdog-sha' } });
+  const result = await tick(io); assert.equal(result.status, 'WATCHDOG_HOLD'); assert.equal(result.guard, 'WATCHDOG_OWNER_APPROVAL'); assert(!started(h));
 });

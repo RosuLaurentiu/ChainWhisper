@@ -4,12 +4,36 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { fork } = require('node:child_process');
-const { main, createRpcAdmission, readServerPeriod } = require('./current-dex-services.cjs');
-const { createPacing, createManagedAdmission } = require('./current-dex-rpc-pacing.cjs');
+const { fork, spawnSync } = require('node:child_process');
+const { main, createRpcAdmission, readServerPeriod, rehearsalWorkerFile } = require('./current-dex-services.cjs');
+const { createPacing, createManagedAdmission, createC1BroadcastFence, c1DispatchDenied } = require('./current-dex-rpc-pacing.cjs');
 const { FetchRequest } = require('ethers');
 const { install } = require('./current-dex-service-stop.cjs');
 const reports = path.resolve(__dirname, '../reports');
+test('a staged rehearsal selects only the worker for its exact approved graph', () => {
+  assert.equal(rehearsalWorkerFile('279683c14c86a24d98f481fa3460db96a6df4649a54e8641e32cae2c4aeeeb21'),
+    'current-dex-c1-convergence.cjs');
+  assert.equal(rehearsalWorkerFile('9e6c03ac69178445605dc78a70e088b596684181d73b218a6a3a89e942b3af21'),
+    'current-dex-c1-convergence.cjs');
+  assert.equal(rehearsalWorkerFile('1a73e0205ca448e4eed5cdbbd4bb850dd87a0b08d183da20e44631fd4dd71fe7'),
+    'current-dex-c1.cjs');
+  assert.throws(() => rehearsalWorkerFile('279683c1'), /DEX_SERVICES_C1_STAGE_GRAPH/);
+});
+test('replacement preflight checks all four real workers without start authority', async () => {
+  const result = await main(['--check-replacement','6f6c3efd3b6915343f9281348a1dc313cee7fe99727fac50144ec44c364e5d5f']);
+  assert.equal(result.status, 'DEX_SERVICES_REPLACEMENT_CHECKED');
+  assert.equal(result.graph.slice(0, 8), '9e6c03ac');
+  assert.equal(result.markets, 6);
+  assert.equal(result.c1WindowCommitmentWei, '323200000000000000');
+  assert.equal(result.sharedOwnerReserveWei, '16000000000000000');
+  assert.equal(result.keeper, 'APP_HOST_CONFIGURED_ENTRY_READY');
+  assert.equal(result.prices, 'CURRENT_PRICE_SERVICE_OFFLINE_CHECKED');
+  assert.equal(result.matching, 'CURRENT_MATCHING_BINDING_CHECKED');
+  assert.equal(result.c1, 'WINDOW_B_C1_RUNTIME_INPUTS_CHECKED');
+  assert(result.noNetwork && result.noCredentials && result.noSend);
+  assert.equal(result.readyToStart, false);
+  await assert.rejects(main(['--check-replacement', reports]), /DEX_SERVICES_USAGE/);
+});
 const completed = { keeper: 'APP_HOST_PUBLIC_CHECKED', prices: 'CURRENT_DEX_PRICES_WINDOW_COMPLETE', matching: 'MATCH_WINDOW_COMPLETE', c1: 'CURRENT_C1_OPERATOR_RETURNED' };
 const rpcRequest = (id, timeout) => {
   const request = new FetchRequest('https://testnet.coti.io/rpc');
@@ -40,12 +64,75 @@ function rpcGroup(t, transport, checkSource = () => {}, options = {}) {
     target.send = (message, callback) => { messages.push(message); child.emit('message', message); callback?.(null); };
     group.bind(name, child);
     peer.pacing = createPacing(request => transport(name, request), name === 'c1' ? 334 : 500,
-      () => checkSource(name), createManagedAdmission(name, target), false, options.retry ? { retry: options.retry } : {});
+      () => checkSource(name), createManagedAdmission(name, target), false,
+      { ...(options.retry?{retry:options.retry}:{}), ...(name==='c1'?{authorizeBroadcast:options.authorizeC1Broadcast}:{}) });
     peers.push(peer);
   }
   t.after(() => { group.stop('TEST_COMPLETE'); peers.forEach(peer => peer.target.emit('message', { type: 'CHAINWHISPER_SERVICE_STOP' })); });
   return { group, peers, stops, messages };
 }
+
+test('a queued C1 broadcast loses approval before physical transport without stopping peers',async t=>{
+  const fence=createC1BroadcastFence(),seen=[];
+  let failAfterStart=false;
+  const f=rpcGroup(t,async(name,request)=>{
+    seen.push(name);
+    if(name==='c1'&&failAfterStart)throw Error('DEX_RPC_C1_BROADCAST_HELD');
+    return rpcResponse(request);
+  },undefined,
+    {authorizeC1Broadcast:fence.authorize});
+  const c1=f.peers.find(peer=>peer.name==='c1'),raw='0xabcdef';
+  const request=(id,bytes=raw)=>{
+    const send=rpcRequest(id,1000);
+    send.body=JSON.stringify({jsonrpc:'2.0',id,method:'eth_sendRawTransaction',params:[bytes]});
+    return send;
+  };
+  let approved=true,calls=0;
+  c1.holdGrant=true;
+  const waiting=fence.submit(raw,()=>c1.pacing.getUrl(request(1),rpcSignal),()=>{calls++;return approved;});
+  await flush();
+  assert.equal(c1.grants.length,1);
+  assert.equal(calls,0);
+  approved=false;
+  c1.target.emit('message',c1.grants.shift());
+  await assert.rejects(waiting,error=>{
+    assert.match(error.message,/DEX_RPC_C1_BROADCAST_HELD/);
+    assert.equal(c1DispatchDenied(Error(error.message),raw),false);
+    assert.equal(c1DispatchDenied(error,'0x0102'),false);
+    assert.equal(c1DispatchDenied(error,raw),true);
+    assert.equal(c1DispatchDenied(error,raw),false);
+    return true;
+  });
+  assert.equal(calls,1);
+  assert.deepEqual(seen,[]);
+  assert.equal(f.group.stats().reserved,0);
+  assert.equal(f.group.stats().perService.c1.cancelled,1);
+  assert.equal(f.group.stats().perService.c1.physicalStarts,0);
+  assert.deepEqual(f.stops,[]);
+
+  c1.holdGrant=false;
+  approved=true;
+  await assert.rejects(fence.submit(raw,()=>c1.pacing.getUrl(request(2,'0x0102'),rpcSignal),()=>true),error=>{
+    assert.match(error.message,/C1_BROADCAST_HELD/);
+    assert.equal(c1DispatchDenied(error,raw),false);
+    return true;
+  });
+  await assert.rejects(c1.pacing.getUrl(request(3),rpcSignal),/C1_BROADCAST_HELD/);
+  await fence.submit(raw,()=>c1.pacing.getUrl(request(4),rpcSignal),()=>approved);
+  await assert.rejects(c1.pacing.getUrl(request(5),rpcSignal),/C1_BROADCAST_HELD/);
+  for(const peer of f.peers.filter(row=>row!==c1))await peer.pacing.getUrl(rpcRequest(6),rpcSignal);
+  assert.deepEqual(seen,['c1','keeper','prices','matching']);
+  assert.equal(f.group.stats().perService.c1.physicalStarts,1);
+  failAfterStart=true;
+  const attempted='0x4567';
+  await assert.rejects(fence.submit(attempted,()=>c1.pacing.getUrl(request(7,attempted),rpcSignal),()=>true),error=>{
+    assert.match(error.message,/DEX_RPC_C1_BROADCAST_HELD/);
+    assert.equal(c1DispatchDenied(error,attempted),false);
+    return true;
+  });
+  assert.equal(f.group.stats().perService.c1.physicalStarts,2);
+  assert.equal(c1.pacing.stats().retries.total,0);
+});
 
 test('shared demand is FIFO with one aggregate slot; synthetic children retain standalone spacing', async t => {
   const starts = []; let active = 0, peak = 0, release;
@@ -245,11 +332,12 @@ for (const phase of ['reserved', 'started']) test(`child loss while ${phase} ret
   assert.equal(fixture.group.stats().occupiedSlots, 1);
 });
 
-function folder(t) {
-  const directory = fs.mkdtempSync(path.join(reports, 'service-group-test-'));
+function folder(t, parent=reports, prefix='service-group-test-') {
+  const directory = path.join(parent, prefix + require('node:crypto').randomBytes(8).toString('hex'));
+  fs.mkdirSync(directory);
   t.after(() => {
-    assert.equal(path.dirname(fs.realpathSync(directory)), fs.realpathSync(reports));
-    assert(path.basename(directory).startsWith('service-group-test-'));
+    assert.equal(path.dirname(fs.realpathSync(directory)), fs.realpathSync(parent));
+    assert(path.basename(directory).startsWith(prefix));
     fs.rmSync(directory, { recursive: true });
   });
   return directory;
@@ -274,9 +362,9 @@ function children(overrides = {}) {
 function operatingChildren(onSpawn, onStop = row => row.close()) {
   const calls = [];
   const spawn = (entry, args, options) => {
-    const name = /^current-dex-(.*)\.cjs$/.exec(path.basename(entry))[1];
+    const name = args[0] === '--stand' ? 'c1' : /^current-dex-(.*)\.cjs$/.exec(path.basename(entry))[1];
     const child = new EventEmitter();
-    const row = { name, child, args, run: calls.filter(call => call.name === name).length + 1,
+    const row = { name, child, args, options, run: calls.filter(call => call.name === name).length + 1,
       grants: [], started: [], closed: false,
       close(code = 0) {
         if (row.closed) return;
@@ -314,6 +402,8 @@ function operatingChildren(onSpawn, onStop = row => row.close()) {
       send(message, callback) {
         callback?.(null);
         if (message.type === 'CHAINWHISPER_RPC_GRANT') row.grants.shift()?.();
+        if (message.type === 'CHAINWHISPER_C1_REHEARSAL') row.rehearsalAdmission = message;
+        if (message.type === 'CHAINWHISPER_C1_STANDING') row.standingAdmission = message;
         if (message.type === 'CHAINWHISPER_SERVICE_STOP') queueMicrotask(() => onStop(row));
       }
     });
@@ -322,16 +412,89 @@ function operatingChildren(onSpawn, onStop = row => row.close()) {
   return { calls, spawn };
 }
 
-function serverPeriod(t,standing=false) {
-  const directory=folder(t),runtime=folder(t),manifest=path.join(runtime,'runtime-public.json');
-  fs.writeFileSync(manifest,JSON.stringify({graph:process.env.CW_LOW_RPC_TRIAL}));
-  const policy={schema:'CURRENT_DEX_SERVER_PERIOD_V1',graph:process.env.CW_LOW_RPC_TRIAL,
+function serverPeriod(t,standing=false,runParent=reports,prefix,installedManifest,graph=require('./current-dex-service-watchdog.cjs').CONFIG.graph) {
+  const directory=folder(t,runParent,prefix),manifest=installedManifest??path.join(folder(t),'runtime-public.json');
+  if(!installedManifest)fs.writeFileSync(manifest,JSON.stringify({graph}));
+  const policy={schema:'CURRENT_DEX_SERVER_PERIOD_V1',graph,
     maximumMs:86400000,maximumNewFeeWei:'2000000000000000000',startedAt:Date.now(),expiresAt:Date.now()+86400000,
     runtimeManifestSha256:require('node:crypto').createHash('sha256').update(fs.readFileSync(manifest)).digest('hex'),approvalSha256:'a'.repeat(64)};
   policy.expiresAt=policy.startedAt+policy.maximumMs;
   if(standing)Object.assign(policy,{mode:'standing',maximumMs:null,expiresAt:null,maximumNewFeeWei:null,priorSpentFeeWei:'796447789500000000'});
   const file=path.join(directory,'period-policy.json'),write=()=>fs.writeFileSync(file,JSON.stringify(policy));write();
-  return {directory,policy,write,read:(dir,now=Date.now())=>readServerPeriod(dir,now,manifest)};
+  return {directory,policy,write,read:(dir,now=Date.now())=>readServerPeriod(dir,now,manifest,graph)};
+}
+function rehearsalPeriod(t,runParent=reports,installedManifest){
+  const {CONFIG,reconcileRehearsalStop}=require('./current-dex-service-watchdog.cjs');
+  const f=serverPeriod(t,true,runParent,'server-beta-rehearsal-test-',installedManifest,CONFIG.graph);
+  const base=path.resolve(__dirname,'../../ChainWhisper Contracts V2/validation/candidates');
+  const {pins}=require(path.join(base,'c1-band-sizing-2026-11-21/candidate.cjs'));
+  const binding={graph:pins.graph,manifest:pins.manifest};
+  const operator=CONFIG.actors.c1.address;
+  const {createHash,randomBytes}=require('node:crypto'),sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+  const priorRun='server-beta-c1-check-'+randomBytes(8).toString('hex'),priorDirectory=path.join(runParent,priorRun);
+  fs.mkdirSync(priorDirectory);
+  const priorFile=path.join(priorDirectory,'group.json'),stopFile=path.join(priorDirectory,'stop-request.json');
+  t.after(()=>{fs.unlinkSync(priorFile);fs.unlinkSync(stopFile);fs.rmdirSync(priorDirectory);});
+  const priorRuntimeManifestSha256=CONFIG.runtimeManifestSha256;
+  const sends={keeper:1,prices:0,matching:0,c1:1};
+  const carry=f.policy.priorSpentFeeWei,finishedAt=new Date(Date.now()-1000).toISOString();
+  const baselineCarry=String(BigInt(carry)-3n);
+  const priorApproval=JSON.stringify({schema:'CHAINWHISPER_BETA_SERVICE_APPROVAL_V1',approvedByOwner:true,
+    runName:priorRun,graph:f.policy.graph,mode:'standing',runtimeManifestSha256:priorRuntimeManifestSha256,
+    priorSpentFeeWei:baselineCarry,gasPriceWei:'50000000',maximumNewFeeWei:null,expiresAt:null,noNewFunding:true});
+  const priorApprovalSha256=sha(priorApproval);
+  f.policy.approvalSha256=priorApprovalSha256;f.write();
+  const prior=JSON.stringify({status:'STOPPED',stopReason:'OPERATOR_STOP',noAutomaticRestart:true,
+    period:{graph:f.policy.graph,mode:'standing',runtimeManifestSha256:priorRuntimeManifestSha256,approvalSha256:priorApprovalSha256,
+      priorSpentFeeWei:baselineCarry},settledFeeWei:carry,
+    finishedAt,rpc:{physicalInFlight:0,unknownInFlight:0,unresolvedOccupancy:0},
+    runs:Object.fromEntries(Object.entries(sends).map(([name,count])=>
+      [name,[{status:'PASSED',traffic:{physicalPending:0,unresolvedOccupancy:0,methods:{eth_sendRawTransaction:count}}}]]))});
+  fs.writeFileSync(priorFile,prior);fs.writeFileSync(stopFile,'');
+  const graph=binding.graph,replacementBindingSha256='a5'.repeat(32),issuedAt=Math.floor(Date.now()/1000);
+  const senderDirectory=fs.realpathSync.native(folder(t));
+  if(process.platform==='linux')fs.chmodSync(senderDirectory,0o700);
+  const senderStat=fs.statSync(senderDirectory,{bigint:true});
+  const senderLock={directory:senderDirectory,device:String(senderStat.dev),inode:String(senderStat.ino)};
+  const manifest={binding,replacementBindingSha256,operator,pairs:{2:{}},
+    policy:{coverage:'tier-passes-v2',now:issuedAt,totalWei:'323200000000000000'}};
+  const body={manifest,sources:{'operator/runtime':'cc'.repeat(32)},senderLock},bundle={...body,hash:sha(JSON.stringify(body))};
+  const approval={schema:'CHAINWHISPER_C1_REHEARSAL_APPROVAL_V1',approvedByOwner:true,graph,chainId:'7082400',
+    operator,signer:'systemd-c1',runName:path.basename(f.directory),bindingSha256:replacementBindingSha256,
+    periodApprovalSha256:f.policy.approvalSha256,runtimeManifestSha256:f.policy.runtimeManifestSha256,
+    maximumCommittedWei:manifest.policy.totalWei,bundleHash:bundle.hash,priorRun,priorGroupSha256:sha(prior),priorRuntimeManifestSha256,
+    stagedRuntimeManifestSha256:'ed'.repeat(32),
+    stagedRuntimeRoot:path.join(reports,'c1-local-unused-stage'),senderLock,
+    issuedAt,expiresAt:issuedAt+1800};
+  const approvalFile=path.join(f.directory,'c1-rehearsal-approval.json'),bundleFile=path.join(f.directory,'c1-rehearsal-bundle.json');
+  const writeApproval=()=>{
+    const bytes=JSON.stringify(approval);
+    fs.writeFileSync(approvalFile,bytes);
+    Object.assign(f.policy,{replacementBindingSha256,c1RehearsalSha256:sha(bytes)});f.write();
+  };
+  const journals=Object.fromEntries(CONFIG.services.map(name=>[name,
+    {service:name,journals:[{path:`j/${name}.jsonl`,sha256:sha(name)}]}]));
+  const reconciliation=reconcileRehearsalStop({priorRun,nextRun:approval.runName,priorGroupSha256:sha(prior),priorApprovalSha256}, {
+    now:()=>Date.parse(finishedAt),
+    readBytes:file=>file===CONFIG.approvalFile?priorApproval:fs.readFileSync(priorFile),
+    exists:file=>file===`${CONFIG.runParent}/${priorRun}/stop-request.json`&&fs.existsSync(stopFile),
+    pinned:()=>({}),unitState:()=>({MainPID:'0',ActiveState:'inactive',Restart:'no'}),
+    readState:()=>({schema:'CW101_WATCHDOG_STATE_V1',restarts:[],baselines:{[priorRun]:{
+      nonces:Object.fromEntries(CONFIG.services.map(name=>[name,'0'])),feesAfter:journals,carry:baselineCarry}}}),
+    facts:()=>({locks:[],c1:{pendingHash:null,hashless:false,activePair:null,halt:null,renewalPending:false,queuedPairs:[]},
+      price:{pending:null,stopped:true,pendingRecordMarket:null},accounting:journals,feeError:null,
+      deltas:{keeper:'1',prices:'0',matching:'0',c1:'2'}})
+  });
+  const reconciliationFile=path.join(f.directory,'STOPPED_SERVICES_RECONCILED.json');
+  const writeReconciliation=()=>{
+    const bytes=JSON.stringify(reconciliation);
+    fs.writeFileSync(reconciliationFile,bytes);
+    approval.priorReconciliationSha256=sha(bytes);
+    writeApproval();
+  };
+  writeReconciliation();fs.writeFileSync(bundleFile,JSON.stringify(bundle));
+  return {...f,approval,approvalFile,bundle,bundleFile,priorFile,graph,replacementBindingSha256,writeApproval,
+    reconciliation,reconciliationFile,writeReconciliation};
 }
 test('asynchronous baseline accounting stops before any child is spawned', async t => {
   const f=serverPeriod(t,true), signals=new EventEmitter(), fixture=operatingChildren();
@@ -467,6 +630,963 @@ for(const fault of ['none','rpc','source','accounting','pending-journal','transp
  }finally{signals.emit('SIGINT');await running;}
 });
 
+// CW-116: on 2026-11-18 slow RPC answers made the read-only C1 window build pass its 90 s head age; the group stopped for 49 hours.
+const c1WindowStop=(guard,extra={})=>({status:'CURRENT_C1_STOP',guard,code:'ERR_ASSERTION',locations:['runtime.cjs:151:2'],noAutomaticRetry:true,reconcileSavedJournalBeforeRetry:true,...extra});
+const c1BuildTraffic={rpcCalls:3,methods:{eth_chainId:1,eth_getBlockByNumber:1,eth_getCode:1}};
+for(const guard of ['C1_CURRENT_HEAD_AGE','C1_CURRENT_READ_BOUND'])test(`a C1 window build stopped by ${guard} skips that window and starts the next one`,async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const fixture=operatingChildren(row=>{
+  if(row.name!=='c1')return;
+  if(row.run===1)void row.complete({code:1,requests:3,stderr:c1WindowStop(guard),traffic:c1BuildTraffic});
+  else if(row.run===2)void row.complete();
+  else signals.emit('SIGINT');
+ });
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0',c1WindowRetryWaitMs:1});
+ assert.equal(result.stopReason,'OPERATOR_STOP');assert.equal(result.runs.c1.length,3);
+ const [skipped,returned]=result.runs.c1;
+ assert.equal(skipped.status,'SKIPPED');assert.equal(skipped.skipReason,guard);assert.equal(skipped.consecutiveSkips,1);assert.equal(skipped.actualFeeWei,'0');assert.equal(skipped.code,1);
+ assert.equal(skipped.noAutomaticRestart,undefined);assert.equal(returned.status,'RETURNED');
+ // The other services never stopped for it, and the skipped window holds no fee commitment.
+ for(const name of ['keeper','prices','matching'])assert.equal(result.runs[name].length,1);
+ assert.equal(BigInt(result.settledFeeWei),BigInt(f.policy.priorSpentFeeWei));
+});
+
+for(const fault of ['send','estimate','no-methods','rpc','transport','accounting','nonzero-fee','pending-journal','other-guard','no-code','state','pending','request-count','read-count','no-read-count'])test(`a C1 window stop is skipped only at a proven read-only boundary: ${fault}`,async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();let snapshots=0;
+ const methods=fault==='send'?{eth_getCode:1,eth_sendRawTransaction:1}:fault==='estimate'?{eth_getCode:1,eth_estimateGas:1}:c1BuildTraffic.methods;
+ // A read bound reached by count (600 reads) is a fixed property of the build; only the time bound is slow RPC.
+ const stderr=c1WindowStop(fault==='other-guard'?'C1_CURRENT_REORG':/read-count/.test(fault)?'C1_CURRENT_READ_BOUND':'C1_CURRENT_HEAD_AGE',{...(fault==='no-code'?{code:null}:{}),...(fault==='state'?{state:{pendingHash:'0xtest'}}:{})});
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:1,requests:1,stderr,traffic:{...(fault==='no-methods'?{}:{methods}),...(fault==='read-count'?{rpcCalls:600}:fault==='no-read-count'?{}:{rpcCalls:3}),...(fault==='request-count'?{requests:2}:{}),
+  ...(fault==='rpc'?{lastFailure:{code:'DEX_RPC_ERROR_RESPONSE',method:'eth_call',status:200,rpcCode:-32000}}:{}),...(fault==='transport'?{stopped:'DEX_RPC_TRANSPORT_STOP'}:{}),...(fault==='pending'?{physicalPending:1}:{})}});});
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,c1WindowRetryWaitMs:1,
+  feeSnapshot:name=>{if(name==='c1'&&++snapshots===2&&fault==='pending-journal')throw Error('DEX_SERVICE_FEES_UNRESOLVED');return{service:name};},
+  feeDelta:(_,b)=>{if(b.service==='c1'&&fault==='accounting')throw Error('UNCERTAIN_ACCOUNTING');return b.service==='c1'&&fault==='nonzero-fee'?'1':'0';}});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'c1:FAILED');assert.equal(result.runs.c1.length,1);assert.equal(result.runs.c1[0].status,'FAILED');
+});
+
+test('consecutive skipped C1 windows wait longer each time and a returned window resets the count',{timeout:10000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter(),spawned=[];
+ const fixture=operatingChildren(row=>{
+  if(row.name!=='c1')return;spawned.push(performance.now());
+  if(row.run<=3||row.run===5)void row.complete({code:1,requests:1,stderr:c1WindowStop('C1_CURRENT_HEAD_AGE'),traffic:c1BuildTraffic});
+  else if(row.run===4)void row.complete();
+  else signals.emit('SIGINT');
+ });
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0',c1WindowRetryWaitMs:40});
+ assert.deepEqual(result.runs.c1.map(row=>row.status),['SKIPPED','SKIPPED','SKIPPED','RETURNED','SKIPPED','FAILED']);
+ assert.deepEqual(result.runs.c1.map(row=>row.consecutiveSkips),[1,2,3,undefined,1,undefined]);
+ assert.deepEqual(result.runs.c1.map(row=>row.retryAfterMs),[40,80,120,undefined,40,undefined]);
+ const closed=fixture.calls.filter(row=>row.name==='c1').map(row=>row.closedAt),gaps=[1,2,3,4,5].map(i=>spawned[i]-closed[i-1]);
+ // Each next start comes no earlier than its recorded wait (the fixture's own start overhead adds to every gap).
+ assert(gaps[0]>=38&&gaps[1]>=78&&gaps[2]>=118&&gaps[4]>=38,JSON.stringify(gaps));
+});
+
+test('an operator stop during the wait after a skipped C1 window ends the group without another C1 start',{timeout:5000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:1,requests:1,stderr:c1WindowStop('C1_CURRENT_HEAD_AGE'),traffic:c1BuildTraffic});});
+ const started=performance.now(),running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0',c1WindowRetryWaitMs:60000});
+ let group;for(let waited=0;waited<3000;waited+=20){group=JSON.parse(fs.readFileSync(path.join(f.directory,'group.json')));if(group.services.c1?.status==='SKIPPED')break;await new Promise(resolve=>setTimeout(resolve,20));}
+ assert.equal(group.services.c1.status,'SKIPPED');assert.equal(group.stopReason,undefined);
+ assert(fixture.calls.filter(row=>row.name!=='c1').every(row=>!row.closed));
+ signals.emit('SIGINT');const result=await running;
+ assert.equal(result.stopReason,'OPERATOR_STOP');assert.equal(fixture.calls.filter(row=>row.name==='c1').length,1);assert(performance.now()-started<3000);
+});
+
+test('after 10 consecutive skipped windows C1 alone is held and the other services continue',{timeout:10000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:1,requests:1,stderr:c1WindowStop('C1_CURRENT_HEAD_AGE'),traffic:c1BuildTraffic});});
+ const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0',c1WindowRetryWaitMs:1});
+ try{
+  let group;for(let waited=0;waited<8000;waited+=20){group=JSON.parse(fs.readFileSync(path.join(f.directory,'group.json')));if(group.services.c1?.status==='HELD')break;await new Promise(resolve=>setTimeout(resolve,20));}
+  assert.deepEqual(group.runs.c1.map(row=>row.status),[...Array(10).fill('SKIPPED'),'HELD']);
+  assert.deepEqual(group.runs.c1.map(row=>row.consecutiveSkips),[1,2,3,4,5,6,7,8,9,10,10]);assert.equal(group.runs.c1[9].retryAfterMs,10);
+  const held=group.runs.c1[10];assert.equal(held.holdReason,'C1_WINDOW_SKIP_LIMIT');assert.equal(held.skipReason,'C1_CURRENT_HEAD_AGE');assert.equal(held.noAutomaticRestart,true);assert.equal(held.actualFeeWei,'0');
+  assert.equal(group.stopReason,undefined);assert(fixture.calls.filter(row=>row.name!=='c1').every(row=>!row.closed));
+  await new Promise(resolve=>setTimeout(resolve,100));assert.equal(fixture.calls.filter(row=>row.name==='c1').length,11);
+ }finally{signals.emit('SIGINT');await running;}
+});
+
+test('a C1 window stop that arrives while the group already stops is not a skipped window',async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const fixture=operatingChildren(row=>{if(row.name==='c1'){signals.emit('SIGINT');void row.complete({code:1,requests:1,stderr:c1WindowStop('C1_CURRENT_HEAD_AGE'),traffic:c1BuildTraffic});}});
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0',c1WindowRetryWaitMs:1});
+ assert.equal(result.stopReason,'OPERATOR_STOP');assert.equal(result.runs.c1.length,1);assert.equal(result.runs.c1[0].status,'FAILED');
+});
+
+test('the wait after a skipped C1 window can be shortened for tests but never lengthened',{timeout:5000},async t=>{
+ const f=serverPeriod(t,true);
+ for(const c1WindowRetryWaitMs of [60001,0,-1,NaN])await assert.rejects(main(['--serve',f.directory],{spawn:operatingChildren().spawn,signals:new EventEmitter(),readPeriod:f.read,
+  feeSnapshot:name=>({service:name}),feeDelta:()=>'0',c1WindowRetryWaitMs}),/DEX_C1_WINDOW_RETRY/);
+ assert(!fs.existsSync(path.join(f.directory,'group.json')));
+});
+
+test('outside the served group a C1 window stop still stops the finite group',async t=>{
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:1,requests:1,stderr:c1WindowStop('C1_CURRENT_HEAD_AGE'),traffic:c1BuildTraffic});});
+ const result=await main(['--operate',folder(t)],{spawn:fixture.spawn,signals:new EventEmitter()});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'c1:FAILED');assert.equal(fixture.calls.filter(row=>row.name==='c1').length,1);
+});
+
+// CW-121: the C1 mode "tier-passes-v2" stops on a Commit that it cannot estimate (a thrown stop signal) or on a policy halt.
+// Each one holds C1 alone with its cause in the run record. User swaps (keeper) and the other services continue.
+const c1CommitStop=(extra={})=>({pair:'3',commitKind:'pool-limit',commitClass:'capacity',rpcCode:-32000,revertSelector:null,contractError:null,staleProof:null,failedPublicChecks:[],...extra});
+const c1CommitStopSignal=(commitStop=c1CommitStop(),extra={})=>({status:'CURRENT_C1_STOP',guard:'CURRENT_C1_PREFLIGHT_REJECTED',code:'CALL_EXCEPTION',publicPreflight:{action:2,pair:'3'},commitStop,locations:['runtime.cjs:208:1'],noAutomaticRetry:true,reconcileSavedJournalBeforeRetry:true,...extra});
+const c1EstimateFailure={lastFailure:{code:'DEX_RPC_ERROR_RESPONSE',method:'eth_estimateGas',phase:'rpc-response',status:200,rpcCode:-32000}};
+const groupOf=f=>JSON.parse(fs.readFileSync(path.join(f.directory,'group.json')));
+const groupWhen=async(f,ready)=>{let group;for(let waited=0;waited<3000;waited+=10){group=groupOf(f);if(ready(group))break;await new Promise(resolve=>setTimeout(resolve,10));}return group;};
+
+const replacementStandingGraph='1a73e0205ca448e4eed5cdbbd4bb850dd87a0b08d183da20e44631fd4dd71fe7';
+const wideStandingGraph='9e6c03ac69178445605dc78a70e088b596684181d73b218a6a3a89e942b3af21';
+const {build13Graph,build13StandingBinding,build13PeerBinding,build13PriceAdmission}=require('./current-dex-service-fees.cjs');
+const standingSelected=[replacementStandingGraph,wideStandingGraph,build13Graph].includes(process.env.CW_LOW_RPC_TRIAL);
+function standingFixture(t){
+  const graph=process.env.CW_LOW_RPC_TRIAL,binding=graph===build13Graph?build13StandingBinding:graph===wideStandingGraph?
+    '6f6c3efd3b6915343f9281348a1dc313cee7fe99727fac50144ec44c364e5d5f':
+    'a1c0f2c1017906ac8bbe1d447282aacccbc2e8738b2afac0316020d6352a9f99';
+  const f=serverPeriod(t,true,reports,undefined,undefined,graph),signals=new EventEmitter();
+  Object.assign(f.policy,{c1StandingSha256:'1'.repeat(64),replacementBindingSha256:binding});
+  f.write();
+  const scope={approvalSha256:f.policy.c1StandingSha256,standingInitialOperatorNonce:'7',
+    firstBundle:{sources:{test:'bound'},manifest:{binding:{graph},replacementBindingSha256:binding,
+      policy:{totalWei:'323200000000000000'}}}};
+  const workerEntry=fs.realpathSync.native(require.resolve('./current-dex-c1-rehearsal.cjs'));
+  const runtimeRoot=path.resolve(__dirname,'../..');
+  const snapshot=(name,options)=>({service:name,runtimeRoot,graph,...options});
+  return {f,signals,workerEntry,scope,binding,graph,snapshot};
+}
+
+test('standing supervisor settles replacement peers and renews C1 until a clean C1 hold',
+  {skip:!standingSelected},async t=>{
+  const {f,signals,workerEntry,scope,binding,graph,snapshot}=standingFixture(t);
+  await assert.rejects(main(['--serve',f.directory],{readPeriod:f.read,spawn:()=>assert.fail('missing standing authority')}),
+    /DEX_SERVICES_STANDING_WORKER_HELD/);
+  await assert.rejects(main(['--serve',f.directory],{readPeriod:f.read,readStandingScope:()=>scope,
+    standingWorkerEntry:require.resolve('./current-dex-c1.cjs'),spawn:()=>assert.fail('wrong standing entry')}),
+    /DEX_SERVICES_STANDING_WORKER_HELD/);
+  f.policy.c1RehearsalSha256='2'.repeat(64);
+  f.write();
+  assert.throws(()=>f.read(f.directory),/DEX_SERVER_POLICY_FIELDS/);
+  delete f.policy.c1RehearsalSha256;
+  f.write();
+  const fixture=operatingChildren(row=>{
+    if(row.name!=='c1')return;
+    assert.deepEqual(row.args,['--stand',f.directory]);
+    assert.equal(row.standingAdmission.approvalSha256,scope.approvalSha256);
+    assert.equal(row.options.env.CW_LOW_RPC_TRIAL,undefined);
+    if(row.run===1)void row.complete({result:{window:1,continuationReady:true,state:{actualFeeWei:'0'}}});
+    else void row.complete({code:1,stderr:c1CommitStopSignal()});
+  });
+  const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+    readStandingScope:()=>scope,standingWorkerEntry:workerEntry,
+    feeSnapshot:(name,options)=>{
+      assert.equal(options.replacementBindingSha256,graph===build13Graph&&name!=='c1'?build13PeerBinding:binding);
+      assert.equal(options.standingInitialOperatorNonce,name==='c1'?'7':undefined);
+      return snapshot(name,options);
+    },
+    feeDelta:(_before,after)=>after.service==='c1'?'0':'1'});
+  try{
+    const group=await groupWhen(f,g=>g.services.c1?.status==='HELD'||g.stopReason);
+    assert.equal(group.stopReason,undefined);
+    assert.equal(group.services.c1.holdReason,'C1_COMMIT_STOP_SIGNAL');
+    assert.equal(group.runs.c1.length,2);
+    assert.deepEqual(group.runs.c1.map(row=>row.actualFeeWei),['0','0']);
+    assert.deepEqual(Object.keys(group.standingBaseline).sort(),['c1','keeper','matching','prices']);
+    for(const name of ['keeper','prices','matching']){
+      const first=fixture.calls.find(row=>row.name===name);
+      assert.equal(first.closed,false);
+      const explicit=[wideStandingGraph,build13Graph].includes(graph),peer=graph===build13Graph?build13PeerBinding:binding;
+      assert.equal(first.options.env.CW_LOW_RPC_TRIAL,explicit?undefined:graph);
+      assert.equal(first.options.env.CHAINWHISPER_KEEPER_BINDING_SHA256,explicit&&name==='keeper'?peer:undefined);
+      assert.equal(first.options.env.CHAINWHISPER_MATCHING_BINDING_SHA256,explicit&&name==='matching'?peer:undefined);
+      assert.equal(first.options.env.CHAINWHISPER_PRICE_BINDING_SHA256,name==='prices'?peer:undefined);
+      assert.equal(first.options.env.CHAINWHISPER_PRICE_PAYER_ADMISSION_SHA256,
+        graph===build13Graph&&name==='prices'?build13PriceAdmission:undefined);
+      await first.complete();
+      await groupWhen(f,()=>fixture.calls.filter(row=>row.name===name).length===2);
+      assert.equal(fixture.calls.filter(row=>row.name===name).length,2);
+    }
+  }finally{signals.emit('SIGINT');await running;}
+});
+
+for(const phase of ['baseline','settlement'])test(`standing C1 alone holds when its ${phase} cannot be reconciled`,
+  {skip:!standingSelected},async t=>{
+  const {f,signals,workerEntry,scope,snapshot}=standingFixture(t);
+  const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete();});
+  const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+    readStandingScope:()=>scope,standingWorkerEntry:workerEntry,
+    feeSnapshot:(name,options)=>{
+      if(name==='c1'&&phase==='baseline')throw Error('DEX_SERVICE_FEES_UNRESOLVED');
+      return snapshot(name,options);
+    },
+    feeDelta:(_before,after)=>{
+      if(after.service==='c1')throw Error('DEX_SERVICE_FEES_PREFIX_CHANGED');
+      return '0';
+    }});
+  try{
+    const group=await groupWhen(f,g=>g.services.c1?.status==='HELD'||g.stopReason);
+    assert.equal(group.stopReason,undefined);
+    assert.equal(group.services.c1.holdReason,phase==='baseline'?'C1_STANDING_BASELINE_UNSETTLED':'C1_STANDING_ACCOUNTING_UNSETTLED');
+    assert.equal(group.services.c1.unsettledFeeLimitWei,'323200000000000000');
+    assert.equal(group.services.c1.actualFeeWei,undefined);
+    assert.equal(group.services.c1.noAutomaticRestart,true);
+    assert.equal(fixture.calls.filter(row=>row.name==='c1').length,phase==='baseline'?0:1);
+    for(const name of ['keeper','prices','matching']){
+      await fixture.calls.find(row=>row.name===name).complete({requests:1});
+      await groupWhen(f,()=>fixture.calls.filter(row=>row.name===name).length===2);
+      assert.equal(fixture.calls.filter(row=>row.name===name).length,2);
+    }
+    assert.equal(groupOf(f).stopReason,undefined);
+  }finally{signals.emit('SIGINT');await running;}
+});
+const assertOnlyC1Held=async(f,fixture,fixtureC1Calls=1)=>{
+ assert(fixture.calls.filter(row=>row.name!=='c1').every(row=>!row.closed));
+ await fixture.calls.find(row=>row.name==='keeper').complete();await groupWhen(f,()=>fixture.calls.filter(row=>row.name==='keeper').length===2);
+ assert.equal(fixture.calls.filter(row=>row.name==='keeper').length,2);assert.equal(fixture.calls.filter(row=>row.name==='c1').length,fixtureC1Calls);assert.equal(groupOf(f).stopReason,undefined);
+};
+test('standing C1 exit before its first RPC leaves the peers running after zero fees reconcile',
+  {skip:!standingSelected},async t=>{
+  const {f,signals,workerEntry,scope,snapshot}=standingFixture(t);
+  const fixture=operatingChildren(row=>{if(row.name==='c1')row.close(1);});
+  const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+    readStandingScope:()=>scope,standingWorkerEntry:workerEntry,feeSnapshot:snapshot,feeDelta:()=>'0'});
+  try {
+    const group=await groupWhen(f,g=>g.services.c1?.status==='HELD'||g.stopReason);
+    assert.equal(group.services.c1.holdReason,'C1_WORKER_EXIT_BEFORE_RPC');
+    assert.equal(group.services.c1.actualFeeWei,'0');
+    await assertOnlyC1Held(f,fixture);
+  } finally {signals.emit('SIGINT');await running;}
+});
+for(const pending of [false,true])test(`standing full Limit-page mismatch ${pending?'preserves the pending-send stop':'holds C1 and renews its peers'}`,
+  {skip:!standingSelected},async t=>{
+  const {f,signals,workerEntry,scope,snapshot}=standingFixture(t);
+  const fixture=operatingChildren(row=>{
+    if(row.name==='c1')void row.complete({code:1,requests:1,stderr:{status:'CURRENT_C1_STOP',code:'ERR_ASSERTION',
+      guard:'C1_QUOTE_PAGE_ENGINE',...(pending?{pendingHash:'0x'+'1'.repeat(64)}:{})}});
+  });
+  const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+    readStandingScope:()=>scope,standingWorkerEntry:workerEntry,feeSnapshot:snapshot,feeDelta:()=>'0'});
+  try{
+    const group=await groupWhen(f,g=>g.services.c1?.status==='HELD'||g.stopReason);
+    if(pending){
+      assert.equal(group.stopReason,'c1:FAILED');
+      assert.equal(group.runs.c1[0].status,'FAILED');
+      return;
+    }
+    assert.equal(group.services.c1.holdReason,'C1_QUOTE_PAGE_ENGINE');
+    assert.equal(group.services.c1.noAutomaticRestart,true);
+    assert.equal(group.services.c1.actualFeeWei,'0');
+    for(const name of ['keeper','prices','matching']){
+      await fixture.calls.find(row=>row.name===name).complete({requests:1});
+      await groupWhen(f,()=>fixture.calls.filter(row=>row.name===name).length===2);
+      assert.equal(fixture.calls.filter(row=>row.name===name).length,2);
+    }
+    assert.equal(groupOf(f).stopReason,undefined);
+    assert.equal(fixture.calls.filter(row=>row.name==='c1').length,1);
+  }finally{signals.emit('SIGINT');await running;}
+});
+for(const commitClass of ['capacity','revert-empty','revert-data','unknown'])test(`a C1 Commit stop signal of class ${commitClass} holds C1 alone and keeps its public cause`,{timeout:5000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const commitStop=c1CommitStop({commitClass,commitKind:'pool-pair',rpcCode:commitClass==='revert-empty'?3:null,revertSelector:commitClass==='revert-data'?'0x12345678':null,contractError:'X'.repeat(300),
+  staleProof:{why:'no-failed-check',pageOrders:51},failedPublicChecks:['quote-block','Y'.repeat(250)],rpcMessage:'private detail',operator:'0xddbfe89f9decad1b99406be4af8bb613065144be'});
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:1,requests:1,stderr:c1CommitStopSignal(commitStop),traffic:c1EstimateFailure});});
+ const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:(_,b)=>b.service==='c1'?'7':'0'});
+ try{
+  const g=await groupWhen(f,group=>group.services.c1?.status==='HELD'||group.stopReason);const held=g.services.c1;
+  assert.equal(held.status,'HELD');assert.equal(held.holdReason,'C1_COMMIT_STOP_SIGNAL');assert.equal(held.noAutomaticRestart,true);assert.equal(held.actualFeeWei,'7');assert.equal(held.code,1);
+  // Only the listed public fields are copied, and each string is cut to 200 characters.
+  assert.deepEqual(held.commitStop,{pair:'3',commitKind:'pool-pair',commitClass,rpcCode:commitClass==='revert-empty'?3:null,revertSelector:commitClass==='revert-data'?'0x12345678':null,
+   contractError:'X'.repeat(200),staleProof:{why:'no-failed-check',pageOrders:51},failedPublicChecks:['quote-block','Y'.repeat(200)]});
+  assert.equal(g.stopReason,undefined);
+  await assertOnlyC1Held(f,fixture);
+ }finally{signals.emit('SIGINT');await running;}
+});
+
+for(const rule of ['estimate-only','both'])test(`a C1 estimate revert with ${rule==='both'?'a Commit stop signal holds C1 for the stop signal':'no Commit stop signal keeps its old hold reason'}`,{timeout:5000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const stderr=rule==='both'?c1CommitStopSignal(c1CommitStop({commitClass:'revert-empty',rpcCode:3})):{status:'CURRENT_C1_STOP',guard:'CURRENT_C1_PREFLIGHT_REJECTED',code:'CALL_EXCEPTION'};
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:1,requests:1,stderr,traffic:{lastFailure:{...c1EstimateFailure.lastFailure,rpcCode:3}}});});
+ const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0'});
+ try{
+  const held=(await groupWhen(f,group=>group.services.c1?.status==='HELD'||group.stopReason)).services.c1;
+  assert.equal(held.status,'HELD');assert.equal(held.noAutomaticRestart,true);
+  if(rule==='both'){assert.equal(held.holdReason,'C1_COMMIT_STOP_SIGNAL');assert.equal(held.commitStop.commitClass,'revert-empty');assert.equal(held.commitStop.rpcCode,3);}
+  else{assert.equal(held.holdReason,'C1_ESTIMATE_REVERT');assert.equal(held.commitStop,undefined);}
+  await assertOnlyC1Held(f,fixture);
+ }finally{signals.emit('SIGINT');await running;}
+});
+
+for(const fault of ['transient-class','no-class','not-object','pending-hash','state-pending-hash','hashless','pending','halt','state-halt','other-guard','exit-0','signal','transport','dirty-traffic','request-count','accounting','fee-overrun','pending-journal'])test(`a C1 Commit stop signal holds C1 only at a safe boundary: ${fault}`,{timeout:5000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();let snapshots=0;
+ const commitStop=fault==='transient-class'?c1CommitStop({commitClass:'transient'}):fault==='no-class'?c1CommitStop({commitClass:undefined}):fault==='not-object'?'capacity':c1CommitStop();
+ const stderr=c1CommitStopSignal(commitStop,{...(fault==='pending-hash'?{pendingHash:'0xtest'}:{}),...(fault==='state-pending-hash'?{state:{pendingHash:'0xtest'}}:{}),...(fault==='hashless'?{hashless:true}:{}),
+  ...(fault==='pending'?{pending:{pair:'3'}}:{}),...(fault==='halt'?{halt:'C1_REVERT_CAUSE_UNPROVED'}:{}),...(fault==='state-halt'?{state:{halt:'C1_REVERT_CAUSE_UNPROVED'}}:{}),...(fault==='other-guard'?{guard:'CURRENT_C1_REJECTED'}:{})});
+ const fixture=operatingChildren(row=>{
+  if(row.name!=='c1')return;
+  if(fault==='signal'){void row.complete({code:1,requests:1,stderr,traffic:c1EstimateFailure,close:false}).then(()=>{row.closed=true;row.child.connected=false;row.child.emit('disconnect');row.child.emit('close',1,'SIGTERM');});return;}
+  void row.complete({code:fault==='exit-0'?0:1,requests:1,stderr,traffic:{...c1EstimateFailure,...(fault==='transport'?{stopped:'DEX_RPC_TRANSPORT_STOP'}:{}),...(fault==='dirty-traffic'?{physicalPending:1}:{}),...(fault==='request-count'?{requests:2}:{})}});
+ });
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+  feeSnapshot:name=>{if(name==='c1'&&++snapshots===2&&fault==='pending-journal')throw Error('DEX_SERVICE_FEES_UNRESOLVED');return{service:name};},
+  feeDelta:(_,b)=>{if(b.service==='c1'&&fault==='accounting')throw Error('UNCERTAIN_ACCOUNTING');return b.service==='c1'&&fault==='fee-overrun'?'79200000000000001':'0';}});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'c1:FAILED');assert.equal(result.runs.c1.length,1);
+ const run=result.runs.c1[0];assert.equal(run.status,'FAILED');assert.equal(run.holdReason,undefined);assert.equal(run.commitStop,undefined);
+ if(['accounting','fee-overrun','pending-journal'].includes(fault))assert.equal(run.accountingError,'DEX_SERVER_ACCOUNTING');
+});
+
+test('outside the served group a C1 Commit stop signal still stops the finite group',async t=>{
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:1,requests:1,stderr:c1CommitStopSignal(),traffic:c1EstimateFailure});});
+ const result=await main(['--operate',folder(t)],{spawn:fixture.spawn,signals:new EventEmitter()});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'c1:FAILED');assert.equal(result.runs.c1[0].status,'FAILED');assert.equal(result.runs.c1[0].holdReason,undefined);
+});
+
+test('a Commit stop signal from another service still stops the group',async t=>{
+ const f=serverPeriod(t,true);
+ const fixture=operatingChildren(row=>{if(row.name==='keeper')void row.complete({code:1,requests:1,result:c1CommitStopSignal(),traffic:c1EstimateFailure});});
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals:new EventEmitter(),readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0'});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'keeper:FAILED');assert.equal(result.runs.keeper[0].status,'FAILED');
+});
+
+for(const where of ['state','result','unbroadcast'])test(`a C1 policy halt in ${where} holds C1 alone and keeps the halt reason`,{timeout:5000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const halt=where==='unbroadcast'?'C1_COMMIT_UNBROADCAST':'C1_REVERT_CAUSE_UNPROVED';
+ const runResult=where==='result'?{halt,pendingHash:null,hashless:false}:{state:{pendingHash:null,hashless:false,halt,parkedPairs:['3']}};
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({requests:2,result:runResult});});
+ // A reverted send costs gas: the halt fee can be above zero, at or below the fee limit of the run.
+ const c1FeeOptions=[];
+ const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+  feeSnapshot:(name,options)=>{if(name==='c1')c1FeeOptions.push(options);return{service:name};},
+  feeDelta:(_,b)=>b.service==='c1'?'79200000000000000':'0'});
+ try{
+  const g=await groupWhen(f,group=>group.services.c1?.status==='HELD'||group.stopReason);const held=g.services.c1;
+  assert.equal(held.status,'HELD');assert.equal(held.holdReason,'C1_POLICY_HALT');assert.equal(held.haltReason,halt);assert.equal(held.noAutomaticRestart,true);
+  assert.equal(held.code,0);assert.equal(held.actualFeeWei,'79200000000000000');assert.equal(held.commitStop,undefined);assert.equal(g.stopReason,undefined);
+  assert.deepEqual(c1FeeOptions,[undefined,{c1Halt:halt}]);
+  await assertOnlyC1Held(f,fixture);
+ }finally{signals.emit('SIGINT');await running;}
+});
+
+for (const drift of [false, true]) test(`replacement C1 halt settlement checks its graph and capture${drift ? ' and rejects drift' : ''}`,
+  {timeout: 7000}, async t => {
+  const f = rehearsalPeriod(t), signals = new EventEmitter(), halt = 'C1_COMMIT_UNBROADCAST';
+  const {graph,replacementBindingSha256}=f;
+  const c1Options = [];
+  const fixture = operatingChildren(row => {
+    if (row.name === 'c1') void row.complete({requests: 1, result: {state: {pendingHash: null, hashless: false, halt}}});
+  });
+  const running = main(['--serve', f.directory], {
+    spawn: fixture.spawn, signals, readPeriod: f.read,
+    feeSnapshot(name, options) {
+      if (name !== 'c1') {
+        assert.equal(options, undefined);
+        return {service: name};
+      }
+      c1Options.push(options);
+      return {service: name, graph, replacementBindingSha256: drift && options.c1Halt ? 'ff'.repeat(32) : replacementBindingSha256};
+    },
+    feeDelta: () => '0'
+  });
+  try {
+    const g = await groupWhen(f, group => group.services.c1?.status === 'HELD' || group.stopReason);
+      assert.equal(g.services.c1.status, 'HELD');
+      assert.equal(g.services.c1.haltReason, drift ? undefined : halt);
+      assert.equal(g.services.c1.feeLimitWei, '323200000000000000');
+      assert.equal(g.services.c1.actualFeeWei, drift ? undefined : '0');
+      if(drift){
+        assert.equal(g.services.c1.holdReason,'C1_REHEARSAL_UNSETTLED');
+        assert.equal(g.services.c1.unsettledFeeLimitWei,'323200000000000000');
+        assert.equal(g.services.c1.accountingError,'DEX_SERVER_ACCOUNTING');
+      }
+      const c1=fixture.calls.find(row=>row.name==='c1');
+      assert.deepEqual(c1.args,['--rehearse',f.directory]);
+      assert.deepEqual(c1.rehearsalAdmission,{type:'CHAINWHISPER_C1_REHEARSAL',pid:c1.child.pid,approvalSha256:f.policy.c1RehearsalSha256});
+      await assertOnlyC1Held(f, fixture);
+      for (const name of ['keeper','prices', 'matching']) {
+        assert.deepEqual(fixture.calls.find(row=>row.name===name).args,['--start']);
+        await fixture.calls.find(row => row.name === name).complete();
+        await groupWhen(f, () => fixture.calls.filter(row => row.name === name).length === 2);
+        assert.equal(fixture.calls.filter(row => row.name === name).length, 2);
+      }
+      assert.equal(groupOf(f).stopReason, undefined);
+    assert.deepEqual(c1Options, [{replacementBindingSha256}, {replacementBindingSha256, c1Halt: halt}]);
+  } finally {
+    signals.emit('SIGINT');
+    await running;
+  }
+});
+
+test('the real supervisor rejects a replacement digest without a rehearsal approval digest', async t => {
+  const f = serverPeriod(t, true);
+  f.policy.replacementBindingSha256='a5'.repeat(32);f.write();
+  await assert.rejects(main(['--serve', f.directory], {
+    signals: new EventEmitter(),
+    readPeriod:f.read,
+    feeSnapshot: () => assert.fail('replacement period reached the installed worker accounting')
+  }), /DEX_SERVER_POLICY_FIELDS/);
+  assert.equal(fs.existsSync(path.join(f.directory, 'group.json')), false);
+});
+
+test('the replacement rehearsal requires the installed group and its exact reconciled fee carry', async t => {
+  const f=rehearsalPeriod(t),worker=require('./current-dex-c1.cjs');
+  const read=()=>worker.rehearsal(f.directory,f.read(f.directory));
+  assert.equal(read().priorSpentFeeWei,f.policy.priorSpentFeeWei);
+  f.approval.market='1';f.writeApproval();
+  assert.throws(read,/C1_REHEARSAL_MARKET_SCOPE/);
+  delete f.approval.market;f.writeApproval();
+  const senderLock=f.approval.senderLock;
+  f.approval.senderLock={...senderLock,inode:'0'};f.writeApproval();
+  assert.throws(read,/C1_SENDER_LOCK_DIRECTORY/);
+  const otherDirectory=fs.realpathSync.native(folder(t));
+  if(process.platform==='linux')fs.chmodSync(otherDirectory,0o700);
+  const other=fs.statSync(otherDirectory,{bigint:true});
+  f.approval.senderLock={directory:otherDirectory,device:String(other.dev),inode:String(other.ino)};f.writeApproval();
+  assert.throws(read,/C1_REHEARSAL_SENDER_LOCK/);
+  f.approval.senderLock=senderLock;f.writeApproval();
+  const carry=f.policy.priorSpentFeeWei;
+  f.policy.priorSpentFeeWei=String(BigInt(carry)+1n);
+  f.write();
+  await assert.rejects(main(['--serve',f.directory],{readPeriod:f.read,
+    spawn:()=>assert.fail('service launched with a different fee carry')}),/C1_REHEARSAL_PRIOR_FEES/);
+  assert.equal(fs.existsSync(path.join(f.directory,'group.json')),false);
+  f.policy.priorSpentFeeWei=carry;
+  f.write();
+  fs.appendFileSync(f.reconciliationFile,'\n');
+  assert.throws(read,/C1_REHEARSAL_RECONCILIATION_DIGEST/);
+  f.reconciliation.locks=1;
+  f.writeReconciliation();
+  assert.throws(read,/C1_REHEARSAL_RECONCILIATION_STATE/);
+  f.reconciliation.locks=0;
+  const nextRun=f.reconciliation.nextRun;
+  f.reconciliation.nextRun='server-beta-another-rehearsal';
+  f.writeReconciliation();
+  assert.throws(read,/C1_REHEARSAL_RECONCILIATION_STATE/);
+  f.reconciliation.nextRun=nextRun;
+  const priorApprovalSha256=f.reconciliation.approvalSha256;
+  f.reconciliation.approvalSha256='7c'.repeat(32);
+  f.writeReconciliation();
+  assert.throws(read,/C1_REHEARSAL_RECONCILIATION_STATE/);
+  f.reconciliation.approvalSha256=priorApprovalSha256;
+  f.reconciliation.deltas.c1='3';
+  f.writeReconciliation();
+  assert.throws(read,/WATCHDOG_FEE_CARRY/);
+  f.reconciliation.deltas.c1='2';
+  f.approval.priorRuntimeManifestSha256='ef'.repeat(32);
+  f.writeReconciliation();
+  assert.throws(read,/C1_REHEARSAL_PRIOR_GROUP/);
+});
+
+test('the default C1 launch holds even when the local rehearsal records match',async t=>{
+  const f=rehearsalPeriod(t);
+  await assert.rejects(main(['--serve',f.directory],{signals:new EventEmitter(),readPeriod:f.read}),/DEX_SERVICES_REPLACEMENT_WORKER_HELD/);
+  await assert.rejects(require('./current-dex-c1.cjs').main(['--rehearse',f.directory]),/C1_REHEARSAL_WORKER_HELD/);
+  assert.equal(fs.existsSync(path.join(f.directory,'group.json')),false);
+});
+
+for(const wide of [false,true])test('standing C1 requires its managed parent and rechecks authority before work, wide='+wide,async()=>{
+  const worker=require('./current-dex-c1.cjs'),directory=path.join(reports,'standing-worker-test');
+  await assert.rejects(worker.main(['--stand',directory]),/C1_STANDING_WORKER_HELD/);
+  const peer=new EventEmitter();
+  peer.connected=true;peer.pid=42;
+  peer.env={CHAINWHISPER_RPC_MANAGED_SERVICE:'c1',CREDENTIALS_DIRECTORY:reports};
+  const graph=wide?wideStandingGraph:replacementStandingGraph;
+  const operator='0xddbfe89f9decad1b99406be4af8bb613065144be',approvalSha256='1'.repeat(64);
+  const bindingSha256=wide?'6f6c3efd3b6915343f9281348a1dc313cee7fe99727fac50144ec44c364e5d5f':'2'.repeat(64);
+  const maximumCommittedWei='323200000000000000',initialBundleHash='3'.repeat(64),standingInitialOperatorNonce='7';
+  const firstBundle={hash:initialBundleHash,manifest:{binding:{graph},chainId:'7082400',operator,
+    replacementBindingSha256:bindingSha256,policy:{totalWei:maximumCommittedWei}}};
+  const scope={approvalSha256,firstBundle,standingInitialOperatorNonce};
+  const invoke=options=>worker.runStanding(directory,{peer,readScope:()=>scope,verifyLaunch:()=>true,
+    bindBroadcast:()=>()=>assert.fail('no broadcast'),...options});
+  const bad=invoke({operate:()=>assert.fail('wrong parent is held')});
+  peer.emit('message',{type:'CHAINWHISPER_C1_STANDING',pid:peer.pid+1,approvalSha256});
+  await assert.rejects(bad,/C1_STANDING_PARENT/);
+  const good=invoke({operate:async(selected,{assertAuthorized})=>{
+    assert.deepEqual(selected,firstBundle);
+    const request={graph,operator,approvalSha256,bindingSha256,maximumCommittedWei,initialBundleHash,standingInitialOperatorNonce};
+    assert.equal(assertAuthorized(request,'select'),true);
+    scope.standingInitialOperatorNonce='8';
+    assert.throws(()=>assertAuthorized(request,'sign'),/C1_STANDING_SCOPE_DRIFT/);
+    scope.standingInitialOperatorNonce='7';
+    peer.emit('message',{type:'CHAINWHISPER_SERVICE_STOP'});
+    assert.throws(()=>assertAuthorized(request,'send'),/C1_STANDING_PARENT/);
+    return {checked:true};
+  }});
+  peer.emit('message',{type:'CHAINWHISPER_C1_STANDING',pid:peer.pid,approvalSha256});
+  assert.deepEqual(await good,{checked:true});
+  assert.equal(peer.listenerCount('message'),0);
+});
+
+test('the C1 rehearsal verifier reads the controller run directory without loading the replacement runtime',t=>{
+  const runParent=path.join(reports,'server-beta-runs'),created=!fs.existsSync(runParent);
+  if(created)fs.mkdirSync(runParent);
+  const f=rehearsalPeriod(t,runParent);
+  if(created)t.after(()=>fs.rmdirSync(runParent));
+  const worker=require('./current-dex-c1.cjs');
+  const Module=require('node:module'),load=Module._load;
+  const adapter=require.resolve('../../ChainWhisper Contracts V2/validation/candidates/c1-shared-integration-2026-10-05/durable-adapter.cjs');
+  const loadCheck=t.mock.method(Module,'_load',function(request,parent,isMain){
+    if(request.endsWith('durable-adapter.cjs'))
+      assert.notEqual(Module._resolveFilename(request,parent,isMain),adapter,'reading public approval metadata must not load the transaction adapter');
+    return load.call(this,request,parent,isMain);
+  });
+  try { assert.equal(worker.rehearsal(f.directory,f.read(f.directory)).graph,f.graph); }
+  finally { loadCheck.mock.restore(); }
+  const cli=spawnSync(process.execPath,[require.resolve('./current-dex-c1.cjs'),'--rehearse',f.directory],{
+    encoding:'utf8',timeout:10000,
+    env:{SystemRoot:process.env.SystemRoot,NODE_OPTIONS:process.env.NODE_OPTIONS,CW_LOW_RPC_TRIAL:f.policy.graph}
+  });
+  assert.equal(cli.status,1,cli.error?.code);
+  assert.equal(cli.stdout,'');
+  assert.equal(JSON.parse(cli.stderr).guard,'C1_REHEARSAL_WORKER_HELD');
+});
+
+const peerArchive=path.resolve(__dirname,'../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/peer-state-package-1');
+function installedPeerFixture(t){
+  const parent=fs.mkdtempSync(path.join(reports,'service-peer-test-'));
+  try{
+    const root=path.join(parent,'runtime');
+    const {CONFIG}=require('./current-dex-service-watchdog.cjs');
+    const bytes=fs.readFileSync(path.join(peerArchive,'runtime-public.json'));
+    assert.equal(require('node:crypto').createHash('sha256').update(bytes).digest('hex'),CONFIG.runtimeManifestSha256);
+    const {files}=JSON.parse(bytes);
+    assert.equal(Object.keys(files).length,CONFIG.runtimeFiles);
+    for(const name of Object.keys(files)){
+      const target=path.join(root,name);
+      fs.mkdirSync(path.dirname(target),{recursive:true});
+      fs.copyFileSync(path.join(peerArchive,name),target);
+    }
+    const manifest=path.join(root,'runtime-public.json'),runParent=path.join(root,'APP/reports/server-beta-runs');
+    fs.writeFileSync(manifest,bytes);
+    fs.mkdirSync(runParent,{recursive:true});
+    return {root,manifest,rehearsal:rehearsalPeriod(t,runParent,manifest)};
+  }finally{
+    t.after(()=>{
+      assert.equal(path.dirname(fs.realpathSync.native(parent)),fs.realpathSync.native(reports));
+      fs.rmSync(parent,{recursive:true});
+    });
+  }
+}
+
+for(const useArchive of [false,true]) test('the staged C1 fork uses one package for its worker and fee reader while the installed peers continue'+
+  (useArchive?' from the repaired peer package':''),{timeout:25000,
+  skip:useArchive&&!fs.existsSync(path.join(peerArchive,'runtime-public.json'))?'installed archive unavailable':false}, async t=>{
+  const installed=useArchive?installedPeerFixture(t):null,f=installed?.rehearsal??rehearsalPeriod(t);
+  const signals=new EventEmitter(),peers=operatingChildren(),stagedC1Root=fs.realpathSync.native(folder(t));
+  const invocationId='9c'.repeat(16),previousInvocation=process.env.INVOCATION_ID;
+  process.env.INVOCATION_ID=invocationId;
+  t.after(()=>{if(previousInvocation===undefined)delete process.env.INVOCATION_ID;else process.env.INVOCATION_ID=previousInvocation;});
+  const {createHash}=require('node:crypto'),sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+  const guard=path.resolve(__dirname,'../../ChainWhisper Contracts V2/validation/candidates/c1-tier-schedule-2026-11-21/adoption/no-socket-guard.cjs');
+  const stop=path.join(__dirname,'current-dex-service-stop.cjs');
+  const entry='APP/scripts/current-dex-c1-rehearsal.cjs',fees='APP/scripts/current-dex-service-fees.cjs';
+  const source={
+    [entry]:`const assert=require('node:assert/strict');
+    assert.equal(process.env.CW_LOW_RPC_TRIAL,undefined);
+    assert.equal(process.env.CHAINWHISPER_RUNTIME_ROOT,${JSON.stringify(stagedC1Root)});
+    assert.equal(process.env.CHAINWHISPER_RPC_MANAGED_SERVICE,'c1');
+    assert.equal(process.env.INVOCATION_ID,${JSON.stringify(invocationId)});
+    assert.equal(process.cwd(),${JSON.stringify(path.join(stagedC1Root,'APP'))});
+    assert(require('node:net').Socket.prototype.connect.localTestGuard);
+    const pacing=require('./current-dex-rpc-pacing.cjs');
+    assert.equal(pacing.stats().service,'c1');
+    assert.equal(typeof pacing.bindC1Broadcast(),'function');
+    const timeout=setTimeout(()=>assert.fail('parent approval IPC missing'),5000);
+    process.once('message',message=>{
+      clearTimeout(timeout);
+      assert.equal(message.type,'CHAINWHISPER_C1_REHEARSAL');
+      assert.equal(message.pid,process.pid);
+      const approval=require('node:fs').readFileSync(require('node:path').join(process.argv[3],'c1-rehearsal-approval.json'));
+      assert.equal(message.approvalSha256,require('node:crypto').createHash('sha256').update(approval).digest('hex'));
+      console.error(JSON.stringify({status:'CURRENT_C1_STOP',guard:'C1_LOCAL_STAGED_DENIAL'}));
+      process.exitCode=1;
+      process.channel.unref();
+    });`,
+    [fees]:`exports.calls=[];exports.snapshotAsync=async(service,options)=>{
+      exports.calls.push(options);
+      return {service,graph:${JSON.stringify(f.graph)},runtimeRoot:options.runtimeRoot,
+        replacementBindingSha256:options.replacementBindingSha256,feeWei:'0',journals:[]};
+    };exports.deltaAsync=async()=>{throw Error('a denied rehearsal must stay held');};`,
+    'APP/scripts/current-dex-rpc-pacing.cjs':fs.readFileSync(path.join(__dirname,'current-dex-rpc-pacing.cjs')),
+    'APP/scripts/current-dex-service-stop.cjs':`require(${JSON.stringify(guard)});require(${JSON.stringify(stop)});`,
+    'APP/scripts/current-dex-c1.cjs':fs.readFileSync(path.join(__dirname,'current-dex-c1.cjs')),
+    'ChainWhisper Contracts V2/validation/node_modules/ethers/index.js':`module.exports=require(${JSON.stringify(require.resolve('ethers'))});`
+  };
+  const files={};
+  for(const [name,bytes] of Object.entries(source)){
+    const file=path.join(stagedC1Root,name);
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    fs.writeFileSync(file,bytes);
+    files[name]=sha(bytes);
+  }
+  const manifest=JSON.stringify({schema:'CHAINWHISPER_BETA_PUBLIC_RUNTIME_V1',graph:f.graph,chainId:'7082400',
+    noPrivateKeysOrSignedInputs:true,files});
+  fs.writeFileSync(path.join(stagedC1Root,'runtime-public.json'),manifest);
+  f.approval.stagedRuntimeManifestSha256=sha(manifest);
+  f.approval.stagedRuntimeRoot=stagedC1Root;f.writeApproval();
+  const options={stagedC1Root,...(installed?{installedPeerRoot:installed.root}:{readPeriod:f.read}),signals,spawn(entry,args,options){
+    assert.equal(path.dirname(entry),installed?path.join(installed.root,'APP','scripts'):__dirname);
+    assert.notEqual(path.basename(entry),'current-dex-c1.cjs','C1 routed to the installed entry');
+    assert.equal(options.env.CW_LOW_RPC_TRIAL,installed?f.policy.graph:process.env.CW_LOW_RPC_TRIAL);
+    if(installed){
+      assert.equal(options.env.CHAINWHISPER_RUNTIME_ROOT,installed.root);
+      assert.equal(options.cwd,path.join(installed.root,'APP'));
+      assert.equal(options.env.NODE_OPTIONS,undefined);
+      assert.equal(options.env.NODE_PATH,path.join(installed.root,'ChainWhisper Contracts V2/validation/node_modules'));
+    }
+    assert(options.execArgv.filter(value=>value!=='--require').every(file=>path.dirname(file)===path.dirname(entry)));
+    return peers.spawn(entry,args,options);
+  },feeSnapshot(name){assert.notEqual(name,'c1','C1 routed to the installed ledger');return {service:name};},feeDelta:()=>'0'};
+  if(installed){
+    await assert.rejects(main(['--serve',f.directory],{...options,spawn:undefined}),/DEX_SERVICES_INSTALLED_PEERS/);
+    assert(!fs.existsSync(path.join(f.directory,'group.json')));
+    if(process.platform!=='win32'){
+      await assert.rejects(main(['--serve',f.directory],options),/DEX_SERVICES_INSTALLED_PEERS/);
+      assert.equal(peers.calls.length,0);
+      return;
+    }
+    const previous=process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS='--require missing-rehearsal-preload.cjs';
+    t.after(()=>{if(previous===undefined)delete process.env.NODE_OPTIONS;else process.env.NODE_OPTIONS=previous;});
+  }
+  if(process.platform==='linux'){
+    for(let directory=stagedC1Root;;directory=path.dirname(directory)){
+      const stat=fs.lstatSync(directory);
+      if(stat.uid!==0||(stat.mode&0o022)!==0){
+        await assert.rejects(main(['--serve',f.directory],options),/DEX_SERVICES_C1_STAGE_SOURCE|DEX_SERVICES_INSTALLED_PEERS/);
+        assert.equal(peers.calls.length,0);
+        return;
+      }
+      if(directory===path.dirname(directory))break;
+    }
+  }
+  await assert.rejects(main(['--serve',f.directory],options),/DEX_SERVICES_C1_STATE_DIRECTORY/);
+  fs.mkdirSync(path.join(stagedC1Root,'APP/reports','c1-state-'+f.graph.slice(0,8)),{recursive:true,mode:0o700});
+  if(installed){
+    const keeper=path.join(installed.root,'APP/scripts/current-dex-keeper.cjs'),keeperBytes=fs.readFileSync(keeper);
+    fs.appendFileSync(keeper,'\n');
+    await assert.rejects(main(['--serve',f.directory],options),/DEX_SERVICES_INSTALLED_PEERS/);
+    assert.equal(peers.calls.length,0);
+    fs.writeFileSync(keeper,keeperBytes);
+  }
+  f.approval.stagedRuntimeRoot=path.join(stagedC1Root,'another-stage');f.writeApproval();
+  await assert.rejects(main(['--serve',f.directory],options),/DEX_SERVICES_C1_STAGE_SOURCE/);
+  f.approval.stagedRuntimeRoot=stagedC1Root;f.writeApproval();
+  fs.appendFileSync(path.join(stagedC1Root,entry),'\n');
+  const stopUnexpectedStart=setTimeout(()=>signals.emit('SIGINT'),500);
+  try{
+    await assert.rejects(main(['--serve',f.directory],options),/DEX_SERVICES_C1_STAGE_SOURCE/);
+  }finally{clearTimeout(stopUnexpectedStart);}
+  assert.equal(peers.calls.length,0);
+  fs.writeFileSync(path.join(stagedC1Root,entry),source[entry]);
+  const running=main(['--serve',f.directory],options);
+  try {
+    const g=await groupWhen(f,group=>group.services.c1?.status==='HELD'||group.stopReason);
+    assert.equal(g.stopReason,undefined);
+    assert.equal(g.services.c1.result.guard,'C1_LOCAL_STAGED_DENIAL');
+    assert.equal(g.services.c1.traffic.requests,0);
+    assert.equal(g.services.c1.unsettledFeeLimitWei,'323200000000000000');
+    if(installed){
+      assert.equal(g.sourcePins[installed.manifest],f.policy.runtimeManifestSha256);
+      assert(g.sourcePins[path.join(installed.root,fees)]);
+    }
+    assert.deepEqual(require(path.join(stagedC1Root,fees)).calls,[{runtimeRoot:stagedC1Root,replacementBindingSha256:f.replacementBindingSha256}]);
+    await assertOnlyC1Held(f,peers,0);
+    for(const name of ['prices','matching']){
+      await peers.calls.find(row=>row.name===name).complete();
+      await groupWhen(f,()=>peers.calls.filter(row=>row.name===name).length===2);
+      assert.equal(peers.calls.filter(row=>row.name===name).length,2);
+    }
+    assert.equal(groupOf(f).runs.c1.length,1);
+  } finally {signals.emit('SIGINT');await running;}
+});
+
+test('replacement C1 holds before fork when its baseline is unresolved',async t=>{
+  const f=rehearsalPeriod(t),signals=new EventEmitter(),fixture=operatingChildren();
+  const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+    feeSnapshot:name=>{if(name==='c1')throw Error('DEX_SERVICE_FEES_UNRESOLVED');return {service:name};},
+    feeDelta:()=> '0'});
+  try{
+    const g=await groupWhen(f,group=>group.services.c1?.status==='HELD'||group.stopReason);
+    assert.equal(g.services.c1.holdReason,'C1_REHEARSAL_BASELINE_UNSETTLED');
+    assert.equal(g.services.c1.unsettledFeeLimitWei,'323200000000000000');
+    assert.equal(fixture.calls.some(row=>row.name==='c1'),false);
+    for(const name of ['keeper','matching','prices'])assert(fixture.calls.some(row=>row.name===name&&!row.closed));
+    assert.equal(g.stopReason,undefined);
+  }finally{signals.emit('SIGINT');await running;}
+});
+
+test('the replacement handoff disconnect before RPC admission holds C1 alone', async t=>{
+  const f=rehearsalPeriod(t),signals=new EventEmitter();
+  const peers=operatingChildren(row=>{if(row.name==='c1')row.close(1);});
+  let handoffFailed=false;
+  const spawn=(entry,args,options)=>{
+    const child=peers.spawn(entry,args,options);
+    if(path.basename(entry)==='current-dex-c1.cjs'){
+      const send=child.send.bind(child);
+      child.send=(message,callback)=>{
+        if(message.type==='CHAINWHISPER_C1_REHEARSAL'){handoffFailed=true;callback(Error('fixture handoff disconnect'));}
+        else send(message,callback);
+      };
+    }
+    return child;
+  };
+  const running=main(['--serve',f.directory],{signals,readPeriod:f.read,spawn,
+    feeSnapshot:name=>({service:name,graph:f.graph,replacementBindingSha256:f.replacementBindingSha256}),feeDelta:()=>'0'});
+  try{
+    const g=await groupWhen(f,group=>group.services.c1?.status==='HELD'||group.stopReason);
+    assert.equal(handoffFailed,true);
+    assert.equal(g.stopReason,undefined);
+    assert.equal(g.services.c1.handoffError,'C1_REHEARSAL_HANDOFF');
+    assert.equal(g.rpc.perService.c1.requested,0);
+    assert.equal(g.rpc.perService.c1.grants,0);
+    await assertOnlyC1Held(f,peers);
+  }finally{signals.emit('SIGINT');await running;}
+});
+
+test('replacement C1 holds a signed unresolved send and keeps its full reserve', async t=>{
+  const f=rehearsalPeriod(t),signals=new EventEmitter(),hash='0x'+'ee'.repeat(32);
+  const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({requests:1,result:{state:{pendingHash:hash}}});});
+  const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+    feeSnapshot:(name,options)=>name==='c1'?{service:name,graph:f.graph,replacementBindingSha256:options.replacementBindingSha256}:{service:name},
+    feeDelta:(_before,after)=>{
+      assert.notEqual(after.service,'c1','an unresolved send reached settlement');
+      return '0';
+    }});
+  try{
+    const g=await groupWhen(f,group=>group.services.c1?.status==='HELD'||group.stopReason);
+    assert.equal(g.services.c1.result.state.pendingHash,hash);
+    assert.equal(g.services.c1.unsettledFeeLimitWei,'323200000000000000');
+    assert.equal(g.services.c1.actualFeeWei,undefined);
+    await assertOnlyC1Held(f,fixture);
+  }finally{signals.emit('SIGINT');await running;}
+});
+
+for(const outcome of ['three windows','early return','unsettled fees'])test(`the approved C1 rehearsal sequence handles ${outcome} without restarting peers`,async t=>{
+  const f=rehearsalPeriod(t),signals=new EventEmitter();
+  f.approval.sequence={maximumWindows:3,totalCommittedWei:String(3n*BigInt(f.approval.maximumCommittedWei))};
+  f.writeApproval();
+  const settled=[];
+  const fixture=operatingChildren(row=>{
+    if(row.name!=='c1')return;
+    assert.equal(row.rehearsalAdmission.approvalSha256,f.policy.c1RehearsalSha256);
+    assert.equal(row.rehearsalAdmission.windowOrdinal??1,row.run);
+    assert.equal(settled.length,row.run-1);
+    const feeWei=outcome==='unsettled fees'?'2':'1';
+    void row.complete({result:{window:row.run,state:{pendingHash:null,hashless:false,halt:null,actualFeeWei:feeWei},
+      continuationReady:outcome!=='early return'}});
+  });
+  const running=main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+    feeSnapshot:name=>({service:name,graph:f.graph,replacementBindingSha256:f.replacementBindingSha256}),
+    feeDelta:(_,after)=>{if(after.service==='c1')settled.push('1');return '1';}});
+  try{
+    const count=outcome==='three windows'?3:1, status=outcome==='unsettled fees'?'HELD':'RETURNED';
+    const group=await groupWhen(f,group=>group.runs.c1.length===count&&group.services.c1?.status===status||group.stopReason);
+    assert.equal(group.runs.c1.length,count);
+    assert.equal(group.services.c1.status,status);
+    assert.equal(group.stopReason,undefined);
+    assert.deepEqual(group.runs.c1.map(row=>row.actualFeeWei),Array(count).fill(status==='HELD'?undefined:'1'));
+    assert.deepEqual(Object.keys(group.rehearsalBaseline).sort(),['c1','keeper','matching','prices']);
+    assert.equal(group.rehearsalBaseline.c1.replacementBindingSha256,f.replacementBindingSha256);
+    for(const name of ['keeper','prices','matching']){
+      const peers=fixture.calls.filter(row=>row.name===name);
+      assert.equal(peers.length,1);
+      assert.equal(peers[0].closed,false);
+      await peers[0].complete();
+      await groupWhen(f,()=>fixture.calls.filter(row=>row.name===name).length===2);
+      assert.equal(fixture.calls.filter(row=>row.name===name).length,2);
+      assert.equal(groupOf(f).stopReason,undefined);
+    }
+  }finally{signals.emit('SIGINT');await running;}
+});
+
+for(const windowOrdinal of [1,2,3])test(`the C1 worker checks the owner record, predecessor journal and parent handoff for window ${windowOrdinal}`, async t=>{
+  const f=rehearsalPeriod(t),worker=require('./current-dex-c1.cjs'),peer=new EventEmitter();
+  const runtime=require('../../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/c1-service/runtime.cjs');
+  peer.connected=true;peer.pid=3003;peer.env={CHAINWHISPER_RPC_MANAGED_SERVICE:'c1',CREDENTIALS_DIRECTORY:path.join(f.directory,'credentials')};
+  const base=f.approval;
+  const continuation={windowOrdinal,continuationSha256:'cd'.repeat(32),expectedOperatorNonce:'39',
+    cumulativeCommitmentWei:String(BigInt(base.maximumCommittedWei)*BigInt(windowOrdinal))};
+  if(windowOrdinal>1)base.continuation=continuation;
+  base.market='2';f.writeApproval();
+  const request={...base,approvalSha256:f.policy.c1RehearsalSha256,...base.continuation};
+  let pendingHash=null,queuedPairs=[],runtimeManifestSha256=base.priorRuntimeManifestSha256;
+  const readPredecessor=()=>({graph:f.policy.graph,runName:base.priorRun,runtimeManifestSha256,
+    groupSha256:base.priorGroupSha256,priorSpentFeeWei:f.policy.priorSpentFeeWei,
+    state:{status:'CURRENT_C1_SAVED_STATE',pendingHash,hashless:false,activePair:null,queuedPairs,halt:null,renewalPending:false,
+      noNetwork:true,noCredentials:true,noSend:true}});
+  t.mock.method(runtime,'inspect',()=>assert.fail('replacement runtime read the predecessor journal'));
+  t.mock.method(runtime,'loadOperator',()=>assert.fail('local worker opened credentials'));
+  let launches=0,broadcastBindings=0,allowLaunch=false;
+  const execute=async (bundle,options)=>{
+    launches++;
+    assert.deepEqual(bundle,f.bundle);
+    assert.deepEqual(options.senderLock,f.approval.senderLock);
+    assert.equal(options.continuationSha256,base.continuation?.continuationSha256);
+    assert.equal(options.assertAuthorized(request,'sign'),true);
+    for(const kind of ['sign','send']){
+      assert.equal(options.assertAuthorized(request,kind,{pair:'2',action:1}),true);
+      assert.equal(options.assertAuthorized(request,kind,{pair:'2',action:6}),true);
+      assert.throws(()=>options.assertAuthorized(request,kind,{pair:'3',action:1}),/C1_REHEARSAL_MARKET_SCOPE/);
+    }
+    assert.throws(()=>options.assertAuthorized(request,'send'),/C1_REHEARSAL_MARKET_SCOPE/);
+    if(windowOrdinal===1){
+      assert.throws(()=>options.assertAuthorized({...request,...continuation},'sign'),/C1_REHEARSAL_REQUEST/);
+    }else{
+      for(const key of Object.keys(continuation)){
+        const wrong={...request};
+        delete wrong[key];
+        assert.throws(()=>options.assertAuthorized(wrong,'sign'),/C1_REHEARSAL_REQUEST/);
+        assert.throws(()=>options.assertAuthorized({...request,[key]:'0'},'send'),/C1_REHEARSAL_REQUEST/);
+      }
+    }
+    pendingHash='0x'+'04'.repeat(32);
+    try{
+      assert.throws(()=>options.assertAuthorized(request,'send'),/C1_REHEARSAL_PREDECESSOR_UNRESOLVED/);
+    }finally{pendingHash=null;}
+    assert.throws(()=>options.assertAuthorized({...request,bindingSha256:'00'.repeat(32)},'send'),/C1_REHEARSAL_REQUEST/);
+    const previous=fs.readFileSync(f.priorFile);
+    try{
+      fs.appendFileSync(f.priorFile,'\n');
+      assert.throws(()=>options.assertAuthorized(request,'send'),/C1_REHEARSAL_PRIOR_GROUP/);
+    }finally{fs.writeFileSync(f.priorFile,previous);}
+    peer.emit('message',{type:'CHAINWHISPER_SERVICE_STOP'});
+    assert.throws(()=>options.assertAuthorized(request,'read'),/C1_REHEARSAL_PARENT/);
+    return {status:'LOCAL_REHEARSAL_ROUTED'};
+  };
+  const run=async (patch={},beforeHandoff=()=>{})=>{
+    const result=worker.runRehearsal(f.directory,{peer,readPeriod:f.read,execute,verifyLaunch:()=>allowLaunch,readPredecessor,
+      bindBroadcast:()=>{broadcastBindings++;return()=>assert.fail('local worker sent a transaction');}});
+    beforeHandoff();
+    peer.emit('message',{type:'CHAINWHISPER_C1_REHEARSAL',pid:peer.pid,approvalSha256:f.policy.c1RehearsalSha256,...patch});
+    return result;
+  };
+  await assert.rejects(run(),/C1_REHEARSAL_LAUNCH_HELD/);
+  allowLaunch=true;
+  await assert.rejects(run({approvalSha256:'00'.repeat(32)}),/C1_REHEARSAL_PARENT/);
+  await assert.rejects(run({},()=>{allowLaunch=false;}),/C1_REHEARSAL_LAUNCH_HELD/);
+  allowLaunch=true;
+  pendingHash=undefined;
+  await assert.rejects(run(),/C1_REHEARSAL_PREDECESSOR_UNRESOLVED/);
+  pendingHash='0x'+'f1'.repeat(32);
+  await assert.rejects(run(),/C1_REHEARSAL_PREDECESSOR_UNRESOLVED/);
+  pendingHash=null;
+  queuedPairs=['2'];
+  await assert.rejects(run(),/C1_REHEARSAL_PREDECESSOR_UNRESOLVED/);
+  queuedPairs=[];
+  runtimeManifestSha256='0f'.repeat(32);
+  await assert.rejects(run(),/C1_REHEARSAL_PREDECESSOR_SOURCE/);
+  runtimeManifestSha256=base.priorRuntimeManifestSha256;
+  const original=fs.readFileSync(f.approvalFile);
+  fs.appendFileSync(f.approvalFile,'\n');
+  await assert.rejects(run(),/C1_REHEARSAL_APPROVAL_DIGEST/);
+  fs.writeFileSync(f.approvalFile,original);
+  assert.equal(launches,0);
+  assert.equal(broadcastBindings,0);
+  if(windowOrdinal>1){
+    base.continuation={...continuation,cumulativeCommitmentWei:base.maximumCommittedWei};
+    f.writeApproval();
+    await assert.rejects(run(),/C1_REHEARSAL_CONTINUATION_SCOPE/);
+    base.continuation=continuation;f.writeApproval();
+  }
+  assert.deepEqual(await run(),{status:'LOCAL_REHEARSAL_ROUTED'});
+  assert.equal(launches,1);
+  assert.equal(broadcastBindings,1);
+});
+
+test('a successor worker publishes and signs only the next window in its approved sequence',async t=>{
+  const f=rehearsalPeriod(t),worker=require('./current-dex-c1.cjs'),peer=new EventEmitter();
+  const runtime=require('../../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/c1-service/runtime.cjs');
+  peer.connected=true;peer.pid=3003;peer.env={CHAINWHISPER_RPC_MANAGED_SERVICE:'c1',CREDENTIALS_DIRECTORY:path.join(f.directory,'credentials')};
+  const base=f.approval;
+  base.market='2';
+  base.sequence={maximumWindows:2,totalCommittedWei:String(2n*BigInt(base.maximumCommittedWei))};
+  f.writeApproval();
+  const continuation={windowOrdinal:2,continuationSha256:'cd'.repeat(32),expectedOperatorNonce:'39',
+    cumulativeCommitmentWei:base.sequence.totalCommittedWei};
+  const next={...f.bundle,hash:'ad'.repeat(32),manifest:{...f.bundle.manifest,
+    policy:{...f.bundle.manifest.policy,now:base.issuedAt+1}}};
+  const request={...base,...continuation,bundleHash:next.hash,issuedAt:next.manifest.policy.now,approvalSha256:f.policy.c1RehearsalSha256};
+  const publication={...request,window:2};
+  let published=0,executed=0;
+  t.mock.method(runtime,'advanceReplacement',async (first,{windowOrdinal,totalReservedWei,assertAuthorized})=>{
+    published++;
+    assert.deepEqual(first,f.bundle);
+    assert.equal(windowOrdinal,2);
+    assert.equal(totalReservedWei,base.sequence.totalCommittedWei);
+    assert.equal(assertAuthorized(publication,'publish'),true);
+    assert.throws(()=>assertAuthorized({...publication,window:3},'publish'),/C1_REHEARSAL_SEQUENCE_SCOPE/);
+    assert.throws(()=>assertAuthorized({...publication,cumulativeCommitmentWei:base.maximumCommittedWei},'publish'),
+      /C1_REHEARSAL_SEQUENCE_SCOPE/);
+    return {bundle:next,...continuation};
+  });
+  const options={peer,readPeriod:f.read,bindBroadcast:()=>()=>assert.fail('local fixture sent a transaction'),verifyLaunch:()=>true,
+    readPredecessor:()=>({graph:f.policy.graph,runName:base.priorRun,runtimeManifestSha256:base.priorRuntimeManifestSha256,
+      groupSha256:base.priorGroupSha256,priorSpentFeeWei:f.policy.priorSpentFeeWei,
+      state:{status:'CURRENT_C1_NOT_STARTED',noNetwork:true,noCredentials:true,noSend:true}}),
+    execute:async (bundle,grant)=>{
+      executed++;
+      assert.deepEqual(bundle,next);
+      assert.equal(grant.continuationSha256,continuation.continuationSha256);
+      assert.equal(grant.assertAuthorized(request,'sign'),true);
+      assert.equal(grant.assertAuthorized(request,'send',{pair:'2',action:6}),true);
+      assert.throws(()=>grant.assertAuthorized(request,'send',{pair:'1',action:2}),/C1_REHEARSAL_MARKET_SCOPE/);
+      assert.throws(()=>grant.assertAuthorized({...request,bundleHash:f.bundle.hash},'send'),/C1_REHEARSAL_REQUEST/);
+      return 'routed';
+    }};
+  const start=ordinal=>{
+    const pending=worker.runRehearsal(f.directory,options);
+    peer.emit('message',{type:'CHAINWHISPER_C1_REHEARSAL',pid:peer.pid,approvalSha256:f.policy.c1RehearsalSha256,windowOrdinal:ordinal});
+    return pending;
+  };
+  await assert.rejects(start(3),/C1_REHEARSAL_SEQUENCE_SCOPE/);
+  assert.equal(published,0);
+  assert.equal(executed,0);
+  assert.equal(await start(2),'routed');
+  assert.equal(published,1);
+  assert.equal(executed,1);
+});
+
+for(const fault of ['pending-hash','state-pending-hash','hashless','state-hashless','state-pending','bad-name','not-string','exit-1','transport','dirty-traffic','accounting','fee-overrun','pending-journal'])test(`a C1 policy halt holds C1 only at a safe boundary: ${fault}`,{timeout:5000},async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();let snapshots=0;
+ const halt=fault==='bad-name'?'c1 revert cause unproved':fault==='not-string'?{reason:'C1_REVERT_CAUSE_UNPROVED'}:'C1_REVERT_CAUSE_UNPROVED';
+ const runResult={...(fault==='pending-hash'?{pendingHash:'0xtest'}:{}),...(fault==='hashless'?{hashless:true}:{}),
+  state:{pendingHash:fault==='state-pending-hash'?'0xtest':null,hashless:fault==='state-hashless',...(fault==='state-pending'?{pending:{pair:'3'}}:{}),halt}};
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({code:fault==='exit-1'?1:0,requests:1,result:runResult,
+  traffic:{...(fault==='transport'?{stopped:'DEX_RPC_TRANSPORT_STOP'}:{}),...(fault==='dirty-traffic'?{physicalPending:1}:{})}});});
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,
+  feeSnapshot:name=>{if(name==='c1'&&++snapshots===2&&fault==='pending-journal')throw Error('DEX_SERVICE_FEES_UNRESOLVED');return{service:name};},
+  feeDelta:(_,b)=>{if(b.service==='c1'&&fault==='accounting')throw Error('UNCERTAIN_ACCOUNTING');return b.service==='c1'&&fault==='fee-overrun'?'79200000000000001':'0';}});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'c1:FAILED');assert.equal(result.runs.c1.length,1);
+ const run=result.runs.c1[0];assert.equal(run.status,'FAILED');assert.equal(run.holdReason,undefined);assert.equal(run.haltReason,undefined);
+ if(['accounting','fee-overrun','pending-journal'].includes(fault))assert.equal(run.accountingError,'DEX_SERVER_ACCOUNTING');
+});
+
+test('outside the served group a C1 policy halt still stops the finite group',async t=>{
+ const fixture=operatingChildren(row=>{if(row.name==='c1')void row.complete({result:{state:{pendingHash:null,hashless:false,halt:'C1_REVERT_CAUSE_UNPROVED'}}});});
+ const result=await main(['--operate',folder(t)],{spawn:fixture.spawn,signals:new EventEmitter()});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'c1:FAILED');assert.equal(result.runs.c1[0].status,'FAILED');assert.equal(result.runs.c1[0].holdReason,undefined);
+});
+
+test('a policy halt from another service still stops the group',async t=>{
+ const f=serverPeriod(t,true);
+ const fixture=operatingChildren(row=>{if(row.name==='matching')void row.complete({result:{state:{pendingHash:null,hashless:false,halt:'C1_REVERT_CAUSE_UNPROVED'}}});});
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals:new EventEmitter(),readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0'});
+ assert.equal(result.status,'STOPPED');assert.equal(result.stopReason,'matching:FAILED');assert.equal(result.runs.matching[0].status,'FAILED');
+});
+
+test('a returned C1 run with parked pairs, refused Commits and suspended markets returns and the group continues',async t=>{
+ const f=serverPeriod(t,true),signals=new EventEmitter();
+ const state={pendingHash:null,hashless:false,halt:null,parkedPairs:['3'],commitNotAdmitted:[{pair:'5',commitKind:'pool-limit',commitClass:'capacity'}],suspendedMarkets:['7']};
+ const fixture=operatingChildren(row=>{
+  if(row.name!=='c1')return;
+  if(row.run===1)void row.complete({requests:1,result:{state}});
+  else signals.emit('SIGINT');
+ });
+ const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals,readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=>'0'});
+ assert.equal(result.stopReason,'OPERATOR_STOP');assert.equal(result.runs.c1.length,2);
+ const returned=result.runs.c1[0];assert.equal(returned.status,'RETURNED');assert.equal(returned.holdReason,undefined);assert.equal(returned.actualFeeWei,'0');
+ assert.deepEqual(returned.result.state,state);
+ for(const name of ['keeper','prices','matching'])assert.equal(result.runs[name].length,1);
+});
+
 for(const fault of ['none','rpc','accounting','nonzero-fee','pending-journal','pending-send','transport','credentials','wrong-guard'])test(`matching reserve holds only matching at a proven no-send boundary: ${fault}`,async t=>{
  const f=serverPeriod(t,true),signals=new EventEmitter();let snapshots=0;
  const fixture=operatingChildren(row=>{if(row.name==='matching')void row.complete({requests:1,result:{status:'MATCH_WINDOW_FEE_HELD',guard:fault==='wrong-guard'?'OTHER':'MATCH_WINDOW_RESERVE',noSend:true,noCredentials:fault!=='credentials',verified:0,attempts:0,actualFeeWei:'0',maximumCommittedWei:'0',pendingHash:fault==='pending-send'?'0xtest':null,hashless:false},traffic:{...(fault==='rpc'?{lastFailure:{code:'DEX_RPC_ERROR_RESPONSE',method:'eth_getProof',status:200,rpcCode:-32000}}:{}),...(fault==='transport'?{stopped:'DEX_RPC_TRANSPORT_STOP'}:{})}});});
@@ -564,6 +1684,32 @@ for(const reason of ['OPERATOR_STOP','TIME_BOUND'])test('a matching operator sto
  const f=serverPeriod(t,true),fixture=operatingChildren(row=>{if(row.name==='matching')void row.complete({result:{status:'MATCH_WINDOW_STOPPED',reason,...(reason==='TIME_BOUND'?{pendingHash:'0xunknown'}:{})}});});
  const result=await main(['--serve',f.directory],{spawn:fixture.spawn,signals:new EventEmitter(),readPeriod:f.read,feeSnapshot:name=>({service:name}),feeDelta:()=> '0'});
  assert.equal(result.stopReason,'matching:FAILED');assert.equal(result.runs.matching.length,1);
+});
+
+for (const pending of [false, true]) test(`an operator stop settles clean worker fees with C1 pending=${pending}`, async t => {
+  const f = serverPeriod(t, true), signals = new EventEmitter();
+  const fixture = operatingChildren(() => {
+    if (fixture.calls.length === 4) signals.emit('SIGINT');
+  }, row => {
+    const results = {
+      prices: {status: 'CURRENT_DEX_PRICES_WINDOW_STOPPED', reason: 'OPERATOR_STOP'},
+      matching: {status: 'MATCH_WINDOW_STOPPED', reason: 'OPERATOR_STOP'},
+      c1: {result: {mode: 'FINITE_C1', status: 'C1_OPERATOR_STOPPED'}, state: {pendingHash: pending ? '0xunknown' : null}}
+    };
+    void row.complete({result: results[row.name]});
+  });
+  const result = await main(['--serve', f.directory], {
+    spawn: fixture.spawn, signals, readPeriod: f.read,
+    feeSnapshot: name => ({service: name}), feeDelta: () => '10'
+  });
+  assert.equal(result.stopReason, 'OPERATOR_STOP');
+  for (const name of ['keeper', 'prices', 'matching', 'c1']) {
+    assert.equal(result.runs[name].length, 1);
+    const withheld = name === 'c1' && pending;
+    assert.equal(result.runs[name][0].status, withheld ? 'FAILED' : 'RETURNED');
+    assert.equal(result.runs[name][0].actualFeeWei, withheld ? undefined : '10');
+  }
+  assert.equal(result.settledFeeWei, String(BigInt(f.policy.priorSpentFeeWei) + (pending ? 30n : 40n)));
 });
 
 test('operate parks matching at its allowance while keeper RPC remains admitted', { timeout: 5000 }, async t => {

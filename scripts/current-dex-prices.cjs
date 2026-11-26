@@ -2,20 +2,22 @@
 
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const service = require(path.resolve(__dirname,
+const retainedService = require(path.resolve(__dirname,
   '../../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/service.cjs'));
 const WINDOW = Object.freeze({ epochs: 12, newWorkMs: 10 * 60 * 1000 });
 
-async function runWindow(once) {
-  const epochs = once ? 1 : WINDOW.epochs, caps = service.controller.LIMITS;
+async function runWindow(once, service, affordable = false) {
+  let epochs = once ? 1 : WINDOW.epochs;
+  const caps = service.controller.LIMITS;
   const limits = { epochs, newWorkMs: WINDOW.newWorkMs,
-    maximumCommittedWei: String(BigInt(caps.commitWei) * BigInt(epochs)), reserveWei: caps.reserveWei };
+    maximumCommittedWei: String(BigInt(caps.commitWei) * BigInt(epochs)), reserveWei: service.ownerReserveWei };
   const source = service.pins(), admission = await service.main('--check', service.NAME);
   assert.equal(admission.sourceDigest, service.controller.hash(source), 'CURRENT_DEX_PRICES_SOURCE');
   assert.deepEqual(admission.limits, caps, 'CURRENT_DEX_PRICES_LIMITS');
   const deadline = Date.now() + limits.newWorkMs, sessions = [], transactions = new Set();
   let reason = null, expected = null, actualFee = 0n;
-  const requestStop = () => { reason ??= 'OPERATOR_STOP'; };
+  let wakeIdle;
+  const requestStop = () => { reason ??= 'OPERATOR_STOP'; wakeIdle?.(); };
   const checkSource = () => assert.deepEqual(service.pins(), source, 'CURRENT_DEX_PRICES_SOURCE');
   process.on('SIGINT', requestStop);
   process.on('SIGTERM', requestStop);
@@ -28,18 +30,35 @@ async function runWindow(once) {
       checkSource();
       const sessionName = service.selectSession('new');
       const prepared = await service.main('--prepare', sessionName);
+      if (affordable && !epoch && prepared.status === 'PRICE_WINDOW_RESERVE_HELD' && prepared.noSend === true) {
+        limits.epochs = 0;
+        limits.maximumCommittedWei = '0';
+        // The standing supervisor checks again at the next normal window boundary.
+        if (!once && !reason) await new Promise(resolve => { wakeIdle = resolve; });
+        return {status: reason ? 'CURRENT_DEX_PRICES_WINDOW_STOPPED' : 'CURRENT_DEX_PRICES_FEE_HELD',
+          reason: reason ?? 'CURRENT_DEX_PRICES_RESERVE', guard:'CURRENT_DEX_PRICES_RESERVE',
+          transactions:0, sessions, actualFeeWei:'0', noSend:true, limits};
+      }
       try {
         checkSource();
         const payer = prepared.payer;
         assert(payer && /^0x[0-9a-f]{40}$/i.test(payer.address) &&
           payer.address.toLowerCase() === admission.identity.actors.owner.toLowerCase(), 'CURRENT_DEX_PRICES_PAYER');
         assert(/^\d+$/.test(payer.nonce) && /^\d+$/.test(payer.balanceWei), 'CURRENT_DEX_PRICES_PAYER');
+        if (affordable && !epoch) {
+          const available = BigInt(payer.balanceWei) - BigInt(limits.reserveWei);
+          const fitted = available / BigInt(caps.commitWei);
+          assert(fitted > 0n, 'CURRENT_DEX_PRICES_RESERVE');
+          if (fitted < BigInt(epochs)) epochs = Number(fitted);
+          limits.epochs = epochs;
+          limits.maximumCommittedWei = String(BigInt(epochs) * BigInt(caps.commitWei));
+        }
         if (expected) {
           assert.equal(payer.nonce, expected.nonce, 'CURRENT_DEX_PRICES_NONCE');
           assert.equal(payer.balanceWei, expected.balanceWei, 'CURRENT_DEX_PRICES_EXACT_FEE');
         }
         const remaining = BigInt(epochs - epoch) * BigInt(caps.commitWei);
-        assert(BigInt(payer.balanceWei) >= remaining + BigInt(caps.reserveWei), 'CURRENT_DEX_PRICES_RESERVE');
+        assert(BigInt(payer.balanceWei) >= remaining + BigInt(limits.reserveWei), 'CURRENT_DEX_PRICES_RESERVE');
       } catch (error) {
         await service.main('--stop', sessionName);
         throw error;
@@ -89,17 +108,21 @@ async function main(args) {
       !['--check', '--start', '--once', '--reconcile', '--stop'].includes(args[0])) {
     throw new Error('CURRENT_DEX_PRICES_USAGE');
   }
+  const binding = process.env.CHAINWHISPER_PRICE_BINDING_SHA256;
+  const service = binding === undefined ? retainedService : require(path.resolve(__dirname,
+    '../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/window-b/price-inputs.cjs')).replacementPriceService(binding);
 
   if (args[0] === '--check') return { ...await service.main('--check', service.NAME),
     window: { ...WINDOW, maximumCommittedWei: String(BigInt(service.controller.LIMITS.commitWei) * BigInt(WINDOW.epochs)),
-      reserveWei: service.controller.LIMITS.reserveWei } };
+      reserveWei: service.ownerReserveWei } };
 
   if (args[0] === '--reconcile' || args[0] === '--stop') {
     const sessionName = service.selectSession(args[0] === '--reconcile' ? 'pending' : 'latest');
     return { ...(await service.main(args[0], sessionName)), sessionName };
   }
 
-  return runWindow(args[0] === '--once');
+  return runWindow(args[0] === '--once', service, binding !== undefined &&
+    binding === require('./current-dex-service-fees.cjs').build13PeerBinding);
 }
 
 module.exports = { main };

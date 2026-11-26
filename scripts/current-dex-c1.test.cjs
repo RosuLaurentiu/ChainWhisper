@@ -8,6 +8,11 @@ test('App C1 commands forward one supported mode to the maintained runtime',asyn
  for(const mode of modes)assert.deepEqual(await app.main([mode]),{mode});
  assert.deepEqual(calls,modes);
  for(const args of [[],['--invalid'],['--start','operation.json']])await assert.rejects(app.main(args),/CURRENT_DEX_C1_USAGE/);
+ const error=Object.assign(Error('provider detail stays private'),{code:'CALL_EXCEPTION'});
+ const published=app.failure(error);
+ assert.deepEqual(published,runtime.failure(error));
+ assert.equal(published.code,'CALL_EXCEPTION');
+ assert(!JSON.stringify(published).includes(error.message));
 });
 test('package exposes each normal C1 operator command',()=>{
  const scripts=require('../package.json').scripts;

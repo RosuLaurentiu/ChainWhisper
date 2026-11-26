@@ -1,8 +1,8 @@
 'use strict';
 const path=require('node:path');
-const runtime=require(path.resolve(__dirname,'../../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/matching-service/runtime.cjs'));
 async function main(args){
  if(!Array.isArray(args)||args.length!==1||!['--check','--start','--once','--reconcile','--inspect'].includes(args[0]))throw Error('CURRENT_DEX_MATCHING_USAGE');
+ const runtime=require(path.resolve(__dirname,'../../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/matching-service/runtime.cjs'));
  return runtime.main(args[0]);
 }
 function failure(error){

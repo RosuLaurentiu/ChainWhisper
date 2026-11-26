@@ -94,6 +94,72 @@ test('normal window requires the whole declared reserve before any send', async 
   assert.equal(calls.at(-1)[0], '--stop');
 });
 
+test('replacement prices reserve the shared owner floor before sending', async t => {
+  const input = require('../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/window-b/price-inputs.cjs');
+  const variable = 'CHAINWHISPER_PRICE_BINDING_SHA256', previous = process.env[variable];
+  process.env[variable] = 'a1c0f2c1017906ac8bbe1d447282aacccbc2e8738b2afac0316020d6352a9f99';
+  t.after(() => {
+    if (previous === undefined) delete process.env[variable];
+    else process.env[variable] = previous;
+  });
+  const actual = input.replacementPriceService(process.env[variable]);
+  let balance = '321999999999999999';
+  const calls = windowService(t, ({ mode, result }) => {
+    if (mode === '--prepare') result.payer.balanceWei = balance;
+  });
+  t.mock.method(input, 'replacementPriceService', () => ({...service,ownerReserveWei:actual.ownerReserveWei}));
+  await assert.rejects(app.main(['--start']), /CURRENT_DEX_PRICES_RESERVE/);
+  assert(!calls.some(call => call[0] === '--run'));
+  assert.equal(calls.at(-1)[0], '--stop');
+
+  balance = '41500000000000000';
+  const result = await app.main(['--once']);
+  assert.equal(result.limits.reserveWei, '16000000000000000');
+  assert.equal(result.limits.maximumCommittedWei, '25500000000000000');
+  assert.equal(calls.filter(call => call[0] === '--run').length, 1);
+});
+
+test('build 13 prices fit whole epochs and hold when even one cannot fit', async t => {
+  const input = require('../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/window-b/price-inputs.cjs');
+  const variable = 'CHAINWHISPER_PRICE_BINDING_SHA256', previous = process.env[variable];
+  process.env[variable] = require('./current-dex-service-fees.cjs').build13PeerBinding;
+  t.after(() => { if (previous === undefined) delete process.env[variable]; else process.env[variable] = previous; });
+  let held = false;
+  const calls = windowService(t, ({mode,epoch,result}) => {
+    if (mode !== '--prepare') return;
+    if (held) Object.assign(result, {status:'PRICE_WINDOW_RESERVE_HELD',noSend:true});
+    else result.payer.balanceWei = String(303437839650000000n - BigInt(epoch) * epochFee);
+  });
+  t.mock.method(input,'replacementPriceService',() => ({...service,ownerReserveWei:'16000000000000000'}));
+  const result = await app.main(['--start']);
+  assert.equal(result.sessions.length,11);
+  assert.equal(result.limits.maximumCommittedWei,'280500000000000000');
+  held = true;
+  assert.equal((await app.main(['--once'])).status,'CURRENT_DEX_PRICES_FEE_HELD');
+  t.mock.timers.enable({apis:['Date','setTimeout']});
+  const idle = app.main(['--start']);
+  await new Promise(setImmediate);
+  t.mock.timers.tick(600000);
+  const empty = await idle;
+  assert.equal(empty.reason,'TIME_BOUND');
+  assert.equal(empty.status,'CURRENT_DEX_PRICES_WINDOW_STOPPED');
+  assert.equal(empty.limits.maximumCommittedWei,'0');
+  assert.equal(calls.filter(row => row[0] === '--run').length,11);
+});
+
+test('build 13 permits daily records while waiting five minutes for the next paid refresh', () => {
+  const at = 86410;
+  const markets = Array.from({length:6}, (_,i) => ({canonicalId:String(i+1),available:true,
+    sampledAt:String(at),dayRecorded:true,unchangedZero:i>0}));
+  const state = {attempts:0,records:0,refreshes:0,lastRefreshAt:{},cursor:0};
+  const decide = (elapsed,interval) => service.controller.decide({markets,chainTimestamp:at+elapsed,day:'1'},state,interval);
+  assert.equal(decide(299,300).status,'SERVICE_CADENCE_WAIT');
+  assert.equal(decide(300,300).kind,'refresh');
+  assert.equal(decide(60,60).kind,'refresh');
+  markets[0].dayRecorded = false;
+  assert.equal(decide(30,300).kind,'record');
+});
+
 for (const field of ['address', 'nonce', 'balanceWei']) {
   test('window rejects changed payer ' + field + ' before the next send', async t => {
     const calls = windowService(t, ({ mode, epoch, result }) => {

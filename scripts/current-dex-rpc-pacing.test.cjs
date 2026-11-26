@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const {spawnSync} = require('node:child_process');
 const { FetchRequest, JsonRpcProvider } = require('ethers');
 const { createPacing } = require('./current-dex-rpc-pacing.cjs');
 const URL = 'https://testnet.coti.io/rpc';
@@ -9,6 +10,18 @@ function request(payload) { const r = new FetchRequest(URL); r.body = JSON.strin
 const call = id => ({ jsonrpc: '2.0', id, method: 'eth_blockNumber', params: [] });
 const ok = r => ({ statusCode: 200, statusMessage: 'OK', headers: {}, body: body({ jsonrpc: '2.0', id: JSON.parse(new TextDecoder().decode(r.body)).id, result: '0x1' }) });
 const signal = { checkSignal() {} };
+test('the rehearsal supervisor and claim can import pacing without installing a worker', () => {
+  const entry = require.resolve('./current-dex-c1-rehearsal.cjs');
+  const pacing = require.resolve('./current-dex-rpc-pacing.cjs');
+  for (const mode of ['--claim','--supervise','--supervise-standing','--rehearse','--stand','--invalid']) {
+    const code = `process.argv[1]=${JSON.stringify(entry)};process.argv[2]=${JSON.stringify(mode)};` +
+      `require('node:assert/strict').equal(require(${JSON.stringify(pacing)}).stats(),null);`;
+    const result = spawnSync(process.execPath,['-e',code],{encoding:'utf8',timeout:10000});
+    if (['--stand','--rehearse'].includes(mode)) assert.match(result.stderr,/DEX_RPC_CHILD_IDENTITY/);
+    else if (mode === '--invalid') assert.match(result.stderr,/DEX_RPC_ENTRY/);
+    else assert.equal(result.status,0,result.stderr);
+  }
+});
 test('queued signal cancellation returns before active transport settles and does not release its slot',async()=>{
  let release,listener;const held=new Promise(resolve=>{release=resolve;}),seen=[];
  const paced=createPacing(async r=>{seen.push(JSON.parse(new TextDecoder().decode(r.body)).id);await held;return ok(r);},0);
