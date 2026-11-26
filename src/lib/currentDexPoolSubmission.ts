@@ -1,4 +1,5 @@
 import { AbiCoder, Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
+import { isCurrentDexBrowserSigner } from './currentDexBrowserPolicy';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type CurrentPoolPreparedFunding,
   type CurrentPoolPreparedTopUpPreview, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
 import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentDexSendProgress, type CurrentTransport } from './currentDexSubmission';
@@ -118,9 +119,13 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
       reservations.get(signer)?.delete(`${attempt.phase}:${attempt.callHash}`);
     } });
   const submit = async <T extends Prepared, R>(phase: Phase, prepared: T, read: (hash: string) => Promise<R | null>, mode: Mode = 'creation', progress?: CurrentDexSendProgress) => {
-    const validate = async () => {
+    const sharedBrowserPreview = candidateKey === 'cheap-history' && mode === 'top-up' && phase === 'pool-preview' &&
+      isCurrentDexBrowserSigner(signer, candidate.graph, owner);
+    const validate = async (checkState = !sharedBrowserPreview) => {
       assertCurrentPoolFundingPrepared(prepared, signer);
-      await prepared.assertCurrent();
+      // The shared browser boundary runs the full proof at admission and before send.
+      if (checkState) await prepared.assertCurrent();
+      else await transport.assertCurrent();
       if (prepared.chainId !== chainId || !same(prepared.from, owner) || !same(prepared.to, core) || prepared.value !== 0n ||
           prepared.graph !== candidate.graph || prepared.packageSha256 !== candidate.packageSha256 || prepared.readyToSign !== false ||
           (phase === 'pool-preview' ? !('readPreview' in prepared) : !('readFunding' in prepared))) {
@@ -213,7 +218,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
             canonical = snapshotReceipt(await boundary.verifyMinedCall(sent.request, sent.transactionHash));
             if (baseline && JSON.stringify(baseline) !== JSON.stringify(canonical)) throw new CurrentPoolProofMismatch('Pool receipt changed during canonical verification.');
           } catch (error) { if (financialProof && baseline && isKnownCurrentPoolProofMismatch(error)) blockCurrentPoolVerification(storage, boundary.requireOwnPending(pending, sent.transactionHash)); throw error; }
-          await validate();
+          await validate(true);
           let result: R | null;
           try { result = await read(sent.transactionHash); }
           catch (error) { if (financialProof && isKnownCurrentPoolProofMismatch(error)) blockCurrentPoolVerification(storage, boundary.requireOwnPending(pending, sent.transactionHash)); throw error; }

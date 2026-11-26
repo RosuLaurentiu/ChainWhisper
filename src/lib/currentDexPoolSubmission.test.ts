@@ -382,8 +382,9 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
     }
     return { ...f, funding, c, pair, adapter: f.make(undefined, candidateKey) };
   }
-  function topUpFixture(index = 0, allow = false, packed = false) {
+  function topUpFixture(index = 0, allow = false, packedOverride?: boolean) {
     const f = preparedFixture(index, allow), id = 43n, ownerContext = toBeHex(77n, 32);
+    const packed = packedOverride ?? poolInputs.usesPackedPoolInputs(f.c);
     const topInputs = [{ ciphertext: { ciphertextHigh: 1n, ciphertextLow: 10n }, signature },
       { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 20n }, signature }, ...(packed ?
         [{ ciphertext: { ciphertextHigh: 1n, ciphertextLow: 200n }, signature }] : [{ ciphertext: 1n, signature }, { ciphertext: 200n, signature }])];
@@ -393,7 +394,7 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
       data: encodePreparedPoolTopUp(f.pair.marketId, id, data, context, ownerContext, topInputs, packed) });
     f.receipt.logs = [{ address: f.c.core, ...abi.encodeEventLog(abi.getEvent('PoolFundingPreviewed')!, [id, context,
       Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]) }];
-    return { ...f, prepared, funding, id, ownerContext, topInputs };
+    return { ...f, prepared, funding, id, ownerContext, topInputs, packed };
   }
   // CW-086, decision-033: the normal browser App releases a Pool request that the wallet rejected and never sent.
   describe.skipIf(candidateKey !== 'cheap-history')('release of a wallet-rejected Pool request in the browser App', () => {
@@ -408,6 +409,27 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
     };
     const rejection = () => Object.assign(new Error('User rejected the request.'), { code: 4001 });
     const saved = (f: ReturnType<typeof browser>) => JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!);
+    it.each(['current', 'stale at admission', 'stale before send', 'estimate fails'] as const)(
+      'checks the browser top-up preview at admission and before send: %s', async state => {
+        const f = browser(true);
+        const proofs = vi.fn(async () => {});
+        if (state === 'stale at admission') proofs.mockRejectedValueOnce(new Error('Pool proof changed'));
+        if (state === 'stale before send') proofs.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Pool proof changed'));
+        Object.assign(f.prepared, { assertCurrent: proofs });
+        if (state === 'estimate fails') f.transport.estimateGas.mockResolvedValueOnce(1n).mockResolvedValueOnce(0n);
+        const result = f.adapter.submitPoolTopUpPreview(f.prepared as never);
+        if (state === 'current') {
+          await expect(result).resolves.toMatchObject({ transactionHash: txHash });
+          expect(f.transport.send).toHaveBeenCalledOnce();
+        } else {
+          await expect(result).rejects.toThrow(state === 'estimate fails' ? 'strict estimate' : 'Pool proof changed');
+          expect(f.transport.send).not.toHaveBeenCalled();
+          expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
+        }
+        expect(proofs).toHaveBeenCalledTimes(state === 'current' || state === 'stale before send' ? 2 : 1);
+        if (state === 'current' || state === 'stale before send')
+          expect(proofs.mock.invocationCallOrder[1]).toBeGreaterThan(f.transport.estimateGas.mock.invocationCallOrder[1]);
+      });
     it.each(['pool-preview', 'pool-fund'] as const)('releases a rejected %s request and permits the same request again', async phase => {
       const f = browser(), error = rejection();
       const submit = () => phase === 'pool-preview' ? f.adapter.submitPoolPreview(f.prepared as never) : f.adapter.submitPoolFunding(f.funding as never);
@@ -563,17 +585,17 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
       f.funding.data = host.encodeFunctionData('managePoolPosition', args);
       if (fault === 'outer-suffix') f.funding.data += '00';
       if (fault === 'ciphertext') { const changed = [...f.topInputs]; changed[0] = { ...changed[0], ciphertext: { ciphertextHigh: 99n, ciphertextLow: 10n } };
-        const changedPreview = encodePreparedPoolFundingPreview(f.pair.marketId, f.id, changed);
-        f.funding.data = encodePreparedPoolTopUp(f.pair.marketId, f.id, changedPreview, context, f.ownerContext, changed); }
-      if (fault === 'preview-id') f.funding.previewData = encodePreparedPoolFundingPreview(f.pair.marketId, 44n, f.topInputs);
+        const changedPreview = encodePreparedPoolFundingPreview(f.pair.marketId, f.id, changed, f.packed);
+        f.funding.data = encodePreparedPoolTopUp(f.pair.marketId, f.id, changedPreview, context, f.ownerContext, changed, f.packed); }
+      if (fault === 'preview-id') f.funding.previewData = encodePreparedPoolFundingPreview(f.pair.marketId, 44n, f.topInputs, f.packed);
       await expect(fault === 'creation-method' ? f.adapter.submitPoolFunding(f.funding as never) : f.adapter.submitPoolTopUpFunding(f.funding as never)).rejects.toThrow();
       expect(f.transport.send).not.toHaveBeenCalled(); expect(f.values.size).toBe(0);
     });
   it.each(['id', 'creation', 'market', 'suffix', 'inner-suffix'] as const)('rejects top-up preview %s mutation', async fault => {
     const f = topUpFixture(1, true);
-    if (fault === 'id') f.prepared.data = encodePreparedPoolFundingPreview(f.pair.marketId, 44n, f.topInputs);
+    if (fault === 'id') f.prepared.data = encodePreparedPoolFundingPreview(f.pair.marketId, 44n, f.topInputs, f.packed);
     if (fault === 'creation') f.prepared.data = encodePreparedPoolFundingPreview(f.pair.marketId, 0n, inputs);
-    if (fault === 'market') f.prepared.data = encodePreparedPoolFundingPreview(resolvePreparedDexScope(candidateKey).candidate.pairs[0].marketId, f.id, f.topInputs);
+    if (fault === 'market') f.prepared.data = encodePreparedPoolFundingPreview(resolvePreparedDexScope(candidateKey).candidate.pairs[0].marketId, f.id, f.topInputs, f.packed);
     if (fault === 'suffix') f.prepared.data += '00';
     if (fault === 'inner-suffix') { const host = new Interface(PREPARED_POOL_FUNDING_ABI), args = [...host.decodeFunctionData('previewPoolFunding', f.prepared.data)];
       args[2] += '00'; f.prepared.data = host.encodeFunctionData('previewPoolFunding', args); }
@@ -598,8 +620,9 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s lo
     if (fault === 'zero-context') args[1] = toBeHex(0n, 32);
     if (fault === 'inner-suffix') args[3] += '00';
     if (fault === 'short-signature') { const inner = [...coder.decode(['bytes32', 'bytes'], args[3])];
-      inner[1] = coder.encode(['tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)[2]', 'tuple(uint256 ciphertext,bytes signature)[2]'],
-        [[{ ...f.topInputs[0], signature: '0x11' }, f.topInputs[1]], f.topInputs.slice(2)]);
+      const wide = 'tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
+      inner[1] = coder.encode([`${wide}[2]`, f.packed ? wide : 'tuple(uint256 ciphertext,bytes signature)[2]'],
+        [[{ ...f.topInputs[0], signature: '0x11' }, f.topInputs[1]], f.packed ? f.topInputs[2] : f.topInputs.slice(2)]);
       args[3] = coder.encode(['bytes32', 'bytes'], inner); }
     f.transaction().data = host.encodeFunctionData('managePoolPosition', args);
     const pending = JSON.parse(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!);
