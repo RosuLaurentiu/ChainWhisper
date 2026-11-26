@@ -37,10 +37,12 @@ export type CurrentDexDailyPricePoint = Readonly<{
   recordedAt: string; recordedBlock: string; sourceBlockHash: string; recordBlockHash: string;
 }>;
 export type CurrentDexDailyPriceSlot = Readonly<{ day: string; point: CurrentDexDailyPricePoint | null }>;
+export type CurrentDexCompletedDayPrice = Readonly<{ day: string; priceE18: string; sampledAt: string; sampledBlock: string }>;
 declare const VERIFIED_DAILY_PRICE: unique symbol;
 export type CurrentDexDailyPriceSnapshot = Readonly<{
   readonly [VERIFIED_DAILY_PRICE]: true; manifest: CurrentDexDailyPriceManifest;
   slots: readonly CurrentDexDailyPriceSlot[]; atBlock: Readonly<{ number: string; hash: string; timestamp: string }>;
+  completedDays?: readonly CurrentDexCompletedDayPrice[];
   currentReference: 'available' | 'unobserved' | 'stale' | 'suppressed-or-changed';
   currentObservation?: Readonly<{ priceE18: string; sampledAt: string; sampledBlock: string; revision: string;
     checkedAt?: string; checkedBlock?: string; checkedBlockHash?: string; coreAvailable?: boolean }>;
@@ -154,6 +156,55 @@ const decodeReference = (raw: unknown, m: ReferenceIdentity): Observation => {
   if (!same(coder.encode(observationTypes,current),raw)) fail('History current reference encoding does not match.');
   validateObservation(current,m);return current;
 };
+const referenceUpdates = new Interface(['event PoolReferenceUpdated(bytes32 indexed market, bytes32 indexed pair, bytes32 schema, bytes data)']);
+const updateTopic = referenceUpdates.getEvent('PoolReferenceUpdated')!.topicHash;
+const hex = (n: bigint) => `0x${n.toString(16)}`;
+
+async function readCompletedDayPrices(m: CurrentDexDailyPriceManifest, start: bigint, today: bigint, deployment: Block, head: Block,
+  canonicalBlock: (n: bigint) => Promise<Block>, rpc: (method: string, params: unknown[]) => Promise<unknown>) {
+  if (start === today || deployment.timestamp / 86400n >= today) return [];
+  let first = deployment.number;
+  if (deployment.timestamp < start * 86400n) {
+    let last = head.number;
+    while (first < last) {
+      const mid = (first + last) / 2n;
+      if ((await canonicalBlock(mid)).timestamp < start * 86400n) first = mid + 1n;
+      else last = mid;
+    }
+  }
+  const pageSize = 20000n;
+  if (head.number - first >= pageSize * 40n) fail('Completed-day price history exceeds its read bound.', 'rpc');
+  const latest = new Map<bigint, { price: bigint; sampledAt: bigint; number: bigint; blockHash: string }>();
+  for (let from = first; from <= head.number; from += pageSize) {
+    const through = from + pageSize - 1n < head.number ? from + pageSize - 1n : head.number;
+    const logs = await rpc('eth_getLogs',[{address:m.source,fromBlock:hex(from),toBlock:hex(through),topics:[updateTopic,m.market,m.pair]}]);
+    if (!Array.isArray(logs) || logs.length > 2048) fail('Completed-day price logs are unavailable.', 'rpc');
+    for (const log of logs as Record<string,unknown>[]) {
+      if (!log || log.removed !== false || !same(log.address,m.source) || !Array.isArray(log.topics) ||
+          log.topics.length !== 3 || !same(log.topics[0],updateTopic) || !same(log.topics[1],m.market) || !same(log.topics[2],m.pair) ||
+          typeof log.data !== 'string') fail('Completed-day price log identity does not match.');
+      const parsed = referenceUpdates.decodeEventLog('PoolReferenceUpdated',log.data as string,log.topics as string[]);
+      if (!same(parsed.schema,PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.schema)) fail('Completed-day price schema does not match.');
+      const o = decodeReference(parsed.data,m), number = quantity(log.blockNumber);
+      const [price,sampledAt,sampledBlock,revision,sourceState,available] = o.toArray().slice(15) as [bigint,bigint,bigint,bigint,string,boolean];
+      const day = sampledAt / 86400n;
+      const blockHash = hash(log.blockHash);
+      if (number < from || number > through || sampledBlock !== number || sampledAt > head.timestamp || revision === 0n)
+        fail('Completed-day price provenance does not match.');
+      if (!available || price === 0n || day < start || day >= today) continue;
+      hash(sourceState);
+      const prior = latest.get(day);
+      if (!prior || number > prior.number) latest.set(day,{price,sampledAt,number,blockHash});
+    }
+  }
+  const points: CurrentDexCompletedDayPrice[] = [];
+  for (const [day,{price,sampledAt,number,blockHash}] of latest) {
+    const b = await canonicalBlock(number);
+    if (b.hash !== blockHash || b.timestamp !== sampledAt) fail('Completed-day price event is no longer canonical.', 'reorg');
+    points.push(Object.freeze({day:String(day),priceE18:String(price),sampledAt:String(sampledAt),sampledBlock:String(number)}));
+  }
+  return points.sort((a,b)=>Number(a.day)-Number(b.day));
+}
 const checkedReference = async(current:Observation,identity:ReferenceIdentity,head:Block,pin:{blockHash:string;requireCanonical:true},rpc:(method:string,params:unknown[])=>Promise<unknown>) => {
   const source=await readCurrentReferenceSource({identity,current,pin,rpc}),o=source.observation;
   const now=BigInt(Math.floor(Date.now()/1000));
@@ -217,9 +268,9 @@ export async function readCurrentDexPublicReference({provider,candidate,pair,fin
   } catch(error) { RECORDER_BINDINGS.delete(provider); throw error; }
   } catch(error) { observe('validation', 'failed'); throw error; }
 }
-export async function readCurrentDexDailyPrice({ provider, manifest: suppliedManifest, count = 32, finalityLagBlocks = 2, assertCurrent = () => {} }: {
+export async function readCurrentDexDailyPrice({ provider, manifest: suppliedManifest, count = 32, finalityLagBlocks = 2, assertCurrent = () => {}, includeCompletedDays = false }: {
   provider: Pick<Eip1193Provider, 'request'>; manifest: CurrentDexDailyPriceManifest; count?: number;
-  finalityLagBlocks?: number; assertCurrent?: () => void | Promise<void>;
+  finalityLagBlocks?: number; assertCurrent?: () => void | Promise<void>; includeCompletedDays?: boolean;
 }): Promise<CurrentDexDailyPriceSnapshot> {
   const observe = observeDexPriceRead('data-dex-history-read');
   try {
@@ -280,13 +331,14 @@ export async function readCurrentDexDailyPrice({ provider, manifest: suppliedMan
     priorRevision=o.revision; priorTime=o.sampledAt; priorBlock=o.sampledBlock;
     slots.push({day:String(day),point:Object.freeze({day:String(day),priceE18:String(o.priceE18),sampledAt:String(o.sampledAt),sampledBlock:String(o.sampledBlock),sourceRevision:String(o.revision),sourceState:hash(o.sourceState),registryRevision:String(o.registryRevision),marketRevision:String(o.marketRevision),recordedAt:String(s.recordedAt),recordedBlock:String(s.recordedBlock),sourceBlockHash:sourceBlock.hash,recordBlockHash:recordBlock.hash})});
   }
+  const completedDays = includeCompletedDays ? Object.freeze(await readCompletedDayPrices(m,start,currentDay,deployment,head,getBlock,rpc)) : undefined;
   const sourceApi = new Interface(['function poolReference(bytes32) view returns(bytes)']);
   const raw = sourceApi.decodeFunctionResult('poolReference',await rpc('eth_call',[{to:m.source,data:sourceApi.encodeFunctionData('poolReference',[m.market])},pin]) as string)[0];
   const current = decodeReference(raw,m), verified = await checkedReference(current,m,head,pin,rpc);
   const {currentReference,currentObservation,lastObservation} = verified;
   if(verified.sample)blocks.set(String(verified.sample.number),verified.sample);
   for (const [n,v] of blocks) if (!same(block(await rpc('eth_getBlockByNumber',[`0x${BigInt(n).toString(16)}`,false])).hash,v.hash)) fail('History read reorganized. No sample was accepted.', 'reorg');
-  const snapshot = Object.freeze({manifest:m,slots:Object.freeze(slots.map(s=>Object.freeze(s))),atBlock:Object.freeze({number:String(head.number),hash:head.hash,timestamp:String(head.timestamp)}),currentReference,currentObservation,...(lastObservation?{lastObservation}:{})}) as CurrentDexDailyPriceSnapshot;
+  const snapshot = Object.freeze({manifest:m,slots:Object.freeze(slots.map(s=>Object.freeze(s))),...(completedDays?{completedDays}:{}),atBlock:Object.freeze({number:String(head.number),hash:head.hash,timestamp:String(head.timestamp)}),currentReference,currentObservation,...(lastObservation?{lastObservation}:{})}) as CurrentDexDailyPriceSnapshot;
   VERIFIED.add(snapshot); bindings.add(bindingKey); observe('validation', 'completed'); return snapshot;
   } catch(error) { bindings.delete(bindingKey); throw error; }
   } catch(error) { observe('validation', 'failed'); throw error; }

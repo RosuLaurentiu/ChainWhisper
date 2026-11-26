@@ -34,7 +34,7 @@ describe('Current DEX daily price source boundary',()=>{
   });
   it('keeps production inactive and binds the exact accepted recorder artifact',()=>{
     expect(CURRENT_DEX_DAILY_PRICE_CONFIG.status).toBe('inactive');
-    const bytes=readFileSync('../ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/reference-history/recorder-build/build-packed-inputs-1/ChainWhisperDailyPoolPrice.json');
+    const bytes=readFileSync('../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/native-bob-dense-1/recorder-build/ChainWhisperDailyPoolPrice.json');
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(CURRENT_DEX_DAILY_PRICE_ARTIFACT.artifactSha256);
     const a=JSON.parse(bytes.toString());expect(CURRENT_DEX_DAILY_PRICE_ARTIFACT.abi).toEqual(a.abi);expect(CURRENT_DEX_DAILY_PRICE_ARTIFACT.deployedBytecode).toBe(a.deployedBytecode);
   });

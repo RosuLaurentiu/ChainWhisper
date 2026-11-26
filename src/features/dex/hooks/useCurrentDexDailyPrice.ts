@@ -4,10 +4,10 @@ import { readCurrentDexDailyPrice } from '../../../lib/appChain';
 import { CURRENT_DEX_DAILY_PRICE_CONFIG, CurrentDexDailyPriceError, currentDexDailyPricePairOrientation, getCurrentDexPriceReadProvider,
   type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 
-export async function loadCurrentDexDailyPrice({ config, pair, provider, count = 32, assertCurrent = () => {} }: {
+export async function loadCurrentDexDailyPrice({ config, pair, provider, count = 32, assertCurrent = () => {}, includeCompletedDays = false }: {
   config: CurrentDexDailyPriceConfig; pair: readonly [string,string];
   provider?: Pick<Eip1193Provider, 'request'>; assertCurrent?: () => void | Promise<void>;
-  count?: number;
+  count?: number; includeCompletedDays?: boolean;
 }): Promise<CurrentDexDailyPriceView> {
   if (config.status === 'inactive') return { status: 'unconfigured' };
   if (currentDexDailyPricePairOrientation(config.manifest.symbols, pair) === 0) {
@@ -16,9 +16,9 @@ export async function loadCurrentDexDailyPrice({ config, pair, provider, count =
   try {
     const snapshot = await readCurrentDexDailyPrice({
       provider: provider ?? getCurrentDexPriceReadProvider(config.rpcUrl),
-      manifest: config.manifest, finalityLagBlocks: config.finalityLagBlocks, count, assertCurrent
+      manifest: config.manifest, finalityLagBlocks: config.finalityLagBlocks, count, assertCurrent, includeCompletedDays
     });
-    return { status: snapshot.slots.some(s => s.point !== null) ? 'ready' : 'empty', snapshot };
+    return { status: (snapshot.completedDays ? snapshot.completedDays.length > 0 : snapshot.slots.some(s => s.point !== null)) ? 'ready' : 'empty', snapshot };
   } catch (error) {
     return { status: 'error', kind: error instanceof CurrentDexDailyPriceError ? error.kind : 'rpc',
       message: error instanceof Error ? error.message : 'Daily history read failed.' };
@@ -42,7 +42,7 @@ export default function useCurrentDexDailyPrice({ pair, config = CURRENT_DEX_DAI
     let active = true;
     const captured = ref.current;
     const assertCurrent = () => { if (!active) throw new Error('Daily history request was superseded.'); };
-    void loadCurrentDexDailyPrice({...captured,assertCurrent}).then(view => {
+    void loadCurrentDexDailyPrice({...captured,assertCurrent,includeCompletedDays:true}).then(view => {
       if (active) setSettled({key,provider:captured.provider,view});
     });
     return () => { active = false; };

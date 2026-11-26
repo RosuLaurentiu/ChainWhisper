@@ -1,10 +1,34 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe,expect,it,vi } from 'vitest';
+import { AbiCoder, Interface } from '@coti-io/coti-ethers';
 import { readCurrentDexDailyPrice,type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { currentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles,buildCurrentDexChartCarryPoints,wrapExpandedChartFocus} from './DexMarketChart';
 describe('DexMarketChart actual daily sample display',()=>{
+  it('plots the last verified update on its completed day and keeps the live price separate',async()=>{
+    const f=makeHistoryFixture(), event=new Interface(['event PoolReferenceUpdated(bytes32 indexed market, bytes32 indexed pair, bytes32 schema, bytes data)']);
+    const fragment=event.getEvent('PoolReferenceUpdated')!, coder=AbiCoder.defaultAbiCoder();
+    const price=175377000000000000n;
+    const log=(n:bigint,p:bigint,revision:bigint)=>{
+      const b=f.header(n), observation=f.observation(p,BigInt(b.timestamp),n,revision);
+      return {address:f.manifest.source,blockNumber:b.number,blockHash:b.hash,removed:false,
+        ...event.encodeEventLog(fragment,[f.manifest.market,f.manifest.pair,observation[0],coder.encode(f.observationTypes,observation)])};
+    };
+    const logs=[log(91n,price,3n),log(90n,2n*10n**18n,2n),log(99n,2n*10n**18n,4n)];
+    const provider:typeof f.provider={request:args=>args.method==='eth_getLogs'?Promise.resolve(logs):f.provider.request(args)};
+    const snapshot=await readCurrentDexDailyPrice({provider,manifest:f.manifest,finalityLagBlocks:0,includeCompletedDays:true});
+    const day=BigInt(snapshot.atBlock.timestamp)/86400n-1n;
+    expect(snapshot.completedDays).toEqual([{day:String(day),priceE18:String(price),sampledAt:String(BigInt(f.header(91n).timestamp)),sampledBlock:'91'}]);
+    expect(snapshot.slots.find(s=>s.day===String(day))?.point?.sampledBlock).toBe('90');
+    const reference=currentDexMarketReference({status:'ready',snapshot},f.manifest.symbols,BigInt(snapshot.atBlock.timestamp));
+    const markup=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" history={{status:'ready',snapshot}} marketReference={reference}/>);
+    expect(markup).toContain('Last sample 0.175377 cwTPB/cwTPA');
+    expect(markup).toContain('Live 2 cwTPB/cwTPA');
+    expect(markup).toContain('last verified observation per completed UTC day');
+    logs[0]={...logs[0],blockHash:f.header(90n).hash};
+    await expect(readCurrentDexDailyPrice({provider,manifest:f.manifest,finalityLagBlocks:0,includeCompletedDays:true})).rejects.toMatchObject({kind:'reorg'});
+  });
   it('adds only a verified, fresh, matching live point after the last saved sample',async()=>{
     const f=makeHistoryFixture(),snapshot=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
     const now=Number(BigInt(f.header(100n).timestamp)),pair=['cwTPA','cwTPB'] as const;
