@@ -251,24 +251,29 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
       engines: Object.freeze(engines), directories: Object.freeze(directories), fixedSources: Object.freeze(fixedSources),
       nftOwners: Object.freeze(nftOwners), nftMinted: Object.freeze(nftMinted), ownerNftBalance, counter, operation });
   };
-  const selectedState = async (id: bigint | null, block: PreparedPoolBlock): Promise<PreparedPoolSelectedState> => {
-    if(id!==null)uint(id);uint(block.number);hash(block.hash);await checkedGuard();await attest(block);
-    const registry=await readPreparedDexMarketRegistry({capability:readCapability,blockNumber:block.number,blockHash:block.hash,candidate:candidateKey});
-    requireProof(registry.graph===prepared.graph && registry.packageSha256===prepared.packageSha256 && registry.core===prepared.core &&
-      same(registry.markets.map(value=>value.marketId),prepared.pairs.map(pair=>pair.marketId)),'Prepared Pool registry candidate scope changed.');
-    const market=registry.markets.find(value=>value.marketId===marketId.toLowerCase());
-    requireProof(!!market,'Prepared selected Pool registry market is unavailable.');
-    const core=await words(prepared.core,0n,149,block),counter=BigInt(core[11]),operation=BigInt(core[12]);
-    if(id===null)id=uint(counter+1n);
+  // CW-133: one selected scan is about 810 single storage requests. A repeated check reads only the
+  // storage roots of Core, the tokens and the position NFT. An equal root means equal storage, so the
+  // earlier words are exact. A changed, refused or malformed root gives a full scan.
+  const storageRoots = async (block: PreparedPoolBlock): Promise<string | null> => {
+    const roots: string[] = [];
+    for (const account of [prepared.core, ...prepared.tokens.map(([token]) => token), nft]) {
+      await checkedGuard();
+      type RootProof = { address?: unknown; storageHash?: unknown } | null;
+      const proof = await (provider.send('eth_getProof', [account, [], tag(block)]) as Promise<RootProof>).catch((): RootProof => null);
+      await checkedGuard();
+      if (!proof || typeof proof !== 'object' || typeof proof.address !== 'string' || proof.address.toLowerCase() !== account.toLowerCase() ||
+          typeof proof.storageHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(proof.storageHash) || BigInt(proof.storageHash) === 0n) return null;
+      roots.push(proof.storageHash.toLowerCase());
+    }
+    return roots.join(':');
+  };
+  const selectedWords = async (requested: bigint | null, block: PreparedPoolBlock) => {
+    const core=await words(prepared.core,0n,149,block),counter=BigInt(core[11]),id=requested??uint(counter+1n);
     requireProof(counter>=42n && id>0n && id<=counter+1n,'Prepared selected Pool allocated scope exceeds its finite bound.');
     const raw=await words(prepared.core,mapping(marketId,1n,'bytes32'),71,block);
-    const anchors: (readonly string[])[]=[],claims:Record<string,{marketId:string;words:readonly string[]}>={};
-    for(let i=0;i<7;i++) {
-      const anchorId=BigInt(raw[18+i]),anchor=await words(prepared.core,preparedPoolPositionStorageBase(marketId,anchorId),64,block);
-      anchors.push(anchor);claims[String(anchorId)]=Object.freeze({marketId,words:anchor});
-    }
+    const anchors: (readonly string[])[]=[];
+    for(let i=0;i<7;i++) anchors.push(await words(prepared.core,preparedPoolPositionStorageBase(marketId,BigInt(raw[18+i])),64,block));
     const claim=await words(prepared.core,preparedPoolPositionStorageBase(marketId,id),64,block);
-    if(id<=counter)claims[String(id)]=Object.freeze({marketId,words:claim});
     const positionMarket=await word(prepared.core,mapping(id,18n),block),sourceIdForPosition=await word(prepared.core,mapping(id,19n),block),
       everPoolFunded=await word(prepared.core,mapping(marketId,124n,'bytes32'),block);
     const ledgers:Record<string,readonly string[]>={},escrows:Record<string,readonly string[]>={},custody:Record<string,readonly string[]>={};
@@ -277,6 +282,32 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
       custody[token]=await words(token,mapping(prepared.core,4n,'address'),4,block);
     }
     const nftOwner=await word(nft,mapping(id,2n),block),minted=await word(nft,mapping(id,6n),block),ownerNftBalance=BigInt(await word(nft,mapping(owner,3n,'address'),block));
+    return Object.freeze({id,core,raw,anchors:Object.freeze(anchors),claim,positionMarket,sourceIdForPosition,everPoolFunded,
+      ledgers:Object.freeze(ledgers),escrows:Object.freeze(escrows),custody:Object.freeze(custody),nftOwner,minted,ownerNftBalance});
+  };
+  const retainedScans = new Map<string, Awaited<ReturnType<typeof selectedWords>>>();
+  const selectedState = async (id: bigint | null, block: PreparedPoolBlock): Promise<PreparedPoolSelectedState> => {
+    if(id!==null)uint(id);uint(block.number);hash(block.hash);await checkedGuard();await attest(block);
+    const registry=await readPreparedDexMarketRegistry({capability:readCapability,blockNumber:block.number,blockHash:block.hash,candidate:candidateKey});
+    requireProof(registry.graph===prepared.graph && registry.packageSha256===prepared.packageSha256 && registry.core===prepared.core &&
+      same(registry.markets.map(value=>value.marketId),prepared.pairs.map(pair=>pair.marketId)),'Prepared Pool registry candidate scope changed.');
+    const market=registry.markets.find(value=>value.marketId===marketId.toLowerCase());
+    requireProof(!!market,'Prepared selected Pool registry market is unavailable.');
+    // CW-133: the same storage roots at this pinned block prove every word below is unchanged.
+    const roots=await storageRoots(block),scanKey=roots===null?null:`${id===null?'next':id}:${roots}`;
+    let scan=scanKey===null?undefined:retainedScans.get(scanKey);
+    if(!scan){
+      scan=await selectedWords(id,block);
+      if(scanKey!==null){
+        if(retainedScans.size>=4)retainedScans.delete(retainedScans.keys().next().value as string);
+        retainedScans.set(scanKey,scan);
+      }
+    }
+    const {core,raw,anchors,claim,positionMarket,sourceIdForPosition,everPoolFunded,ledgers,escrows,custody,nftOwner,minted,ownerNftBalance}=scan;
+    const counter=BigInt(core[11]),operation=BigInt(core[12]);id=scan.id;
+    const claims:Record<string,{marketId:string;words:readonly string[]}>={};
+    anchors.forEach((anchor,i)=>{claims[String(BigInt(raw[18+i]))]=Object.freeze({marketId,words:anchor});});
+    if(id<=counter)claims[String(id)]=Object.freeze({marketId,words:claim});
     const result:PreparedPoolSelectedState=Object.freeze({scope:'selected-pool-accounting',candidateKey,packageSha256:prepared.packageSha256,coreAddress:prepared.core,owner:owner.toLowerCase(),
       graph:prepared.graph,marketId,positionId:id,block:Object.freeze({...block}),market:market!,core,counter,operation,claim,anchors:Object.freeze(anchors),
       markets:Object.freeze({[marketId]:raw}),claims:Object.freeze(claims),positionMarket,sourceIdForPosition,everPoolFunded,

@@ -634,3 +634,73 @@ describe('prepared bounded financial preservation', () => {
     expect(() => checkPreparedPoolSnapshotOnlyChange(before, after)).toThrow();
   });
 });
+
+describe('selected Pool scan reuse by storage root (CW-133)', () => {
+  const later = { number: 101n, hash: word(101) };
+  const rooted = (f: ReturnType<typeof fixture>, fault?: 'refused' | 'malformed' | 'address' | 'zero') => {
+    const send = f.provider.send.bind(f.provider), calls: Record<string, number> = {}, proofs: unknown[][] = [];
+    f.provider.send = async (method, params) => {
+      calls[method] = (calls[method] ?? 0) + 1;
+      if (method !== 'eth_getProof') return send(method, params);
+      proofs.push(params as unknown[]);
+      if (fault === 'refused') throw new Error('COTI RPC reads stopped after HTTP 403. No automatic retry.');
+      const account = String((params as unknown[])[0]).toLowerCase();
+      const entries = [...f.slots].filter(([key]) => key.startsWith(`${account}:`)).sort(([a], [b]) => a < b ? -1 : 1);
+      const storageHash = fault === 'zero' ? zero : keccak256(coder.encode(['string'], [JSON.stringify(entries)]));
+      return fault === 'malformed' ? { address: account, storageHash: '0x12' } : { address: fault === 'address' ? owner : account, storageHash };
+    };
+    return { calls, proofs };
+  };
+  it('reads only the six pinned storage roots while contract storage is unchanged', async () => {
+    const f = fixture(), { calls, proofs } = rooted(f);
+    const first = await f.reader.selectedState(8n, block);
+    expect(calls).toMatchObject({ eth_getStorageAt: 810, eth_getProof: 6 });
+    const second = await f.reader.selectedState(8n, later);
+    expect(calls).toMatchObject({ eth_getStorageAt: 810, eth_getProof: 12 });
+    expect(second.block).toEqual(later);
+    expect({ ...second, block: null }).toEqual({ ...first, block: null });
+    expect(proofs.slice(6).map(([account]) => account)).toEqual([candidate.core, ...candidate.tokens.map(([token]) => token), nft]);
+    proofs.slice(6).forEach(params => expect(params.slice(1)).toEqual([[], { blockHash: later.hash, requireCanonical: true }]));
+    const next = await f.reader.selectedState(null, block), again = await f.reader.selectedState(null, later);
+    expect(calls.eth_getStorageAt).toBe(1620);
+    expect(again.positionId).toBe(next.positionId);
+  });
+  it.each(['core', 'token', 'nft'] as const)('scans again and returns the new word after a %s storage change', async account => {
+    const f = fixture(), { calls } = rooted(f), token = candidate.tokens[0][0];
+    await f.reader.selectedState(8n, block);
+    if (account === 'core') f.put(candidate.core, 12n, word(4));
+    if (account === 'token') f.put(token, map(candidate.core, 4n, 'address'), word(9));
+    if (account === 'nft') f.put(nft, map(owner, 3n, 'address'), word(7));
+    const changed = await f.reader.selectedState(8n, later);
+    expect(calls.eth_getStorageAt).toBe(1620);
+    if (account === 'core') expect(changed.operation).toBe(4n);
+    if (account === 'token') expect(changed.custody[token][0]).toBe(word(9));
+    if (account === 'nft') expect(changed.ownerNftBalance).toBe(7n);
+  });
+  it.each(['refused', 'malformed', 'address', 'zero'] as const)('keeps the full scan when a storage root is %s', async fault => {
+    const f = fixture(), { calls } = rooted(f, fault);
+    const first = await f.reader.selectedState(8n, block), second = await f.reader.selectedState(8n, block);
+    expect(calls.eth_getStorageAt).toBe(1620);
+    expect(second).toEqual(first);
+  });
+  it('still rejects a stale producer and reuses the scan for a current one', async () => {
+    const f = fixture(), { calls } = rooted(f), producer = await f.reader.issue(8n, 'snapshot', transactionHash);
+    const reads = calls.eth_getStorageAt;
+    await expect(f.reader.current(producer, block)).resolves.toBe(producer);
+    expect(calls.eth_getStorageAt).toBe(reads);
+    f.put(candidate.core, 12n, word(4));
+    await expect(f.reader.current(producer, block)).rejects.toThrow('Prepared Pool producer is stale; sign a new snapshot.');
+    expect(calls.eth_getStorageAt).toBe(reads + 810);
+  });
+  it('stops on a revoked wallet lease and retains at most four scans', async () => {
+    const f = fixture(), { calls } = rooted(f);
+    await f.reader.selectedState(8n, block);
+    for (const value of [11, 12, 13, 14]) { f.put(candidate.core, 12n, word(value)); await f.reader.selectedState(8n, block); }
+    f.put(candidate.core, 12n, word(3));
+    await f.reader.selectedState(8n, block);
+    expect(calls.eth_getStorageAt).toBe(6 * 810);
+    f.revoke();
+    await expect(f.reader.selectedState(8n, block)).rejects.toThrow('lease revoked');
+    expect(calls.eth_getStorageAt).toBe(6 * 810);
+  });
+});
