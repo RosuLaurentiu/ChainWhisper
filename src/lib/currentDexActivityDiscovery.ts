@@ -15,7 +15,7 @@ export class CurrentDexActivitySourceError extends Error {
 export type CurrentDexActivityCursor = Readonly<{ transactions: number | null; nfts: number | null;
   limitFills?: Readonly<Record<string, bigint | null>>;
   asyncTerminals?: Readonly<Record<string, number>> }>;
-export type CurrentDexActivityCandidate = 'cheap-exit' | 'cheap-history';
+export type CurrentDexActivityCandidate = 'cheap-history';
 export type CurrentDexActivityDiscoveryPage = Readonly<{
   hashes: readonly string[];
   nextCursor: CurrentDexActivityCursor;

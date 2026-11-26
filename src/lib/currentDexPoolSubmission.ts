@@ -5,7 +5,7 @@ import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type
 import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentDexSendProgress, type CurrentTransport } from './currentDexSubmission';
 import { blockCurrentPoolVerification, clearCurrentDexPendingAttempt, currentDexPendingStorage } from './currentDexPendingAttempt';
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, encodePreparedPoolTopUp, usesPackedPoolInputs } from './currentDexPoolFunding';
-import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, currentCheapDexCandidateKey, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, currentCheapDexCandidateKey, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { assertCurrentNativePoolProfile, issueCurrentNativePoolSourceFit, CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_LIMITS,
   admitCurrentNativePoolPreview, admitCurrentNativePoolFunding, currentNativePoolSession } from './currentDexNativePoolPolicy';
 import { isCurrentNativeSwapCandidate, currentNativeSigningBudget, recordCurrentNativePoolOutcome } from './currentDexNativeSwapPolicy';
@@ -35,18 +35,18 @@ type Mode = 'creation' | 'top-up';
 export const assertCurrentPoolFundingNativeAdmission = (candidate: CurrentCheapDexCandidate, mode: Mode = 'creation') => {
   if ((mode === 'creation' || mode === 'top-up') && candidate.graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph &&
       resolvePreparedDexScope(candidate).key === 'cheap-history') return;
-  assertCurrentCheapDexNativeAdmission(candidate);
+  rejectUnprovenNativeAdmission();
 };
 type Head = Awaited<ReturnType<CurrentTransport['readHead']>>;
 const same = (a: string | null, b: string) => typeof a === 'string' && a.toLowerCase() === b.toLowerCase();
 const checkCall = (phase: Phase, data: string, candidate: CurrentCheapDexCandidate, context?: string, marketId?: string,
   expected?: { mode: Mode; positionId?: bigint; ownerContext?: string; previewData?: string }) => {
   try {
-  const candidateKey = currentCheapDexCandidateKey(candidate);
+  currentCheapDexCandidateKey(candidate);
   const packed = usesPackedPoolInputs(candidate);
   const wide = 'tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
   const types = [`${wide}[2]`, packed ? wide : 'tuple(uint256 ciphertext,bytes signature)[2]'];
-  const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidate) : null;
+  const preparedScope = resolvePreparedDexScope(candidate);
   const isPrepared = preparedScope !== null;
   const isManage = phase === 'pool-fund' && data.slice(0, 10).toLowerCase() === preparedAbi.getFunction('managePoolPosition')!.selector.toLowerCase();
   const nonzeroHash = (value: string) => /^0x[0-9a-fA-F]{64}$/.test(value) && BigInt(value) !== 0n;
@@ -96,7 +96,7 @@ const checkCall = (phase: Phase, data: string, candidate: CurrentCheapDexCandida
 
 // Reuse the swap nonce/canonical boundary and its single public pending record.
 // This adapter does not enable a UI action or prove the bounded gas profile fits natively.
-export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest, requireFunding, candidate: candidateKey = 'cheap-current',
+export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest, requireFunding, candidate: candidateKey = 'cheap-history',
   nativePoolProfile, now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
   signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport;
   attest: (head: Pick<Head, 'number' | 'hash'>) => Promise<void>;
@@ -104,7 +104,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
   now?: () => bigint; candidate?: CurrentCheapDexCandidateKey; nativePoolProfile?: typeof CURRENT_NATIVE_POOL_PROFILE;
 }) => {
   const candidate = resolveCurrentCheapDexCandidate(candidateKey);
-  const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
+  const preparedScope = resolvePreparedDexScope(candidateKey);
   const owner = getAddress(ownerAddress), core = getAddress(candidate.core), storage = currentDexPendingStorage({ chainId, graph: candidate.graph, owner });
   if (chainId !== BigInt(candidate.chainId) || BigInt(owner) === 0n) throw new Error('Wrong Pool owner or chain.');
   let keys = reservations.get(signer);
@@ -319,6 +319,4 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
     }
   });
 };
-
-
 

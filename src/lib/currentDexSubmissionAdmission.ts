@@ -1,8 +1,7 @@
 import { assertCurrentSwapCandidate } from './currentDexNativeSwapPolicy';
 import { keccak256 } from '@coti-io/coti-ethers';
-import { assertCurrentSharedPoolPreparedQuote, assertCurrentSharedPoolIssuedQuote,
-  assertCurrentCheapDexPreparedQuote, assertCurrentCheapDexIssuedQuote } from '../features/wallet/currentDexQuoteCapability';
-import { CURRENT_CHEAP_DEX_CANDIDATE, CURRENT_SHARED_POOL_CANDIDATE, currentCheapDexQuoteProtocol,
+import { assertCurrentCheapDexPreparedQuote, assertCurrentCheapDexIssuedQuote } from '../features/wallet/currentDexQuoteCapability';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, currentCheapDexQuoteProtocol,
   currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate } from './dexV2Deployment';
 import type { CurrentCheapDexPreparedQuote, CurrentCheapDexIssuedQuote, CurrentDexPreparedAcceptance } from './currentDexSubmission';
 
@@ -63,32 +62,7 @@ const register = <Phase extends InternalPhase>(binding: InternalBinding & { phas
   return admission;
 };
 
-export const issueCurrentSharedPoolQuoteAdmission = (prepared: Readonly<{
-  chainId: bigint; from: string; to: string; value: bigint; data: string; graph: string;
-  intent: Readonly<{ runtimeHash: string; releaseId: string }>;
-}>, signer: object): CurrentDexInternalAdmission<'quote'> => {
-  assertCurrentSharedPoolPreparedQuote(prepared, signer);
-  const c = CURRENT_SHARED_POOL_CANDIDATE;
-  const coreRuntime = c.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2];
-  if (prepared.graph !== c.graph || prepared.chainId !== BigInt(c.chainId) ||
-      prepared.from.toLowerCase() === c.core || prepared.to.toLowerCase() !== c.core || prepared.value !== 0n ||
-      prepared.intent.runtimeHash !== coreRuntime || prepared.intent.releaseId !== c.releaseId) {
-    throw new Error('Shared-Pool Quote does not match the reviewed candidate.');
-  }
-  return register({ phase: 'quote', signer, callHash: keccak256(prepared.data), preparedQuote: prepared });
-};
 
-export const issueCurrentSharedPoolAcceptAdmission = (quote: CurrentDexInternalAdmission<'quote'>,
-  issued: Readonly<{ operationId: bigint; operation: Readonly<{ contextHash: string }> }>,
-  prepared: Readonly<{ data: string }>, signer: object): CurrentDexInternalAdmission<'accept'> => {
-  assertCurrentSharedPoolIssuedQuote(issued, signer);
-  const previous = internalBindings.get(quote);
-  if (!previous || previous.phase !== 'quote' || previous.signer !== signer) {
-    throw new Error('Shared-Pool Quote authority is absent.');
-  }
-  return register({ phase: 'accept', signer, callHash: keccak256(prepared.data),
-    preparedQuote: previous.preparedQuote, issuedQuote: issued });
-};
 
 export const assertCurrentDexInternalAdmission = (value: unknown, phase: InternalPhase, signer: object,
   callData: string, preparedQuote: object, issuedQuote?: object): void => {
@@ -103,7 +77,7 @@ export const assertCurrentDexInternalAdmission = (value: unknown, phase: Interna
 export const issueCurrentCheapDexQuoteAdmission = (prepared: CurrentCheapDexPreparedQuote,
   signer: object): CurrentDexInternalAdmission<'quote'> => {
   assertCurrentCheapDexPreparedQuote(prepared, signer);
-  const c = prepared.intent.candidate ? resolveCurrentCheapDexCandidate(currentCheapDexCandidateKey(prepared.intent.candidate)) : CURRENT_CHEAP_DEX_CANDIDATE;
+  const c = prepared.intent.candidate ? resolveCurrentCheapDexCandidate(currentCheapDexCandidateKey(prepared.intent.candidate)) : STAGED_SHARED_HISTORY_DEX_CANDIDATE;
   assertCurrentSwapCandidate(c, prepared.intent, signer);
   if (prepared.intent.candidate) assertCurrentSwapCandidate(prepared.intent.candidate, prepared.intent, signer);
   const protocol = currentCheapDexQuoteProtocol(c);
@@ -128,7 +102,7 @@ export const issueCurrentCheapDexAcceptAdmission = (quote: CurrentDexInternalAdm
     throw new Error('Current-mode Quote authority is absent or changed.');
   }
   const original = previous.preparedQuote as CurrentCheapDexPreparedQuote;
-  const identity = issued.intent.candidate ?? CURRENT_CHEAP_DEX_CANDIDATE;
+  const identity = issued.intent.candidate ?? STAGED_SHARED_HISTORY_DEX_CANDIDATE;
   assertCurrentSwapCandidate(identity, issued.intent, signer);
   if (original.graph !== identity.graph || original.to.toLowerCase() !== identity.core.toLowerCase() ||
       original.intent.runtimeHash !== issued.runtimeHash || original.intent.releaseId !== issued.releaseId ||

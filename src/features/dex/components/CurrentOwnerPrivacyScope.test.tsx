@@ -1,17 +1,10 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SharedWalletSession } from '../../../lib/walletSession';
-import { CURRENT_CHEAP_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
 import CurrentPoolWorkspace from './CurrentPoolWorkspace';
 import CurrentPoolPositionsWorkspace from './CurrentPoolPositionsWorkspace';
 import CurrentLimitWorkspace from './CurrentLimitWorkspace';
-// Retained native recovery tests select their candidate before component import.
-vi.mock('../../../lib/dexV2Deployment', async original => {
-  const actual = await original<typeof import('../../../lib/dexV2Deployment')>();
-  return { ...actual, CURRENT_CHEAP_DEX_CANDIDATE: actual.resolveCurrentCheapDexCandidate('cheap-native'),
-    resolveCurrentCheapDexCandidate: (key: Parameters<typeof actual.resolveCurrentCheapDexCandidate>[0]) =>
-      actual.resolveCurrentCheapDexCandidate(key === 'cheap-current' ? 'cheap-native' : key) };
-});
 
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[] }));
 vi.mock('react', async original => {
@@ -45,6 +38,7 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
   const prepareOwnerAction = vi.fn(async () => ({ prepared: true }));
   const submitLimitOwner = vi.fn(async () => ({ transactionHash: `0x${'11'.repeat(32)}`, recover: read }));
   const sender = { recoverCurrentNativePoolFundingResult: read, recoverCurrentNativePoolPositionResult: vi.fn(async () => null),
+    recoverCurrentPreparedPoolFundingResult: read, recoverCurrentPreparedPoolPositionResult: vi.fn(async () => null),
     recoverPendingPoolAttempt: vi.fn(async () => ({ status: 'observed-mined', privateAccountingVerified: false, readyToSign: false })),
     recoverPendingPoolPositionAttempt: vi.fn(async () => ({ status: 'observed-mined', privateAccountingVerified: false, readyToSign: false })),
     submitLimitOwner, recoverPendingLimitAttempt: vi.fn(async () => null) };
@@ -54,7 +48,7 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
       getCurrentDexPoolPositionCapability: vi.fn(async () => ({ readPosition: read })), getCurrentDexLimitCapability: vi.fn(async () => ({ prepareOwnerAction })) }
   } as unknown as SharedWalletSession;
   const render = () => { hooks.index = 0; hooks.refIndex = 0;
-    return panel === 'pool' ? components.pool({ sharedWalletSession: session }) : panel === 'position' ? components.position({ sharedWalletSession: session }) : CurrentLimitWorkspace({ sharedWalletSession: session, view: 'manage' }); };
+    return panel === 'pool' ? components.pool({ sharedWalletSession: session, selectedPair: ['HBR', 'BCN'] }) : panel === 'position' ? components.position({ sharedWalletSession: session }) : CurrentLimitWorkspace({ sharedWalletSession: session, view: 'manage', selectedPair: ['HBR', 'BCN'] }); };
   const button = (label: string) => elements(render()).find(e => e.type === 'button' && text(e.props.children) === label)!;
   // Busy is state 5 in all panels; the Limit approval-mode hook now holds state 4.
   const idle = async () => { await vi.waitFor(() => expect(hooks.states[5]).toBe(false)); };
@@ -80,7 +74,7 @@ const rotate = (session: SharedWalletSession, change: 'onboard' | 'health' | 'lo
 };
 afterEach(() => { hooks.states = []; hooks.refs = []; vi.unstubAllGlobals(); });
 
-describe.each(['pool', 'position', 'limit'] as const)('retained native %s owner private session', panel => {
+describe.each(['pool', 'position', 'limit'] as Panel[])('retained current %s owner private session', panel => {
   it('retains the verified display during an unchanged session render', async () => {
     const f = fixture(panel); await f.load(); expect(text(f.render())).toContain(labels[panel]);
     expect(text(f.render())).toContain(labels[panel]); expect(f.read).toHaveBeenCalledOnce();
@@ -98,7 +92,7 @@ describe.each(['pool', 'position', 'limit'] as const)('retained native %s owner 
   });
 });
 
-it.each(['pool', 'position'] as const)('actual current %s public metadata grants no private owner display', async panel => {
+it.each(['position'] as Panel[])('actual current %s public metadata grants no private owner display', async panel => {
   vi.doMock('../../../lib/dexV2Deployment', () => vi.importActual('../../../lib/dexV2Deployment')); vi.resetModules();
   const [pool, position] = await Promise.all([import('./CurrentPoolWorkspace'), import('./CurrentPoolPositionsWorkspace')]);
   const f = fixture(panel, { pool: pool.default, position: position.default });

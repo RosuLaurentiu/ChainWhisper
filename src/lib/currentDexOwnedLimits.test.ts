@@ -5,7 +5,7 @@ import { resolvePreparedDexScope } from './currentDexPreparedScope';
 
 const owner=`0x${'22'.repeat(20)}`,hash=toBeHex(100n,32);
 const slot=(key:bigint|string,root:bigint,type='uint256')=>keccak256(AbiCoder.defaultAbiCoder().encode([type,'uint256'],[key,root]));
-function fixture(key:'cheap-exit'|'cheap-history'='cheap-exit'){
+function fixture(key:'cheap-history'='cheap-history'){
   const c=resolvePreparedDexScope(key).candidate,nft=c.companions.find(([name])=>name==='ChainWhisperDexPositionNFT')![1];
   const words=new Map<string,string>(),set=(host:string,index:string,value:bigint)=>words.set(`${host}:${index}`,toBeHex(value,32));
   set(c.core,toBeHex(11n),45n);set(nft,slot(owner,3n,'address'),3n);
@@ -33,7 +33,7 @@ describe('current owner Limit inventory',()=>{
     [257n,0n,1n,id,source,1n,1n,70n,71n,1n,1n,2n].forEach((v,i)=>{for(const [host,root]of [[f.c.core,20n],[pair.engine,9n]]as const)f.set(host,toBeHex(BigInt(slot(source,root))+BigInt(i)),v);});
     return{pair,source,id};
   };
-  it.each(['cheap-exit','cheap-history']as const)('restores burned %s orders across markets without local history or private amount reads',async key=>{
+  it.each(['cheap-history']as const)('restores burned %s orders across markets without local history or private amount reads',async key=>{
     const f=fixture(key),entry=closed(f),r=await f.read();expect(r.complete).toBe(true);
     expect(r.orders.map(x=>x.positionId)).toEqual([43n,45n,46n]);
     expect(r.orders[2]).toMatchObject({positionId:46n,closed:true,marketId:entry.pair.marketId,poolTokens:entry.pair.tokens,status:0n});

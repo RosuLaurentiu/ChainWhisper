@@ -4,10 +4,8 @@ import { createCurrentCheapDexSubmissionAdapter, currentCheapDexGasCaps, type Cu
 import { resolveCurrentCheapDexCandidate, currentCheapDexQuoteProtocol, currentCheapDexStages, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, encodeCurrentDexQuoteRequest, type CurrentCheapDexProfile } from './currentDexOperation';
 import { CURRENT_DEX_ACCEPT_ABI, CURRENT_SLIPPAGE_DEX_ACCEPT_ABI } from './currentDexQuoteReview';
-import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY, readCurrentDexOperationLookups,
-  blockCurrentDexOperationVerification, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
+import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
 import { verifyCurrentDexCanonicalInclusion } from './currentDexCanonicalInclusion';
-import { issueCurrentDexSubmissionCapability } from '../features/wallet/currentDexSubmissionCapability';
 
 const wiring = vi.hoisted(() => ({ issue: vi.fn(), graph: vi.fn(), operation: vi.fn() }));
 vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: wiring.issue }));
@@ -17,7 +15,7 @@ type Tx = Parameters<NonNullable<CurrentTransport['verifyCanonicalInclusion']>>[
 type Receipt = Parameters<NonNullable<CurrentTransport['verifyCanonicalInclusion']>>[1];
 const owner = `0x${'22'.repeat(20)}`, txHash = `0x${'33'.repeat(32)}`, blockHash = `0x${'44'.repeat(32)}`, context = `0x${'55'.repeat(32)}`;
 const wide = { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n }, signature: `0x${'11'.repeat(65)}` }, small = { ciphertext: 1n, signature: wide.signature };
-function fixture(profile: CurrentCheapDexProfile = 'fast-pool', phase: 'quote' | 'accept' | 'cancel' | 'recover' = 'quote', candidate: CurrentCheapDexCandidateKey = 'cheap-native', status = 1) {
+function fixture(profile: CurrentCheapDexProfile = 'fast-pool', phase: 'quote' | 'accept' | 'cancel' | 'recover' = 'quote', candidate: CurrentCheapDexCandidateKey = 'cheap-history', status = 1) {
   const c = resolveCurrentCheapDexCandidate(candidate), protocol = currentCheapDexQuoteProtocol(c), stages = currentCheapDexStages(c);
   const quote = new Interface(protocol ? CURRENT_SLIPPAGE_DEX_QUOTE_ABI : CURRENT_CHEAP_DEX_QUOTE_ABI), accept = new Interface(protocol ? CURRENT_SLIPPAGE_DEX_ACCEPT_ABI : CURRENT_DEX_ACCEPT_ABI);
   const actions = new Interface(['function cancelSwap(uint256)', 'function recoverSwap(uint256)']);
@@ -64,8 +62,8 @@ function fixture(profile: CurrentCheapDexProfile = 'fast-pool', phase: 'quote' |
     revoke: () => { active = false; }, reorg: () => { canonicalHash = context; } };
 }
 describe('native receipt-only pending recovery', () => {
-  it.each([['fast-pool', 'quote'], ['cheap-async', 'quote']] as const)('reconciles exact b2aa %s %s without App-wallet or private authority', async (profile, phase) => {
-    const f = fixture(profile, phase, 'cheap-exit');
+  it.each([['fast-pool', 'quote'], ['cheap-async', 'quote']] as const)('reconciles exact current %s %s without App-wallet or private authority', async (profile, phase) => {
+    const f = fixture(profile, phase, 'cheap-history');
     await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined', phase,
       operationId: 7n, privateAccountingVerified: false, readyToSign: false });
     expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(true);
@@ -73,8 +71,8 @@ describe('native receipt-only pending recovery', () => {
     expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2); f.noSend();
     f.noSend();
   });
-  it.each([['fast-pool', 'accept'], ['cheap-async', 'accept'], ['cheap-async', 'cancel'], ['cheap-async', 'recover']] as const)('retains exact b2aa %s %s until owner private accounting is checked', async (profile, phase) => {
-    const f = fixture(profile, phase, 'cheap-exit');
+  it.each([['fast-pool', 'accept'], ['cheap-async', 'accept'], ['cheap-async', 'cancel'], ['cheap-async', 'recover']] as const)('retains exact current %s %s until owner private accounting is checked', async (profile, phase) => {
+    const f = fixture(profile, phase, 'cheap-history');
     const saved = f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY);
     await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({
       status: 'manual-reconciliation-required', phase, transactionHash: txHash,
@@ -89,8 +87,8 @@ describe('native receipt-only pending recovery', () => {
     expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);
     f.noSend();
   });
-  it.each(['missing-index', 'cap', 'reorg', 'blocked'] as const)('retains b2aa recovery metadata on %s', async fault => {
-    const f = fixture('cheap-async', 'recover', 'cheap-exit');
+  it.each(['missing-index', 'cap', 'reorg', 'blocked'] as const)('retains current recovery metadata on %s', async fault => {
+    const f = fixture('cheap-async', 'recover', 'cheap-history');
     if (fault === 'missing-index') f.transport.verifyCanonicalInclusion.mockRejectedValue(new Error('canonical index unavailable'));
     if (fault === 'cap') Object.assign(f.tx, { gasLimit: 25_000_000n });
     if (fault === 'reorg') f.reorg();
@@ -100,44 +98,10 @@ describe('native receipt-only pending recovery', () => {
     } else await expect(f.adapter.recoverPendingCurrentCheapAttempt()).rejects.toThrow();
     expect(f.values.size).toBe(1); f.noSend();
   });
-  it.each([['fast-pool', 'quote'], ['cheap-async', 'quote'], ['fast-pool', 'accept'], ['cheap-async', 'accept'], ['cheap-async', 'cancel'], ['cheap-async', 'recover']] as const)('reconciles d06 %s %s metadata while the real App hold stays active', async (profile, phase) => {
-    const f = fixture(profile, phase, 'cheap-d06');
-    await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined', phase, operationId: 7n,
-      privateAccountingVerified: false, readyToSign: false });
-    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
-    expect(f.values.has(CURRENT_DEX_OPERATION_LOOKUPS_KEY)).toBe(profile === 'cheap-async' && phase === 'accept');
-    expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2); f.noSend();
-  });
-  it.each(['missing-index', 'cap', 'reorg', 'blocked'] as const)('retains d06 recovery record on %s', async fault => {
-    const f = fixture('cheap-async', 'recover', 'cheap-d06');
-    if (fault === 'missing-index') f.transport.verifyCanonicalInclusion.mockRejectedValue(new Error('canonical index unavailable'));
-    if (fault === 'cap') Object.assign(f.tx, { gasLimit: 25_000_000n });
-    if (fault === 'reorg') f.reorg();
-    if (fault === 'blocked') { f.save({ verificationBlocked: true }); await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'manual-reconciliation-required' }); }
-    else await expect(f.adapter.recoverPendingCurrentCheapAttempt()).rejects.toThrow();
-    expect(f.values.size).toBe(1); f.noSend();
-  });
-  it.each([['fast-pool', 'quote'], ['cheap-async', 'quote'], ['fast-pool', 'accept'], ['cheap-async', 'accept'], ['cheap-async', 'cancel']] as const)('recovers exact %s %s metadata despite expired new-send head', async (profile, phase) => {
-    const f = fixture(profile, phase); await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined', phase, operationId: 7n, privateAccountingVerified: false, readyToSign: false });
-    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
-    expect(f.values.has(CURRENT_DEX_OPERATION_LOOKUPS_KEY)).toBe(profile === 'cheap-async' && phase === 'accept');
-    expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2); f.noSend();
-    await expect(f.adapter.checkCurrentCheapCandidate()).rejects.toThrow('block, gas headroom or deadline');
-  });
-  it.each(['quote', 'accept', 'cancel'] as const)('reconciles terminal status0 %s only with empty events and repeated full inclusion', async phase => {
-    const f = fixture(phase === 'cancel' ? 'cheap-async' : 'fast-pool', phase, 'cheap-native', 0);
+  it.each(['accept', 'cancel'] as const)('reconciles terminal status0 %s only with empty events and repeated full inclusion', async phase => {
+    const f = fixture(phase === 'cancel' ? 'cheap-async' : 'fast-pool', phase, 'cheap-history', 0);
     await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-reverted', privateAccountingVerified: false, readyToSign: false });
     expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2); expect(f.readOperation).not.toHaveBeenCalled(); expect(f.values.size).toBe(0); f.noSend();
-  });
-  it.each(['cheap-two-pool', 'cheap-reference'] as const)('keeps other staged %s recovery held', async candidate => {
-    const f = fixture('fast-pool', 'quote', candidate); await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'manual-reconciliation-required' }); expect(f.values.size).toBe(1); f.noSend();
-  });
-  it('reconciles accepted native funded recovery without send permission', async () => {
-    const f = fixture('cheap-async', 'recover'); await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined', privateAccountingVerified:false, readyToSign:false }); expect(f.values.size).toBe(0); expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2); f.noSend();
-  });
-  it.each(['quote', 'accept', 'cancel', 'recover'] as const)('retains exact archived %s cap/protocol recovery without new inclusion requirement', async phase => {
-    const f = fixture(phase === 'quote' || phase === 'accept' ? 'fast-pool' : 'cheap-async', phase, 'cheap-archived');
-    await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined' }); expect(f.transport.verifyCanonicalInclusion).not.toHaveBeenCalled(); expect(f.values.size).toBe(0); f.noSend();
   });
   it.each(['chainId', 'from', 'to', 'nonce', 'data', 'value', 'gasLimit', 'hash'] as const)('retains native record on wrong transaction %s', async field => {
     const f = fixture(); const changed = { ...f.tx, [field]: ['from', 'to'].includes(field) ? owner : field === 'data' ? '0x1234' : field === 'hash' ? context : field === 'nonce' ? 9 : 1n };
@@ -160,92 +124,18 @@ describe('native receipt-only pending recovery', () => {
     else if (fault === 'missing-receipt') await expect(result).resolves.toMatchObject({ status: 'awaiting-chain-confirmation' }); else await expect(result).rejects.toThrow();
     expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved); f.noSend();
   });
-  it('recovers a known hash from hashless metadata without issuing private authority', async () => {
-    const f = fixture(); f.save({ txHash: null }); await expect(f.adapter.recoverPendingCurrentCheapAttempt(txHash)).resolves.toMatchObject({ status: 'observed-mined', privateAccountingVerified: false }); expect(f.values.size).toBe(0); f.noSend();
-  });
-  it('reconciles an explicit repriced native hash only for the exact saved nonce/calldata/cap', async () => {
-    const f = fixture('fast-pool', 'accept'), knownHash = `0x${'aa'.repeat(32)}`;
-    Object.assign(f.tx, { hash: knownHash }); Object.assign(f.receipt, { hash: knownHash });
-    await expect(f.adapter.recoverPendingCurrentCheapAttempt(knownHash)).resolves.toMatchObject({ status: 'observed-mined', transactionHash: knownHash, privateAccountingVerified: false });
-    expect(f.values.size).toBe(0); f.noSend();
-  });
   it('allows receipt-only recovery with no transaction-fit or fresh-send resource permission', async () => {
     const f = fixture(); f.transport.readHead.mockResolvedValue({ number: 10n, hash: blockHash, timestamp: 0n, gasLimit: 0n });
     await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined', privateAccountingVerified: false, readyToSign: false }); f.noSend();
   });
   it('does not clear status0 when its receipt changes during repeated canonical verification', async () => {
-    const f = fixture('fast-pool', 'quote', 'cheap-native', 0); let reads = 0;
+    const f = fixture('fast-pool', 'accept', 'cheap-history', 0); let reads = 0;
     f.transport.waitForReceipt.mockImplementation(async () => ++reads === 3 ? { ...f.receipt, status: 1 } : f.receipt);
     const saved = f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY); await expect(f.adapter.recoverPendingCurrentCheapAttempt()).rejects.toThrow();
     expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved); f.noSend();
   });
-  it.each(['status-and-logs', 'logs', 'block'] as const)('uses canonical status1 snapshot when the first receipt mutates %s during recheck', async mutation => {
-    const f = fixture(), canonicalReceipt = structuredClone(f.receipt), rawRead = f.rpc.getMockImplementation()!;
-    let receiptReads = 0;
-    f.transport.waitForReceipt.mockImplementation(async () => ++receiptReads === 1 ? f.receipt : structuredClone(canonicalReceipt));
-    f.rpc.mockImplementation(async method => method === 'eth_getTransactionReceipt'
-      ? { ...canonicalReceipt, transactionHash: canonicalReceipt.hash, status: '0x1', blockNumber: '0xa', transactionIndex: '0x0' }
-      : rawRead(method));
-    const verify = f.transport.verifyCanonicalInclusion.getMockImplementation()!;
-    f.transport.verifyCanonicalInclusion.mockImplementation(async (transaction, observed) => {
-      await verify(transaction, observed);
-      if (mutation === 'status-and-logs') Object.assign(f.receipt, { status: 0, logs: [] });
-      if (mutation === 'logs') (f.receipt.logs as unknown[]).splice(0);
-      if (mutation === 'block') Object.assign(f.receipt, { blockNumber: 11, blockHash: context });
-    });
-    await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined',
-      operationId: 7n, privateAccountingVerified: false, readyToSign: false });
-    expect(f.readOperation).toHaveBeenCalledWith('fast-pool', 7n, { number: 10n, hash: blockHash });
-    expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(2); expect(f.values.size).toBe(0); f.noSend();
-  });
   it.each(['reorg', 'status', 'logs', 'gas'] as const)('keeps record when %s changes after public operation read', async fault => {
     const f = fixture(); f.readOperation.mockImplementationOnce(async () => { if (fault === 'reorg') f.reorg(); if (fault === 'status') Object.assign(f.receipt, { status: 0 }); if (fault === 'logs') Object.assign(f.receipt, { logs: [] }); if (fault === 'gas') Object.assign(f.tx, { gasLimit: 1n }); return { operation: f.operation }; });
     const saved = f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY); await expect(f.adapter.recoverPendingCurrentCheapAttempt()).rejects.toThrow(); expect(f.values.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved); f.noSend();
-  });
-  it('uses actual wallet issuer and raw canonical helper for native metadata recovery without signing', async () => {
-    const f = fixture('cheap-async', 'accept'), signer = { sendTransaction: vi.fn(), estimateGas: vi.fn(), getNonce: vi.fn() };
-    wiring.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.transport.assertCurrent, assertSnapshotCurrent: vi.fn(), chainId: 7082400n, ownerAddress: owner,
-      signer, readProvider: { send: f.rpc, getTransaction: f.transport.readTransaction, getTransactionReceipt: f.transport.waitForReceipt } }));
-    wiring.graph.mockResolvedValue({ graph: f.c.graph, packageSha256: f.c.packageSha256, core: f.c.core }); wiring.operation.mockResolvedValue({ operation: f.operation });
-    const capability = await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-native' } as never);
-    await expect(capability.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined', privateAccountingVerified: false, readyToSign: false });
-    expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
-    expect(readCurrentDexOperationLookups(f.storage)).toHaveLength(1);
-    expect(signer.sendTransaction).not.toHaveBeenCalled(); expect(signer.estimateGas).not.toHaveBeenCalled(); expect(signer.getNonce).not.toHaveBeenCalled();
-  });
-  it('retains async public lookup across repeated checks and terminal stages without private authority', async () => {
-    const f = fixture('cheap-async', 'accept', 'cheap-d06');
-    await f.adapter.recoverPendingCurrentCheapAttempt();
-    const saved = f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY);
-    for (const [stage, phase] of [[6, 'settling'], [7, 'settled'], [8, 'released']] as const) {
-      Object.assign(f.operation, { stage, phase });
-      await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'observed-mined',
-        operationId: 7n, operation: { stage, phase }, readyToSign: false, privateAccountingVerified: false });
-      expect(f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY)).toBe(saved);
-    }
-    expect(f.transport.verifyCanonicalInclusion).toHaveBeenCalledTimes(8); f.noSend();
-  });
-  it('does not bind an old funded operation to another owner or candidate after reload', async () => {
-    const f = fixture('cheap-async', 'accept', 'cheap-d06');
-    await f.adapter.recoverPendingCurrentCheapAttempt();
-    const saved = f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY);
-    await expect(f.recreate(f.c.core).recoverPendingCurrentCheapAttempt()).resolves.toBeNull();
-    await expect(f.recreate(owner, 'cheap-native').recoverPendingCurrentCheapAttempt()).resolves.toBeNull();
-    await expect(f.recreate().recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ operationId: 7n, privateAccountingVerified: false });
-    expect(f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY)).toBe(saved); f.noSend();
-  });
-  it.each(['origin', 'deadline', 'context', 'blocked', 'pending'] as const)('retains original async lookup on %s', async fault => {
-    const f = fixture('cheap-async', 'accept', 'cheap-d06');
-    await f.adapter.recoverPendingCurrentCheapAttempt();
-    if (fault === 'origin') { Object.assign(f.tx, { blockNumber: 11 }); Object.assign(f.receipt, { blockNumber: 11 }); }
-    if (fault === 'deadline') Object.assign(f.operation, { deadline: 201n });
-    if (fault === 'context') Object.assign(f.operation, { contextHash: blockHash });
-    if (fault === 'blocked') blockCurrentDexOperationVerification(f.storage, readCurrentDexOperationLookups(f.storage)[0]);
-    if (fault === 'pending') f.transport.waitForReceipt.mockResolvedValue(null);
-    const saved = f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY);
-    if (fault === 'blocked') await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'manual-reconciliation-required', transactionHash: txHash, verificationBlocked: true });
-    else if (fault === 'pending') await expect(f.adapter.recoverPendingCurrentCheapAttempt()).resolves.toMatchObject({ status: 'awaiting-chain-confirmation', transactionHash: txHash });
-    else await expect(f.adapter.recoverPendingCurrentCheapAttempt()).rejects.toThrow();
-    expect(f.values.get(CURRENT_DEX_OPERATION_LOOKUPS_KEY)).toBe(saved); f.noSend();
   });
 });

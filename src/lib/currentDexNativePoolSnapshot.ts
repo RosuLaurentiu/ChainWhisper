@@ -1,5 +1,6 @@
 import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
-import { STAGED_NATIVE_DEX_CANDIDATE as native, type CurrentCheapDexCandidate } from './dexV2Deployment';
+import { STAGED_NATIVE_DEX_CANDIDATE as native } from './currentDexNativeCandidate';
+import { type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { checkCurrentPoolPositionValues } from './currentDexPoolPosition';
 import type { PrivateUint256Output } from './privateUint256';

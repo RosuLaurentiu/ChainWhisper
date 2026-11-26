@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CURRENT_CHEAP_DEX_CANDIDATE as c } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c } from './dexV2Deployment';
 import { readOfficialTestnetGas, OFFICIAL_COTI_TESTNET_FAUCET_URL, OFFICIAL_TESTNET_TOKEN_CATALOG } from './officialTestnetFaucet';
 const owner = '0x1111111111111111111111111111111111111111';
 const head = { number: '0x100', hash: `0x${'22'.repeat(32)}`, timestamp: '0x200' };

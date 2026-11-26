@@ -6,9 +6,8 @@ import { Interface } from '@coti-io/coti-ethers';
 import { describe, expect, it } from 'vitest';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './currentDexExitCandidate';
 import { STAGED_PREPARED_DEX_CANDIDATE as prepared } from './currentDexPreparedCandidate';
-import { CURRENT_CHEAP_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE,
-  resolveCurrentCheapDexCandidate, currentCheapDexCandidateKey, currentCheapDexStages,
-  currentCheapDexQuoteProtocol, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as current, currentCheapDexCandidateKey,
+  currentCheapDexQuoteProtocol, rejectUnprovenNativeAdmission } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI } from './currentDexOperation';
 
@@ -42,49 +41,43 @@ describe('exit-preview shared-Core public candidate', () => {
     expect(exit.additionalReviewedTokenSet).toBe(input.pkg.additionalReviewedTokenSet);
   }, 30000);
 
-  it('binds the distinct key, ABI and stages and keeps signing closed', () => {
-    expect(resolveCurrentCheapDexCandidate('cheap-exit')).toBe(exit);
-    expect(currentCheapDexCandidateKey(exit)).toBe('cheap-exit');
-    expect(currentCheapDexQuoteProtocol(exit)).toBe('quote-slippage');
-    expect(currentCheapDexStages(exit)).toEqual({ workCalls: 4, ready: 5, funded: 6, settled: 7, released: 8 });
-    expect(exit.protocol.quoteSignature).toBe(new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI).getFunction('quoteCheapAsync')!.format('sighash'));
-    expect(CURRENT_CHEAP_DEX_CANDIDATE).toBe(STAGED_D06_DEX_CANDIDATE);
-    expect(resolveCurrentCheapDexCandidate('cheap-current')).toBe(STAGED_D06_DEX_CANDIDATE);
+  it('keeps the retained exit descriptor out of App selection and keeps signing closed', () => {
+    expect(() => currentCheapDexCandidateKey(exit)).toThrow('do not match');
+    expect(() => currentCheapDexQuoteProtocol(exit)).toThrow('do not match');
+    expect(exit.protocol.quoteSignature).not.toBe(new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI).getFunction('quoteCheapAsync')!.format('sighash'));
     expect(exit.readyToSign).toBe(false);
     expect(exit.nativeScope).toEqual({ sixMarketPublicBinding: true, fullFixtureAdmission: false, connectedAppWalletHeld: true, noBetaAcceptance: true });
-    expect(() => assertCurrentCheapDexNativeAdmission(exit)).toThrow('native App submission admission');
-    for (const patch of [{ graph: prepared.graph }, { packageSha256: prepared.packageSha256 }, { core: prepared.core }]) {
-      expect(() => currentCheapDexCandidateKey({ ...exit, ...patch })).toThrow('do not match');
-    }
+    expect(() => rejectUnprovenNativeAdmission()).toThrow('native App submission admission');
+    expect(() => resolvePreparedDexScope(exit as never)).toThrow('candidate changed');
   });
 
-  it('resolves only the complete descriptors for both candidates', () => {
-    expect(resolvePreparedDexScope().candidate).toBe(prepared);
-    for (const [key, candidate] of [['cheap-prepared', prepared], ['cheap-exit', exit]] as const) {
-      expect(resolvePreparedDexScope(key)).toEqual({ key, candidate });
-      expect(resolvePreparedDexScope(candidate).candidate).toBe(candidate);
-      expect(resolvePreparedDexScope(structuredClone(candidate)).candidate).toBe(candidate);
-      for (const field of Reflect.ownKeys(candidate)) {
-        const changed = { ...candidate, [field]: undefined };
-        expect(() => resolvePreparedDexScope(changed)).toThrow('candidate changed');
-      }
-      const extra = { ...candidate, extra: undefined };
-      const forged = { ...candidate, toJSON: () => candidate };
-      const hidden = Object.defineProperty({ ...candidate }, 'hidden', { value: undefined });
-      const symbol = { ...candidate, [Symbol('extra')]: undefined };
-      const accessor = Object.defineProperty({ ...candidate }, 'core', { get: () => { throw new Error('GETTER_MUST_NOT_RUN'); } });
-      expect(() => resolvePreparedDexScope(extra)).toThrow('candidate changed');
-      expect(() => resolvePreparedDexScope(forged)).toThrow('candidate changed');
-      expect(() => resolvePreparedDexScope(hidden)).toThrow('candidate changed');
-      expect(() => resolvePreparedDexScope(symbol)).toThrow('candidate changed');
-      expect(() => resolvePreparedDexScope(accessor)).toThrow('candidate changed');
-      const stages = { ...candidate, protocol: { ...candidate.protocol, stages: { ...candidate.protocol.stages, ready: 4 } } };
-      const pairs = { ...candidate, pairs: candidate.pairs.slice(1) };
-      expect(() => resolvePreparedDexScope(stages)).toThrow('candidate changed');
-      expect(() => resolvePreparedDexScope(pairs)).toThrow('candidate changed');
+  it('resolves only the complete current descriptor', () => {
+    const candidate = current;
+    expect(resolvePreparedDexScope().candidate).toBe(candidate);
+    expect(resolvePreparedDexScope('cheap-history')).toEqual({ key: 'cheap-history', candidate });
+    expect(resolvePreparedDexScope(candidate).candidate).toBe(candidate);
+    expect(resolvePreparedDexScope(structuredClone(candidate)).candidate).toBe(candidate);
+    for (const field of Reflect.ownKeys(candidate)) {
+      const changed = { ...candidate, [field]: undefined };
+      expect(() => resolvePreparedDexScope(changed)).toThrow('candidate changed');
     }
-    for (const key of ['cheap-current', 'cheap-d06', 'cheap-native', 'wrong']) {
-      expect(() => resolvePreparedDexScope(key as 'cheap-prepared')).toThrow('candidate changed');
+    const extra = { ...candidate, extra: undefined };
+    const forged = { ...candidate, toJSON: () => candidate };
+    const hidden = Object.defineProperty({ ...candidate }, 'hidden', { value: undefined });
+    const symbol = { ...candidate, [Symbol('extra')]: undefined };
+    const accessor = Object.defineProperty({ ...candidate }, 'core', { get: () => { throw new Error('GETTER_MUST_NOT_RUN'); } });
+    expect(() => resolvePreparedDexScope(extra)).toThrow('candidate changed');
+    expect(() => resolvePreparedDexScope(forged)).toThrow('candidate changed');
+    expect(() => resolvePreparedDexScope(hidden)).toThrow('candidate changed');
+    expect(() => resolvePreparedDexScope(symbol)).toThrow('candidate changed');
+    expect(() => resolvePreparedDexScope(accessor)).toThrow('candidate changed');
+    const stages = { ...candidate, protocol: { ...candidate.protocol, stages: { ...candidate.protocol.stages, ready: 4 } } };
+    const pairs = { ...candidate, pairs: candidate.pairs.slice(1) };
+    expect(() => resolvePreparedDexScope(stages as never)).toThrow('candidate changed');
+    expect(() => resolvePreparedDexScope(pairs as never)).toThrow('candidate changed');
+    for (const old of [exit, prepared]) expect(() => resolvePreparedDexScope(old as never)).toThrow('candidate changed');
+    for (const key of ['cheap-exit', 'cheap-prepared', 'cheap-current', 'cheap-d06', 'cheap-native', 'wrong']) {
+      expect(() => resolvePreparedDexScope(key as 'cheap-history')).toThrow('candidate changed');
     }
   });
 

@@ -15,7 +15,7 @@ function fixture(){
   const getPositions=vi.fn(async()=>({readOwnedPositions:read}));
   const session={walletAddress:owner,chainId:7082400,browserProvider:{},browserWalletId:'metamask',activeSignerSource:'browser',
     sessionOnboardInfo:{[owner]:{aesKey:'local-fixture-only'}},walletAesHealthByAddress:{},actions:{getCurrentDexPoolPositionCapability:getPositions}} as unknown as SharedWalletSession;
-  const props:ComponentProps<typeof CurrentOwnedPoolPositions>={session,candidateKey:'cheap-exit',visible:true,disabled:false,onSelect:vi.fn()};
+  const props:ComponentProps<typeof CurrentOwnedPoolPositions>={session,candidateKey:'cheap-history',visible:true,disabled:false,onSelect:vi.fn()};
   const render=()=>{hooks.index=0;hooks.refIndex=0;return renderToStaticMarkup(CurrentOwnedPoolPositions(props));};
   const load=async()=>{render();const cleanup=hooks.effect!();await vi.waitFor(()=>expect(hooks.states[1]).toMatchObject({state:'ready'}));return cleanup;};
   return{props,session,read,getPositions,render,load};
@@ -30,15 +30,8 @@ describe('Your Positions automatic owner list',()=>{
   it('loads current-owned and received claims without an NFT ID or producer input',async()=>{
     const f=fixture();await f.load();const html=f.render();
     expect(html).toContain('Open liquidity NFT 43');expect(html).toContain('Open liquidity NFT 44');expect(html).toContain('Needs privacy activation');
-    expect(f.getPositions).toHaveBeenCalledWith(7082400n,{candidate:'cheap-exit'});expect(f.read).toHaveBeenCalledWith();
+    expect(f.getPositions).toHaveBeenCalledWith(7082400n,{candidate:'cheap-history'});expect(f.read).toHaveBeenCalledWith();
     expect(html).not.toContain('Private shares');expect(html).not.toContain('Pool spread');
-  });
-  it('uses the selected candidate and clears old positions when it changes',async()=>{
-    const f=fixture();await f.load();f.props.candidateKey='cheap-history';
-    expect(f.render()).not.toContain('Open liquidity NFT 43');hooks.effect!();
-    await vi.waitFor(()=>expect(f.getPositions).toHaveBeenLastCalledWith(7082400n,{candidate:'cheap-history'}));
-    await vi.waitFor(()=>expect(hooks.states[1]).toMatchObject({state:'ready'}));
-    expect(f.render()).toContain('Open liquidity NFT 43');
   });
   it('ignores an old candidate inventory that resolves after the new candidate',async()=>{
     const f=fixture();let resolveOld!:(value:{positions:{positionId:bigint;status:bigint;context:string}[];complete:boolean})=>void;

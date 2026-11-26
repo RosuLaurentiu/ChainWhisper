@@ -5,7 +5,7 @@ import { resolvePreparedDexScope } from './currentDexPreparedScope';
 
 const owner = `0x${'22'.repeat(20)}`, other = `0x${'33'.repeat(20)}`, hash = toBeHex(100n,32);
 const slot = (key: bigint|string, root: bigint, type='uint256') => keccak256(AbiCoder.defaultAbiCoder().encode([type,'uint256'],[key,root]));
-function fixture(key:'cheap-exit'|'cheap-history'='cheap-exit') {
+function fixture(key:'cheap-history'='cheap-history') {
   const candidate=resolvePreparedDexScope(key).candidate, nft=candidate.companions.find(([name])=>name==='ChainWhisperDexPositionNFT')![1];
   const words=new Map<string,string>([[`${candidate.core}:0x0b`,toBeHex(45n,32)],[`${nft}:${slot(owner,3n,'address')}`,toBeHex(2n,32)],
     [`${nft}:${slot(43n,2n)}`,toBeHex(BigInt(owner),32)],[`${nft}:${slot(44n,2n)}`,toBeHex(BigInt(other),32)],
@@ -18,7 +18,7 @@ function fixture(key:'cheap-exit'|'cheap-history'='cheap-exit') {
   return{read,words,candidate,nft,rpc,assertCurrent};
 }
 describe('canonical current owner NFT inventory',()=>{
-  it.each(['cheap-exit','cheap-history']as const)('finds owned IDs only in %s without history or private decryption',async key=>{
+  it.each(['cheap-history']as const)('finds owned IDs only in %s without history or private decryption',async key=>{
     const f=fixture(key); expect(await f.read()).toMatchObject({positionIds:[43n,45n],complete:true,readyToSign:false});
     expect(f.rpc).toHaveBeenCalledTimes(47);
   });

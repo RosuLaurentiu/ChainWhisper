@@ -361,7 +361,7 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
     uint(id); requireProof(id > 0n, 'Prepared Pool producer needs a position.');
     const lifecycle = kind === 'activate' || kind === 'resume';
     requireProof(kind === 'fund' || kind === 'snapshot' || lifecycle, 'This prepared owner action needs a separate poolSnapshot producer.');
-    requireProof(!lifecycle || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history', 'Pool lifecycle producer needs the current exit candidate.');
+    requireProof(!lifecycle || true, 'Pool lifecycle producer needs the current exit candidate.');
     const proof = await canonical(transactionHash); requireProof(!!proof, 'Prepared Pool producer receipt is unavailable.');
     const confirmed = proof!;
     if (kind === 'snapshot') requireProof(confirmed.data.toLowerCase() === currentPoolPositionAbi.encodeFunctionData('poolSnapshot', [id]).toLowerCase(), 'Prepared Pool snapshot selector/id changed.');

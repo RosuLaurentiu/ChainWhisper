@@ -5,7 +5,7 @@ import { MAX_TOKEN_ALLOWANCE } from '../../../lib/tokenAllowance';
 import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
 import { useRef, useState } from 'react';
 import { ArrowRight, Check, ChevronDown, Info, LockKeyhole, Settings2 } from 'lucide-react';
-import { resolveCurrentCheapDexCandidate, STAGED_NATIVE_DEX_CANDIDATE, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { assertCurrentPoolFundingNativeAdmission } from '../../../lib/currentDexPoolSubmission';
 import { usesPackedPoolInputs } from '../../../lib/currentDexPoolFunding';
 import { assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority } from '../../../lib/currentDexC1SwapPolicy';
@@ -113,11 +113,11 @@ const previewCardRows = (a: Amounts, tokenLabels = CURRENT_DEX_POOL_LABELS,
     : [{ label: 'New private shares', value: displayAmount(a.mintedShares.toString()) }, { label: 'Position shares after funding', value: displayAmount(a.ownedShares.toString()) }])
 ];
 
-export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplayInverted = false, candidateKey = 'cheap-current', selectedPair, marketReference, onOpenPositions }: {
+export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplayInverted = false, candidateKey = 'cheap-history', selectedPair, marketReference, onOpenPositions }: {
   sharedWalletSession?: SharedWalletSession; priceDisplayInverted?: boolean; candidateKey?: CurrentCheapDexCandidateKey; selectedPair?: readonly [string, string];
   marketReference?: CurrentDexMarketReference; onOpenPositions?: () => void
 }) {
-  const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
+  const preparedScope = resolvePreparedDexScope(candidateKey);
   const candidate = preparedScope?.candidate ?? resolveCurrentCheapDexCandidate(candidateKey), chain = BigInt(candidate.chainId);
   const recordScope = currentDexRecordScope(candidate, sharedWalletSession?.walletAddress);
   const preparedCandidate = preparedScope !== null;
@@ -136,7 +136,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     parseDexCandidateTokenAmount(candidate, poolTokens[index], value, tokenLabels[index], true) : parseCurrentDexTokenAmount(value, tokenLabels[index], true);
   const rows = (a: Amounts) => amountRows(a, tokenLabels, format);
   const cardRows = (a: Amounts) => previewCardRows(a, tokenLabels, format);
-  const nativeTrial = candidate.graph === STAGED_NATIVE_DEX_CANDIDATE.graph;
+  const nativeTrial = false as boolean;
   const [budget0, setBudget0] = useState(nativeTrial ? '100' : ''); const [budget1, setBudget1] = useState(nativeTrial ? '100' : '');
   const [price, setPrice] = useState(nativeTrial ? (priceDisplayInverted ? '0.5' : '2') : '');
   const [classId, setClassId] = useState(nativeTrial ? 0 : 1); const [tolerance, setTolerance] = useState(nativeTrial ? '0.5' : '1');

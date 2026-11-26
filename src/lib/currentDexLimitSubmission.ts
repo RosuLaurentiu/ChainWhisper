@@ -21,12 +21,12 @@ const reservations=new WeakMap<object,Set<string>>();
 const ownerReservations=new WeakMap<object,WeakSet<object>>();
 const same=(a:string|null,b:string)=>typeof a==='string'&&a.toLowerCase()===b.toLowerCase();
 type Prepared=CurrentLimitPrepared|CurrentLimitPreparedSnapshot|CurrentLimitPreparedOwner;
-export const createCurrentLimitSubmissionAdapter=({signer,ownerAddress,chainId,transport,attest,requireFunding,candidate='cheap-current',now=()=>BigInt(Math.floor(Date.now()/1000))}:{
+export const createCurrentLimitSubmissionAdapter=({signer,ownerAddress,chainId,transport,attest,requireFunding,candidate='cheap-history',now=()=>BigInt(Math.floor(Date.now()/1000))}:{
   signer:object;ownerAddress:string;chainId:bigint;transport:CurrentTransport;attest:(head:{number:bigint;hash:string})=>Promise<void>;
   requireFunding:(prepared:CurrentLimitPrepared,head:{number:bigint;hash:string})=>Promise<void>;now?:()=>bigint;candidate?:CurrentCheapDexCandidateKey;
 })=>{
   const c=resolveCurrentCheapDexCandidate(candidate);
-  const abi=currentLimitAbiForCandidate(candidate),preparedMarket=candidate==='cheap-prepared'||candidate==='cheap-exit'||candidate==='cheap-history';
+  const abi=currentLimitAbiForCandidate(candidate),preparedMarket=true;
   const owner=getAddress(ownerAddress),core=getAddress(c.core),storage=currentDexPendingStorage({chainId,graph:c.graph,owner});
   if(chainId!==BigInt(c.chainId)||BigInt(owner)===0n)throw new Error('Wrong Limit owner or chain.');
   // decision-033: a Limit action reserves only its pending slot and an in-memory key. No owner-record charge exists for it.

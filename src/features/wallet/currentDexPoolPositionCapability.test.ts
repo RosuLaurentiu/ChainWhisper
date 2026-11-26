@@ -10,8 +10,7 @@ import { issueCurrentDexPoolPositionCapability, assertCurrentPoolPositionPrepare
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi } from '../../lib/currentDexPoolPosition';
 import { usesTransactionScopedPoolSnapshots } from '../../lib/currentDexSnapshotAdmission';
-import { ARCHIVED_CHEAP_DEX_CANDIDATE as c, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
-const ARCHIVED_CHEAP_POOL_TOKENS=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1);
+import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 const mocks=vi.hoisted(()=>({issue:vi.fn(),graph:vi.fn(),decrypt:vi.fn(),small:vi.fn(),wide:vi.fn(),reader:vi.fn()}));
 vi.mock('../../lib/currentDexPreparedPoolSnapshot',async original=>({...await original<typeof import('../../lib/currentDexPreparedPoolSnapshot')>(),createPreparedOwnerPoolSnapshotReader:mocks.reader}));
 vi.mock('./ownerCotiMetaMaskCapability',async original=>({...await original<typeof import('./ownerCotiMetaMaskCapability')>(),issueOwnerCotiMetaMaskCapability:mocks.issue}));
@@ -24,7 +23,7 @@ const word = (n: bigint | number) => toBeHex(n, 32), empty = (n: number) => Arra
 const transactionScopedSnapshots = usesTransactionScopedPoolSnapshots(resolveCurrentCheapDexCandidate('cheap-history'));
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends readonly (infer V)[] ? Mutable<V>[] : T[K] extends object ? Mutable<T[K]> : T[K] };
 // Exact six-market/four-token synthetic scope. The financial and codec checks are real.
-async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-exit'|'cheap-history'='cheap-exit',id=43n,selectedOwner=owner,
+async function preparedExitFixture(pairIndex = 0,candidateKey:'cheap-history'='cheap-history',id=43n,selectedOwner=owner,
   packed=poolInputs.usesPackedPoolInputs(resolvePreparedDexScope(candidateKey).candidate)) {
   const owner=selectedOwner;
   const candidate = resolvePreparedDexScope(candidateKey).candidate, pair = candidate.pairs[pairIndex];
@@ -132,8 +131,8 @@ describe.runIf(transactionScopedSnapshots)('superseded snapshot recovery capabil
     expect(f.reader.issue).not.toHaveBeenCalled(); expect(f.reader.current).not.toHaveBeenCalled();
     await expect(f.cap.readPosition(43n)).resolves.toMatchObject({ amounts: null });
   });
-  it.each(['candidate','missing-proof','session'] as const)('rejects %s without branding a result', async fault => {
-    const f = await preparedExitFixture(0, fault === 'candidate' ? 'cheap-exit' : 'cheap-history');
+  it.each(['missing-proof','session'] as const)('rejects %s without branding a result', async fault => {
+    const f = await preparedExitFixture(0, 'cheap-history');
     const verify = vi.fn(async () => { throw new Error('Missing newest snapshot proof'); });
     Object.assign(f.reader, { verifySupersededSnapshot: verify });
     if (fault === 'session') f.revoke();
@@ -283,7 +282,7 @@ it('uses one packed fraction and two full-width protected minima with isolated c
     await expect(paid.readResult(f.snapshotHash)).resolves.toMatchObject({ privateAccountingVerified: true, snapshot: { amounts: { shares: 100n, totalShares: 300n } } });
   } finally { profile.mockRestore(); }
 });
-async function fixture(candidate:CurrentCheapDexCandidateKey='cheap-archived',selectedOwner=owner){
+async function fixture(candidate:CurrentCheapDexCandidateKey='cheap-history',selectedOwner=owner){
   const owner=selectedOwner;
   const c=resolveCurrentCheapDexCandidate(candidate);
   vi.clearAllMocks();let active=true,aes='test-key',nftOwner=owner,recipientCode='0x';
@@ -339,12 +338,12 @@ describe('active snapshot final signing baseline',()=>{
     const next=await nextCapability.prepareSnapshot({positionId:56n,confirm:async()=>true});
     expect(next).toMatchObject({positionId:56n,replacementFrom:txHash});
   });
-  it.each(['signer','owner','candidate','position'] as const)('does not reuse a completed snapshot source across %s scope',async scope=>{
+  it.each(['signer','owner','position'] as const)('does not reuse a completed snapshot source across %s scope',async scope=>{
     const first=await preparedExitFixture(4,'cheap-history',56n);
     const paid=(await first.cap.prepareSnapshot({positionId:56n,confirm:async()=>true}))!;
     if(!('sealBeforeSend'in paid))throw new Error('Expected prepared snapshot');
     paid.sealBeforeSend();await paid.readResult(txHash);
-    const candidate=scope==='candidate'?'cheap-exit':'cheap-history',id=scope==='position'?57n:56n;
+    const candidate='cheap-history',id=scope==='position'?57n:56n;
     await preparedExitFixture(4,candidate,id,scope==='owner'?recipient:owner);
     if(scope!=='signer'){
       const issue=mocks.issue.getMockImplementation()!;
@@ -455,7 +454,7 @@ describe('active snapshot final signing baseline',()=>{
 describe('current owner Pool inventory capability',()=>{
   beforeEach(()=>resetOwnedPositionBurnHistory());
   const mapping=(key:bigint|string,root:bigint,type='uint256')=>keccak256(AbiCoder.defaultAbiCoder().encode([type,'uint256'],[key,root]));
-  async function inventoryFixture(key:'cheap-exit'|'cheap-history'='cheap-exit'){
+  async function inventoryFixture(key:'cheap-history'='cheap-history'){
     const f=await fixture(key),candidate=resolvePreparedDexScope(key).candidate;
     const nft=candidate.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1], original=f.provider.send.getMockImplementation()!;
     f.provider.send.mockImplementation(async(method,params)=>{
@@ -472,7 +471,7 @@ describe('current owner Pool inventory capability',()=>{
       return original(method,params);
     });return f;
   }
-  it.each(['cheap-exit','cheap-history']as const)('lists %s Pool claims and excludes owned Limits without private snapshots or signing',async key=>{
+  it.each(['cheap-history']as const)('lists %s Pool claims and excludes owned Limits without private snapshots or signing',async key=>{
     const f=await inventoryFixture(key),result=await f.cap.readOwnedPositions();
     expect(result.complete).toBe(true);expect(result.positions).toMatchObject([{positionId:43n,status:1n,context}]);
     expect(mocks.decrypt).not.toHaveBeenCalled();expect(mocks.reader).not.toHaveBeenCalled();expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
@@ -522,7 +521,7 @@ describe('current owner Pool inventory capability',()=>{
   });
 });
 
-describe.each(['cheap-exit','cheap-history']as const)('%s received prepared Pool owner access',candidateKey=>{
+describe.each(['cheap-history']as const)('%s received prepared Pool owner access',candidateKey=>{
   const exitFixture=(pair=0)=>preparedExitFixture(pair,candidateKey);
   it('reads only owned pending metadata before privacy activation without a creator producer',async()=>{
     const f=await exitFixture();f.before.claim[0]=word(3);
@@ -537,7 +536,7 @@ describe.each(['cheap-exit','cheap-history']as const)('%s received prepared Pool
   });
 });
 
-describe.each(['cheap-exit','cheap-history']as const)('%s prepared Pool ownership lifecycle',candidateKey=>{
+describe.each(['cheap-history']as const)('%s prepared Pool ownership lifecycle',candidateKey=>{
   const exitFixture=(pair=0)=>preparedExitFixture(pair,candidateKey);
   async function transferred(){
     const f=await exitFixture(),request={positionId:43n,expectedContext:context,action:'transfer' as const,recipient,producerHash:txHash,confirm:async()=>true};
@@ -616,7 +615,7 @@ describe.each(['cheap-exit','cheap-history']as const)('%s prepared Pool ownershi
   });
 });
 
-describe.each(['cheap-exit','cheap-history']as const)('%s exit preview and exact withdrawal owner proof', candidateKey => {
+describe.each(['cheap-history']as const)('%s exit preview and exact withdrawal owner proof', candidateKey => {
   const exitFixture=(pair=0)=>preparedExitFixture(pair,candidateKey);
   it('orders a verification snapshot by its receipt block while accounting uses a later current state',async()=>{
     const f=await exitFixture(),{p}=await f.prepareWithdrawal();f.setState(f.managed);await p.readResult(f.withdrawalHash);
@@ -643,10 +642,6 @@ describe.each(['cheap-exit','cheap-history']as const)('%s exit preview and exact
     f.setState(f.snapshot);
     expect(await paid.readResult(f.snapshotHash)).toMatchObject({ privateAccountingVerified: true, snapshot: { amounts: { shares: 100n, totalShares: 300n } } });
     await expect(f.cap.prepareSnapshot({ positionId: 43n, confirm: async () => true })).resolves.toMatchObject({ action: 'snapshot', closed: false, replacementFrom: f.snapshotHash });
-  });
-  it.each(['cheap-prepared', 'cheap-native', 'cheap-archived'] as const)('holds preview for %s before encryption', async candidate => {
-    const f = await fixture(candidate); await expect(f.cap.prepareExitPreview(f.request)).rejects.toThrow('exact exit candidate');
-    expect(mocks.small).not.toHaveBeenCalled();
   });
   it.each(['cancel', 'fraction', 'context', 'producer', 'review-state', 'review-wallet', 'revoked'] as const)('rejects %s preview preparation', async fault => {
     const f = await exitFixture();
@@ -703,83 +698,10 @@ describe.each(['cheap-exit','cheap-history']as const)('%s exit preview and exact
     await expect(paid.readResult(f.snapshotHash)).rejects.toThrow();
   });
 });
-describe('current owner liquidity NFT capability',()=>{
-  it('reads only owner envelopes from the same canonical block',async()=>{
-    const f=await fixture();expect(await f.cap.readPosition(8n)).toMatchObject({positionId:8n,status:1n,amounts:{amount0:200n,amount1:100n,shares:200n,classId:1n}});
-    expect(mocks.decrypt.mock.calls.map(call=>call[1].ciphertextHigh)).toEqual(Array.from({length:10},(_,i)=>BigInt(i)));
-    expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
-  });
-  it.each(['owner','anchor','independent','class','padding','shares','context','encoding','graph','locked','revoked'])('rejects %s private claims',async fault=>{
-    const f=await fixture();if(fault==='owner')f.owner(recipient);if(fault==='independent')f.state.sourceId=1n;
-    if(fault==='class')f.values[9]=7n;if(fault==='padding')f.values[4]=1n;if(fault==='shares')f.values[2]=401n;
-    if(fault==='context')f.state.context=toBeHex(0n,32);if(fault==='encoding')f.provider.send.mockResolvedValueOnce({number:'0xa',hash}).mockResolvedValueOnce('0x');
-    if(fault==='graph')mocks.graph.mockRejectedValueOnce(new Error('Graph changed'));if(fault==='locked')f.lock();if(fault==='revoked')f.revoke();
-    await expect(f.cap.readPosition(fault==='anchor'?7n:8n)).rejects.toThrow();
-  });
-  it('reads pending recipient public state without decrypting a private claim',async()=>{
-    const f=await fixture();f.state.status=3n;expect((await f.cap.readPosition(8n)).amounts).toBeNull();expect(mocks.decrypt).not.toHaveBeenCalled();
-  });
-  it.each(['0x6001','0x00','0x0','',null])('rejects non-EOA or malformed recipient code %s before confirmation',async code=>{
-    const f=await fixture();f.code(code as string);
-    await expect(f.cap.prepareAction({...f.request,action:'transfer',recipient})).rejects.toThrow('Only EOA');
-    expect(f.request.confirm).not.toHaveBeenCalled();expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
-  });
-  it.each(['review','sign','result'])('rejects recipient code changes at %s',async phase=>{
-    const f=await fixture();const request={...f.request,action:'transfer' as const,recipient,
-      confirm:async()=>{if(phase==='review')f.code('0x6001');return true;}};
-    if(phase==='review'){await expect(f.cap.prepareAction(request)).rejects.toThrow('Only EOA');return;}
-    const prepared=(await f.cap.prepareAction(request))!;f.code('0x6001');
-    if(phase==='sign')await expect(prepared.assertBeforeSend()).rejects.toThrow('Only EOA');
-    else{f.mine(prepared.data,prepared.to);await expect(prepared.readResult(txHash)).rejects.toThrow('Only EOA');}
-  });
-  it('requires confirmation and exact selector-bound fraction/minimum encryption',async()=>{
-    const f=await fixture(),prepared=(await f.cap.prepareAction(f.request))!;
-    assertCurrentPoolPositionPrepared(prepared,f.signer);expect(()=>assertCurrentPoolPositionPrepared({...prepared},f.signer)).toThrow();
-    expect(mocks.wide.mock.calls.map(call=>call[1])).toEqual([99n,49n]);expect(mocks.small.mock.calls.map(call=>call[1])).toEqual([1n,2n]);
-    for(const call of [...mocks.small.mock.calls,...mocks.wide.mock.calls])expect(call.slice(2)).toEqual([c.core,abi.getFunction('managePoolPosition')!.selector]);
-  });
-  it.each(['cancel','mutation','full','zero','minimum','recipient','stale','revoked'])('rejects %s preparation before private signing',async fault=>{
-    const f=await fixture();let request={...f.request}as Parameters<typeof f.cap.prepareAction>[0];
-    if(fault==='cancel')request.confirm=async()=>false;if(fault==='mutation')request.confirm=async()=>{f.state.context=toBeHex(51n,32);return true;};
-    if(fault==='full')request.fraction=[1n,1n];if(fault==='zero')request.fraction=[0n,2n];if(fault==='minimum')request.minimums=[-1n,0n];
-    if(fault==='recipient')request={...request,action:'transfer',recipient:owner};if(fault==='stale')request.expectedContext=toBeHex(52n,32);if(fault==='revoked')f.revoke();
-    if(fault==='cancel')await expect(f.cap.prepareAction(request)).resolves.toBeNull();else await expect(f.cap.prepareAction(request)).rejects.toThrow();
-    expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
-  });
-  it.each(['withdraw','close','activate','resume']as const)('rejects incorrect %s lifecycle revision before payout decryption',async action=>{
-    const f=await fixture();if(action==='activate')f.state.status=3n;if(action==='resume')f.state.status=2n;
-    const prepared=(await f.cap.prepareAction({...f.request,action}))!;f.mine(prepared.data,prepared.to);
-    f.state.positionRevision=2n;f.state.context=toBeHex(51n,32);
-    f.state.status=action==='close'?4n:action==='activate'?2n:1n;
-    f.state.lifecycleRevision=action==='withdraw'?2n:1n;
-    await expect(prepared.readResult(txHash)).rejects.toThrow('incorrect status or revision');
-  });
-  it.each(['withdraw','close','transfer','activate','resume']as const)('authenticates %s result, private payouts or authority revision',async action=>{
-    const f=await fixture();if(action==='activate')f.state.status=3n;if(action==='resume')f.state.status=2n;
-    const prepared=(await f.cap.prepareAction({...f.request,action,recipient}))!,receipt=f.mine(prepared.data,prepared.to);
-    f.state.positionRevision=2n;f.state.context=toBeHex(51n,32);f.state.status=action==='close'?4n:action==='activate'?2n:action==='transfer'?3n:1n;
-    if(action==='close'||action==='activate'||action==='resume')f.state.lifecycleRevision=2n;
-    if(action==='transfer'){f.owner(recipient);f.state.ownershipRevision=2n;f.state.lifecycleRevision=2n;
-      receipt.logs=[{address:prepared.to,...nftAbi.encodeEventLog(nftAbi.getEvent('Transfer')!,[owner,recipient,8n])}];
-    }else if(action==='withdraw'||action==='close'){
-      f.values[2]=action==='close'?0n:100n;f.values[0]=100n;f.values[1]=50n;
-      receipt.logs=ARCHIVED_CHEAP_POOL_TOKENS.map(([address],i)=>({address,...transfer.encodeEventLog(transfer.getEvent('Transfer')!,[c.core,owner,[999n,0n],[BigInt(i),i?50n:100n]])}));
-      if(action==='close')receipt.logs.push({address:c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1],...nftAbi.encodeEventLog(nftAbi.getEvent('Transfer')!,[owner,`0x${'00'.repeat(20)}`,8n])});
-    }
-    mocks.decrypt.mockClear();
-    await expect(prepared.readResult(txHash)).resolves.toMatchObject({action,positionId:8n,readyToSign:false});
-    if(action==='transfer')expect(mocks.decrypt).not.toHaveBeenCalled();
-  });
-});
-
-
-describe('selected native Pool position issuer remains narrow',()=>{
-  it('holds unissued private reads and owner actions; never signs on Load',async()=>{const f=await fixture('cheap-native');await expect(f.cap.readPosition(8n)).rejects.toThrow('issued current native Pool session');await expect(f.cap.prepareAction(f.request)).rejects.toThrow('issued current native Pool session');expect(mocks.wide).not.toHaveBeenCalled();f.revoke();await expect(f.cap.readPosition(8n)).rejects.toThrow('Revoked');});
-});
 
 // Isolated capability tests: the real snapshot-only checker runs here. Reader
 // authentication/storage/crypto use the 35 unmocked reader tests separately.
-describe.each(['cheap-prepared', 'cheap-exit','cheap-history'] as const)('%s position capability with isolated authenticated reader', candidateKey => {
+describe.each(['cheap-history'] as const)('%s position capability with isolated authenticated reader', candidateKey => {
   const preparedFixture = async () => {
     const candidate = resolvePreparedDexScope(candidateKey).candidate, pair = candidate.pairs[4];
     const claim = Array.from({ length: 64 }, () => toBeHex(0n, 32)); claim[0] = toBeHex(1n, 32);

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import { currentDexAppPair, resolveCurrentDexAppCandidate } from './currentDexAppScope';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, rejectUnprovenNativeAdmission } from './dexV2Deployment';
 import { currentLimitOwnerNativeAdmission } from './currentDexLimit';
 import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 
@@ -22,7 +22,7 @@ describe('main App DEX scope', () => {
       const pair=market.tokens.map(token=>symbols.get(token)!)as[string,string];
       expect(currentDexAppPair(scope,pair)).toBe(pair);
     }
-    expect(()=>assertCurrentCheapDexNativeAdmission(scope.candidate)).toThrow();
+    expect(()=>rejectUnprovenNativeAdmission()).toThrow('Successor DEX native App submission admission is absent.');
     expect(()=>assertCurrentD06AppAuthority(scope.candidate.graph)).toThrow();
     expect(currentLimitOwnerNativeAdmission('cheap-history')).toEqual({refresh:true,claim:true,pause:true,resume:true,close:true,topup:true,reprice:true});
     expect(()=>resolveCurrentDexAppCandidate('production','cheap-history')).toThrow();

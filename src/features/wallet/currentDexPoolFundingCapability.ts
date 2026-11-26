@@ -7,7 +7,6 @@ import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, checkCurrentPoolFu
   encodeCurrentPoolCreation, encodeCurrentPoolFundingPreview, encodePreparedPoolCreation, encodePreparedPoolFundingPreview, encodePreparedPoolTopUp, type PoolFundingInput } from '../../lib/currentDexPoolFunding';
 import { decryptPrivateUint256Output, encryptPrivateUint128Input, encryptPrivateUint256Input, resignPrivateInput } from '../../lib/privateUint256';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
-import { STAGED_NATIVE_DEX_CANDIDATE } from '../../lib/dexV2Deployment';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { createCurrentOwnerPoolSnapshotReader } from '../../lib/currentDexNativePoolSnapshotReader';
 import { currentNativePoolSession } from '../../lib/currentDexNativePoolPolicy';
@@ -34,12 +33,12 @@ const same = (a: string | null, b: string) => typeof a === 'string' && a.toLower
 
 // Preparation and authenticated private reads only. The existing submission
 // capability must still admit, nonce-bind and reconcile each transaction.
-export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 'cheap-current', ...args}: IssueArgs) => issueOwnerCotiMetaMaskCapability({
+export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 'cheap-history', ...args}: IssueArgs) => issueOwnerCotiMetaMaskCapability({
   ...args, capabilityLabel: 'current Pool funding preparation', requirePrivacy: true,
   bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, chainId, ownerAddress }) => {
     const candidate = resolveCurrentCheapDexCandidate(candidateKey);
     const packed = usesPackedPoolInputs(candidate);
-    const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey) : null;
+    const preparedScope = resolvePreparedDexScope(candidateKey);
     const preparedCandidate = preparedScope !== null;
     const fundingAbi = preparedCandidate ? preparedAbi : abi;
     const previewSelector = fundingAbi.getFunction('previewPoolFunding')!.selector;
@@ -59,9 +58,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
       }
       return graph;
     };
-    const nativeReader = candidate.graph === STAGED_NATIVE_DEX_CANDIDATE.graph ? createCurrentOwnerPoolSnapshotReader({
-      signer, owner: ownerAddress, candidate, provider: readProvider, guard,
-      attest: block => checkedGraph(block.number, block.hash).then(() => undefined) }) : null;
+    const nativeReader = null as ReturnType<typeof createCurrentOwnerPoolSnapshotReader> | null;
     const preparePoolTopUp = async (request: {
       graph: Readonly<{ expectedGraph: string; expectedPackageSha256: string; blockNumber: bigint; blockHash: string }>;
       positionId: bigint; ownerContext: string; producerHash: string; pair: readonly [string, string];

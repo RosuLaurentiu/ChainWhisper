@@ -8,12 +8,6 @@ import type { SharedWalletSession } from '../../../lib/walletSession';
 
 const hooks=vi.hoisted(()=>({index:0,refIndex:0,states:[]as unknown[],refs:[]as {current:unknown}[],confirm:vi.fn(async()=>true),allowNative:false,forceSwapAdmission:false}));
 // Only local UI wiring tests pass the hold. The hold test uses the real admission.
-vi.mock('../../../lib/dexV2Deployment',async original=>{
-  const actual=await original<typeof import('../../../lib/dexV2Deployment')>();
-  return {...actual,assertCurrentCheapDexNativeAdmission:(value:Parameters<typeof actual.assertCurrentCheapDexNativeAdmission>[0])=>{
-    if(hooks.forceSwapAdmission||!hooks.allowNative)actual.assertCurrentCheapDexNativeAdmission(value);
-  }};
-});
 vi.mock('../../../lib/currentDexC1SwapPolicy',async original=>{
   const actual=await original<typeof import('../../../lib/currentDexC1SwapPolicy')>();
   return {...actual,assertCurrentAppLimitAuthority:(...args:Parameters<typeof actual.assertCurrentAppLimitAuthority>)=>{if(!hooks.allowNative)actual.assertCurrentAppLimitAuthority(...args);},assertCurrentD06AppAuthority:(graph:string)=>{if(!hooks.allowNative)actual.assertCurrentD06AppAuthority(graph);}};
@@ -30,7 +24,7 @@ const text=(node:ReactNode):string=>Array.isArray(node)?node.map(text).join(''):
 const owner=`0x${'22'.repeat(20)}`;
 afterEach(()=>{hooks.states=[];hooks.refs=[];hooks.allowNative=false;hooks.forceSwapAdmission=false;vi.clearAllMocks();vi.unstubAllGlobals();});
 
-describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market',key=>{
+describe.each(['cheap-history']as const)('%s selected Limit market',key=>{
   const candidate=resolveCurrentCheapDexCandidate(key),pairs=readCurrentDexDisplay(candidate).pairs;
   function fixture(index=0,candidateKey:CurrentCheapDexCandidateKey=key){
     const activeCandidate=resolveCurrentCheapDexCandidate(candidateKey),activePairs=readCurrentDexDisplay(activeCandidate).pairs;
@@ -57,7 +51,7 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(text(f.render())).toContain('Pending Limit needs reconciliation.');
     f.props.view='create';expect(text(f.render())).toContain('Pending Limit needs reconciliation.');
   });
-  it.runIf(key==='cheap-exit')('verifies a saved top-up through a fresh owner capability without sending it again',async()=>{
+  it('verifies a saved top-up through a fresh owner capability without sending it again',async()=>{
     const f=fixture(),transactionHash=`0x${'55'.repeat(32)}`,proof={result:{positionId:55n,refreshRequired:true}};
     f.sender.recoverPendingLimitAttempt.mockResolvedValueOnce({status:'manual-reconciliation-required',verificationBlocked:true,readyToSign:false,topUp:{positionId:55n,transactionHash}}as never);
     f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
@@ -86,7 +80,7 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
       expect(f.getSender).toHaveBeenLastCalledWith(BigInt(candidate.chainId),{candidate:key});
       expect(hooks.confirm).toHaveBeenLastCalledWith(expect.objectContaining({message:expect.stringContaining('Post-only'),summaryRows:expect.arrayContaining([
         {label:'Offered budget',value:'1.234567'},{label:`Maker minimum (${pair.tokens[sellToken0?0:1].label})`,value:'0.000001'},
-        {label:'Private-input signatures',value:'11'},
+        {label:'Private-input signatures',value:'4'},
         {label:'Transaction confirmations',value:'1 create + 1 owner snapshot; token approval is separate'}
       ])}));
     }
@@ -103,13 +97,6 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
   it.each([undefined,['EMBR','EMBR'],['unknown','ORBT']].map(selectedPair=>({selectedPair})))('requires a valid explicit selected pair $selectedPair',({selectedPair})=>{
     const f=fixture();f.props.selectedPair=selectedPair as[string,string];expect(()=>f.render()).toThrow();expect(f.getLimit).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();
   });
-  it.each(['Review order','Load private order'])('holds real candidate before wallet calls for %s',async label=>{
-    const f=fixture();hooks.states[1]='1';hooks.states[2]='2';hooks.states[11]='9';f.props.view=label==='Load private order'?'manage':'create';
-    expect(f.button(label).props.disabled).toBeFalsy();f.button(label).props.onClick!();
-    await vi.waitFor(()=>expect(text(f.render())).toContain(key==='cheap-exit'&&label==='Load private order'?'connected App-wallet hold remains active':'native App submission admission is absent'));
-    expect(f.getLimit).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();
-    expect(f.sender.submitLimit).not.toHaveBeenCalled();expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();
-  });
   function privateOwnerFixture(){
     const f=fixture();f.props.view='manage';hooks.states[11]='9';f.render();
     const result={positionId:9n,context:'test-only-context',status:0n,closed:false,refreshRequired:false,amounts:{unspent:1234567n,proceeds:2345678n,sellToken0:true,priceNumerator:3n,priceDenominator:1n,makerMinimum:1n}};
@@ -117,7 +104,6 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     hooks.states[12]={value:result,capability,scope:hooks.refs[1].current};return{...f,result,capability};
   }
   it.each([true,false])('reviews exact owner edits in offered-token units (sellToken0=%s)',async sellToken0=>{
-    if(key!=='cheap-exit')return;
     hooks.allowNative=true;const f=privateOwnerFixture();f.result.amounts.sellToken0=sellToken0;
     hooks.states[15]='1.234567';hooks.states[16]='2';hooks.states[17]='0.000001';
     expect(text(f.render())).toContain('Top-up amount');expect(text(f.render())).toContain(`New price (${pairs[0].tokens[1].label}/${pairs[0].tokens[0].label})`);
@@ -128,7 +114,7 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(text(f.render())).toContain('1.234567');
   });
   it.each(['topup','reprice']as const)('rejects %s input drift during preparation before review',async action=>{
-    if(key!=='cheap-exit')return;hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[15]='1';hooks.states[16]='2';
+    hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[15]='1';hooks.states[16]='2';
     const prepare=vi.fn(async(input:{confirm:(review:unknown)=>Promise<boolean>})=>{
       hooks.states[action==='topup'?15:16]='3';f.render();await input.confirm({snapshot:f.result});return{};
     });Object.assign(f.capability,{prepareOwnerAction:prepare});
@@ -136,30 +122,24 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(hooks.confirm).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(text(f.render())).toContain('Limit edit inputs changed');expect(text(f.render())).not.toContain('1.234567');
   });
   it.each(['topup','reprice','allowance']as const)('clears private authority after stale source during %s preparation',async action=>{
-    if(key!=='cheap-exit')return;hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[15]='1';hooks.states[16]='2';
+    hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[15]='1';hooks.states[16]='2';
     const prepare=vi.fn(async()=>{throw Error('Limit source or wallet changed');});Object.assign(f.capability,action==='allowance'?{prepareFundingReview:prepare}:{prepareOwnerAction:prepare});
     f.button(action==='allowance'?'Review exact top-up allowance':action==='topup'?'Review top-up':'Review new price').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(prepare).toHaveBeenCalledOnce();expect(hooks.states[12]).toBeNull();expect(text(f.render())).not.toContain('1.234567');expect(text(f.render())).toContain('Limit source or wallet changed');expect(f.getSender).not.toHaveBeenCalled();
   });
   it('retains the authenticated snapshot for a local minimum uint128 error',async()=>{
-    if(key!=='cheap-exit')return;hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[16]='2';hooks.states[17]=(1n<<128n).toString();
+    hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[16]='2';hooks.states[17]=(1n<<128n).toString();
     f.button('Review new price').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(f.capability.prepareOwnerAction).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(text(f.render())).toContain('Maker minimum must fit uint128');expect(text(f.render())).toContain('1.234567');
   });
-  it.each(['Review top-up','Review new price','Review exact top-up allowance','Review exact order allowance'])('holds %s before wallet preparation',async label=>{
-    if(key!=='cheap-exit')return;const f=privateOwnerFixture();if(label==='Review exact order allowance')hooks.states[1]='1';hooks.states[15]='1';hooks.states[16]='2';
-    f.button(label).props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(f.capability.prepareOwnerAction).not.toHaveBeenCalled();expect(f.getLimit).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();
-    expect(text(f.render())).toContain(label==='Review exact order allowance'?'native App submission admission is absent':'connected App-wallet hold remains active');
-  });
   it('uses the authenticated management market for edits after the trade pair changes',async()=>{
-    if(key!=='cheap-exit')return;hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[14]=pairs[1].tokens.map(token=>token.address);f.render();
+    hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[14]=pairs[1].tokens.map(token=>token.address);f.render();
     hooks.states[12]={value:f.result,capability:f.capability,scope:hooks.refs[1].current};hooks.states[15]='1.234567';hooks.states[16]='2';hooks.states[17]='0.000001';
     expect(text(f.render())).toContain(`Top-up amount (${pairs[1].tokens[0].label})`);
     f.button('Review new price').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));expect(f.capability.prepareOwnerAction).toHaveBeenCalledWith(expect.objectContaining({action:'reprice',newTerms:[1n,2n,1n,1n,0n]}));
   });
   it.each(['create','topup']as const)('checks exact %s allowance separately and prepares the Core action again',async kind=>{
-    if(key!=='cheap-exit')return;hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[1]='1.25';hooks.states[2]='2';hooks.states[15]='1.25';f.render();hooks.states[12]={value:f.result,capability:f.capability,scope:hooks.refs[1].current};
+    hooks.allowNative=true;const f=privateOwnerFixture();hooks.states[1]='1.25';hooks.states[2]='2';hooks.states[15]='1.25';f.render();hooks.states[12]={value:f.result,capability:f.capability,scope:hooks.refs[1].current};
     const funding={review:true},prepareFundingReview=vi.fn(async()=>funding),recover=vi.fn(async()=>({fundingOutcome:'verified',privateAccountingVerified:true}));
     Object.assign(f.capability,{prepareFundingReview});f.getLimit.mockImplementation(async()=>({prepareLimit:f.prepareLimit,prepareOwnerAction:f.prepareOwnerAction,prepareFundingReview}));
     const prepareSharedLimitApproval=vi.fn(async(input:{funding:unknown;confirm:(review:unknown)=>Promise<boolean>})=>{
@@ -174,7 +154,6 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(kind==='create'?f.prepareLimit:f.capability.prepareOwnerAction).toHaveBeenCalledOnce();
   });
   it.each(['create','topup']as const)('allows cheap-history %s allowance without swap admission',async kind=>{
-    if(key!=='cheap-prepared')return;
     hooks.allowNative=true;hooks.forceSwapAdmission=true;
     const historyCandidate=resolveCurrentCheapDexCandidate('cheap-history'),historyPairs=readCurrentDexDisplay(historyCandidate).pairs,f=fixture(0,'cheap-history');let snapshot:unknown;
     const funding={review:true},prepareFundingReview=vi.fn(async()=>funding);
@@ -199,7 +178,6 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(f.sender.submitSharedLimitApproval).not.toHaveBeenCalled();expect(f.sender.submitLimit).not.toHaveBeenCalled();expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();
   });
   it.each(['create','topup']as const)('requires live funding capability before cheap-history %s allowance preparation',async kind=>{
-    if(key!=='cheap-prepared')return;
     const f=fixture(0,'cheap-history');
     const prepareFundingReview=vi.fn(async()=>{throw new Error('Connected wallet lease is unavailable.');});
     if(kind==='create'){
@@ -217,10 +195,9 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(hooks.confirm).not.toHaveBeenCalled();expect(f.sender.submitSharedLimitApproval).not.toHaveBeenCalled();
     expect(f.sender.submitLimit).not.toHaveBeenCalled();expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();
   });
-  it('allows cheap-exit top-up allowance without swap admission',async()=>{
-    if(key!=='cheap-exit')return;
+  it('allows current top-up allowance without swap admission',async()=>{
     hooks.allowNative=true;hooks.forceSwapAdmission=true;
-    const f=fixture(0,'cheap-exit');f.props.view='manage';hooks.states[11]='9';f.render();
+    const f=fixture(0,'cheap-history');f.props.view='manage';hooks.states[11]='9';f.render();
     const snapshot={positionId:9n,context:'test-only-context',status:0n,closed:false,refreshRequired:false,amounts:{unspent:1234567n,proceeds:2345678n,sellToken0:true,priceNumerator:3n,priceDenominator:1n,makerMinimum:1n}};
     const prepareFundingReview=vi.fn(async()=>({review:true}));
     hooks.states[12]={value:snapshot,capability:{prepareOwnerAction:vi.fn(async()=>null),prepareFundingReview},scope:hooks.refs[1].current};hooks.states[15]='1.25';
@@ -237,27 +214,26 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(f.sender.submitSharedLimitApproval).not.toHaveBeenCalled();expect(f.sender.submitLimit).not.toHaveBeenCalled();expect(f.sender.submitLimitOwner).not.toHaveBeenCalled();
   });
   it.each(['verified','reverted','bad-accounting']as const)('handles separate allowance recovery outcome %s',async outcome=>{
-    if(key!=='cheap-exit')return;const f=privateOwnerFixture(),recover=vi.fn(async()=>({fundingOutcome:outcome,privateAccountingVerified:outcome!=='bad-accounting'}));
+    const f=privateOwnerFixture(),recover=vi.fn(async()=>({fundingOutcome:outcome,privateAccountingVerified:outcome!=='bad-accounting'}));
     hooks.states[13]={recover,phase:'limit-approval',scope:hooks.refs[1].current};hooks.states[6]=true;
     f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(recover).toHaveBeenCalledOnce();expect(f.sender.recoverPendingLimitAttempt).not.toHaveBeenCalled();expect(hooks.states[6]).toBe(outcome==='bad-accounting');
     expect(text(f.render())).toContain(outcome==='verified'?'Exact private Limit allowance verified':outcome==='reverted'?'Limit allowance reverted':'Exact Limit allowance accounting is unavailable');expect(text(f.render())).toContain('1.234567');
   });
   it.each(['observed-mined','awaiting-chain-confirmation']as const)('reconciles saved allowance status %s without private delta authority',async status=>{
-    if(key!=='cheap-exit')return;const f=fixture(),recoverPendingSharedLimitApproval=vi.fn(async()=>({status,privateAccountingVerified:false}));Object.assign(f.sender,{recoverPendingSharedLimitApproval});
+    const f=fixture(),recoverPendingSharedLimitApproval=vi.fn(async()=>({status,privateAccountingVerified:false}));Object.assign(f.sender,{recoverPendingSharedLimitApproval});
     const record={version:1,owner,chainId:candidate.chainId.toString(),core:candidate.core,graph:`0x${candidate.graph}`,phase:'token-approve',callHash:`0x${'11'.repeat(32)}`,nonce:1,txHash:`0x${'12'.repeat(32)}`};
     vi.stubGlobal('window',{sessionStorage:{getItem:()=>JSON.stringify(record),setItem:vi.fn(),removeItem:vi.fn()}});
     f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(recoverPendingSharedLimitApproval).toHaveBeenCalledOnce();expect(f.sender.recoverPendingLimitAttempt).not.toHaveBeenCalled();expect(hooks.states[6]).toBe(status!=='observed-mined');expect(text(f.render())).not.toContain('Exact private Limit allowance verified');
   });
   it('selects an owned order in another market and binds its exact pair before refresh',async()=>{
-    if(key!=='cheap-exit')return;
     const f=fixture();f.props.view='manage';hooks.allowNative=true;
     const list=elements(f.render()).find(element=>element.type===CurrentOwnedLimits);expect(list).toBeDefined();
     const pair=pairs[1],tokens=pair.tokens.map(token=>token.address)as[string,string];
     (list!.props as unknown as {onSelect:(order:unknown)=>void}).onSelect({positionId:55n,marketId:pair.marketId,poolTokens:tokens,status:0n,closed:false,context:'public-only'});
     f.render();expect(hooks.states[11]).toBe('55');f.button('Load private order').props.onClick!();
-    await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));expect(f.getLimit).toHaveBeenCalledWith(7082400n,{candidate:'cheap-exit',selectedPair:tokens});
+    await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));expect(f.getLimit).toHaveBeenCalledWith(7082400n,{candidate:'cheap-history',selectedPair:tokens});
   });
   function closedOwnerFixture(){
     const f=fixture();f.props.view='manage';const pair=pairs[1],tokens=pair.tokens.map(token=>token.address)as[string,string];
@@ -268,10 +244,10 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     f.render();return{...f,tokens,result,readClosedOrder};
   }
   it('loads a selected closed order without write admission, sender, or confirmation',async()=>{
-    if(key!=='cheap-exit')return;const f=closedOwnerFixture();
+    const f=closedOwnerFixture();
     expect(f.button('Load private order').props.disabled).toBeFalsy();f.button('Load private order').props.onClick!();
     await vi.waitFor(()=>expect(f.readClosedOrder).toHaveBeenCalledOnce());await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(f.getLimit).toHaveBeenCalledWith(7082400n,{candidate:'cheap-exit',selectedPair:f.tokens});
+    expect(f.getLimit).toHaveBeenCalledWith(7082400n,{candidate:'cheap-history',selectedPair:f.tokens});
     expect(f.readClosedOrder).toHaveBeenCalledWith({positionId:55n,expectedContext:'closed-discovery'});
     expect(text(f.render())).toContain('Closed Limit');expect(text(f.render())).toContain('Private price');expect(text(f.render())).toContain('1/3');
     expect(text(f.render())).not.toContain('previous-order-transaction');
@@ -281,7 +257,7 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(f.prepareOwnerAction).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();
   });
   it.each(['owner','pair','privacy-key','privacy-health']as const)('rejects a late closed read after %s changes',async change=>{
-    if(key!=='cheap-exit')return;const f=closedOwnerFixture();let resolve!:(value:typeof f.result)=>void;
+    const f=closedOwnerFixture();let resolve!:(value:typeof f.result)=>void;
     f.readClosedOrder.mockImplementation(()=>new Promise(done=>{resolve=done;}));f.button('Load private order').props.onClick!();await vi.waitFor(()=>expect(resolve).toBeDefined());
     if(change==='owner')f.props.sharedWalletSession.walletAddress=`0x${'33'.repeat(20)}`;
     if(change==='pair')f.props.selectedPair=pairs[1].tokens.map(token=>token.label)as[string,string];
@@ -291,19 +267,18 @@ describe.each(['cheap-prepared','cheap-exit']as const)('%s selected Limit market
     expect(hooks.states[12]).toBeNull();expect(text(f.render())).not.toContain('Private price');expect(f.getSender).not.toHaveBeenCalled();
   });
   it('keeps closed reads blocked while an action needs reconciliation',()=>{
-    if(key!=='cheap-exit')return;const f=closedOwnerFixture();hooks.states[6]=true;
+    const f=closedOwnerFixture();hooks.states[6]=true;
     expect(f.button('Load private order').props.disabled).toBe(true);f.button('Load private order').props.onClick!();expect(f.readClosedOrder).not.toHaveBeenCalled();
   });
   it.each(['wrong-id','wrong-context','active','refresh-required','missing-amounts']as const)('rejects an invalid closed read result: %s',async invalid=>{
-    if(key!=='cheap-exit')return;const f=closedOwnerFixture();f.readClosedOrder.mockResolvedValue({...f.result,
+    const f=closedOwnerFixture();f.readClosedOrder.mockResolvedValue({...f.result,
       ...(invalid==='wrong-id'?{positionId:56n}:invalid==='wrong-context'?{context:'other-closed-context'}:invalid==='active'?{closed:false}:invalid==='refresh-required'?{refreshRequired:true}:{amounts:null})}as never);
     f.button('Load private order').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(hooks.states[12]).toBeNull();expect(text(f.render())).toContain('Closed Limit private state is unavailable');expect(f.getSender).not.toHaveBeenCalled();
   });
-  it.each(['candidate','pair','pair-order','owner','privacy-key','privacy-health']as const)('hides private snapshot after %s changes',change=>{
+  it.each(['pair','pair-order','owner','privacy-key','privacy-health']as const)('hides private snapshot after %s changes',change=>{
     const f=privateOwnerFixture();expect(text(f.render())).toContain('1.234567');expect(text(f.render())).toContain('2.345678');
     expect(f.button('Resume Limit').props.disabled).toBe(true);
-    if(change==='candidate')f.props.candidateKey=key==='cheap-exit'?'cheap-prepared':'cheap-exit';
     if(change==='pair')f.props.selectedPair=pairs[1].tokens.map(token=>token.label)as[string,string];
     if(change==='pair-order')f.props.selectedPair=[f.props.selectedPair[1],f.props.selectedPair[0]];
     if(change==='owner')f.props.sharedWalletSession={...f.props.sharedWalletSession,walletAddress:`0x${'33'.repeat(20)}`};

@@ -26,9 +26,9 @@ export const currentLimitIntent=(sellToken0:boolean,amount:string,price:string,m
   if(m>=1n<<128n)throw new Error('Maker minimum must fit uint128.');
   return{sellToken0,amount:parseCurrentTrialAtoms(amount,true),terms:[w[0],w[1],m,w[2],w[3]]as const};
 };
-export default function CurrentLimitWorkspace({sharedWalletSession,view='create',visible=true,priceDisplayInverted=false,candidateKey='cheap-current',selectedPair,managementNavigation}:{sharedWalletSession?:SharedWalletSession;view?:'create'|'manage';visible?:boolean;priceDisplayInverted?:boolean;candidateKey?:CurrentCheapDexCandidateKey;selectedPair?:readonly[string,string];managementNavigation?:ReactNode}){
-  const preparedScope=candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidateKey):null;
-  const ownedDiscovery=candidateKey==='cheap-exit'||candidateKey==='cheap-history';
+export default function CurrentLimitWorkspace({sharedWalletSession,view='create',visible=true,priceDisplayInverted=false,candidateKey='cheap-history',selectedPair,managementNavigation}:{sharedWalletSession?:SharedWalletSession;view?:'create'|'manage';visible?:boolean;priceDisplayInverted?:boolean;candidateKey?:CurrentCheapDexCandidateKey;selectedPair?:readonly[string,string];managementNavigation?:ReactNode}){
+  const preparedScope=resolvePreparedDexScope(candidateKey);
+  const ownedDiscovery=true;
   const c=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),preparedCandidate=preparedScope!==null;
   const recordScope=currentDexRecordScope(c,sharedWalletSession?.walletAddress);
   const display=preparedCandidate?readCurrentDexDisplay(c):null;

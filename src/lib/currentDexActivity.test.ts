@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readCurrentDexActivityPage, readCurrentDexActivitySwap, buildCurrentDexActivityEntries } from './currentDexActivity';
+import { readCurrentDexActivityPage, buildCurrentDexActivityEntries } from './currentDexActivity';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as historyCandidate } from './dexV2Deployment';
 import type { CurrentDexActivityRow } from './currentDexActivityReceipt';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as candidate } from './currentDexExitCandidate';
@@ -21,8 +21,7 @@ const fixture = () => {
     getCurrentDexSubmissionCapability: vi.fn(async () => sender), getCurrentDexQuoteCapability: vi.fn(async () => quote)
   } } as unknown as SharedWalletSession;
   const assertCurrent = vi.fn();
-  const read = () => readCurrentDexActivitySwap(session, 'cheap-exit', assertCurrent);
-  return { issued, receipt, sender, quote, session, assertCurrent, read };
+  return { issued, receipt, sender, quote, session, assertCurrent };
 };
 
 describe('saved owner-private async activity', () => {
@@ -51,7 +50,6 @@ describe('saved owner-private async activity', () => {
     expect(readPage).toHaveBeenCalledOnce();
     expect(options.onProgress).toHaveBeenCalledWith(0, 0, 'validation');
     expect(f.quote.restoreCurrentQuote).not.toHaveBeenCalled();
-    await expect(readCurrentDexActivitySwap(session, 'cheap-history', f.assertCurrent)).rejects.toThrow('unavailable');
   });
   it('keeps new chain History unavailable when its reader fails', async () => {
     const f = fixture();
@@ -118,50 +116,5 @@ describe('saved owner-private async activity', () => {
     if(fault==='refund')terminal={...terminal,movements:terminal.movements.slice(1)};if(fault==='output')terminal={...terminal,movements:terminal.movements.slice(0,1)};
     const rows=[quote,...(fault==='funding'?[]:[funding]),terminal];
     expect(buildCurrentDexActivityEntries(rows)[0]).toMatchObject({status:'Amounts unavailable',movements:[],amountsState:'none'});
-  });
-  it('uses read-only accounting without restoring a signing budget or claiming historical Quote-rate proof', async () => {
-    const f = fixture();
-    expect(await f.read()).toMatchObject({ operationId: 53n, quoteHash: hash, status: 'Delivered',
-      inputToken: candidate.tokens[1][0], outputToken: candidate.tokens[0][0],
-      amounts: { actualInput: 1_000_000n, netOutput: 1_355_299n, refund: 0n }, originalQuoteRateVerification: 'unavailable' });
-    expect(f.quote.restoreCurrentQuote).toHaveBeenCalledWith({ quoteHash: hash });
-    expect(f.sender.readCurrentCheapActivityReceipt).toHaveBeenCalledOnce();
-    expect(f.sender.restoreCurrentCheapOperation).not.toHaveBeenCalled(); expect(f.sender.readCurrentCheapDelivery).not.toHaveBeenCalled();
-  });
-  it.each([1, 5, 6])('does not turn public stage %s into a private fill', async stage => {
-    const f = fixture(); f.issued.operation.stage = stage;
-    expect(await f.read()).toMatchObject({ amounts: null });
-    expect(f.sender.readCurrentCheapActivityReceipt).not.toHaveBeenCalled();
-  });
-  it.each(['partial', 'no-fill', 'cancel', 'recover'] as const)('shows exact %s terminal semantics', async outcome => {
-    const f = fixture();
-    if (outcome === 'partial') Object.assign(f.receipt.amounts, { actualInput: 500_000n, refund: 500_000n });
-    else Object.assign(f.receipt.amounts, { filled: false, actualInput: 0n, netOutput: 0n, refund: 1_000_000n });
-    if (outcome === 'cancel' || outcome === 'recover') {
-      f.issued.operation.stage = 8; f.receipt.operation.stage = 8; f.receipt.releaseAction = outcome;
-    }
-    expect(await f.read()).toMatchObject({ status: outcome === 'partial' ? 'Partially filled' : outcome === 'no-fill' ? 'No fill; refunded' : outcome === 'cancel' ? 'Quote cancelled' : 'Recovered; refunded',
-      amounts: f.receipt.amounts, unusedInput: outcome === 'cancel' });
-  });
-  it('distinguishes no saved identity from an unknown signing hash', async () => {
-    const f = fixture(); f.sender.readCurrentCheapRestoreHint.mockReturnValue(null);
-    expect(await f.read()).toBeNull();
-    f.sender.readCurrentCheapRestoreHint.mockReturnValue({ quoteHash: null });
-    await expect(f.read()).rejects.toThrow('no known Quote hash');
-    expect(f.quote.restoreCurrentQuote).not.toHaveBeenCalled();
-  });
-  it.each(['owner', 'candidate', 'profile'] as const)('rejects restored %s drift before private receipt use', async field => {
-    const f = fixture();
-    if (field === 'owner') f.issued.intent.destination = `0x${'44'.repeat(20)}`;
-    if (field === 'candidate') f.issued.intent.candidate = { ...candidate, graph: 'changed' } as unknown as typeof candidate;
-    if (field === 'profile') f.issued.intent.profile = 'fast-pool';
-    await expect(f.read()).rejects.toThrow('activity identity');
-    expect(f.sender.readCurrentCheapActivityReceipt).not.toHaveBeenCalled();
-  });
-  it('does not expose a result after session revocation or private failure', async () => {
-    const f = fixture(); f.sender.readCurrentCheapActivityReceipt.mockImplementation(async () => { throw new Error('private checks failed'); });
-    await expect(f.read()).rejects.toThrow('private checks failed');
-    f.sender.readCurrentCheapActivityReceipt.mockImplementation(async () => { f.assertCurrent.mockImplementation(() => { throw new Error('revoked'); }); return f.receipt; });
-    await expect(f.read()).rejects.toThrow('revoked');
   });
 });

@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { CURRENT_SHARED_DEX_TOKENS as definitions, CURRENT_SHARED_TOKEN_DISTRIBUTION as policy,
   readCurrentSharedDexTokenDistribution, resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
 import { STAGED_PREPARED_DEX_CANDIDATE as prepared } from './currentDexPreparedCandidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './currentDexExitCandidate';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './selectedCurrentDexCandidate';
 
@@ -24,7 +23,7 @@ const owner = '0x1111111111111111111111111111111111111111';
 const head = { number: BigInt(renewal.head.number) + 1n, hash: `0x${'44'.repeat(32)}`, timestamp: BigInt(renewal.head.timestamp) + 1n };
 const hex = (x: bigint) => `0x${x.toString(16)}`;
 const lower = (x: string) => x.toLowerCase();
-function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
+function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-history') {
   const policy = resolveCurrentSharedTokenDistribution(candidate);
   const d = policy.vaultDeployment;
   const deploymentInput = `0x${artifact.evm.bytecode.object}${AbiCoder.defaultAbiCoder().encode(['address'], [policy.vault.recovery]).slice(2)}`;
@@ -42,19 +41,18 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
   const core: Record<string, unknown> = { releaseId: policy.releaseId, tokenAdmissionCommitment: policy.tokenAdmissionCommitment };
   const codes: Record<string, string> = { [lower(policy.core)]: runtime.core.code, [lower(policy.vault.address)]: runtime.vault.code,
     ...Object.fromEntries(definitions.map(token => [lower(token.address), runtime.token.code])) };
-  if (candidate === 'cheap-exit') {
-    const capture = json('../../reports/exit-candidate-2026-10-07/public-capture-2.json');
-    codes[lower(policy.core)] = capture.reads.find((r: { method: string; params: string[] }) =>
-      r.method === 'eth_getCode' && lower(r.params[0]) === lower(policy.core)).result;
-  }
   if (candidate === 'cheap-history') {
     const source = [
       { graph: '958eea2faf9aec536df3318d5b770acec1da36efa1665cfc11a0c788d97f8fdf', core: '0x74ace210762c91cea53e59edc232898f612f47a9', file: '../../reports/limit-directory-adoption-2026-11-04/public-binding/public-capture-1.json' },
-      { graph: '7c63020b4eead20603e63c580e3155af8974b4eb5cf0a2b2eb2ea8c796a10eb9', core: '0xa7a3d2564b4ae598bad316a5fddc8016ad889edf', file: '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json' }
+      { graph: '7c63020b4eead20603e63c580e3155af8974b4eb5cf0a2b2eb2ea8c796a10eb9', core: '0xa7a3d2564b4ae598bad316a5fddc8016ad889edf', file: '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json' },
+      // Build 13, the single App candidate (decision-034). Its attested App public capture has no package field.
+      { graph: '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239', core: '0xbbe7fc39f326fdebc018476cde9b46bf71af90b1', file: `${base}c1-band-sizing-2026-11-21/native-bob-dense-1/APP_PUBLIC_CAPTURE.json` }
     ].find(row => row.graph === policy.graph && row.core === lower(policy.core));
     if (!source) throw new Error('Current distribution fixture candidate changed.');
     const capture = json(source.file);
-    expect(capture.graph).toBe(policy.graph); expect(capture.packageSha256).toBe(policy.packageSha256);
+    expect(capture.graph).toBe(policy.graph);
+    if (capture.packageSha256 !== undefined) expect(capture.packageSha256).toBe(policy.packageSha256);
+    else expect(createHash('sha256').update(readFileSync(new URL(source.file, import.meta.url))).digest('hex')).toBe(policy.attestationSha256);
     codes[lower(policy.core)] = capture.reads.find((row: { method: string; params: string[] }) =>
       row.method === 'eth_getCode' && lower(row.params[0]) === lower(policy.core)).result;
     expect(keccak256(codes[lower(policy.core)])).toBe(policy.coreRuntimeHash);
@@ -114,15 +112,13 @@ describe('current shared DEX public token distribution', () => {
     expect(selected.packageSha256).toBe(history.packageSha256); expect(selected.vault).toBe(policy.vault);
     expect(selected.vaultDeployment).toBe(policy.vaultDeployment);
   });
-  it('binds the exit Core while retaining the independently deployed distributor', async () => {
-    const p = resolveCurrentSharedTokenDistribution('cheap-exit');
-    expect(p.core.toLowerCase()).toBe(exit.core); expect(p.graph).toBe(exit.graph);
-    expect(p.packageSha256).toBe(exit.packageSha256); expect(p.vault).toBe(policy.vault);
-    const f = fixture('cheap-exit'), result = await readCurrentSharedDexTokenDistribution(f.args);
-    expect(result).toMatchObject({ core: p.core, graph: exit.graph, packageSha256: exit.packageSha256, readyToSign: false });
+  it('binds the current Core identity and refuses other candidate keys', async () => {
+    const p = resolveCurrentSharedTokenDistribution('cheap-history');
+    const f = fixture(), result = await readCurrentSharedDexTokenDistribution(f.args);
+    expect(result).toMatchObject({ core: p.core, graph: history.graph, packageSha256: history.packageSha256, readyToSign: false });
     f.core.releaseId = `0x${'11'.repeat(32)}`;
     await expect(readCurrentSharedDexTokenDistribution(f.args)).rejects.toThrow('Core identity changed');
-    expect(() => resolveCurrentSharedTokenDistribution('cheap-current')).toThrow();
+    for (const old of ['cheap-exit', 'cheap-prepared', 'cheap-current']) expect(() => resolveCurrentSharedTokenDistribution(old as never)).toThrow();
   });
   it('binds the successor package and independent vault native receipts', () => {
     const pkg = json(`${base}shared-core-prepared-markets-2026-10-07/native-deployment-1/package.json`);
@@ -161,9 +157,9 @@ describe('current shared DEX public token distribution', () => {
     expect(runtimeFixture.captureSha256).toBe(prepared.attestationSha256);
     expect(runtimeFixture.codes.tokens.map((row: { runtimeHash: string }) => row.runtimeHash)).toEqual(prepared.tokens.map(([, hash]) => hash));
   });
-  it('rejects the retired Core runtime at the prepared Core address', async () => {
+  it('rejects the retired Core runtime at the current Core address', async () => {
     const old = json('../../reports/shared-token-distribution-2026-10-07/reader/runtime-fixture.json');
-    const f = fixture(); f.codes[lower(policy.core)] = old.codes.core.code;
+    const f = fixture(); f.codes[lower(history.core)] = old.codes.core.code;
     await expect(readCurrentSharedDexTokenDistribution(f.args)).rejects.toThrow('runtime');
   });
   it('reads all four assets at one canonical block with immutable public results', async () => {
@@ -195,7 +191,7 @@ describe('current shared DEX public token distribution', () => {
     const f = fixture(); if (kind === 'chain') f.wrongChain(); else f.wrongGenesis();
     await expect(readCurrentSharedDexTokenDistribution(f.args)).rejects.toThrow('chain or genesis');
   });
-  it.each([policy.core, policy.vault.address, ...definitions.map(t => t.address)])('rejects changed runtime %s', async address => {
+  it.each([history.core, policy.vault.address, ...definitions.map(t => t.address)])('rejects changed runtime %s', async address => {
     const f = fixture(); f.codes[lower(address)] = '0x123456';
     await expect(readCurrentSharedDexTokenDistribution(f.args)).rejects.toThrow('runtime');
   });

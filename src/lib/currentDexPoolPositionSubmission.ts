@@ -4,7 +4,7 @@ import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as currentCandidate } from './selec
 import { decodePoolExitPreviewEvent } from './currentDexPoolExitPreview';
 import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentTransport } from './currentDexSubmission';
 import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentPoolVerification, currentPoolRefreshStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, CURRENT_POOL_REFRESH_ATTEMPT_KEY, CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
-import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { assertCurrentAppPoolAuthority } from './currentDexC1SwapPolicy';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi, currentPoolOwnerGasCap,
@@ -23,7 +23,7 @@ import { assertCurrentPoolFundingPrepared, type CurrentPoolTopUpResult } from '.
 export const assertCurrentPoolPositionNativeAdmission=(candidate:CurrentCheapDexCandidate,action:'snapshot'|CurrentPoolOwnerAction,closed=false,exitPhase?:'preview'|'withdrawal')=>{
   if(candidate.graph===STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph&&resolvePreparedDexScope(candidate).key==='cheap-history'&&
       (action==='snapshot'&&!closed||action==='snapshot'&&closed||['transfer','activate','resume','close'].includes(action)||action==='withdraw'&&(exitPhase==='preview'||exitPhase==='withdrawal')))return;
-  assertCurrentCheapDexNativeAdmission(candidate);
+  rejectUnprovenNativeAdmission();
 };
 
 // Keep the canonical baseline independent of mutable provider receipt objects.
@@ -59,15 +59,15 @@ const shape=(phase:string,data:string,owner:string,preparedCandidate=false,exitC
     ([5n,6n].includes(values[2])&&values[3]!=='0x')) throw new Error('Invalid current Pool owner action.');
   return values;
 };
-export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,chainId,transport,attest,candidate: candidateKey='cheap-current',
+export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,chainId,transport,attest,candidate: candidateKey='cheap-history',
   nativePoolProfile,now=()=>BigInt(Math.floor(Date.now()/1000))}:{signer:object;ownerAddress:string;chainId:bigint;transport:CurrentTransport;
   nativePoolProfile?:typeof CURRENT_NATIVE_POOL_PROFILE;
   attest:(head:{number:bigint;hash:string})=>Promise<void>;now?:()=>bigint;candidate?:CurrentCheapDexCandidateKey})=>{
   const candidate=resolveCurrentCheapDexCandidate(candidateKey),nft=candidate.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1];
   const owner=getAddress(ownerAddress),core=getAddress(candidate.core),storage=currentDexPendingStorage({chainId,graph:candidate.graph,owner});
   if (chainId!==BigInt(candidate.chainId)||BigInt(owner)===0n) throw new Error('Wrong position owner or chain.');
-  const preparedCandidate=!!(candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidate):null);
-  const exitCandidate=preparedCandidate&&(candidateKey==='cheap-exit'||candidateKey==='cheap-history');
+  const preparedCandidate=!!resolvePreparedDexScope(candidate);
+  const exitCandidate=preparedCandidate;
   // decision-033: a position action reserves only its pending slot and an in-memory key. The release step frees that exact key.
   // A native engineering budget keeps its Pool scope, so that profile is never released. A top-up snapshot and a
   // held refresh are refused by the boundary itself.

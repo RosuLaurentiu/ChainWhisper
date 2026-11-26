@@ -52,7 +52,7 @@ const owner = `0x${'22'.repeat(20)}`, hash = `0x${'33'.repeat(32)}`, snapshotHas
 // CW-140.04: the automatic result check keeps its bound (TOP_UP_RESULT_WAIT.tries); tests remove only the wait between tries.
 TOP_UP_RESULT_WAIT.delayMs = 0;
 
-describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s prepared consumers', key => {
+describe.each(['cheap-history'] as const)('%s prepared consumers', key => {
 const candidate = resolveCurrentCheapDexCandidate(key);
 function fixture(pairIndex = 0, wallet = owner) {
   const journal = new Map<string, string>();
@@ -339,12 +339,11 @@ describe('prepared Pool top-up money flow', () => {
     expect(f.prepareApproval).not.toHaveBeenCalled(); expect(f.submitFunding).not.toHaveBeenCalled();
     await f.click('Preview top-up'); expect(f.submitPreview).toHaveBeenCalledTimes(2);
   });
-  it.each(['wallet', 'position', 'inputs', 'candidate'] as const)('revokes a pending private result after %s changes', async reason => {
+  it.each(['wallet', 'position', 'inputs'] as const)('revokes a pending private result after %s changes', async reason => {
     const f = fixture(); hooks.allowNative = true; f.enter(); f.receiptPending(); await f.click('Preview top-up');
     expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.button('Check status')).toBeDefined();
     if (reason === 'wallet') f.props.session = { ...f.props.session, walletAddress: snapshotHash.slice(0, 42) };
     if (reason === 'position') f.props.position = { ...f.props.position, positionId: 53n };
-    if (reason === 'candidate') f.props.candidateKey = key === 'cheap-exit' ? 'cheap-prepared' : 'cheap-exit';
     if (reason === 'inputs') f.change('Top-up funding tolerance', '1');
     f.render(); await f.click('Check status');
     expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.button('Review and deposit')).toBeUndefined(); expect(f.submitFunding).not.toHaveBeenCalled();

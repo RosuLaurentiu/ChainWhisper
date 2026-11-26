@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { TESTNET_DEX_DAILY_PRICE_CONFIG, TESTNET_DEX_DAILY_PRICE_MANIFEST as m } from '../../tests/fixtures/currentDexDailyPriceTestnet';
-import { CURRENT_DEX_DAILY_PRICE_CONFIG } from './currentDexDailyPrice';
-import { CURRENT_DEX_DISPLAY_TOKENS } from './currentDexDisplay';
+import { TESTNET_DEX_DAILY_PRICE_MANIFEST as m } from '../../tests/fixtures/currentDexDailyPriceTestnet';
+
 
 describe('Admitted Testnet daily read configuration', () => {
   it('matches the accepted native recorder and first sample evidence', () => {
@@ -16,12 +15,5 @@ describe('Admitted Testnet daily read configuration', () => {
     }
     expect(m.runtimeHash).toBe(b.runtime); expect(m.sourceRuntimeHash).toBe(b.sourceRuntime);
     expect(m.decimals0).toBe(Number(b.decimals0)); expect(m.decimals1).toBe(Number(b.decimals1));
-  });
-  it('binds address labels and leaves the default trading view inactive', () => {
-    expect(m.symbols).toEqual([CURRENT_DEX_DISPLAY_TOKENS[1].label, CURRENT_DEX_DISPLAY_TOKENS[0].label]);
-    expect(m.token0.toLowerCase()).toBe(CURRENT_DEX_DISPLAY_TOKENS[1].address.toLowerCase());
-    expect(m.token1.toLowerCase()).toBe(CURRENT_DEX_DISPLAY_TOKENS[0].address.toLowerCase());
-    expect(TESTNET_DEX_DAILY_PRICE_CONFIG.status).toBe('active');
-    expect(CURRENT_DEX_DAILY_PRICE_CONFIG.status).toBe('inactive');
   });
 });

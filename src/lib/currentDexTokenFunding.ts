@@ -1,5 +1,5 @@
 import { Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
-import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
 import { clearCurrentDexPendingAttempt, currentDexPendingStorage, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash } from './currentDexPendingAttempt';
 import type { PrivateUint256Input, PrivateUint256Output } from './privateUint256';
@@ -52,7 +52,7 @@ const same = (a: string | null, b: string) => typeof a === 'string' && a.toLower
 const zero = '0x0000000000000000000000000000000000000000';
 const receiptSnapshot = (r: NonNullable<Awaited<ReturnType<CurrentTransport['waitForReceipt']>>>) => Object.freeze({ ...r,
   logs: r.logs && Object.freeze(r.logs.map(l => Object.freeze({ ...l, topics: Object.freeze([...l.topics]) }))) });
-export const createCurrentTokenFundingAdapter = ({ signer, ownerAddress, chainId, transport, attest, readState, encrypt, decrypt, assertResources, candidate = 'cheap-current',
+export const createCurrentTokenFundingAdapter = ({ signer, ownerAddress, chainId, transport, attest, readState, encrypt, decrypt, assertResources, candidate = 'cheap-history',
   now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
   signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport; attest: (head: Head) => Promise<void>;
   readState: (index: 0 | 1, head: Head) => Promise<CurrentTokenFundingState>;
@@ -89,7 +89,7 @@ export const createCurrentTokenFundingAdapter = ({ signer, ownerAddress, chainId
     ['token', 'owner', 'tokenIndex', 'balance', 'allowance', 'claimed', 'faucetAmount', 'decimals', 'publicAmounts', 'encryptionAddress']
       .every(k => a[k as keyof typeof a] === z[k as keyof typeof z]);
   const fundingAuthority = (p: CurrentTokenFundingPrepared) => {
-    if (!isCurrentNativeSwapCandidate(c)) return assertCurrentCheapDexNativeAdmission(c);
+    if (!isCurrentNativeSwapCandidate(c)) return rejectUnprovenNativeAdmission();
     assertCurrentSwapCandidate(c);
     const scoped=poolPreparations.get(p);
     const activePool=currentNativePoolSession(signer);

@@ -4,9 +4,8 @@ import { readFileSync } from 'node:fs';
 import { Interface } from '@coti-io/coti-ethers';
 import { describe, expect, it } from 'vitest';
 import { STAGED_PREPARED_DEX_CANDIDATE as prepared } from './currentDexPreparedCandidate';
-import { CURRENT_CHEAP_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE, resolveCurrentCheapDexCandidate,
-  currentCheapDexCandidateKey, currentCheapDexQuoteProtocol, currentCheapDexStages,
-  assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, currentCheapDexCandidateKey, currentCheapDexQuoteProtocol,
+  rejectUnprovenNativeAdmission } from './dexV2Deployment';
 import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI } from './currentDexOperation';
 
 const helper = createRequire(import.meta.url)('../../scripts/prepare-current-dex-prepared-candidate.cjs');
@@ -44,19 +43,15 @@ describe('prepared shared-Core public candidate', () => {
     expect(prepared.additionalReviewedTokenSet).toBe(input.pkg.additionalReviewedTokenSet);
   }, 30000);
 
-  it('binds the actual ABI and stages, while it keeps the held default', () => {
-    expect(resolveCurrentCheapDexCandidate('cheap-prepared')).toBe(prepared);
-    expect(currentCheapDexCandidateKey(prepared)).toBe('cheap-prepared');
-    expect(currentCheapDexStages(prepared)).toEqual({ workCalls: 4, ready: 5, funded: 6, settled: 7, released: 8 });
-    expect(currentCheapDexQuoteProtocol(prepared)).toBe('quote-slippage');
+  it('keeps the retained descriptor out of App candidate selection and admission', () => {
+    expect(() => currentCheapDexCandidateKey(prepared)).toThrow('do not match');
+    expect(() => currentCheapDexQuoteProtocol(prepared)).toThrow('do not match');
     const appAbi = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
-    expect(prepared.protocol.quoteSignature).toBe(appAbi.getFunction('quoteCheapAsync')!.format('sighash'));
-    expect(CURRENT_CHEAP_DEX_CANDIDATE).toBe(STAGED_D06_DEX_CANDIDATE);
-    expect(resolveCurrentCheapDexCandidate('cheap-current')).toBe(STAGED_D06_DEX_CANDIDATE);
+    expect(prepared.protocol.quoteSignature).not.toBe(appAbi.getFunction('quoteCheapAsync')!.format('sighash'));
     expect(prepared.readyToSign).toBe(false);
-    expect(() => assertCurrentCheapDexNativeAdmission(prepared)).toThrow('native App submission admission');
-    expect(() => currentCheapDexCandidateKey({ ...prepared, packageSha256: STAGED_D06_DEX_CANDIDATE.packageSha256 })).toThrow('do not match');
-    expect(() => currentCheapDexCandidateKey({ ...prepared, core: STAGED_D06_DEX_CANDIDATE.core })).toThrow('do not match');
+    expect(() => rejectUnprovenNativeAdmission()).toThrow('native App submission admission');
+    expect(() => currentCheapDexCandidateKey({ ...prepared, packageSha256: STAGED_SHARED_HISTORY_DEX_CANDIDATE.packageSha256 })).toThrow('do not match');
+    expect(() => currentCheapDexCandidateKey({ ...prepared, core: STAGED_SHARED_HISTORY_DEX_CANDIDATE.core })).toThrow('do not match');
   });
 
   it('freezes each nested public identity object and array', () => {

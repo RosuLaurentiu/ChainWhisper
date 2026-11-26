@@ -34,8 +34,8 @@ const coreOnly = new Interface(['function core() view returns (address)']);
 const evaluator = new Interface(['function bindingCommitment() view returns (bytes32)']);
 
 const lower = (value: string) => value.toLowerCase();
-const companion = (role: string) => (m.companions as [string, string, string][]).find(([name]) => name === role)!;
-const runtime = (role: string) => (m.runtimes as [string, string, string][]).find(([name]) => name === role)!;
+const companion = (role: string) => (m.companions as readonly (readonly [string, string, string])[]).find(([name]) => name === role)!;
+const runtime = (role: string) => (m.runtimes as readonly (readonly [string, string, string])[]).find(([name]) => name === role)!;
 
 /** Public answers that the reviewed candidate expects, keyed by contract address. */
 const answers = () => {
@@ -64,10 +64,10 @@ const answers = () => {
     [lower(fastAt), [coreOnly, { core: [m.core] }]],
     [lower(evaluatorAt), [evaluator, { bindingCommitment: [m.evaluatorBinding] }]]
   ]);
-  const codes = new Map<string, string>([...(m.runtimes as [string, string, string][]).map(([, at, h]) => [lower(at), h] as const),
-    ...(m.tokens as [string, string][]).map(([at, h]) => [lower(at), h] as const),
-    ...(m.companions as [string, string, string][]).map(([, at, h]) => [lower(at), h] as const)]);
-  const storage = new Map((m.factoryStorage as [string, string][]).map(([slot, word]) => [`${lower(factoryAt)}:${BigInt(slot)}`, word]));
+  const codes = new Map<string, string>([...(m.runtimes as readonly (readonly [string, string, string])[]).map(([, at, h]) => [lower(at), h] as const),
+    ...(m.tokens as readonly (readonly [string, string])[]).map(([at, h]) => [lower(at), h] as const),
+    ...(m.companions as readonly (readonly [string, string, string])[]).map(([, at, h]) => [lower(at), h] as const)]);
+  const storage = new Map((m.factoryStorage as readonly (readonly [string, string])[]).map(([slot, word]) => [`${lower(factoryAt)}:${BigInt(slot)}`, word]));
   return { calls, codes, storage };
 };
 

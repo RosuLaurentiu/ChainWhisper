@@ -35,7 +35,7 @@ export const CURRENT_SHARED_DEX_TOKENS = Object.freeze(prepared.tokenMetadata
 
 // The distributor and tokens are shared. The DEX allowance and Core proof are not.
 // Select only a maintained exact descriptor; this does not issue write authority.
-export const resolveCurrentSharedTokenDistribution = (key: CurrentCheapDexCandidateKey = 'cheap-prepared') => {
+export const resolveCurrentSharedTokenDistribution = (key: CurrentCheapDexCandidateKey = 'cheap-history') => {
   const { candidate } = resolvePreparedDexScope(key);
   const coreRuntime = candidate.runtimes.find(([name]) => name === 'ChainWhisperDexCore');
   if (!coreRuntime || candidate.tokenMetadata.length !== CURRENT_SHARED_DEX_TOKENS.length ||

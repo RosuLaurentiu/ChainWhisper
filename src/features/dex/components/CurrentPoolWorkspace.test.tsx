@@ -35,7 +35,7 @@ describe('current shared-Pool form inputs', () => {
     expect(() => currentPoolFractionWitness(2n, 4n)).toThrow();
   });
   it('renders token inputs with no enabled writer or public reserve state while disconnected', () => {
-    const markup = renderToStaticMarkup(<CurrentPoolWorkspace />);
+    const markup = renderToStaticMarkup(<CurrentPoolWorkspace selectedPair={['BCN', 'HBR']} />);
     expect(markup).toContain('Current private Pool creation');
     expect(markup).toContain('Deposit amounts');
     expect(markup).toContain('Your shares belong to a position NFT');

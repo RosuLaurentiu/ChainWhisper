@@ -2,14 +2,15 @@ import { Interface, toBeHex } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as limitCodec from './currentDexLimit';
 import { readCurrentDexActivityReceipt } from './currentDexActivityReceipt';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as c } from './currentDexExitCandidate';
+import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './currentDexExitCandidate';
 import { currentDexOwnerTransferAbi as transfers } from './currentDexOwnerTokenProof';
 import { currentSharedTokenFundingAbi } from './currentSharedDexTokenFunding';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as historyCandidate } from './dexV2Deployment';
 import type { CurrentDexActivityCandidate } from './currentDexActivityDiscovery';
 
 const owner = `0x${'22'.repeat(20)}`, hash = toBeHex(3, 32), blockHash = toBeHex(4, 32), zero = toBeHex(0, 20);
-function fixture(candidate: CurrentDexActivityCandidate = 'cheap-exit') {
+const c = historyCandidate;
+function fixture(candidate: CurrentDexActivityCandidate = 'cheap-history') {
   const token = c.tokens[1][0], event = transfers.encodeEventLog(transfers.getEvent('Transfer')!, [zero, owner, [0n, 0n], [10_000_000_000n, 0n]]);
   const transaction = { hash, chainId: BigInt(c.chainId), from: owner, to: token, value: 0n,
     data: currentSharedTokenFundingAbi.encodeFunctionData('claimFaucet'), blockNumber: 100, blockHash, nonce: 4, gasLimit: 5_000_000n };
@@ -40,13 +41,13 @@ describe('canonical owner DEX action history', () => {
   });
   it.each(['foreign-target', 'mixed-witness'] as const)('rejects new History %s before private decryption', async fault => {
     const f = fixture('cheap-history'), worker = toBeHex(7, 20);
-    const target = fault === 'foreign-target' ? c.core : historyCandidate.core;
+    const target = fault === 'foreign-target' ? exit.core : historyCandidate.core;
     f.transaction.from = worker; f.transaction.to = target as typeof f.transaction.to;
     f.transaction.data = new Interface(['function advanceFixedWork(uint256)']).encodeFunctionData('advanceFixedWork', [53n]);
     Object.assign(f.receipt, { from: worker, to: target, status: 0, logs: [] });
     await expect(readCurrentDexActivityReceipt({ candidate: 'cheap-history', owner, transaction: f.transaction,
       receipt: f.receipt, timestamp: 1000n, assertCurrent: f.assertCurrent, verifyCanonical: f.verifyCanonical, decrypt: f.decrypt,
-      ownerOperation: { core: c.core, hash, blockNumber: 90, blockHash, timestamp: 900n, action: 'Quote',
+      ownerOperation: { core: exit.core, hash, blockNumber: 90, blockHash, timestamp: 900n, action: 'Quote',
         status: 'Quote submitted', kind: 'async-quote', operationId: 53n, movements: [], amountsState: 'none',
         readyToSign: false, nativeAdmission: false } })).rejects.toThrow(fault === 'foreign-target' ? 'outside' : 'owner changed');
     expect(f.decrypt).not.toHaveBeenCalled();
@@ -97,7 +98,7 @@ describe('canonical owner DEX action history', () => {
     f.transaction.from = worker; f.transaction.to = c.core as typeof f.transaction.to;
     f.transaction.data = new Interface(['function advanceFixedWork(uint256)']).encodeFunctionData('advanceFixedWork', [53n]);
     Object.assign(f.receipt, { from: worker, to: c.core, status: 0, logs: [] });
-    await expect(readCurrentDexActivityReceipt({ candidate: 'cheap-exit', owner, transaction: f.transaction,
+    await expect(readCurrentDexActivityReceipt({ candidate: 'cheap-history', owner, transaction: f.transaction,
       receipt: f.receipt, timestamp: 1000n, assertCurrent: f.assertCurrent, verifyCanonical: f.verifyCanonical, decrypt: f.decrypt,
       ownerOperation: { core: toBeHex(9, 20), hash, blockNumber: 90, blockHash, timestamp: 900n, action: 'Quote',
         status: 'Quote submitted', kind: 'async-quote', operationId: 53n, movements: [], amountsState: 'none',

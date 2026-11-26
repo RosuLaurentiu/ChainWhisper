@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as retired } from './currentDexHistoryCandidate';
 import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as previous, resolveCurrentCheapDexCandidate,
-  currentCheapDexCandidateKey, currentCheapDexStages, currentCheapDexQuoteProtocol,
-  assertCurrentCheapDexNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
+import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as previous } from './currentDexExitCandidate';import { resolveCurrentCheapDexCandidate,  currentCheapDexCandidateKey, currentCheapDexStages, currentCheapDexQuoteProtocol,  rejectUnprovenNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { currentDexDisplayPair, parseDexCandidateTokenAmount, readCurrentDexDisplay } from './currentDexDisplay';
 import { currentLimitAbiForCandidate, packedLimitAbi, usesPackedLimitInputs, currentLimitOwnerNativeAdmission,
@@ -21,11 +19,10 @@ describe('shared history public candidate and separate signing admission', () =>
     expect(currentCheapDexCandidateKey(history)).toBe(key);
     expect(retired.graph).not.toBe(history.graph);
     expect(() => currentCheapDexCandidateKey(retired)).toThrow('do not match a reviewed candidate');
-    expect(resolveCurrentCheapDexCandidate('cheap-exit')).toBe(previous);
     expect(currentCheapDexStages(history)).toEqual({ workCalls: 4, ready: 5, funded: 6, settled: 7, released: 8 });
     expect(currentCheapDexQuoteProtocol(history)).toBe('quote-slippage');
     expect(history.readyToSign).toBe(false);
-    expect(() => assertCurrentCheapDexNativeAdmission(history)).toThrow('submission admission is absent');
+    expect(() => rejectUnprovenNativeAdmission()).toThrow('submission admission is absent');
     expect(resolveCurrentDexAppCandidate('coti-testnet-candidate').candidate).toBe(history);
     expect(resolveCurrentDexAppCandidate('coti-testnet-candidate', key).candidate).toBe(history);
     expect(() => resolveCurrentDexAppCandidate('coti-testnet-candidate', 'cheap-exit')).toThrow('Invalid development DEX candidate selection');

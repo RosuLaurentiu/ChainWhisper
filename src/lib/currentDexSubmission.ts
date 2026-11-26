@@ -1,7 +1,7 @@
 import { isCurrentDexBrowserSigner, assertCurrentDexBrowserWindow } from './currentDexBrowserPolicy';
 import { assertCurrentSwapCandidate, assertCurrentSwapIdentity, assertCurrentNativeSwapIntent, usesCurrentNativeSwapChecks, currentNativeSigningBudget, completeCurrentNativeSwapScope,
   currentNativeSwapCheckpoint, recordCurrentNativeSwapHash, restoreCurrentNativeSwapCheckpoint, validateCurrentNativeSwapCheckpoint, currentNativeSwapChargeGasPrice, hasCurrentNativeSigningBudget, bindCurrentNativeSwapFundingScope, renewCurrentNativeSwapFundingWindow, renewCurrentNativeSwapClosedWindow, CURRENT_NATIVE_SWAP_LIMITS, type CurrentNativeSwapCheckpoint } from './currentDexNativeSwapPolicy';
-import { CURRENT_D06_SWAP_GAS_CAPS, assertCurrentD06AppAuthority, assertCurrentAppInitialClaimAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, CURRENT_APP_REPLACEMENT_TRIAL, CURRENT_APP_FURTHER_TRIAL, CURRENT_APP_FOURTH_TRIAL, CURRENT_APP_HISTORY_REPLACEMENT_TRIAL, hasCurrentHistoryReplacementProof, CURRENT_APP_HISTORY_FAST_TRIAL, hasCurrentHistoryFastProof } from './currentDexC1SwapPolicy';
+import { assertCurrentD06AppAuthority, assertCurrentAppInitialClaimAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, CURRENT_APP_REPLACEMENT_TRIAL, CURRENT_APP_FURTHER_TRIAL, CURRENT_APP_FOURTH_TRIAL, CURRENT_APP_HISTORY_REPLACEMENT_TRIAL, hasCurrentHistoryReplacementProof, CURRENT_APP_HISTORY_FAST_TRIAL, hasCurrentHistoryFastProof } from './currentDexC1SwapPolicy';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type CurrentPoolPreparedFunding, type CurrentPoolPreparedTopUpPreview, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
 import { assertCurrentPoolPositionPrepared, type CurrentPoolPreparedPositionAction, type CurrentPoolPreparedSnapshot, type CurrentPoolPreparedExitPreview } from '../features/wallet/currentDexPoolPositionCapability';
 import { assertCurrentSharedPoolApprovalPrepared, type CurrentSharedPoolApprovalPrepared } from './currentSharedDexTokenFunding';
@@ -18,9 +18,8 @@ import type { CurrentDexOwnerTokenAmounts, CurrentDexOwnerTokenPhase } from './c
 import { assertCurrentNativePoolSourceFit, assertCurrentNativePoolSourceFitBinding, type CurrentNativePoolSourceFit } from './currentDexNativePoolPolicy';
 import { Interface, getAddress, keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
 import type { issueCurrentDexQuoteCapability } from '../features/wallet/currentDexQuoteCapability';
-import { assertCurrentDexIssuedQuote, currentDexRestoredPlan, assertCurrentDexQuoteNotRestored } from '../features/wallet/currentDexQuoteCapability';
-import { CURRENT_DEX_OPEN_ABI, CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI,
-  decodeCurrentCheapDexOperation, type CurrentCheapDexProfile } from './currentDexOperation';
+import { currentDexRestoredPlan, assertCurrentDexQuoteNotRestored } from '../features/wallet/currentDexQuoteCapability';
+import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, decodeCurrentCheapDexOperation, type CurrentCheapDexProfile } from './currentDexOperation';
 import { CURRENT_DEX_ACCEPT_ABI, CURRENT_SLIPPAGE_DEX_ACCEPT_ABI } from './currentDexQuoteReview';
 export class CurrentDexPrivateReceiptError extends Error {
   constructor(message: string) {
@@ -28,24 +27,11 @@ export class CurrentDexPrivateReceiptError extends Error {
     this.name = 'CurrentDexPrivateReceiptError';
   }
 }
-
-import {
-  CURRENT_DEX_SUBMISSION_CANDIDATE_SHA256,
-  CURRENT_DEX_SUBMISSION_SOURCES_SHA256,
-  CURRENT_DEX_SUBMISSION_VERSION,
-  verifyCurrentDexSubmissionAdmission,
-  type CurrentDexNativeAdmission,
-  type CurrentDexSubmissionAdmission,
-  type CurrentDexSubmissionAdmissionEvidence,
-  type CurrentDexSubmissionPhase
-} from './currentDexSubmissionAdmission';
-import { assertCurrentDexInternalAdmission, issueCurrentSharedPoolAcceptAdmission,
-  issueCurrentSharedPoolQuoteAdmission, issueCurrentCheapDexQuoteAdmission,
+import { assertCurrentDexInternalAdmission, issueCurrentCheapDexQuoteAdmission,
   issueCurrentCheapDexAcceptAdmission } from './currentDexSubmissionAdmission';
-import { CURRENT_CHEAP_DEX_CANDIDATE, ARCHIVED_CHEAP_DEX_CANDIDATE, STAGED_NATIVE_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE, CURRENT_SHARED_POOL_CANDIDATE, currentCheapDexQuoteProtocol,
-  currentCheapDexStages, currentCheapDexOwnerActionEligible, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
-import { assertCurrentSharedPoolIssuedQuote, assertCurrentSharedPoolPreparedQuote,
-  assertCurrentCheapDexPreparedQuote, assertCurrentCheapDexIssuedQuote } from '../features/wallet/currentDexQuoteCapability';
+import { currentCheapDexQuoteProtocol, currentCheapDexStages, currentCheapDexOwnerActionEligible, resolveCurrentCheapDexCandidate,
+  type CurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
+import { assertCurrentCheapDexPreparedQuote, assertCurrentCheapDexIssuedQuote } from '../features/wallet/currentDexQuoteCapability';
 import { blockCurrentSwapVerification, blockCurrentDexOperationVerification, clearCurrentDexOperationLookup,
   readCurrentDexOperationLookups, recordCurrentDexOperationLookup,
   clearCurrentDexPendingAttempt, currentDexPendingStorage, readCurrentDexPendingAttempt,
@@ -68,8 +54,6 @@ export type {
 } from './currentDexSubmissionAdmission';
 
 type QuoteCapability = Awaited<ReturnType<typeof issueCurrentDexQuoteCapability>>;
-export type CurrentDexPreparedQuote = NonNullable<Awaited<ReturnType<QuoteCapability['prepareQuote']>>>;
-export type CurrentDexIssuedQuote = NonNullable<Awaited<ReturnType<CurrentDexPreparedQuote['readIssue']>>>;
 export type CurrentCheapDexPreparedQuote = NonNullable<Awaited<ReturnType<QuoteCapability['prepareCurrentQuote']>>>;
 export type CurrentCheapDexIssuedQuote = NonNullable<Awaited<ReturnType<CurrentCheapDexPreparedQuote['readIssue']>>>;
 type CurrentCheapDexOperation = ReturnType<typeof decodeCurrentCheapDexOperation>;
@@ -94,8 +78,6 @@ export type CurrentDexPreparedAcceptance = Readonly<{
   operationId: bigint; contextHash: string;
 }>;
 
-const openInterface = new Interface(CURRENT_DEX_OPEN_ABI);
-const acceptInterface = new Interface(CURRENT_DEX_ACCEPT_ABI);
 const ownerActionInterface = new Interface(['function cancelSwap(uint256 operationId)', 'function recoverSwap(uint256 operationId)']);
 const hash = (value: string, label: string) => {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value) || BigInt(value) === 0n) throw new Error(`Invalid ${label}.`);
@@ -112,47 +94,6 @@ const sameCall = (left: UnsignedTransaction, right: UnsignedTransaction) =>
   left.chainId === right.chainId && sameAddress(left.from, right.from) && sameAddress(left.to, right.to) &&
   left.value === right.value && left.data.toLowerCase() === right.data.toLowerCase();
 
-const nativeCheck = (value: CurrentDexNativeAdmission, label: string) => {
-  hash(value.evidenceHash, `${label} native evidence hash`);
-  if (typeof value.gasUsed !== 'bigint' || typeof value.gasLimit !== 'bigint' ||
-      value.gasUsed <= 0n || value.gasLimit <= 0n || value.gasUsed > value.gasLimit) {
-    throw new Error(`Invalid ${label} native transaction-fit evidence.`);
-  }
-};
-
-const admittedEvidence = (admission: CurrentDexSubmissionAdmission | null, phase: CurrentDexSubmissionPhase) => {
-  if (!verifyCurrentDexSubmissionAdmission(admission)) throw new Error('Current DEX submission is not admitted.');
-  const evidence = admission.evidence;
-  if (evidence.version !== CURRENT_DEX_SUBMISSION_VERSION ||
-      evidence.candidateSha256 !== CURRENT_DEX_SUBMISSION_CANDIDATE_SHA256 ||
-      evidence.sourcesSha256 !== CURRENT_DEX_SUBMISSION_SOURCES_SHA256 || evidence.phase !== phase ||
-      typeof evidence.chainId !== 'bigint' || evidence.chainId <= 0n) {
-    throw new Error('Current DEX submission evidence is for another candidate or phase.');
-  }
-  address(evidence.principal, 'submission principal'); address(evidence.core, 'submission Core');
-  address(evidence.inputToken, 'submission input token'); address(evidence.outputToken, 'submission output token');
-  hash(evidence.manifestHash, 'submission manifest hash'); hash(evidence.runtimeHash, 'submission runtime hash');
-  hash(evidence.releaseId, 'submission release ID'); hash(evidence.tokenPolicyHash, 'submission token policy evidence');
-  hash(evidence.callHash, `${phase} call hash`);
-  hash(evidence.authorizationHash, 'submission authorization evidence');
-  if (sameAddress(evidence.inputToken, evidence.outputToken) || sameAddress(evidence.principal, evidence.core)) {
-    throw new Error('Current DEX submission evidence has an invalid authority or token pair.');
-  }
-  nativeCheck(evidence.native, phase);
-  return evidence;
-};
-
-const validateSamePlan = (quote: CurrentDexSubmissionAdmissionEvidence, accept: CurrentDexSubmissionAdmissionEvidence) => {
-  if (quote.chainId !== accept.chainId || !sameAddress(quote.principal, accept.principal) ||
-      !sameAddress(quote.core, accept.core) || !sameAddress(quote.inputToken, accept.inputToken) ||
-      !sameAddress(quote.outputToken, accept.outputToken) || quote.manifestHash.toLowerCase() !== accept.manifestHash.toLowerCase() ||
-      quote.runtimeHash.toLowerCase() !== accept.runtimeHash.toLowerCase() ||
-      quote.releaseId.toLowerCase() !== accept.releaseId.toLowerCase() ||
-      quote.tokenPolicyHash.toLowerCase() !== accept.tokenPolicyHash.toLowerCase()) {
-    throw new Error('Acceptance authority does not match the admitted quote plan.');
-  }
-};
-
 const decodeCanonical = (data: string, contract: Interface, functionName: string) => {
   try {
     if (!/^0x[0-9a-fA-F]+$/.test(data)) throw new Error();
@@ -161,26 +102,6 @@ const decodeCanonical = (data: string, contract: Interface, functionName: string
     return decoded;
   } catch {
     throw new Error('Current DEX transaction changed the admitted call.');
-  }
-};
-
-const validateQuoteCall = (call: UnsignedTransaction, prepared: CurrentDexPreparedQuote,
-  evidence: CurrentDexSubmissionAdmissionEvidence) => {
-  const decoded = decodeCanonical(call.data, openInterface, 'openSinglePassSwapV2');
-  if (call.value !== 0n || keccak256(call.data).toLowerCase() !== evidence.callHash.toLowerCase() ||
-      !sameAddress(decoded[0], prepared.intent.inputToken) || !sameAddress(decoded[1], prepared.intent.outputToken) ||
-      !sameAddress(decoded[2], prepared.intent.destination) || decoded[3] !== prepared.intent.deadline) {
-    throw new Error('Current DEX transaction changed the admitted quote call.');
-  }
-};
-
-const validateAcceptanceCall = (call: UnsignedTransaction, prepared: CurrentDexPreparedAcceptance,
-  issued: CurrentDexIssuedQuote, evidence: CurrentDexSubmissionAdmissionEvidence) => {
-  const decoded = decodeCanonical(call.data, acceptInterface, 'acceptPrivateSwapV1');
-  if (call.value !== 0n || keccak256(call.data).toLowerCase() !== evidence.callHash.toLowerCase() ||
-      decoded[0] !== issued.operationId || decoded[1].toLowerCase() !== issued.operation.contextHash.toLowerCase() ||
-      prepared.operationId !== decoded[0] || prepared.contextHash.toLowerCase() !== decoded[1].toLowerCase()) {
-    throw new Error('Current DEX transaction changed the admitted acceptance call.');
   }
 };
 
@@ -211,187 +132,10 @@ const validateReceipt = (receipt: MinedReceipt | null, request: TransactionReque
     throw new Error('Current DEX receipt status is unavailable. Keep the pending action and reconcile without resending.');
 };
 
-const validatePlan = (evidence: CurrentDexSubmissionAdmissionEvidence, prepared: CurrentDexPreparedQuote) => {
-  const i = prepared.intent;
-  if (prepared.readyToSign !== false || prepared.chainId !== evidence.chainId || !sameAddress(prepared.from, evidence.principal) ||
-      !sameAddress(prepared.to, evidence.core) || prepared.value !== 0n ||
-      hash(prepared.manifestHash, 'prepared manifest hash') !== evidence.manifestHash.toLowerCase() ||
-      hash(i.runtimeHash, 'prepared runtime hash') !== evidence.runtimeHash.toLowerCase() ||
-      hash(i.releaseId, 'prepared release ID') !== evidence.releaseId.toLowerCase() ||
-      !sameAddress(i.principal, evidence.principal) || !sameAddress(i.core, evidence.core) ||
-      !sameAddress(i.inputToken, evidence.inputToken) || !sameAddress(i.outputToken, evidence.outputToken)) {
-    throw new Error('Prepared quote does not match the admitted plan.');
-  }
-};
-
-const validateIssuedPlan = (evidence: CurrentDexSubmissionAdmissionEvidence, issued: CurrentDexIssuedQuote, currentTime: bigint) => {
-  const i = issued.intent;
-  if (issued.readyToSign !== false || issued.operationId <= 0n || i.operationId !== issued.operationId ||
-      issued.operation.status !== 2 || !issued.operation.quotePrepared || issued.operation.funded || currentTime >= i.deadline ||
-      issued.operation.deadline !== i.deadline ||
-      i.chainId !== evidence.chainId || !sameAddress(i.principal, evidence.principal) || !sameAddress(i.core, evidence.core) ||
-      !sameAddress(i.inputToken, evidence.inputToken) || !sameAddress(i.outputToken, evidence.outputToken) ||
-      hash(i.runtimeHash, 'issued runtime hash') !== evidence.runtimeHash.toLowerCase() ||
-      hash(i.releaseId, 'issued release ID') !== evidence.releaseId.toLowerCase() ||
-      i.contextHash.toLowerCase() !== issued.operation.contextHash.toLowerCase()) {
-    throw new Error('Mined quote does not match the active admitted plan.');
-  }
-};
-
-const readReadyQuote = async (issued: CurrentDexIssuedQuote, evidence: CurrentDexSubmissionAdmissionEvidence, now: () => bigint) => {
-  assertCurrentDexIssuedQuote(issued);
-  const current = await issued.readCurrent();
-  assertCurrentDexIssuedQuote(current);
-  if (current.operationId !== issued.operationId || current.operation.epochId !== issued.operation.epochId ||
-      current.transactionHash !== issued.transactionHash || current.block.number < issued.block.number ||
-      current.originBlock.number !== issued.originBlock.number ||
-      current.originBlock.hash.toLowerCase() !== issued.originBlock.hash.toLowerCase() ||
-      (current.block.number === issued.block.number && current.block.hash.toLowerCase() !== issued.block.hash.toLowerCase()) ||
-      current.chainId !== issued.chainId || !sameAddress(current.core, issued.core) ||
-      current.runtimeHash.toLowerCase() !== issued.runtimeHash.toLowerCase() ||
-      current.releaseId.toLowerCase() !== issued.releaseId.toLowerCase() ||
-      current.intent.chainId !== issued.intent.chainId || !sameAddress(current.intent.principal, issued.intent.principal) ||
-      !sameAddress(current.intent.core, issued.intent.core) || !sameAddress(current.intent.inputToken, issued.intent.inputToken) ||
-      !sameAddress(current.intent.outputToken, issued.intent.outputToken) ||
-      current.intent.runtimeHash.toLowerCase() !== issued.intent.runtimeHash.toLowerCase() ||
-      current.intent.releaseId.toLowerCase() !== issued.intent.releaseId.toLowerCase() ||
-      current.intent.contextHash.toLowerCase() !== issued.intent.contextHash.toLowerCase() ||
-      current.operation.contextHash.toLowerCase() !== issued.operation.contextHash.toLowerCase() ||
-      current.intent.deadline !== issued.intent.deadline || current.intent.destination !== issued.intent.destination ||
-      current.intent.maximumInput !== issued.intent.maximumInput || current.intent.minimumInput !== issued.intent.minimumInput ||
-      current.intent.minimumOutput !== issued.intent.minimumOutput ||
-      current.intent.rateNumerator !== issued.intent.rateNumerator || current.intent.rateDenominator !== issued.intent.rateDenominator) {
-    throw new Error('Current quote changed from the mined Open operation.');
-  }
-  validateIssuedPlan(evidence, current, now());
-  return current;
-};
-
-const quoteCall = (prepared: CurrentDexPreparedQuote): UnsignedTransaction => Object.freeze({
-  chainId: prepared.chainId, from: prepared.from, to: prepared.to, value: 0n, data: prepared.data
-});
 const acceptanceCall = (prepared: CurrentDexPreparedAcceptance): UnsignedTransaction => Object.freeze({
   chainId: prepared.chainId, from: prepared.from, to: prepared.to, value: 0n, data: prepared.data
 });
 
-export const createCurrentDexSubmissionAdapter = ({ quoteAdmission, transport, now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
-  quoteAdmission: CurrentDexSubmissionAdmission<'quote'> | null;
-  transport: CurrentDexSubmissionTransport;
-  now?: () => bigint;
-}) => {
-  const quoteKeys = new Set<string>(), acceptKeys = new Set<string>();
-  const submit = async (call: UnsignedTransaction, check: CurrentDexNativeAdmission, validateBeforeSign: () => void | Promise<void>,
-    onSigningRequest: () => void) => {
-    await validateBeforeSign();
-    await transport.assertCurrent();
-    const gas = await transport.estimateGas(call);
-    await transport.assertCurrent();
-    if (typeof gas !== 'bigint' || gas <= 0n || gas > check.gasLimit) throw new Error('Current DEX transaction exceeds admitted native gas.');
-    const request = Object.freeze({ ...call, gasLimit: check.gasLimit });
-    await transport.assertCurrent();
-    await validateBeforeSign();
-    onSigningRequest();
-    const transaction = await transport.send(request);
-    return Object.freeze({ request, transactionHash: validateSubmitted(transaction, request) });
-  };
-  const recover = async (request: TransactionRequest, transactionHash: string) => {
-    await transport.assertCurrent();
-    const receipt = await transport.waitForReceipt(hash(transactionHash, 'recovery transaction hash'));
-    await transport.assertCurrent();
-    validateReceipt(receipt, request, transactionHash.toLowerCase());
-    return receipt;
-  };
-  return Object.freeze({
-    version: CURRENT_DEX_SUBMISSION_VERSION,
-    readyToSign: verifyCurrentDexSubmissionAdmission(quoteAdmission) && quoteAdmission.evidence.phase === 'quote',
-    submitQuote: async (prepared: CurrentDexPreparedQuote) => {
-      const evidence = admittedEvidence(quoteAdmission, 'quote'), captured = quoteCall(prepared);
-      const validate = () => {
-        validatePlan(evidence, prepared);
-        if (now() >= prepared.intent.deadline) throw new Error('Prepared quote expired before submission.');
-        const current = quoteCall(prepared);
-        if (!sameCall(current, captured)) throw new Error('Prepared quote changed before submission.');
-        validateQuoteCall(current, prepared, evidence);
-      };
-      validate();
-      const key = `${captured.chainId}:${captured.from}:${captured.to}:${keccak256(captured.data)}`.toLowerCase();
-      if (quoteKeys.has(key)) throw new Error('Prepared quote was already submitted. Recover it instead.');
-      quoteKeys.add(key);
-      let signingRequested = false;
-      try {
-        const submitted = await submit(captured, evidence.native, validate, () => { signingRequested = true; });
-        return Object.freeze({ ...submitted,
-          recover: async () => {
-            await recover(submitted.request, submitted.transactionHash);
-            const issued = await prepared.readIssue(submitted.transactionHash);
-            if (!issued) throw new Error('Mined quote operation is not available. Recover or request a new quote.');
-            validatePlan(evidence, prepared);
-            if (issued.intent.operationId !== issued.operationId || issued.intent.contextHash.toLowerCase() !== issued.operation.contextHash.toLowerCase()) {
-              throw new Error('Mined quote identity is inconsistent.');
-            }
-            return issued;
-          }
-        });
-      } catch (error) {
-        if (!signingRequested) quoteKeys.delete(key);
-        throw error;
-      }
-    },
-    submitAcceptance: async ({ issued, prepare }: {
-      issued: CurrentDexIssuedQuote;
-      prepare: (ready: CurrentDexIssuedQuote) => Promise<Readonly<{
-        prepared: CurrentDexPreparedAcceptance;
-        admission: CurrentDexSubmissionAdmission<'accept'> | null;
-      }> | null>;
-    }) => {
-      const quoteEvidence = admittedEvidence(quoteAdmission, 'quote');
-      assertCurrentDexIssuedQuote(issued);
-      const key = [issued.intent.chainId, issued.intent.principal, issued.intent.core, issued.operationId,
-        issued.operation.contextHash, issued.intent.runtimeHash, issued.intent.releaseId].join(':').toLowerCase();
-      if (acceptKeys.has(key)) throw new Error('Quote acceptance was already submitted. Recover it instead.');
-      acceptKeys.add(key);
-      let signingRequested = false;
-      try {
-        const ready = await readReadyQuote(issued, quoteEvidence, now);
-        await transport.assertCurrent();
-        const reviewed = await prepare(ready);
-        await transport.assertCurrent();
-        if (!reviewed) { acceptKeys.delete(key); return null; }
-        const { prepared } = reviewed;
-        const evidence = admittedEvidence(reviewed.admission, 'accept');
-        validateSamePlan(quoteEvidence, evidence);
-        const captured = acceptanceCall(prepared);
-        const validate = async () => {
-          const refreshed = await readReadyQuote(issued, evidence, now);
-          if (refreshed.operation.stageRevision !== ready.operation.stageRevision) {
-            throw new Error('Current quote changed during acceptance review.');
-          }
-          const current = acceptanceCall(prepared);
-          if (!sameCall(current, captured) || prepared.readyToSign !== false || prepared.operationId !== issued.operationId ||
-              prepared.contextHash.toLowerCase() !== refreshed.operation.contextHash.toLowerCase() ||
-              prepared.chainId !== evidence.chainId || !sameAddress(prepared.from, evidence.principal) ||
-              !sameAddress(prepared.to, evidence.core) || prepared.value !== 0n) {
-            throw new Error('Prepared acceptance does not match the mined quote or admitted plan.');
-          }
-          validateAcceptanceCall(current, prepared, refreshed, evidence);
-        };
-        const submitted = await submit(captured, evidence.native, validate, () => { signingRequested = true; });
-        return Object.freeze({ ...submitted, operationId: issued.operationId, status: 'accepting' as const,
-          recover: async () => {
-            await recover(submitted.request, submitted.transactionHash);
-            return Object.freeze({ operationId: issued.operationId, transactionHash: submitted.transactionHash,
-              status: 'settlement-pending' as const });
-          }
-        });
-      } catch (error) {
-        if (!signingRequested) acceptKeys.delete(key);
-        throw error;
-      }
-    }
-  });
-};
-
-// Internal current-candidate path. The legacy evidence-shaped adapter above stays denied.
 const SHARED_POOL_GAS_CAP = 108_000_000n;
 type CurrentHead = Readonly<{ number: bigint; hash: string; timestamp: bigint; gasLimit: bigint }>;
 export { CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
@@ -435,7 +179,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
   // The adapter releases its own reservation for the rejected record, or throws. No hook means no release.
   releaseReservation?: (attempt: CurrentDexPendingAttempt) => Promise<void>;
 }) => {
-  const nativeFit = [STAGED_NATIVE_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE]
+  const nativeFit = [STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE]
     .some(candidate => c.graph === candidate.graph && core.toLowerCase() === candidate.core);
   const exitFit = [STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE].some(candidate =>
     c.graph === candidate.graph && core.toLowerCase() === candidate.core && chainId === BigInt(candidate.chainId));
@@ -829,355 +573,20 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
   return { pending, requireEmptyPending, requirePoolTopUpHandoff, requireOwnPending, currentHead, requireNativeResources, sendCurrent, verifyMinedCall, recheckMinedCall, releaseUnsent };
 };
 
-export const createCurrentSharedPoolSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest,
-  reviewAcceptance, readOperation, now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
-  signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport;
-  attest: (head: CurrentHead) => Promise<void>;
-  reviewAcceptance: (issued: CurrentDexIssuedQuote, confirm: (model: unknown) => Promise<boolean>) => Promise<CurrentDexPreparedAcceptance | null>;
-  readOperation: (operationId: bigint, origin?: { number: bigint; hash: string }) => Promise<{
-    operation: { status: number; contextHash: string; epochId: bigint; deadline: bigint } }>;
-  now?: () => bigint;
-}) => {
-  let reservations = currentReservations.get(signer);
-  if (!reservations) {
-    reservations = { quote: new Set(), accept: new Set(), actions: new Set(), acceptRequests: new Map() };
-    currentReservations.set(signer, reservations);
-  }
-  const quoteKeys = reservations.quote, acceptKeys = reservations.accept, actionKeys = reservations.actions;
-  const recoveredQuotes = new WeakMap<object, CurrentDexPreparedQuote>();
-  const pendingAcceptRequests = reservations.acceptRequests;
-  const c = CURRENT_SHARED_POOL_CANDIDATE, core = address(c.core, 'current shared-Pool Core');
-  const owner = address(ownerAddress, 'current shared-Pool owner');
-  const storage = currentDexPendingStorage({ chainId, graph: c.graph, owner });
-  const runtimeHash = c.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2];
-  if (chainId !== BigInt(c.chainId)) throw new Error('Current shared-Pool chain differs.');
-  const { pending, requireEmptyPending, requireOwnPending, currentHead, sendCurrent, verifyMinedCall } =
-    createCurrentAttemptBoundary({ storage, c, core, owner, chainId, transport, attest, now });
-  const validateQuote = (prepared: CurrentDexPreparedQuote, allowExpired = false) => {
-    assertCurrentSharedPoolPreparedQuote(prepared, signer);
-    const intent = prepared.intent;
-    if (prepared.readyToSign !== false || prepared.chainId !== chainId ||
-        !sameAddress(prepared.from, owner) || !sameAddress(prepared.to, core) || prepared.value !== 0n ||
-        prepared.graph !== c.graph || intent.chainId !== chainId ||
-        !sameAddress(intent.principal, owner) || !sameAddress(intent.core, core) ||
-        intent.runtimeHash !== runtimeHash || intent.releaseId !== c.releaseId ||
-        !((sameAddress(intent.inputToken, c.tokens[0][0]) && sameAddress(intent.outputToken, c.tokens[1][0])) ||
-          (sameAddress(intent.inputToken, c.tokens[1][0]) && sameAddress(intent.outputToken, c.tokens[0][0])))) {
-      throw new Error('Current shared-Pool Quote plan changed.');
-    }
-    const decoded = decodeCanonical(prepared.data, openInterface, 'openSinglePassSwapV2');
-    if (!sameAddress(decoded.inputToken, intent.inputToken) || !sameAddress(decoded.outputToken, intent.outputToken) ||
-        !sameAddress(decoded.destination, intent.destination) || decoded.deadline !== intent.deadline ||
-        (!allowExpired && now() >= intent.deadline)) throw new Error('Current shared-Pool Quote call changed or expired.');
-  };
-  const recoverQuote = async (prepared: CurrentDexPreparedQuote, transactionHash: string) => {
-    validateQuote(prepared, true);
-    await transport.assertCurrent();
-    const issued = await prepared.readIssue(transactionHash);
-    await transport.assertCurrent();
-    if (!issued) throw new Error('Current shared-Pool Open receipt is not available.');
-    assertCurrentSharedPoolIssuedQuote(issued, signer);
-    if (issued.transactionHash.toLowerCase() !== transactionHash.toLowerCase() ||
-        issued.operation.status === 0 || issued.operation.deadline !== prepared.intent.deadline ||
-        !sameAddress(issued.principal, owner)) {
-      throw new Error('Current shared-Pool Open identity changed.');
-    }
-    const recorded = pending();
-    if (!recorded || recorded.phase !== 'quote' || recorded.callHash !== keccak256(prepared.data).toLowerCase()) {
-      throw new Error('Current DEX pending Open attempt changed.');
-    }
-    const transaction = await transport.readTransaction(transactionHash);
-    await transport.assertCurrent();
-    if (!transaction || transaction.nonce !== recorded.nonce || transaction.chainId !== chainId ||
-        !sameAddress(transaction.from, owner) || !transaction.to || !sameAddress(transaction.to, core) ||
-        transaction.value !== 0n || keccak256(transaction.data).toLowerCase() !== recorded.callHash) {
-      throw new Error('Current DEX pending Open transaction changed.');
-    }
-    clearCurrentDexPendingAttempt(storage, requireOwnPending(recorded, transactionHash));
-    recoveredQuotes.set(issued, prepared);
-    return issued;
-  };
-  const recoverPendingAttempt = async () => {
-    await transport.assertCurrent();
-    const attempt = pending();
-    if (!attempt) return null;
-    if (attempt.phase === 'token-faucet' || attempt.phase === 'token-approve' || attempt.phase === 'token-refill' || attempt.phase === 'pool-preview' || attempt.phase === 'pool-fund' || attempt.phase === 'pool-owner' || attempt.phase === 'pool-transfer' || attempt.phase === 'pool-snapshot' || attempt.phase === 'limit-create' || attempt.phase === 'limit-snapshot' || attempt.phase === 'limit-owner') throw new Error('Use the owner-action pending-attempt reader for this action.');
-    if (attempt.chainId !== chainId.toString() || attempt.owner !== owner.toLowerCase() ||
-        attempt.core !== core.toLowerCase() || attempt.graph !== `0x${c.graph}`.toLowerCase()) {
-      throw new Error('Current DEX pending attempt belongs to another owner or candidate.');
-    }
-    if (!attempt.txHash) return Object.freeze({ status: 'manual-reconciliation-required' as const,
-      phase: attempt.phase, nonce: attempt.nonce, callHash: attempt.callHash });
-    const head = await transport.readHead();
-    await transport.assertCurrent();
-    await attest(head);
-    const transaction = await transport.readTransaction(attempt.txHash);
-    await transport.assertCurrent();
-    const receipt = await transport.waitForReceipt(attempt.txHash);
-    await transport.assertCurrent();
-    if (!transaction || !receipt) return Object.freeze({ status: 'awaiting-chain-confirmation' as const,
-      phase: attempt.phase, nonce: attempt.nonce, transactionHash: attempt.txHash });
-    if (hash(transaction.hash, 'pending transaction hash') !== attempt.txHash ||
-        transaction.chainId !== chainId || !sameAddress(transaction.from, owner) ||
-        !transaction.to || !sameAddress(transaction.to, core) || transaction.value !== 0n ||
-        transaction.nonce !== attempt.nonce || keccak256(transaction.data).toLowerCase() !== attempt.callHash ||
-        hash(receipt.hash, 'pending receipt hash') !== attempt.txHash ||
-        (receipt.status !== 0 && receipt.status !== 1) ||
-        !sameAddress(receipt.from, owner) || !receipt.to || !sameAddress(receipt.to, core) ||
-        !Number.isSafeInteger(receipt.blockNumber) || (receipt.blockNumber ?? -1) < 0 ||
-        !receipt.blockHash || transaction.blockNumber !== receipt.blockNumber ||
-        !transaction.blockHash || hash(transaction.blockHash, 'pending transaction block') !== hash(receipt.blockHash, 'pending receipt block')) {
-      throw new Error('Current DEX pending attempt does not match the canonical transaction.');
-    }
-    const canonicalHash = await transport.readBlockHash(receipt.blockNumber!);
-    await transport.assertCurrent();
-    if (!canonicalHash || hash(canonicalHash, 'canonical block hash') !== hash(receipt.blockHash, 'pending receipt block')) {
-      throw new Error('Current DEX pending attempt block changed.');
-    }
-    if (receipt.status === 0) {
-      clearCurrentDexPendingAttempt(storage, requireOwnPending(attempt, attempt.txHash));
-      if (attempt.phase === 'cancel' || attempt.phase === 'recover') {
-        actionKeys.delete(`${chainId}:${owner}:${attempt.operationId}:${attempt.phase}`.toLowerCase());
-      }
-      return Object.freeze({ status: 'observed-reverted' as const, phase: attempt.phase,
-        transactionHash: attempt.txHash });
-    }
-    let operationId: bigint, expectedContext: string | null = null, expectedEpoch: bigint | null = null,
-      expectedDeadline: bigint | null = null;
-    if (attempt.phase === 'quote') {
-      const decoded = decodeCanonical(transaction.data, openInterface, 'openSinglePassSwapV2');
-      const pair = c.tokens.map(([token]) => token);
-      if (!pair.some(token => sameAddress(token, decoded.inputToken)) ||
-          !pair.some(token => sameAddress(token, decoded.outputToken)) ||
-          sameAddress(decoded.inputToken, decoded.outputToken) || sameAddress(decoded.destination, core)) {
-        throw new Error('Current DEX pending Open call has another market.');
-      }
-      const event = openInterface.getEvent('WorkIssued')!;
-      const matches = (receipt.logs ?? []).filter(log => sameAddress(log.address, core) &&
-        log.topics[0]?.toLowerCase() === event.topicHash);
-      if (matches.length !== 1) throw new Error('Current DEX pending Open has no unique operation event.');
-      const parsed = openInterface.parseLog(matches[0]);
-      const encoded = parsed && openInterface.encodeEventLog(event, parsed.args);
-      if (!parsed || parsed.name !== 'WorkIssued' ||
-          encoded?.data.toLowerCase() !== matches[0].data.toLowerCase() ||
-          encoded.topics.length !== matches[0].topics.length ||
-          encoded.topics.some((topic, index) => topic.toLowerCase() !== matches[0].topics[index].toLowerCase()) ||
-          parsed.args.releaseId.toLowerCase() !== c.releaseId || parsed.args.deadline !== decoded.deadline) {
-        throw new Error('Current DEX pending Open event changed.');
-      }
-      operationId = BigInt(parsed.args.operationId);
-      expectedEpoch = BigInt(parsed.args.epochId);
-      expectedDeadline = BigInt(parsed.args.deadline);
-      if (operationId <= 0n || expectedEpoch <= 0n) throw new Error('Current DEX pending Open operation is invalid.');
-    } else if (attempt.phase === 'accept') {
-      const decoded = decodeCanonical(transaction.data, acceptInterface, 'acceptPrivateSwapV1');
-      operationId = BigInt(decoded.operationId);
-      expectedContext = hash(decoded.expectedContext, 'pending Accept context');
-      if (operationId <= 0n) throw new Error('Current DEX pending Accept operation is invalid.');
-    } else {
-      const decoded = decodeCanonical(transaction.data, ownerActionInterface,
-        attempt.phase === 'cancel' ? 'cancelSwap' : 'recoverSwap');
-      operationId = BigInt(decoded.operationId);
-      if (operationId <= 0n || operationId.toString() !== attempt.operationId) {
-        throw new Error('Current DEX pending owner action is invalid.');
-      }
-    }
-    const observed = await readOperation(operationId, { number: BigInt(receipt.blockNumber!), hash: receipt.blockHash! });
-    await transport.assertCurrent();
-    if (observed.operation.status === 0 ||
-        ((attempt.phase === 'cancel' || attempt.phase === 'recover') && observed.operation.status !== 4) ||
-        (expectedEpoch !== null && observed.operation.epochId !== expectedEpoch) ||
-        (expectedDeadline !== null && observed.operation.deadline !== expectedDeadline) ||
-        (expectedContext !== null && observed.operation.contextHash.toLowerCase() !== expectedContext)) {
-      throw new Error('Current DEX pending operation identity changed.');
-    }
-    clearCurrentDexPendingAttempt(storage, requireOwnPending(attempt, attempt.txHash));
-    return Object.freeze({ status: 'observed-mined' as const, phase: attempt.phase,
-      transactionHash: attempt.txHash, operationId, operation: observed.operation });
-  };
-  const submitOwnerAction = async ({ issued, action, confirm }: { issued: CurrentDexIssuedQuote;
-    action: 'cancel' | 'recover'; confirm: (operation: CurrentDexIssuedQuote['operation']) => Promise<boolean> }) => {
-    assertCurrentSharedPoolIssuedQuote(issued, signer);
-    if (typeof issued.operationId !== 'bigint' || issued.operationId <= 0n ||
-        !sameAddress(issued.principal, owner) || !sameAddress(issued.intent.principal, owner) ||
-        issued.chainId !== chainId || !sameAddress(issued.core, core) ||
-        issued.runtimeHash.toLowerCase() !== runtimeHash || issued.releaseId.toLowerCase() !== c.releaseId) {
-      throw new Error('Current shared-Pool owner operation changed.');
-    }
-    requireEmptyPending();
-    const key = `${chainId}:${owner}:${issued.operationId}:${action}`.toLowerCase();
-    if (actionKeys.has(key)) throw new Error('Current DEX owner action was already submitted. Recover it instead.');
-    actionKeys.add(key);
-    let signingRequested = false;
-    try {
-      const refresh = async () => {
-        await transport.assertCurrent();
-        const current = await issued.readCurrent();
-        await transport.assertCurrent();
-        assertCurrentSharedPoolIssuedQuote(current, signer);
-        if (current.operationId !== issued.operationId || current.operation.epochId !== issued.operation.epochId ||
-            current.operation.contextHash.toLowerCase() !== issued.operation.contextHash.toLowerCase() ||
-            current.operation.deadline !== issued.operation.deadline ||
-            current.operation.canonicalMarketId !== issued.operation.canonicalMarketId ||
-            current.operation.marketRevision !== issued.operation.marketRevision ||
-            current.operation.registryRevision !== issued.operation.registryRevision ||
-            current.transactionHash !== issued.transactionHash ||
-            current.originBlock.hash.toLowerCase() !== issued.originBlock.hash.toLowerCase() ||
-            current.operation.status !== 1 && current.operation.status !== 2 ||
-            action === 'cancel' && current.operation.status === 1 && current.operation.fixedCursor !== 0n) {
-          throw new Error('Current DEX owner action is not eligible on this operation.');
-        }
-        return current;
-      };
-      const current = await refresh();
-      await currentHead();
-      if (!await confirm(current.operation)) { actionKeys.delete(key); return null; }
-      await transport.assertCurrent();
-      const call: UnsignedTransaction = Object.freeze({ chainId, from: owner, to: core, value: 0n,
-        data: ownerActionInterface.encodeFunctionData(action === 'cancel' ? 'cancelSwap' : 'recoverSwap', [issued.operationId]) });
-      const sent = await sendCurrent(action, call, undefined, async () => { await refresh(); },
-        () => { signingRequested = true; }, issued.operationId);
-      return Object.freeze({ ...sent, operationId: issued.operationId, action, status: 'release-pending' as const,
-        recover: async () => {
-          await verifyMinedCall(sent.request, sent.transactionHash);
-          const recorded = pending();
-          if (!recorded || recorded.phase !== action || recorded.operationId !== issued.operationId.toString()) {
-            throw new Error('Current DEX pending owner action changed.');
-          }
-          const head = await transport.readHead();
-          await transport.assertCurrent();
-          await attest(head);
-          const observed = await readOperation(issued.operationId);
-          await transport.assertCurrent();
-          if (observed.operation.status !== 4 ||
-              observed.operation.contextHash.toLowerCase() !== issued.operation.contextHash.toLowerCase() ||
-              observed.operation.epochId !== issued.operation.epochId) {
-            throw new Error('Current DEX owner release is not confirmed.');
-          }
-          clearCurrentDexPendingAttempt(storage, requireOwnPending(recorded, sent.transactionHash));
-          return Object.freeze({ status: 'released' as const, operationId: issued.operationId,
-            transactionHash: sent.transactionHash, operation: observed.operation });
-        } });
-    } catch (error) { if (!signingRequested) actionKeys.delete(key); throw error; }
-  };
-  return Object.freeze({ readyToSign: false as const,
-    recoverPendingCurrentAttempt: recoverPendingAttempt,
-    submitCurrentOwnerAction: submitOwnerAction,
-    submitCurrentQuote: async (prepared: CurrentDexPreparedQuote) => {
-      validateQuote(prepared);
-      requireEmptyPending();
-      const admission = issueCurrentSharedPoolQuoteAdmission(prepared, signer);
-      const call = quoteCall(prepared), key = `${chainId}:${owner}:${keccak256(call.data)}`.toLowerCase();
-      if (quoteKeys.has(key)) throw new Error('Current shared-Pool Quote was already submitted. Recover it instead.');
-      quoteKeys.add(key);
-      let signingRequested = false;
-      try {
-        const sent = await sendCurrent('quote', call, prepared.intent.deadline, () => {
-          validateQuote(prepared);
-          assertCurrentDexInternalAdmission(admission, 'quote', signer, prepared.data, prepared);
-        }, () => { signingRequested = true; });
-        return Object.freeze({ ...sent, recover: () => recoverQuote(prepared, sent.transactionHash) });
-      } catch (error) { if (!signingRequested) quoteKeys.delete(key); throw error; }
-    },
-    recoverCurrentQuote: recoverQuote,
-    submitCurrentAcceptance: async ({ issued, confirm }: { issued: CurrentDexIssuedQuote;
-      confirm: (model: unknown) => Promise<boolean> }) => {
-      assertCurrentSharedPoolIssuedQuote(issued, signer);
-      requireEmptyPending();
-      const preparedQuote = recoveredQuotes.get(issued);
-      if (!preparedQuote) throw new Error('Current shared-Pool Quote was not recovered in this session.');
-      const key = `${chainId}:${owner}:${issued.operationId}:${issued.operation.contextHash}`.toLowerCase();
-      if (acceptKeys.has(key)) throw new Error('Current shared-Pool Accept was already submitted. Recover it instead.');
-      acceptKeys.add(key);
-      let signingRequested = false;
-      try {
-        const ready = await issued.readCurrent();
-        assertCurrentSharedPoolIssuedQuote(ready, signer);
-        if (ready.operation.status !== 2 || !ready.operation.quotePrepared || ready.operation.funded ||
-            ready.operationId !== issued.operationId || ready.operation.contextHash !== issued.operation.contextHash ||
-            ready.operation.epochId !== issued.operation.epochId || ready.operation.deadline !== preparedQuote.intent.deadline ||
-            now() >= ready.operation.deadline) throw new Error('Current shared-Pool Quote is not READY.');
-        await currentHead(ready.operation.deadline);
-        const prepared = await reviewAcceptance(ready, confirm);
-        await transport.assertCurrent();
-        if (!prepared) { acceptKeys.delete(key); return null; }
-        const admission = issueCurrentSharedPoolAcceptAdmission(issueCurrentSharedPoolQuoteAdmission(preparedQuote, signer),
-          ready, prepared, signer);
-        const call = acceptanceCall(prepared), decoded = decodeCanonical(call.data, acceptInterface, 'acceptPrivateSwapV1');
-        if (prepared.readyToSign !== false || !sameAddress(call.from, owner) || !sameAddress(call.to, core) ||
-            call.chainId !== chainId || call.value !== 0n || decoded.operationId !== ready.operationId ||
-            decoded.expectedContext.toLowerCase() !== ready.operation.contextHash.toLowerCase()) {
-          throw new Error('Current shared-Pool Accept call changed.');
-        }
-        const validate = async () => {
-          assertCurrentDexInternalAdmission(admission, 'accept', signer, prepared.data, preparedQuote, ready);
-          const refreshed = await ready.readCurrent();
-          assertCurrentSharedPoolIssuedQuote(refreshed, signer);
-          if (refreshed.operation.status !== 2 || !refreshed.operation.quotePrepared || refreshed.operation.funded ||
-              refreshed.operationId !== ready.operationId || refreshed.operation.contextHash !== ready.operation.contextHash ||
-              refreshed.operation.stageRevision !== ready.operation.stageRevision ||
-              refreshed.operation.canonicalMarketId !== ready.operation.canonicalMarketId ||
-              refreshed.operation.marketRevision !== ready.operation.marketRevision ||
-              refreshed.operation.registryRevision !== ready.operation.registryRevision ||
-              now() >= ready.operation.deadline) throw new Error('Current shared-Pool Quote changed before Accept.');
-        };
-        const sent = await sendCurrent('accept', call, ready.operation.deadline, validate, request => {
-          signingRequested = true;
-          pendingAcceptRequests.set(key, request);
-        });
-        return Object.freeze({ ...sent, operationId: ready.operationId, status: 'accepting' as const,
-          recover: async () => {
-            await verifyMinedCall(sent.request, sent.transactionHash);
-            const recorded = pending();
-            if (!recorded || recorded.phase !== 'accept' || recorded.callHash !== keccak256(call.data).toLowerCase()) {
-              throw new Error('Current DEX pending Accept attempt changed.');
-            }
-            clearCurrentDexPendingAttempt(storage, requireOwnPending(recorded, sent.transactionHash));
-            return Object.freeze({ operationId: ready.operationId, transactionHash: sent.transactionHash,
-              status: 'settlement-pending' as const }); } });
-      } catch (error) { if (!signingRequested) acceptKeys.delete(key); throw error; }
-    },
-    recoverCurrentAcceptance: async ({ issued, transactionHash }: { issued: CurrentDexIssuedQuote; transactionHash: string }) => {
-      assertCurrentSharedPoolIssuedQuote(issued, signer);
-      const key = `${chainId}:${owner}:${issued.operationId}:${issued.operation.contextHash}`.toLowerCase();
-      const request = pendingAcceptRequests.get(key);
-      if (!request) throw new Error('Current shared-Pool Accept has no signing attempt to recover.');
-      await verifyMinedCall(request, transactionHash);
-      const recorded = pending();
-      if (!recorded || recorded.phase !== 'accept' || recorded.callHash !== keccak256(request.data).toLowerCase()) {
-        throw new Error('Current DEX pending Accept attempt changed.');
-      }
-      clearCurrentDexPendingAttempt(storage, requireOwnPending(recorded, transactionHash));
-      return Object.freeze({ operationId: issued.operationId, transactionHash: transactionHash.toLowerCase(),
-        status: 'settlement-pending' as const });
-    }
-  });
-};
-
-/** Current 04ea modes. The historical methods above keep their explicit old profile. */
 export const CURRENT_CHEAP_DEX_GAS_CAPS = Object.freeze({
   'fast-pool': Object.freeze({ quote: 60_000_000n, accept: 50_000_000n }),
   'cheap-async': Object.freeze({ quote: 50_000_000n, accept: 25_000_000n, cancel: 10_000_000n, recover: 25_000_000n })
 });
 // Exact signed caps from the accepted fa71 native profiles. A cap grants no send admission.
-export const currentCheapDexGasCaps = (candidate = CURRENT_CHEAP_DEX_CANDIDATE) => {
+export const currentCheapDexGasCaps = (candidate: CurrentCheapDexCandidate = STAGED_SHARED_HISTORY_DEX_CANDIDATE) => {
   if (usesCurrentSwapAccounting(candidate)) {
     assertCurrentSwapIdentity(candidate);
     return CURRENT_EXIT_SWAP_GAS_CAPS;
   }
-  if (candidate.graph === STAGED_D06_DEX_CANDIDATE.graph) {
-    assertCurrentSwapIdentity(candidate);
-    return CURRENT_D06_SWAP_GAS_CAPS;
-  }
-  return candidate.graph === STAGED_NATIVE_DEX_CANDIDATE.graph && candidate.packageSha256 === STAGED_NATIVE_DEX_CANDIDATE.packageSha256 &&
-  candidate.core.toLowerCase() === STAGED_NATIVE_DEX_CANDIDATE.core
-    ? Object.freeze({ 'fast-pool': Object.freeze({ quote: 70_000_000n, accept: 85_000_000n }),
-      'cheap-async': Object.freeze({ quote: 65_000_000n, accept: 35_000_000n, cancel: 20_000_000n,
-        recover: 50_000_000n }) }) // Exact accepted funded principal-recovery signed cap.
-    : CURRENT_CHEAP_DEX_GAS_CAPS;
+  return CURRENT_CHEAP_DEX_GAS_CAPS;
 };
 // Bound to native-coexistence-manifest-1.json (9513dcca...) and its original native receipts.
-const cheapProtocol = currentCheapDexQuoteProtocol(CURRENT_CHEAP_DEX_CANDIDATE);
+const cheapProtocol = currentCheapDexQuoteProtocol(STAGED_SHARED_HISTORY_DEX_CANDIDATE);
 const cheapOpening = new Interface(cheapProtocol ? CURRENT_SLIPPAGE_DEX_QUOTE_ABI : CURRENT_CHEAP_DEX_QUOTE_ABI);
 const pendingProfile = (data: string, phase: CurrentDexPendingAttempt['phase'], protocol: ReturnType<typeof currentCheapDexQuoteProtocol>): CurrentCheapDexProfile => {
   if (phase === 'cancel' || phase === 'recover') {
@@ -1230,16 +639,7 @@ export type CurrentDexSendProgress = Readonly<{
 }>;
 
 export const createCurrentCheapDexSubmissionAdapter = (args: Parameters<typeof createCheapDexSubmissionAdapter>[0] & { candidate?: CurrentCheapDexCandidateKey }) =>
-  createCheapDexSubmissionAdapter(args, args.candidate ? resolveCurrentCheapDexCandidate(args.candidate) : CURRENT_CHEAP_DEX_CANDIDATE);
-
-// Exact reviewed-candidate reconciliation only. No submission or private Accept authority is restored.
-export const createArchivedCheapDexRecovery = (args: Pick<Parameters<typeof createCheapDexSubmissionAdapter>[0],
-  'signer' | 'ownerAddress' | 'chainId' | 'transport' | 'attest' | 'readOperation' | 'now'> & { candidate?: CurrentCheapDexCandidateKey }) =>
-  createCheapDexSubmissionAdapter({ ...args,
-    readReceipt: async () => { throw new Error('Archived recovery does not restore private Quote authority.'); },
-    reviewAcceptance: async () => { throw new Error('Archived recovery cannot accept a Quote.'); },
-    requireFunding: async () => { throw new Error('Archived recovery cannot fund a swap.'); }
-  }, args.candidate ? resolveCurrentCheapDexCandidate(args.candidate) : ARCHIVED_CHEAP_DEX_CANDIDATE).recoverPendingCurrentCheapAttempt;
+  createCheapDexSubmissionAdapter(args, resolveCurrentCheapDexCandidate(args.candidate ?? 'cheap-history'));
 
 const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest,
   readOperation, readReceipt, reviewAcceptance, requireFunding, verifyOwnerTokens, readTerminalReceipt,
@@ -1262,7 +662,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   verifySwapAllowanceCleanup?: (request: TransactionRequest, transactionHash: string) => Promise<void>;
   readOriginalQuoteReceipt?: (issued: CurrentCheapDexIssuedQuote) => Promise<CurrentCheapReceipt>;
   now?: () => bigint;
-}, c = CURRENT_CHEAP_DEX_CANDIDATE) => {
+}, c: CurrentCheapDexCandidate = STAGED_SHARED_HISTORY_DEX_CANDIDATE) => {
   const stages = currentCheapDexStages(c);
   // Defer send-only fit admission so held candidates can still be read and
   // pending metadata can be reconciled without selecting historical caps.

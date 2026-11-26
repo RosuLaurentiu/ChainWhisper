@@ -1,6 +1,7 @@
 import { keccak256 } from '@coti-io/coti-ethers';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedFunding, type CurrentPoolPreparedPreview } from '../features/wallet/currentDexPoolFundingCapability';
-import { STAGED_NATIVE_DEX_CANDIDATE as native, type CurrentCheapDexIdentity } from './dexV2Deployment';
+import { STAGED_NATIVE_DEX_CANDIDATE as native } from './currentDexNativeCandidate';
+import { type CurrentCheapDexIdentity } from './dexV2Deployment';
 import type { CurrentPoolSnapshotProducer } from './currentDexNativePoolSnapshot';
 
 export const CURRENT_NATIVE_POOL_PROFILE = 'fa71-class0-new-claim-100-100-add-v1' as const;

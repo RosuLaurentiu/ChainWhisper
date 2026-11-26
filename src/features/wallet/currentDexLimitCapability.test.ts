@@ -4,7 +4,7 @@ import { afterEach,describe,expect,it,vi } from 'vitest';
 import { issueCurrentDexLimitCapability,assertCurrentLimitPrepared } from './currentDexLimitCapability';
 import { currentLimitAbi as abi,currentLimitAbiForCandidate,resolveCurrentLimitScope,CURRENT_LIMIT_MARKET_FOR_POSITION,currentLimitNftAbi,currentLimitBindingAbi,currentLimitMappingSlot as slot,currentLimitAddressSlot,CURRENT_LIMIT_LAYOUT as l,CURRENT_LIMIT_OWNER_LAYOUT as ol,currentLimitTokens,readCurrentLimitOwnerState,CurrentLimitProofMismatch,type CurrentLimitOwnerAction } from '../../lib/currentDexLimit';
 import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from '../../lib/appShared/contracts';
-import { CURRENT_CHEAP_DEX_CANDIDATE as c, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import * as limitPolicy from '../../lib/currentDexC1SwapPolicy';
 import * as limitCodec from '../../lib/currentDexLimit';
@@ -20,8 +20,8 @@ vi.mock('../../lib/privateUint256',()=>({encryptPrivateUint128Input:mocks.small,
 const owner=`0x${'22'.repeat(20)}`,hash=toBeHex(10n,32),txHash=toBeHex(20n,32),engine=c.companions.find(([role])=>role==='ChainWhisperFixedEngine')![1];
 const transfer=new Interface(['event Transfer(address indexed from,address indexed to,(uint256 ciphertextHigh,uint256 ciphertextLow) senderValue,(uint256 ciphertextHigh,uint256 ciphertextLow) receiverValue)']);
 const approval=new Interface(['event Approval(address indexed owner,address indexed spender,(uint256 ciphertextHigh,uint256 ciphertextLow) ownerValue,(uint256 ciphertextHigh,uint256 ciphertextLow) spenderValue)']);
-async function fixture(direction=true,candidate:CurrentCheapDexCandidateKey='cheap-current',pairIndex=0){
-  const c=resolveCurrentCheapDexCandidate(candidate),prepared=candidate==='cheap-exit'||candidate==='cheap-prepared'||candidate==='cheap-history'?resolvePreparedDexScope(candidate).candidate:null,pair=prepared?.pairs[pairIndex],scope=resolveCurrentLimitScope(candidate,pair?.tokens),abi=currentLimitAbiForCandidate(candidate),nft=c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1],engine=scope.engine;
+async function fixture(direction=true,candidate:CurrentCheapDexCandidateKey='cheap-history',pairIndex=0){
+  const c=resolveCurrentCheapDexCandidate(candidate),prepared=resolvePreparedDexScope(candidate).candidate,pair=prepared?.pairs[pairIndex],scope=resolveCurrentLimitScope(candidate,pair?.tokens),abi=currentLimitAbiForCandidate(candidate),nft=c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1],engine=scope.engine;
   vi.clearAllMocks();let active=true,aes='key',observedOwner=owner;
   const signer={getUserOnboardInfo:()=>({aesKey:aes})},guard=async()=>{if(!active)throw new Error('Revoked');};
   const expected=[9007199254740993n,0n,3n,1n,1n,9007199254740993n,direction?1n:0n,0n],words=new Map<string,bigint>();
@@ -55,8 +55,8 @@ async function fixture(direction=true,candidate:CurrentCheapDexCandidateKey='che
   return{cap,request,provider,signer,mine,set,c,pair,scope,engine,abi,bumpRegistry:()=>{registryRevision++;},replaceAes:()=>{aes='other-key';},expected,words,balances,allowances,lock:()=>{aes='';},revoke:()=>{active=false;},changeOwner:()=>{observedOwner=c.core;}};
 }
 
-async function ownerFixture(direction=true,candidate:CurrentCheapDexCandidateKey='cheap-current',pairIndex=0){
-  const c=resolveCurrentCheapDexCandidate(candidate),prepared=candidate==='cheap-exit'||candidate==='cheap-prepared'||candidate==='cheap-history'?resolvePreparedDexScope(candidate).candidate:null,pair=prepared?.pairs[pairIndex],scope=resolveCurrentLimitScope(candidate,pair?.tokens),abi=currentLimitAbiForCandidate(candidate),nft=c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1],engine=scope.engine;
+async function ownerFixture(direction=true,candidate:CurrentCheapDexCandidateKey='cheap-history',pairIndex=0){
+  const c=resolveCurrentCheapDexCandidate(candidate),prepared=resolvePreparedDexScope(candidate).candidate,pair=prepared?.pairs[pairIndex],scope=resolveCurrentLimitScope(candidate,pair?.tokens),abi=currentLimitAbiForCandidate(candidate),nft=c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1],engine=scope.engine;
   const f=await fixture(direction,candidate,pairIndex);f.expected[0]=100n;f.expected[1]=7n;f.expected[5]=100n;
   f.set(nft,slot(9n,ol.nftOwners),BigInt(owner));f.set(nft,currentLimitAddressSlot(owner,ol.nftBalances),1n);
   f.set(engine,slot(0n,ol.engineDirectory),24n);f.set(engine,slot(0n,ol.engineEpochs),1n);f.set(engine,3n,1n);
@@ -190,20 +190,20 @@ describe('current owner Limit discovery capability',()=>{
     await expect(pending).rejects.toThrow('caller hidden');
     expect(f.provider.send.mock.calls.map(([method])=>method)).toEqual(['eth_getBlockByNumber','eth_chainId']);
   });
-  it.each(['cheap-exit','cheap-history']as const)('finds the wallet Limit on %s without signing or decoding its amounts',async key=>{
+  it.each(['cheap-history']as const)('finds the wallet Limit on %s without signing or decoding its amounts',async key=>{
     const f=await ownerFixture(true,key,2);f.set(f.c.core,11n,42n);mocks.decrypt.mockClear();
     const r=await f.cap.readOwnedOrders();expect(r).toMatchObject({complete:true,readyToSign:false,orders:[{positionId:9n,marketId:f.pair!.marketId,poolTokens:f.pair!.tokens,status:0n}]});
     expect(mocks.decrypt).not.toHaveBeenCalled();expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
   });
   it('rejects a changed canonical inventory block',async()=>{
-    const f=await ownerFixture(true,'cheap-exit');f.set(f.c.core,11n,42n);
+    const f=await ownerFixture(true,'cheap-history');f.set(f.c.core,11n,42n);
     const original=f.provider.send.getMockImplementation()!;let heads=0;
     f.provider.send.mockImplementation(async(method,params)=>method==='eth_getBlockByNumber'&&++heads>1?{number:'0xa',hash:toBeHex(999n,32),timestamp:'0x64',transactions:[txHash]}:original(method,params));
     await expect(f.cap.readOwnedOrders()).rejects.toThrow(/chain head changed/);
   });
 });
 describe('shared Limit owner-state read',()=>{
-  const closeFixture=async(key:'cheap-exit'|'cheap-history'='cheap-exit')=>{const f=await ownerFixture(true,key,2);f.ownerMine({data:f.abi.encodeFunctionData('closePrivateOrder',[9n])},'close');mocks.small.mockClear();mocks.wide.mockClear();mocks.decrypt.mockClear();f.provider.getTransaction.mockClear();f.provider.getTransactionReceipt.mockClear();return f;};
+  const closeFixture=async(key:'cheap-history'='cheap-history')=>{const f=await ownerFixture(true,key,2);f.ownerMine({data:f.abi.encodeFunctionData('closePrivateOrder',[9n])},'close');mocks.small.mockClear();mocks.wide.mockClear();mocks.decrypt.mockClear();f.provider.getTransaction.mockClear();f.provider.getTransactionReceipt.mockClear();return f;};
   it('restores the new deployment closed order without private inputs or transaction lookup',async()=>{
     const f=await closeFixture('cheap-history'),state=await f.cap.readClosedOrder({positionId:9n});
     expect(state).toMatchObject({closed:true,readyToSign:false,marketId:f.pair!.marketId,amounts:{unspent:0n,proceeds:0n}});
@@ -229,14 +229,14 @@ describe('shared Limit owner-state read',()=>{
     await expect(f.cap.readClosedOrder({positionId:9n,...(fault==='context'?{expectedContext:'stale'}:{})})).rejects.toThrow();
   });
   it('reads the exact current market,owner,source and encrypted snapshot without issuing signing authority',async()=>{
-    const f=await ownerFixture(true,'cheap-exit',2);mocks.decrypt.mockClear();
-    const state=await readCurrentLimitOwnerState({candidate:'cheap-exit',selectedPair:f.pair!.tokens,owner,positionId:9n,block:{number:10n,hash},rpc:f.provider.send,assertCurrent:async()=>{},attest:async()=>({registryRevision:7n,marketRevision:1n})});
+    const f=await ownerFixture(true,'cheap-history',2);mocks.decrypt.mockClear();
+    const state=await readCurrentLimitOwnerState({candidate:'cheap-history',selectedPair:f.pair!.tokens,owner,positionId:9n,block:{number:10n,hash},rpc:f.provider.send,assertCurrent:async()=>{},attest:async()=>({registryRevision:7n,marketRevision:1n})});
     expect(state).toMatchObject({positionId:9n,sourceId:24n,status:0n,closed:false,terms:1n,ownership:1n,lifecycle:1n,marketId:f.pair!.marketId,nftBalance:1n});
     expect(state.snapshot).toHaveLength(32);expect(mocks.decrypt).not.toHaveBeenCalled();expect(Object.keys(state)).not.toContain('readyToSign');
   });
   it('rejects a former owner before returning encrypted state',async()=>{
-    const f=await ownerFixture(true,'cheap-exit');f.changeOwner();
-    await expect(readCurrentLimitOwnerState({candidate:'cheap-exit',selectedPair:f.pair!.tokens,owner,positionId:9n,block:{number:10n,hash},rpc:f.provider.send,assertCurrent:async()=>{},attest:async()=>({registryRevision:7n,marketRevision:1n})})).rejects.toThrow(/own/);
+    const f=await ownerFixture(true,'cheap-history');f.changeOwner();
+    await expect(readCurrentLimitOwnerState({candidate:'cheap-history',selectedPair:f.pair!.tokens,owner,positionId:9n,block:{number:10n,hash},rpc:f.provider.send,assertCurrent:async()=>{},attest:async()=>({registryRevision:7n,marketRevision:1n})})).rejects.toThrow(/own/);
   });
 });
 describe('source-bound plain Limit owner lifecycle',()=>{
@@ -277,7 +277,7 @@ describe('source-bound plain Limit owner lifecycle',()=>{
 describe('genuine current owner Limit preparation',()=>{
   it.each([true,false])('authenticates exact offered debit, then stored owner snapshot for direction %s',async direction=>{
     const f=await fixture(direction),prepared=(await f.cap.prepareLimit(f.request))!;assertCurrentLimitPrepared(prepared,f.signer);
-    expect(mocks.small.mock.calls.map(x=>x[1])).toEqual([direction?1n:0n,0n,3n,1n,1n,1n,2n]);expect(mocks.wide.mock.calls.map(x=>x[1])).toEqual([9007199254740993n,0n,0n,0n]);
+    expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide.mock.calls.map(x=>x[1])).toEqual([9007199254740993n,...limitCodec.packCurrentLimitTerms(f.request.intent.terms,direction)]);
     f.mine(prepared.data);const created=(await prepared.readResult(txHash))!;expect(created.positionId).toBe(9n);expect(mocks.decrypt.mock.calls).toHaveLength(2);
     const snapshot=(await created.prepareSnapshot!(async()=>true))!;f.mine(snapshot.data,true);mocks.decrypt.mockClear();
     await expect(snapshot.readResult(txHash)).resolves.toMatchObject({positionId:9n,intent:f.request.intent});expect(mocks.decrypt.mock.calls.map(x=>x[1].ciphertextHigh)).toEqual([1n,2n,3n,4n,5n,6n,7n,8n]);
@@ -302,19 +302,6 @@ describe('genuine current owner Limit preparation',()=>{
 });
 
 
-
-describe('selected native Limit issuer',()=>{
-  it.each([true,false])('binds selected Core/Engine/NFT and exact token budget for direction %s',async direction=>{
-    const f=await fixture(direction,'cheap-native'),c=resolveCurrentCheapDexCandidate('cheap-native'),p=(await f.cap.prepareLimit(f.request))!;expect(p).toMatchObject({to:c.core,graph:c.graph,packageSha256:c.packageSha256,readyToSign:false});expect(mocks.graph).toHaveBeenCalledWith(expect.objectContaining({candidate:'cheap-native'}));expect([...mocks.small.mock.calls,...mocks.wide.mock.calls].every(x=>x[2]===c.core)).toBe(true);
-    f.mine(p.data);const result=(await p.readResult(txHash))!;expect(result).toMatchObject({positionId:9n,sourceId:24n});const snapshot=(await result.prepareSnapshot(async()=>true))!;f.mine(snapshot.data,true);expect(await snapshot.readResult(txHash)).toMatchObject({positionId:9n});assertCurrentLimitPrepared(snapshot,f.signer);
-  });
-  it('rejects cross-candidate graph before private encryption',async()=>{const f=await fixture(true,'cheap-native');f.request.graph.expectedGraph=c.graph;await expect(f.cap.prepareLimit(f.request)).rejects.toThrow('Wrong Limit');expect(mocks.wide).not.toHaveBeenCalled();});
-  it.each([true,false])('keeps selected private owner snapshot/proceeds/close accounting for direction %s',async direction=>{
-    const f=await ownerFixture(direction,'cheap-native'),native=resolveCurrentCheapDexCandidate('cheap-native');expect(f.result.amounts).toMatchObject({unspent:100n,proceeds:7n,sellToken0:direction});const p=(await f.prepare('close'))!;expect(p).toMatchObject({to:native.core,graph:native.graph,packageSha256:native.packageSha256,readyToSign:false});f.ownerMine(p,'close');expect(await p.readResult(txHash)).toMatchObject({closed:true,amounts:{unspent:0n,proceeds:0n}});
-  });
-  it('rejects selected owner preparation after lease loss',async()=>{const f=await fixture(true,'cheap-native');f.revoke();await expect(f.cap.prepareLimit(f.request)).rejects.toThrow('Revoked');});
-});
-
 describe('selected six-market Limit preparation and accounting',()=>{
   it('binds new History candidate creation, snapshot and funding review to its selected market',async()=>{
     const f=await fixture(false,'cheap-history',4),p=(await f.cap.prepareLimit(f.request))!;
@@ -331,7 +318,7 @@ describe('selected six-market Limit preparation and accounting',()=>{
   });
   it.each([0,2,5])('rejects inadequate exact funding in pair %i before review or encrypted-input signatures',async index=>{
     for(const direction of [true,false])for(const fault of ['balance','insufficient-allowance']as const){
-      const f=await fixture(direction,'cheap-exit',index),offered=f.c.tokens.findIndex(([token])=>token===f.pair!.tokens[direction?0:1]),amount=f.request.intent.amount;
+      const f=await fixture(direction,'cheap-history',index),offered=f.c.tokens.findIndex(([token])=>token===f.pair!.tokens[direction?0:1]),amount=f.request.intent.amount;
       if(fault==='balance')f.balances[offered]=amount-1n;
       else f.allowances[offered]=amount-1n;
       await expect(f.cap.prepareLimit(f.request)).rejects.toThrow(fault==='balance'?/balance/:/allowance/);
@@ -339,14 +326,14 @@ describe('selected six-market Limit preparation and accounting',()=>{
     }
   });
   it.each([true,false])('accepts exactly funded direction %s without requiring unrelated token allowances',async direction=>{
-    const f=await fixture(direction,'cheap-exit',4),offered=f.c.tokens.findIndex(([token])=>token===f.pair!.tokens[direction?0:1]);
+    const f=await fixture(direction,'cheap-history',4),offered=f.c.tokens.findIndex(([token])=>token===f.pair!.tokens[direction?0:1]);
     f.balances[offered]=f.request.intent.amount;
     const prepared=await f.cap.prepareLimit(f.request);expect(prepared).toMatchObject({phase:'limit-create',marketId:f.pair!.marketId});
     expect(f.request.confirm).toHaveBeenCalledOnce();expect(mocks.wide.mock.calls[0][1]).toBe(f.request.intent.amount);
   });
   it.each(Array.from({length:6},(_,index)=>index))('binds pair %i in both directions to its market ABI, Engine and exact four-token accounting',async index=>{
     for(const direction of [true,false]){
-      const f=await fixture(direction,'cheap-exit',index),p=(await f.cap.prepareLimit(f.request))!;
+      const f=await fixture(direction,'cheap-history',index),p=(await f.cap.prepareLimit(f.request))!;
       expect(p.marketId).toBe(f.pair!.marketId);expect(p.poolTokens).toEqual(f.pair!.tokens);
       expect(f.abi.decodeFunctionData('createPrivateOrder',p.data)[0]).toBe(f.pair!.marketId);
       expect([...mocks.small.mock.calls,...mocks.wide.mock.calls].every(call=>call[3]===f.abi.getFunction('createPrivateOrder')!.selector)).toBe(true);
@@ -354,13 +341,13 @@ describe('selected six-market Limit preparation and accounting',()=>{
       const created=(await p.readResult(txHash))!;expect(created).toMatchObject({marketId:f.pair!.marketId,poolTokens:f.pair!.tokens,positionId:9n,sourceId:24n,readyToSign:false});
       const snap=(await created.prepareSnapshot(async()=>true))!;f.mine(snap.data,true);
       expect(await snap.readResult(txHash)).toMatchObject({marketId:f.pair!.marketId,positionId:9n,sourceId:24n});
-      expect(mocks.registry).toHaveBeenCalledWith(expect.objectContaining({candidate:'cheap-exit'}));
+      expect(mocks.registry).toHaveBeenCalledWith(expect.objectContaining({candidate:'cheap-history'}));
       expect(f.provider.send.mock.calls.filter(([method])=>method==='eth_getStorageAt').some(([,params])=>params[0]===f.engine)).toBe(true);
     }
   });
   it.each(Array.from({length:6},(_,index)=>index))('pays only selected pair %i, preserves other tokens, and keeps source ID separate from NFT ID',async index=>{
     for(const direction of [true,false]){
-      const f=await ownerFixture(direction,'cheap-exit',index),p=(await f.prepare('close'))!;
+      const f=await ownerFixture(direction,'cheap-history',index),p=(await f.prepare('close'))!;
       expect(f.result).toMatchObject({positionId:9n,sourceId:24n,marketId:f.pair!.marketId});
       await p.assertAuthority({number:10n,hash});const receipt=f.ownerMine(p,'close');
       expect(receipt.logs.filter(log=>f.c.tokens.some(([address])=>address===log.address)).map(log=>log.address).sort()).toEqual([...f.pair!.tokens].sort());
@@ -368,19 +355,19 @@ describe('selected six-market Limit preparation and accounting',()=>{
     }
   });
   it.each(['market','mapping','registry-engine','registry-revision','key'] as const)('rejects %s owner authority drift before any send',async fault=>{
-    const f=await ownerFixture(true,'cheap-exit',3);
-    if(fault==='market')f.set(f.c.core,slot(9n,CURRENT_LIMIT_MARKET_FOR_POSITION),BigInt(STAGED_EXIT_PREVIEW_DEX_CANDIDATE.pairs[0].marketId));
+    const f=await ownerFixture(true,'cheap-history',3);
+    if(fault==='market')f.set(f.c.core,slot(9n,CURRENT_LIMIT_MARKET_FOR_POSITION),BigInt(c.pairs[0].marketId));
     if(fault==='mapping')f.set(f.engine,slot(9n,l.engineMapping),25n);
     if(fault==='registry-engine'){const original=mocks.registry.getMockImplementation()!;mocks.registry.mockImplementation(async args=>{const result=await original(args);return{...result,markets:result.markets.map((m:{marketId:string;engine:string})=>m.marketId===f.pair!.marketId?{...m,engine:f.c.core}:m)};});}
     if(fault==='registry-revision')f.bumpRegistry();if(fault==='key')f.replaceAes();
     await expect(f.prepare('claim')).rejects.toThrow();
   });
   it('reads status at source ID, not at the distinct NFT ID',async()=>{
-    const f=await ownerFixture(true,'cheap-exit',3);f.set(f.engine,slot(9n,l.engineStatus),1n);
+    const f=await ownerFixture(true,'cheap-history',3);f.set(f.engine,slot(9n,l.engineStatus),1n);
     expect(await f.prepare('claim')).toMatchObject({positionId:9n});
   });
   it.each(['other-wallet','other-log','selected-payout','allowance','canonical'] as const)('rejects %s after owner payout',async fault=>{
-    const f=await ownerFixture(false,'cheap-exit',4),p=(await f.prepare('close'))!,receipt=f.ownerMine(p,'close'),other=f.c.tokens.findIndex(([address])=>!f.pair!.tokens.some(token=>token===address));
+    const f=await ownerFixture(false,'cheap-history',4),p=(await f.prepare('close'))!,receipt=f.ownerMine(p,'close'),other=f.c.tokens.findIndex(([address])=>!f.pair!.tokens.some(token=>token===address));
     if(fault==='other-wallet')f.balances[other]++;
     if(fault==='other-log')receipt.logs.push({address:f.c.tokens[other][0],...transfer.encodeEventLog(transfer.getEvent('Transfer')!,[f.c.core,owner,[999n,0n],[1n,0n]])});
     if(fault==='selected-payout')receipt.logs[1].data=transfer.encodeEventLog(transfer.getEvent('Transfer')!,[f.c.core,owner,[999n,0n],[1n,999n]]).data;
@@ -389,16 +376,16 @@ describe('selected six-market Limit preparation and accounting',()=>{
     await expect(p.readResult(txHash)).rejects.toThrow();
   });
   it.each(['other-wallet','other-log','allowance','market','registry'] as const)('rejects %s creation drift',async fault=>{
-    const f=await fixture(true,'cheap-exit',5),p=(await f.cap.prepareLimit(f.request))!,receipt=f.mine(p.data),other=f.c.tokens.findIndex(([address])=>!f.pair!.tokens.some(token=>token===address));
+    const f=await fixture(true,'cheap-history',5),p=(await f.cap.prepareLimit(f.request))!,receipt=f.mine(p.data),other=f.c.tokens.findIndex(([address])=>!f.pair!.tokens.some(token=>token===address));
     if(fault==='other-wallet')f.balances[other]++;
     if(fault==='other-log')receipt.logs.push({address:f.c.tokens[other][0],...transfer.encodeEventLog(transfer.getEvent('Transfer')!,[owner,f.c.core,[1n,0n],[999n,0n]])});
     if(fault==='allowance')f.allowances[other]++;if(fault==='market')f.set(f.c.core,slot(9n,CURRENT_LIMIT_MARKET_FOR_POSITION),0n);if(fault==='registry')f.bumpRegistry();
     await expect(p.readResult(txHash)).rejects.toThrow();
   });
-  it('retains old prepared scope with explicit pair and rejects missing or wrong pairs before encryption',async()=>{
-    const f=await fixture(true,'cheap-prepared',2),p=(await f.cap.prepareLimit(f.request))!;expect(p.marketId).toBe(f.pair!.marketId);
+  it('binds the explicit pair and rejects missing or wrong pairs before encryption',async()=>{
+    const f=await fixture(true,'cheap-history',2),p=(await f.cap.prepareLimit(f.request))!;expect(p.marketId).toBe(f.pair!.marketId);
     mocks.small.mockClear();mocks.wide.mockClear();
-    for(const selectedPair of [undefined,[f.pair!.tokens[0],f.pair!.tokens[0]],[f.pair!.tokens[0],owner]] as const)await expect(issueCurrentDexLimitCapability({candidate:'cheap-exit',selectedPair}as never)).rejects.toThrow('Limit market pair');
+    for(const selectedPair of [undefined,[f.pair!.tokens[0],f.pair!.tokens[0]],[f.pair!.tokens[0],owner]] as const)await expect(issueCurrentDexLimitCapability({candidate:'cheap-history',selectedPair}as never)).rejects.toThrow('Limit market pair');
     expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
   });
 });
@@ -407,7 +394,7 @@ describe('selected six-market Limit preparation and accounting',()=>{
 describe('current plain Limit edit preparation',()=>{
   const terms=[5n,2n,1n,1n,2n]as const;
   const edit=(f:Awaited<ReturnType<typeof ownerFixture>>,action:'topup'|'reprice',extra={})=>f.cap.prepareOwnerAction({positionId:9n,action,snapshot:f.result,expectedContext:f.result.context,confirm:async()=>true,...(action==='topup'?{topUpAmount:11n}:{newTerms:terms}),...extra});
-  it.each([[true,'cheap-exit'],[false,'cheap-exit'],[false,'cheap-history']]as const)('binds exact top-up funding direction %s on %s, clears stale amount authority and checks the sender debit',async(direction,key)=>{
+  it.each([[true,'cheap-history'],[false,'cheap-history']]as const)('binds exact top-up funding direction %s on %s, clears stale amount authority and checks the sender debit',async(direction,key)=>{
     const f=await ownerFixture(direction,key,2),prepared=(await edit(f,'topup'))!,call=f.abi.decodeFunctionData('topUpPrivateOrder',prepared.data);
     expect(call[0]).toBe(9n);expect(call[1]).toBe(1n);expect(call[2]).toBe(1n);expect(call[3].ciphertext.ciphertextLow).toBe(11n);
     expect(prepared).toMatchObject({fundingToken:f.scope.poolTokens[direction?0:1],topUpAmount:11n,expectedTermsRevision:1n});
@@ -442,7 +429,7 @@ describe('current plain Limit edit preparation',()=>{
     f.set(f.c.core,slot(24n,l.coreSources)+13n,123n);f.set(f.engine,slot(24n,l.engineSources)+16n,456n);
     await expect(prepared.readResult(txHash)).rejects.toThrow(/top-up/);
   });
-  it.each(['cheap-exit','cheap-history']as const)('encrypts exact repricing on %s with zero range terms, binds selector and leaves wallets fixed',async key=>{
+  it.each(['cheap-history']as const)('encrypts exact repricing on %s with zero range terms, binds selector and leaves wallets fixed',async key=>{
     const f=await ownerFixture(true,key),prepared=(await edit(f,'reprice'))!,call=f.abi.decodeFunctionData('repricePrivateOrder',prepared.data);
     // The selected 'cheap-history' candidate uses the packed Limit input graph: three (high<<128|low) term pairs, no range inputs.
     if(limitCodec.usesPackedLimitInputs(f.c)){
@@ -458,24 +445,24 @@ describe('current plain Limit edit preparation',()=>{
     expect(await prepared.readResult(txHash)).toMatchObject({values:null,amounts:null,refreshRequired:true,termsRevision:2n,lifecycleRevision:1n});
   });
   it.each(['zero','overflow','witness','extra','snapshot','context','allowance','balance'])('rejects %s before confirmation and encryption',async fault=>{
-    const f=await ownerFixture(true,'cheap-exit'),confirm=vi.fn(async()=>true),extra:Record<string,unknown>={confirm};let action:'topup'|'reprice'='topup';
+    const f=await ownerFixture(true,'cheap-history'),confirm=vi.fn(async()=>true),extra:Record<string,unknown>={confirm};let action:'topup'|'reprice'='topup';
     if(fault==='zero')extra.topUpAmount=0n;if(fault==='overflow')extra.topUpAmount=(1n<<256n)-1n;
     if(fault==='witness'){action='reprice';extra.newTerms=[5n,2n,1n,0n,0n];}if(fault==='extra')extra.fundingToken=f.scope.poolTokens[1];if(fault==='snapshot')extra.snapshot={...f.result};if(fault==='context')extra.expectedContext='0x';
     const index=f.c.tokens.findIndex(([address])=>address===f.scope.poolTokens[0]);if(fault==='allowance')f.allowances[index]=0n;if(fault==='balance')f.balances[index]=0n;
     mocks.small.mockClear();mocks.wide.mockClear();await expect(edit(f,action,extra)).rejects.toThrow();expect(confirm).not.toHaveBeenCalled();expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();
   });
   it('copies repricing terms before asynchronous review',async()=>{
-    const f=await ownerFixture(true,'cheap-exit'),mutable:bigint[]=[...terms],prepared=await edit(f,'reprice',{newTerms:mutable,confirm:async()=>{mutable[0]=99n;return true;}});
+    const f=await ownerFixture(true,'cheap-history'),mutable:bigint[]=[...terms],prepared=await edit(f,'reprice',{newTerms:mutable,confirm:async()=>{mutable[0]=99n;return true;}});
     expect(prepared!.newTerms).toEqual(terms);expect(Object.isFrozen(prepared!.newTerms)).toBe(true);
   });
-  it.each(['cheap-exit','cheap-history']as const)('issues branded read-only funding review on %s with low allowance; revokes it on any private wallet change',async key=>{
+  it.each(['cheap-history']as const)('issues branded read-only funding review on %s with low allowance; revokes it on any private wallet change',async key=>{
     const f=await ownerFixture(false,key,2),token=f.scope.poolTokens[1],index=f.c.tokens.findIndex(([a])=>a===token);f.allowances[index]=0n;mocks.small.mockClear();mocks.wide.mockClear();
     const review=await f.cap.prepareFundingReview({kind:'topup',positionId:9n,snapshot:f.result,expectedContext:f.result.context,amount:11n});
     expect(review).toMatchObject({phase:'limit-funding-review',kind:'topup',fundingToken:token,amount:11n,readyToSign:false});assertCurrentLimitPrepared(review,f.signer);expect(()=>assertCurrentLimitPrepared({...review},f.signer)).toThrow();
     await review.assertAuthority({number:10n,hash});expect(mocks.small).not.toHaveBeenCalled();expect(mocks.wide).not.toHaveBeenCalled();f.allowances[index]=11n;await expect(review.assertAuthority({number:10n,hash})).rejects.toThrow(/changed/);
   });
   it('reviews creation funding and rejects forged top-up snapshot or direction fields',async()=>{
-    const f=await ownerFixture(true,'cheap-exit');expect(await f.cap.prepareFundingReview({kind:'create',sellToken0:false,amount:1n})).toMatchObject({kind:'create',fundingToken:f.scope.poolTokens[1]});
+    const f=await ownerFixture(true,'cheap-history');expect(await f.cap.prepareFundingReview({kind:'create',sellToken0:false,amount:1n})).toMatchObject({kind:'create',fundingToken:f.scope.poolTokens[1]});
     await expect(f.cap.prepareFundingReview({kind:'topup',positionId:9n,snapshot:{...f.result},expectedContext:f.result.context,amount:1n})).rejects.toThrow(/Refresh/);
     await expect(f.cap.prepareFundingReview({kind:'topup',positionId:9n,snapshot:f.result,expectedContext:f.result.context,amount:1n,sellToken0:false}as never)).rejects.toThrow(/Invalid/);
   });

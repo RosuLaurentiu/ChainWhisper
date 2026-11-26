@@ -1,13 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as current } from './currentDexExitCandidate';
-import { STAGED_NATIVE_DEX_CANDIDATE as historical, type CurrentCheapDexIdentity } from './dexV2Deployment';
-import { assertCurrentNativeSwapIntent } from './currentDexNativeSwapPolicy';
-import type { CurrentCheapDexPreparedQuote } from './currentDexSubmission';
-import { createCurrentAttemptBoundary, currentCheapDexGasCaps, CURRENT_NATIVE_FIXED_GAS_PRICE,
-  CURRENT_NATIVE_RECOVERY_RESERVE } from './currentDexSubmission';
+import { STAGED_NATIVE_DEX_CANDIDATE as historical } from './currentDexNativeCandidate';
+import { createCurrentAttemptBoundary, CURRENT_NATIVE_FIXED_GAS_PRICE, CURRENT_NATIVE_RECOVERY_RESERVE } from './currentDexSubmission';
 import { CURRENT_EXIT_SWAP_GAS_CAPS, CURRENT_EXIT_SWAP_FIXED_GAS_PRICE, currentSwapFixedGasPrice } from './currentDexExitSwapPolicy';
 import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './currentDexHistoryCandidate';
 import { encodeCurrentDexQuoteRequest } from './currentDexOperation';
 import { CURRENT_SLIPPAGE_DEX_ACCEPT_ABI } from './currentDexQuoteReview';
 import { Interface } from '@coti-io/coti-ethers';
@@ -19,31 +15,6 @@ import { createHash } from 'node:crypto';
 vi.mock('./currentDexC1SwapPolicy', async original => ({
   ...await original<typeof import('./currentDexC1SwapPolicy')>(), assertCurrentD06AppAuthority: () => {}
 }));
-const prepared = (maximumInput = 20_000_000n, candidate: CurrentCheapDexIdentity = current): CurrentCheapDexPreparedQuote => ({ intent: {
-  candidate, quoteProtocol: 'quote-slippage', toleranceBps: 50, maximumInput,
-  minimumInput: 0n, minimumOutput: 0n, rateNumerator: 0n, rateDenominator: 1n, deadline: 1000n
-} } as unknown as CurrentCheapDexPreparedQuote);
-
-describe('b2aa test-token swap intent bounds', () => {
-  it('accepts the tested 20M raw-unit ceiling', () => {
-    expect(() => assertCurrentNativeSwapIntent(prepared(), 100n)).not.toThrow();
-  });
-  it.each([0n, 20_000_001n, 20n * 10n ** 18n])('rejects input outside its tested raw-unit scope (%s)', maximum => {
-    expect(() => assertCurrentNativeSwapIntent(prepared(maximum), 100n)).toThrow('finite profile');
-  });
-  it.each(['tolerance', 'lifetime', 'expiry', 'minimum'] as const)('rejects b2aa %s drift', fault => {
-    const p = prepared(), intent = { ...p.intent };
-    if (fault === 'tolerance') intent.toleranceBps = 51;
-    if (fault === 'lifetime') intent.deadline = 1001n;
-    if (fault === 'expiry') intent.deadline = 100n;
-    if (fault === 'minimum') intent.minimumInput = 20_000_001n;
-    expect(() => assertCurrentNativeSwapIntent({ ...p, intent }, 100n)).toThrow('finite profile');
-  });
-  it('preserves the separate historical input scope', () => {
-    expect(() => assertCurrentNativeSwapIntent(prepared(100n * 10n ** 18n, historical), 100n)).not.toThrow();
-  });
-});
-
 function sender(profile: 'fast-pool' | 'cheap-async', phase: 'quote' | 'accept' | 'cancel' | 'recover') {
   const owner = `0x${'22'.repeat(20)}`, hash = `0x${'33'.repeat(32)}`, context = `0x${'44'.repeat(32)}`;
   const wide = { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n }, signature: `0x${'11'.repeat(65)}` };
@@ -71,9 +42,6 @@ function sender(profile: 'fast-pool' | 'cheap-async', phase: 'quote' | 'accept' 
 }
 
 describe('b2aa technical user sender with the hold mocked only in this suite', () => {
-  it('keeps current Fast caps consistent with its shared accounting profile without granting authority', () => {
-    expect(currentCheapDexGasCaps(history)['fast-pool']).toEqual(CURRENT_EXIT_SWAP_GAS_CAPS['fast-pool']);
-  });
   it('selects 52M only for b2aa and keeps historical fa71/d06 at 50M', () => {
     expect(currentSwapFixedGasPrice(current)).toBe(52_000_000n);
     expect(currentSwapFixedGasPrice(historical)).toBe(CURRENT_NATIVE_FIXED_GAS_PRICE);
@@ -97,10 +65,6 @@ describe('b2aa technical user sender with the hold mocked only in this suite', (
     }
     expect(CURRENT_EXIT_SWAP_GAS_CAPS).toEqual({ 'fast-pool': { quote: 110_000_000n, accept: 110_000_000n },
       'cheap-async': { quote: 110_000_000n, accept: 35_000_000n, cancel: 30_000_000n, recover: 50_000_000n } });
-  });
-  it('selects exact b2aa caps and rejects candidate identity changes', () => {
-    expect(currentCheapDexGasCaps(current)).toBe(CURRENT_EXIT_SWAP_GAS_CAPS);
-    expect(() => currentCheapDexGasCaps({ ...current, packageSha256: '00' })).toThrow('identity changed');
   });
   it.each([['fast-pool', 'quote'], ['fast-pool', 'accept'], ['cheap-async', 'quote'], ['cheap-async', 'accept'], ['cheap-async', 'cancel'], ['cheap-async', 'recover']] as const)('uses exact resources and cap for %s %s', async (profile, phase) => {
     const f = sender(profile, phase); await f.send();

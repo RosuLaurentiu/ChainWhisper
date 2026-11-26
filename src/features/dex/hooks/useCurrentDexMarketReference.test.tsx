@@ -1,13 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { AbiCoder,Interface,keccak256 } from '@coti-io/coti-ethers';
-import { CURRENT_CHEAP_DEX_CANDIDATE as current,STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from '../../../lib/dexV2Deployment';
+const exit={core:`0x${'99'.repeat(20)}`};
 import { STAGED_GAP_DEX_CANDIDATE as history } from '../../../lib/currentDexGapCandidate';
 import { makeCurrentReferenceStorage } from '../../../../tests/fixtures/currentReferenceSource.fixture';
 vi.mock('../../../lib/selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('../../../lib/selectedCurrentDexCandidate')>();const current=await import('../../../lib/currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});
 import { CURRENT_DEX_DISPLAY_PAIR,readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
-import { HISTORY_FIXTURE_DAY,makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
+import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { loadCurrentDexDailyPrice } from './useCurrentDexDailyPrice';
 import * as priceReads from '../../../lib/currentDexDailyPrice';
 import useCurrentDexMarketReference,{loadCurrentDexMarketReference} from './useCurrentDexMarketReference';
@@ -179,9 +179,9 @@ describe('selected candidate market-reference hook',()=>{
     expect(Render(false).status).toBe('unavailable');expect(()=>assertions[2]()).toThrow('superseded');
     await vi.advanceTimersByTimeAsync(61000);expect(read).toHaveBeenCalledTimes(3);
   });
-  it('keeps the unsupported historical default inactive',()=>{
+  it('starts the default current candidate Core read without a daily recorder',()=>{
     function View(){return <output>{useCurrentDexMarketReference(true).status}</output>;}
-    expect(renderToStaticMarkup(<View/>)).toContain('unavailable');
+    expect(renderToStaticMarkup(<View/>)).toContain('loading');
     expect(state.read).toHaveBeenLastCalledWith(expect.objectContaining({pair:CURRENT_DEX_DISPLAY_PAIR,count:1,config:{status:'inactive'}}));
   });
   it('uses the current Core for each market and orientation without a recorder fallback',()=>{
@@ -192,15 +192,6 @@ describe('selected candidate market-reference hook',()=>{
       expect(state.read).toHaveBeenLastCalledWith({pair:direction,count:1,config:{status:'inactive'}});
       }
     }
-  });
-  it('uses the selected ratio for a verified observation and never reuses it for a different pair',async()=>{
-    const f=makeHistoryFixture();state.view=await loadCurrentDexDailyPrice({config:f.config,pair:f.manifest.symbols,provider:f.provider});
-    vi.useFakeTimers();vi.setSystemTime(Number(HISTORY_FIXTURE_DAY*86400n+100n)*1000);
-    const reversed=[f.manifest.symbols[1],f.manifest.symbols[0]]as const;
-    function View(){const r=useCurrentDexMarketReference(true,current,reversed);return <output>{r.status==='available'?r.price:r.status}</output>;}
-    expect(renderToStaticMarkup(<View/>)).toContain('0.5');
-    function Other(){return <output>{useCurrentDexMarketReference(true,current,['BCN','HBR']).status}</output>;}
-    expect(renderToStaticMarkup(<Other/>)).toContain('unavailable');
   });
   it('starts the current candidate Core read without a daily recorder and keeps inactive pages unavailable',()=>{
     for(const active of [true,false]){

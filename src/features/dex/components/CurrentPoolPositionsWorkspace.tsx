@@ -6,7 +6,7 @@ import { logMobileWalletDiagnostic } from '../../../lib/mobileWalletDiagnostics'
 import { getProviderErrorMessage, isProviderActionRejected } from '../../../lib/appShared/core';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
-import { resolveCurrentCheapDexCandidate, STAGED_NATIVE_DEX_CANDIDATE, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { CURRENT_NATIVE_POOL_PROFILE } from '../../../lib/currentDexNativePoolPolicy';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
 import type { issueCurrentDexPoolPositionCapability } from '../../wallet/currentDexPoolPositionCapability';
@@ -38,12 +38,12 @@ export const currentPoolWithdrawalFraction=(percentage:string):readonly [bigint,
   while(b!==0n)[a,b]=[b,a%b];n/=a;d/=a;
   if(d>=1n<<128n)throw new Error('Withdrawal percentage is outside the supported range.');return[n,d];
 };
-export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candidateKey='cheap-current',visible=true,managementNavigation,selectedPair,priceDisplayInverted=false}:{selectedPair?:readonly[string,string];priceDisplayInverted?:boolean;sharedWalletSession?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;visible?:boolean;managementNavigation?:ReactNode}){
-  const preparedScope=candidateKey==='cheap-prepared'||candidateKey==='cheap-exit'||candidateKey==='cheap-history'?resolvePreparedDexScope(candidateKey):null;
-  const candidate=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),nativeTrial=candidate.graph===STAGED_NATIVE_DEX_CANDIDATE.graph;
+export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candidateKey='cheap-history',visible=true,managementNavigation,selectedPair,priceDisplayInverted=false}:{selectedPair?:readonly[string,string];priceDisplayInverted?:boolean;sharedWalletSession?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;visible?:boolean;managementNavigation?:ReactNode}){
+  const preparedScope=resolvePreparedDexScope(candidateKey);
+  const candidate=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),nativeTrial=false as boolean;
   const recordScope=currentDexRecordScope(candidate,sharedWalletSession?.walletAddress);
   const preparedCandidate=preparedScope!==null,signedSnapshot=nativeTrial||preparedCandidate;
-  const exitCandidate=preparedScope?.key==='cheap-exit'||preparedScope?.key==='cheap-history';
+  const exitCandidate=true;
   const ownedDiscovery=exitCandidate;
   const [id,setId]=useState(''),[percentage,setPercentage]=useState('50'),[minimum0,setMinimum0]=useState('0'),[minimum1,setMinimum1]=useState('0'),[recipient,setRecipient]=useState('');
   const [busy,setBusy]=useState(false),[blocked,setBlocked]=useState(false),[message,setStoredMessage]=useState('');

@@ -5,7 +5,7 @@ import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice'
 
 type Capability=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexPoolPositionCapability']>>>;
 type Inventory=Awaited<ReturnType<Capability['readOwnedPositions']>>;
-export default function CurrentOwnedPoolPositions({session,candidateKey='cheap-exit',visible,disabled=false,refreshToken='',selectedId,onSelect,managementNavigation}: {
+export default function CurrentOwnedPoolPositions({session,candidateKey='cheap-history',visible,disabled=false,refreshToken='',selectedId,onSelect,managementNavigation}: {
   session?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;visible:boolean;disabled?:boolean;refreshToken?:string;selectedId?:string;managementNavigation?:ReactNode;onSelect:(id:bigint)=>void;
 }) {
   const candidate=resolveCurrentCheapDexCandidate(candidateKey);

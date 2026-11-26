@@ -49,7 +49,7 @@ const formatPolicyAmount = (amount: bigint) => {
   return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction ? `.${fraction}` : ''}`;
 };
 
-export default function CurrentSharedTestTokenControls({ sharedWalletSession, disabled = false, candidateKey = 'cheap-prepared', onInspect }: {
+export default function CurrentSharedTestTokenControls({ sharedWalletSession, disabled = false, candidateKey = 'cheap-history', onInspect }: {
   sharedWalletSession?: SharedWalletSession; disabled?: boolean; candidateKey?: CurrentCheapDexCandidateKey;
   onInspect?: (view: CurrentDexOwnerRecoveryView) => void;
 }) {

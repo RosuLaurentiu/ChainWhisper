@@ -1,11 +1,7 @@
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { AbiCoder, Interface, toBeHex } from '@coti-io/coti-ethers';
 import { describe, expect, it } from 'vitest';
-import { ARCHIVED_CHEAP_DEX_CANDIDATE as CURRENT_CHEAP_DEX_CANDIDATE } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as CURRENT_CHEAP_DEX_CANDIDATE } from './dexV2Deployment';
 import { CURRENT_POOL_FUNDING_ABI, checkCurrentPoolFundingValues, decodeCurrentPoolFundingEvent,
   encodeCurrentPoolCreation, encodeCurrentPoolFundingPreview, PREPARED_POOL_FUNDING_ABI,
   encodePreparedPoolFundingPreview, encodePreparedPoolCreation, encodePreparedPoolTopUp, packPoolInputPair, usesPackedPoolInputs, type PoolFundingInput } from './currentDexPoolFunding';
@@ -52,28 +48,6 @@ const event = (id = 0n) => ({ address: core, ...abi.encodeEventLog(abi.getEvent(
   [id, context, Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]) });
 
 describe('current shared Pool owner funding codec', () => {
-  it('matches the frozen deployed candidate Core and event ABI, not the old successor API', () => {
-    // This ABI check needs frozen bytes, not the old runner's mutable production-artifact prerequisite.
-    const root = fileURLToPath(new URL('../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/matching-boundary-build-1/', import.meta.url));
-    const manifest = JSON.parse(readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-    const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
-    expect(hash(JSON.stringify(manifest.graph))).toBe(CURRENT_CHEAP_DEX_CANDIDATE.graph);
-    const frozenAbi = (name: string) => {
-      const rows = manifest.graph.filter((row: { path: string }) => row.path.replace(/\\/g, '/').endsWith(`/${name}.json`));
-      expect(rows).toHaveLength(1);
-      const bytes = readFileSync(path.join(root, 'snapshot', rows[0].path));
-      expect(hash(bytes)).toBe(rows[0].sha256);
-      return JSON.parse(bytes.toString()).abi;
-    };
-    const actualCore = new Interface(frozenAbi('ChainWhisperDexCore'));
-    const actualEvents = new Interface(frozenAbi('ChainWhisperDexPositionCommands'));
-    for (const name of ['previewPoolFunding', 'createPoolPosition']) {
-      expect(abi.getFunction(name)!.format('sighash')).toBe(actualCore.getFunction(name)!.format('sighash'));
-      expect(abi.getFunction(name)!.selector).toBe(actualCore.getFunction(name)!.selector);
-    }
-    expect(event()).toEqual({ address: core, ...actualEvents.encodeEventLog(actualEvents.getEvent('PoolFundingPreviewed')!,
-      [0n, context, Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]) });
-  });
   it('keeps all thirteen preview ciphertexts while changing only entry-point signatures', () => {
     const preview = encodeCurrentPoolFundingPreview(0n, inputs);
     const resigned = inputs.map(input => ({ ...input, signature: `0x${'22'.repeat(65)}` }));

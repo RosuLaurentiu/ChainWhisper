@@ -8,8 +8,7 @@ import { createDexV2ReadCapability, readCurrentDexPrincipalReceipt, readCurrentD
 import { CURRENT_DEX_ACCEPT_ABI } from './currentDexQuoteReview';
 import { CURRENT_DEX_OPEN_ABI, decodeCurrentDexQuoteIssue } from './currentDexOperation';
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI, CURRENT_FAST_DEX_RECEIPT_ABI,
-  decodeCurrentCheapDexOperation, type CurrentCheapDexProfile } from './currentDexOperation';
-import { ARCHIVED_CHEAP_DEX_CANDIDATE } from './dexV2Deployment';
+  type CurrentCheapDexProfile } from './currentDexOperation';
 import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI, encodeCurrentDexQuoteRequest, packCurrentDexMinimumRate } from './currentDexOperation';
 
 describe('packed current Quote price input', () => {
@@ -106,20 +105,6 @@ describe('current DEX public operation codec', () => {
     expect(() => decodeCurrentDexQuoteIssue(old)).toThrow();
   });
 
-  it('uses the frozen 04ea stages and preserves the Fast consumed-state limit', () => {
-    const abi = new Interface(CURRENT_CHEAP_DEX_OPERATION_ABI), zero = `0x${'00'.repeat(32)}`;
-    const asyncData = (stage: number, ctx = stage >= 4 ? context : zero) => abi.encodeFunctionResult('cheapAsyncPublic', [stage, ctx, stage === 0 ? 0n : 100n]);
-    const phases = ['not-found', 'preparing-quote', 'preparing-quote', 'preparing-quote', 'quote-prepared', 'settling', 'settled', 'released'];
-    phases.forEach((phase, stage) => expect(decodeCurrentCheapDexOperation(asyncData(stage), 99n, 'cheap-async', ARCHIVED_CHEAP_DEX_CANDIDATE).phase).toBe(phase));
-    expect(decodeCurrentCheapDexOperation(asyncData(7, zero), 99n, 'cheap-async', ARCHIVED_CHEAP_DEX_CANDIDATE).phase).toBe('released');
-    for (const stage of [1, 4, 5]) expect(decodeCurrentCheapDexOperation(asyncData(stage), 100n, 'cheap-async', ARCHIVED_CHEAP_DEX_CANDIDATE).phase).toBe('expired-unrecovered');
-    for (const raw of [asyncData(8), asyncData(1, context), asyncData(4, zero), asyncData(4) + '00']) expect(() => decodeCurrentCheapDexOperation(raw, 99n, 'cheap-async', ARCHIVED_CHEAP_DEX_CANDIDATE)).toThrow();
-    const fast = (ready: boolean) => abi.encodeFunctionResult('fastPoolQuotePublic', [context, 100n, ready]);
-    expect(decodeCurrentCheapDexOperation(fast(true), 99n, 'fast-pool').phase).toBe('quote-prepared');
-    expect(decodeCurrentCheapDexOperation(fast(true), 100n, 'fast-pool').phase).toBe('expired-unrecovered');
-    expect(decodeCurrentCheapDexOperation(fast(false), 101n, 'fast-pool').phase).toBe('consumed-unverified');
-    expect(decodeCurrentCheapDexOperation(fast(false), 101n, 'fast-pool')).not.toHaveProperty('funded');
-  });
   it('matches the deployed shared-Pool Core operation and private receipt ABI', () => {
     const native = new Interface(frozen.artifacts.ChainWhisperDexCore.abi), shared = new Interface(CURRENT_SHARED_POOL_OPERATION_ABI);
     expect(shared.getFunction('operationPublic')?.format('full')).toBe(native.getFunction('operationPublic')?.format('full'));

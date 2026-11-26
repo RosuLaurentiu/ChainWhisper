@@ -1,5 +1,6 @@
 import { isCurrentDexBrowserSigner, assertCurrentDexBrowserWindow } from './currentDexBrowserPolicy';
-import { STAGED_NATIVE_DEX_CANDIDATE as native, assertCurrentCheapDexNativeAdmission,
+import { STAGED_NATIVE_DEX_CANDIDATE as native } from './currentDexNativeCandidate';
+import { rejectUnprovenNativeAdmission,
   currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate, type CurrentCheapDexIdentity } from './dexV2Deployment';
 import type { CurrentCheapDexPreparedQuote } from './currentDexSubmission';
 import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
@@ -31,7 +32,7 @@ export const assertCurrentSwapCandidate = (c: CurrentCheapDexIdentity, scope?: C
   assertCurrentSwapIdentity(c);
   assertCurrentD06AppAuthority(c.graph, scope, signer);
   if (c.graph === STAGED_D06_DEX_CANDIDATE.graph || usesCurrentSwapAccounting(c)) return;
-  if (!isCurrentNativeSwapCandidate(c)) return assertCurrentCheapDexNativeAdmission(c);
+  if (!isCurrentNativeSwapCandidate(c)) return rejectUnprovenNativeAdmission();
   // Full registry identity includes runtime, release, attestation, economic and token bindings.
   if (JSON.stringify(c) !== JSON.stringify(native)) throw new Error('Native swap candidate identity changed.');
 };

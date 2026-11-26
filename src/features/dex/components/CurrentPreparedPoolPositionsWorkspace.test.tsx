@@ -14,12 +14,6 @@ import type { SharedWalletSession } from '../../../lib/walletSession';
 import type { issueCurrentDexPoolPositionCapability } from '../../wallet/currentDexPoolPositionCapability';
 
 const hooks=vi.hoisted(()=>({index:0,refIndex:0,states:[] as unknown[],refs:[] as {current:unknown}[],allowNative:false,confirm:vi.fn(async()=>true)}));
-vi.mock('../../../lib/dexV2Deployment',async original=>{
-  const actual=await original<typeof import('../../../lib/dexV2Deployment')>();
-  return{...actual,assertCurrentCheapDexNativeAdmission:(value:Parameters<typeof actual.assertCurrentCheapDexNativeAdmission>[0])=>{
-    if(!hooks.allowNative)actual.assertCurrentCheapDexNativeAdmission(value);
-  }};
-});
 // Explicit UI-mechanics fixtures may simulate authority; real-hold cases keep it off.
 vi.mock('../../../lib/currentDexC1SwapPolicy',async original=>{
   const actual=await original<typeof import('../../../lib/currentDexC1SwapPolicy')>();
@@ -42,7 +36,7 @@ type Props={children?:ReactNode;disabled?:boolean;onClick?:()=>void};
 const elements=(node:ReactNode):ReactElement<Props>[]=>Array.isArray(node)?node.flatMap(elements):isValidElement<Props>(node)?[node,...elements(node.props.children)]:[];
 const text=(node:ReactNode):string=>Array.isArray(node)?node.map(text).join(''):isValidElement<Props>(node)?text(node.props.children):typeof node==='string'||typeof node==='number'?String(node):'';
 const owner=`0x${'22'.repeat(20)}`,hash=`0x${'33'.repeat(32)}`;
-describe.each(['cheap-prepared', 'cheap-exit','cheap-history'] as const)('%s prepared consumers', key => {
+describe.each(['cheap-history'] as const)('%s prepared consumers', key => {
 const candidate = resolveCurrentCheapDexCandidate(key);
 function fixture(pairIndex=0){
   const store=new Map<string,string>();
@@ -65,7 +59,7 @@ function fixture(pairIndex=0){
 afterEach(()=>{hooks.states=[];hooks.refs=[];hooks.allowNative=false;vi.clearAllMocks();vi.unstubAllGlobals();});
 
 describe('prepared Positions owner snapshot view',()=>{
-  if(key==='cheap-history'&&usesTransactionScopedPoolSnapshots(candidate))it.each(['success','owner-change'] as const)('recovers the saved initial-claim refresh without another wallet action: %s',async outcome=>{
+  if(usesTransactionScopedPoolSnapshots(candidate))it.each(['success','owner-change'] as const)('recovers the saved initial-claim refresh without another wallet action: %s',async outcome=>{
     const f=fixture();hooks.allowNative=true;
     Object.assign(f.props.sharedWalletSession!,{sessionOnboardInfo:{[owner]:{aesKey:'fixture-only'}},walletAesHealthByAddress:{}});
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,
@@ -85,7 +79,7 @@ describe('prepared Positions owner snapshot view',()=>{
     if(outcome==='success'){expect(text(f.render())).toContain('Fresh private claim verified');expect(f.store.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);}
     else{expect(f.store.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(text(f.render())).not.toContain('Fresh private claim verified');}
   });
-  if(key==='cheap-history')it.each(['rpc','rejected'] as const)('keeps restore failure feedback safe: %s',async outcome=>{
+  it.each(['rpc','rejected'] as const)('keeps restore failure feedback safe: %s',async outcome=>{
     const f=fixture();await f.load();
     const error=outcome==='rpc'?new Error('could not coalesce error (error={"message":"missing trie node"}, payload={"method":"eth_getCode","params":["PRIVATE_PAYLOAD"]})')
       :Object.assign(new Error('action rejected (payload=PRIVATE_PAYLOAD)'),{code:'ACTION_REJECTED'});
@@ -97,7 +91,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(f.button('Withdraw previewed shares').props.disabled).toBe(true);
     expect(f.getSender).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();expect(f.prepareExitPreview).not.toHaveBeenCalled();
   });
-  if(key!=='cheap-prepared')it.each(['success','absent','failure','scope'] as const)('restores completed preview read-only: %s',async outcome=>{
+  it.each(['success','absent','failure','scope'] as const)('restores completed preview read-only: %s',async outcome=>{
     const f=fixture();await f.load();
     f.restoreExitPreview.mockImplementation(async()=>{
       if(outcome==='failure')throw new Error('Completed exit preview is stale.');
@@ -116,7 +110,7 @@ describe('prepared Positions owner snapshot view',()=>{
     if(outcome==='absent')expect(text(f.render())).toContain('No completed withdrawal preview');
     if(outcome==='failure')expect(text(f.render())).toContain('Completed exit preview is stale');
   });
-  if(key==='cheap-history')it.each([49n,54n])('offers a separate refresh for position %s under position49 hold without releasing spending or changing the old record',async positionId=>{
+  it.each([49n,54n])('offers a separate refresh for position %s under position49 hold without releasing spending or changing the old record',async positionId=>{
     const f=fixture();hooks.allowNative=true;
     f.value.positionId=positionId;hooks.states[0]=String(positionId);
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:394,txHash:hash,
@@ -136,7 +130,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(elements(f.render()).find(x=>x.type==='fieldset')!.props.disabled).toBe(true);
     expect(text(f.render())).toContain('old verification hold remains');expect(f.request).not.toHaveBeenCalled();
   });
-  if(key==='cheap-history')it('shows the separate refresh hold after reload without preparing or resending a snapshot',async()=>{
+  it('shows the separate refresh hold after reload without preparing or resending a snapshot',async()=>{
     const f=fixture();hooks.allowNative=true;
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:394,txHash:hash,
       callHash:keccak256(currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[52n])),verificationBlocked:true});
@@ -155,7 +149,7 @@ describe('prepared Positions owner snapshot view',()=>{
     if(hold!=='active')f.store.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);
     hooks.states[6]=hold!=='saved';
     f.readPosition.mockResolvedValue({...f.value,producerHash:hash} as never);
-    if(key!=='cheap-prepared'){
+    {
       const list=elements(f.render()).find(x=>x.type===CurrentOwnedPoolPositions)!;
       expect(list.props.disabled).toBe(false);
       (list.props as unknown as {onSelect:(id:bigint)=>void}).onSelect(52n);
@@ -173,7 +167,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(f.prepareSnapshot).not.toHaveBeenCalled();expect(f.prepareAction).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
     expect(f.store.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(hold==='active'?undefined:saved);
   });
-  if(key!=='cheap-prepared')it('reveals a selected position and opens its controls without manual lookup',async()=>{
+  it('reveals a selected position and opens its controls without manual lookup',async()=>{
     const f=fixture();hooks.allowNative=true;
     f.readPosition.mockResolvedValue({...f.value,positionId:43n,producerHash:hash} as never);
     const list=elements(f.render()).find(item=>item.type===CurrentOwnedPoolPositions)!;
@@ -184,7 +178,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(text(f.render())).toContain('Add liquidity');
     expect(f.getSender).not.toHaveBeenCalled();expect(f.prepareSnapshot).not.toHaveBeenCalled();
   });
-  if(key!=='cheap-prepared')it('opens a discovered NFT without keeping the previous claim or producer',async()=>{
+  it('opens a discovered NFT without keeping the previous claim or producer',async()=>{
     const f=fixture();hooks.allowNative=true;hooks.states[11]=hash;await f.load();
     expect(text(f.render())).toContain('1.234567');
     const list=elements(f.render()).find(item=>item.type===CurrentOwnedPoolPositions)!;
@@ -197,7 +191,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(f.button('Review private amount verification').props.disabled).toBe(false);
     expect(f.prepareSnapshot).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();
   });
-  if(key!=='cheap-prepared')it('opens a received NFT, activates privacy, then resumes without an extra refresh transaction',async()=>{
+  it('opens a received NFT, activates privacy, then resumes without an extra refresh transaction',async()=>{
     const f=fixture();hooks.allowNative=true;
     const pending={...f.value,positionId:43n,status:3n,amounts:null};f.readPosition.mockResolvedValue(pending as never);
     const list=elements(f.render()).find(item=>item.type===CurrentOwnedPoolPositions)!;
@@ -239,9 +233,9 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(f.button('Check position status').props.disabled).toBe(false);
   });
   it('requires live position capability before paid refresh preparation',async()=>{
-    const f=fixture();if(key==='cheap-history')f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
-    f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
-    expect(f.getPositions).toHaveBeenCalledTimes(key==='cheap-history'?1:0);expect(f.prepareSnapshot).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();
+    const f=fixture();f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
+    f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(text(f.render())).toContain('Connected wallet lease is unavailable.'));
+    expect(f.getPositions).toHaveBeenCalledTimes(1);expect(f.prepareSnapshot).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();
   });
   it.each([0,1,2,3,4,5])('uses authenticated market %i token labels and six decimals',async index=>{
     const f=fixture(index);hooks.allowNative=true;hooks.states[11]=hash;await f.load();
@@ -254,8 +248,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(rendered).toContain(`Approximate Pool rate (snapshot)1.90000056 ${f.pair.tokens[1].label}/${f.pair.tokens[0].label} (rounded down)`);
     expect(rendered).toContain('last verified snapshot');expect(rendered).toContain('Integer rounding');
     expect(rendered).toContain('excludes spread, fees and price impact and is not a live quote');
-    if(key==='cheap-prepared')expect(rendered).toContain('integration is incomplete');
-    else expect(f.button('Transfer liquidity NFT').props.disabled).toBe(false);
+    expect(f.button('Transfer liquidity NFT').props.disabled).toBe(false);
     expect(f.button('Close and withdraw all').props.disabled).toBe(false);expect(f.prepareAction).not.toHaveBeenCalled();
   });
   it('shows the authenticated pair and unavailable state without inventing amounts',async()=>{
@@ -280,9 +273,8 @@ describe('prepared Positions owner snapshot view',()=>{
     f.readPosition.mockResolvedValue({...f.value,poolTokens:[...f.value.poolTokens].reverse()} as never);await f.load();
     expect(text(f.render())).toContain(`1.90000056 ${f.pair.tokens[0].label}/${f.pair.tokens[1].label} (rounded down)`);
   });
-  it.each(['candidate','owner','position'])('hides private amounts when %s changes',async changed=>{
+  it.each(['owner','position'])('hides private amounts when %s changes',async changed=>{
     const f=fixture();hooks.allowNative=true;await f.load();expect(text(f.render())).toContain('1.234567');
-    if(changed==='candidate')f.props.candidateKey='cheap-current';
     if(changed==='owner')f.props.sharedWalletSession={...f.props.sharedWalletSession,walletAddress:`0x${'44'.repeat(20)}`};
     if(changed==='position')hooks.states[0]='53';
     expect(text(f.render())).not.toContain('1.234567');
@@ -314,7 +306,7 @@ describe('prepared Positions owner snapshot view',()=>{
     const recover=vi.fn(async()=>{throw new Error('Private proof unavailable');});
     const submit=vi.fn(async()=>({transactionHash:hash,recover}));
     f.getSender.mockResolvedValue({submitPoolPositionAction:submit,waitForCurrentCheapReceipt:vi.fn(async()=>fault!=='pending')});
-    const label=key==='cheap-prepared'?'Refresh this position':'Review private amount verification';
+    const label='Review private amount verification';
     f.button(label).props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(text(f.render())).toContain(fault==='pending'?'confirmation is pending':'Private proof unavailable');
     expect(text(f.render())).toContain('The submitted snapshot is pending verification. Do not request another.');
@@ -339,9 +331,9 @@ describe('prepared Positions owner snapshot view',()=>{
   });
   it('requires live position capability before Close preparation',async()=>{
     const f=fixture();hooks.allowNative=true;await f.load();hooks.allowNative=false;f.getPositions.mockClear();
-    if(key==='cheap-history')f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
+    f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
     f.button('Close and withdraw all').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'admission is absent');expect(f.getPositions).toHaveBeenCalledTimes(key==='cheap-history'?1:0);expect(f.prepareAction).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();
+    expect(text(f.render())).toContain('Connected wallet lease is unavailable.');expect(f.getPositions).toHaveBeenCalledTimes(1);expect(f.prepareAction).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();
   });
   it('binds exact six-decimal minimums, producer and close-to-snapshot recovery',async()=>{
     const f=fixture(4);hooks.allowNative=true;hooks.states[11]=hash;await f.load();hooks.states[2]='1.000001';hooks.states[3]='2.000002';
@@ -356,7 +348,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId),{candidate:key});
     expect(text(f.render())).toContain('StatusClosed');
     expect(text(f.render())).toContain('Close mined and payouts checked');expect(text(f.render())).not.toContain('Close complete');
-    if(key!=='cheap-prepared'){
+    {
       const list=elements(f.render()).find(item=>item.type===CurrentOwnedPoolPositions)!;
       expect((list.props as unknown as {refreshToken:string}).refreshToken).toBe(hash);
     }
@@ -375,7 +367,7 @@ describe('prepared Positions owner snapshot view',()=>{
     f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(text(f.render())).toContain('no independent verification of the original payout');expect(text(f.render())).not.toContain('Close complete');
   });
-  if(key==='cheap-history')it('keeps a closed position visible when private payout verification fails',async()=>{
+  it('keeps a closed position visible when private payout verification fails',async()=>{
     const f=fixture();hooks.allowNative=true;await f.load();
     f.prepareAction.mockResolvedValue({action:'close'});
     f.readPosition.mockResolvedValue({...f.value,status:4n,amounts:null} as never);
@@ -391,7 +383,7 @@ describe('prepared Positions owner snapshot view',()=>{
   });
 });
 
-if(key!=='cheap-prepared')describe('private partial withdrawal consumer',()=>{
+describe('private partial withdrawal consumer',()=>{
   const previewHash=`0x${'55'.repeat(32)}`;
   async function previewFixture(index=0){
     const f=fixture(index);hooks.allowNative=true;hooks.states[11]=hash;await f.load();
@@ -420,9 +412,9 @@ if(key!=='cheap-prepared')describe('private partial withdrawal consumer',()=>{
   });
   it('requires live position capability before withdrawal preview preparation',async()=>{
     const f=await previewFixture();hooks.allowNative=false;f.getPositions.mockClear();
-    if(key==='cheap-history')f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
+    f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
     f.button('Review private withdrawal preview').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'admission is absent');expect(f.getPositions).toHaveBeenCalledTimes(key==='cheap-history'?1:0);
+    expect(text(f.render())).toContain('Connected wallet lease is unavailable.');expect(f.getPositions).toHaveBeenCalledTimes(1);
     expect(f.getSender).not.toHaveBeenCalled();expect(f.prepareExitPreview).not.toHaveBeenCalled();
   });
   it.each([0,1,2,3,4,5])('connects preview, withdrawal and remaining-share proof for pair%i',async index=>{
@@ -467,12 +459,11 @@ if(key!=='cheap-prepared')describe('private partial withdrawal consumer',()=>{
     f.button('Review private withdrawal preview').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(text(f.render())).toContain('inputs changed during review');expect(f.getSender).not.toHaveBeenCalled();
   });
-  it.each(['percentage','position','owner','candidate'] as const)('hides old preview after %s changes',async change=>{
+  it.each(['percentage','position','owner'] as const)('hides old preview after %s changes',async change=>{
     const f=await previewFixture();await f.run();f.getPositions.mockClear();f.getSender.mockClear();
     if(change==='percentage')hooks.states[1]='25';
     if(change==='position')hooks.states[0]='53';
     if(change==='owner')f.props.sharedWalletSession={...f.props.sharedWalletSession,walletAddress:`0x${'44'.repeat(20)}`};
-    if(change==='candidate')f.props.candidateKey='cheap-prepared';
     expect(text(f.render())).not.toContain('Remaining private shares50');
     if(change==='percentage'){
       expect(f.button('Withdraw previewed shares').props.disabled).toBe(true);

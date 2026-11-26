@@ -2,8 +2,9 @@ import { createRequire } from 'node:module';
 import { AbiCoder, Interface, keccak256, toBeHex, type JsonRpcSigner } from '@coti-io/coti-ethers';
 import { describe, expect, it, vi } from 'vitest';
 import type { CotiReadProvider } from './appShared';
-import { STAGED_PREPARED_DEX_CANDIDATE as candidate } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
+// decision-034: the selected current candidate is the only prepared descriptor.
+const candidate = resolvePreparedDexScope('cheap-history').candidate;
 import { STAGED_GAP_DEX_CANDIDATE as currentGap } from './currentDexGapCandidate';
 import { readPreparedDexMarketRegistry, type DexV2ReadCapability } from './dexV2Chain';
 import { currentPoolPositionAbi, currentPoolNftAbi } from './currentDexPoolPosition';
@@ -419,12 +420,12 @@ describe('prepared Pool source-bound storage and authenticated producers', () =>
   });
   it('resolves only the complete accepted descriptor and returns the canonical scope', () => {
     expect(resolvePreparedDexScope().candidate).toBe(candidate);
-    expect(resolvePreparedDexScope(structuredClone(candidate))).toEqual({ key: 'cheap-prepared', candidate });
+    expect(resolvePreparedDexScope(structuredClone(candidate))).toEqual({ key: 'cheap-history', candidate });
     const duplicate = { ...candidate, pairs: [candidate.pairs[0], ...candidate.pairs.slice(0, 5)] };
     const tokenSpoof = { ...candidate, tokens: [candidate.tokens[0], candidate.tokens[0], ...candidate.tokens.slice(2)] };
     const derivative = { ...candidate, graph: 'b2aa0895d7661a43e3a7db85c9ae24daaa641db238a06bec5c64d031dcf382cd', core: '0x52d5d2acc60ada57a7316de996221766bafffe27' };
-    for (const supplied of [duplicate, tokenSpoof, derivative]) expect(() => resolvePreparedDexScope(supplied)).toThrow('candidate changed');
-    expect(() => resolvePreparedDexScope('cheap-d06')).toThrow('candidate changed');
+    for (const supplied of [duplicate, tokenSpoof, derivative]) expect(() => resolvePreparedDexScope(supplied as never)).toThrow('candidate changed');
+    expect(() => resolvePreparedDexScope('cheap-d06' as never)).toThrow('candidate changed');
   });
   it('binds registry graph, package, Core and unique six-market scope to the same explicit key', async () => {
     for (const fault of ['graph', 'package', 'core', 'duplicate'] as const) {
@@ -434,7 +435,7 @@ describe('prepared Pool source-bound storage and authenticated producers', () =>
         ...(fault === 'graph' ? { graph: 'wrong-graph' } : fault === 'package' ? { packageSha256: 'wrong-package' } :
           fault === 'core' ? { core: owner } : { markets: [registry.markets[0], ...registry.markets.slice(0, 5)] }) });
       await expect(f.reader.state(8n, block)).rejects.toThrow('registry candidate scope');
-      expect(readPreparedDexMarketRegistry).toHaveBeenLastCalledWith(expect.objectContaining({ candidate: 'cheap-prepared' }));
+      expect(readPreparedDexMarketRegistry).toHaveBeenLastCalledWith(expect.objectContaining({ candidate: 'cheap-history' }));
     }
   });
   it('matches the sealed build-6 layout, NFT mapping and snapshot ABI', () => {
@@ -546,10 +547,8 @@ describe('prepared Pool source-bound storage and authenticated producers', () =>
   it('reports the compiled shared-owner event gap before receipt or private reads', async () => {
     const f = fixture(); for (const action of ['top-up', 'close', 'withdraw'] as const)
       await expect(f.reader.issue(8n, action, transactionHash, f.tx.data)).rejects.toThrow('separate poolSnapshot');
-    for(const action of ['activate','resume']as const)
-      await expect(f.reader.issue(8n,action,transactionHash,f.tx.data)).rejects.toThrow('current exit candidate');
   });
-  for(const candidateKey of ['cheap-exit','cheap-history']as const){
+  for(const candidateKey of ['cheap-history']as const){
   it.each(['activate','resume'] as const)(`${candidateKey}: authenticates the exact %s owner envelopes without a separate snapshot event`,async kind=>{
     const c=resolvePreparedDexScope(candidateKey).candidate,f=fixture(false,false,0,c),base=preparedPoolPositionStorageBase(f.pair.marketId,8n);
     f.put(c.core,base,word(kind==='activate'?2:1));f.tx.data=currentPoolPositionAbi.encodeFunctionData('managePoolPosition',[8n,context,kind==='activate'?6n:5n,'0x']);

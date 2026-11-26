@@ -6,8 +6,9 @@ import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as historyCandidate } from './dexV2
 import type { CurrentDexActivityRow } from './currentDexActivityReceipt';
 
 const owner = '0x1111111111111111111111111111111111111111';
-const core = '0x52d5d2acc60ada57a7316de996221766bafffe27';
-const tx = (hash: string, from = owner, to = core, blockNumber = '10') => ({ hash, from, to, blockNumber });
+// The earlier exit-preview Core; discovery must not select its transactions.
+const oldCore = '0x52d5d2acc60ada57a7316de996221766bafffe27';
+const tx = (hash: string, from = owner, to: string = historyCandidate.core, blockNumber = '10') => ({ hash, from, to, blockNumber });
 const response = (result: unknown, status = '1', message = 'OK') => ({
   ok: true, json: async () => ({ status, message, result })
 }) as Response;
@@ -54,7 +55,7 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
   });
   it('uses the new Core and NFT without selecting old Core transactions', async () => {
     const nft = historyCandidate.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
-    const fetcher = vi.fn().mockResolvedValueOnce(response([tx(txHash, owner, historyCandidate.core), tx(nftHash)]))
+    const fetcher = vi.fn().mockResolvedValueOnce(response([tx(txHash, owner, historyCandidate.core), tx(nftHash, owner, oldCore)]))
       .mockResolvedValueOnce(response([]));
     const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: 1 }, fetcher, assertCurrent: () => undefined });
@@ -67,7 +68,7 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
       .mockResolvedValueOnce(response([tx(txHash, '0x2222222222222222222222222222222222222222', owner),
         tx(nftHash, '0x2222222222222222222222222222222222222222', owner)]));
 
-    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: 1 }, fetcher, assertCurrent: () => undefined });
 
     expect(page).toEqual({ hashes: [txHash, nftHash], nextCursor: { transactions: null, nfts: null }, complete: true });
@@ -78,11 +79,11 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
   });
 
   it('advances only full pages and rejects blocks above the captured head', async () => {
-    const rows = Array.from({ length: 5 }, (_, i) => tx(`0x${i.toString(16).padStart(64, '0')}`, owner, core, i === 0 ? '21' : '20'));
+    const rows = Array.from({ length: 5 }, (_, i) => tx(`0x${i.toString(16).padStart(64, '0')}`, owner, historyCandidate.core, i === 0 ? '21' : '20'));
     const fetcher = vi.fn()
       .mockResolvedValueOnce(response(rows))
       .mockResolvedValueOnce(response([] , '0', 'No transactions found'));
-    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 4, nfts: 2 }, fetcher, assertCurrent: () => undefined });
     expect(page.hashes).toHaveLength(4);
     expect(page.nextCursor).toEqual({ transactions: 5, nfts: null });
@@ -105,7 +106,7 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
       return response(rows.slice(start, start + offset));
     });
     const read = (cursor: Parameters<typeof readCurrentDexActivityDiscoveryPage>[0]['cursor']) =>
-      readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n, cursor, fetcher, assertCurrent: () => undefined });
+      readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n, cursor, fetcher, assertCurrent: () => undefined });
     const first = await read({ transactions: 1, nfts: 1 });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(first.hashes.length).toBeLessThanOrEqual(10);
@@ -124,44 +125,44 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
   it('rejects an oversized explorer page without truncating it or advancing a cursor', async () => {
     const fetcher = vi.fn().mockResolvedValue(response(Array.from({ length: 6 }, (_, index) =>
       tx(`0x${(index + 1).toString(16).padStart(64, '0')}`))));
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: null }, fetcher, assertCurrent: () => undefined })).rejects.toThrow('page exceeded its limit');
     expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it('rejects an explorer API error instead of treating it as empty history', async () => {
     const fetcher = vi.fn().mockResolvedValue(response([], '0', 'Invalid API key'));
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: null }, fetcher, assertCurrent: () => undefined }))
       .rejects.toThrow(/explorer/i);
   });
 
   it('accepts the explorer empty NFT-transfer response', async () => {
     const fetcher = vi.fn().mockResolvedValue(response([], '0', 'No token transfers found'));
-    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: null, nfts: 1 }, fetcher, assertCurrent: () => undefined });
     expect(page).toEqual({ hashes: [], nextCursor: { transactions: null, nfts: null }, complete: true });
   });
 
   it('stops when the wallet lease is revoked and rejects invalid cursors', async () => {
     const fetcher = vi.fn().mockResolvedValue(response([]));
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: null }, fetcher, assertCurrent: () => { throw new Error('lease revoked'); } }))
       .rejects.toThrow('lease revoked');
     expect(fetcher).not.toHaveBeenCalled();
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 0, nfts: null }, fetcher, assertCurrent: () => undefined }))
       .rejects.toThrow(/cursor/i);
   });
 
   it('rejects malformed explorer rows and conflicting block numbers within a feed', async () => {
     const malformed = vi.fn().mockResolvedValue(response([tx(txHash, 'not-an-address')]));
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: null }, fetcher: malformed, assertCurrent: () => undefined }))
       .rejects.toThrow(/row/i);
     const conflicting = vi.fn().mockResolvedValue(response([tx(txHash), tx(txHash, owner,
-      core, '11')]));
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+      historyCandidate.core, '11')]));
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: null }, fetcher: conflicting, assertCurrent: () => undefined }))
       .rejects.toThrow(/block number/i);
   });
@@ -170,13 +171,13 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
     const fetcher = vi.fn().mockResolvedValue(response([
       { ...tx(txHash), to: '' },
       { ...tx(nftHash), to: null },
-      tx(`0x${'c'.repeat(64)}`, '0x2222222222222222222222222222222222222222', core)
+      tx(`0x${'c'.repeat(64)}`, '0x2222222222222222222222222222222222222222', historyCandidate.core)
     ]));
-    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    const page = await readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: null }, fetcher, assertCurrent: () => undefined });
     expect(page.hashes).toEqual([]);
     const malformed = vi.fn().mockResolvedValue(response([{ ...tx(txHash), to: 'not-an-address' }]));
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: null }, fetcher: malformed, assertCurrent: () => undefined }))
       .rejects.toThrow(/row/i);
   });
@@ -185,7 +186,7 @@ describe('readCurrentDexActivityDiscoveryPage', () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(response([tx(txHash)]))
       .mockResolvedValueOnce(response([tx(txHash, '0x2222222222222222222222222222222222222222', owner, '11')]));
-    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-exit', headNumber: 20n,
+    await expect(readCurrentDexActivityDiscoveryPage({ owner, candidate: 'cheap-history', headNumber: 20n,
       cursor: { transactions: 1, nfts: 1 }, fetcher, assertCurrent: () => undefined }))
       .rejects.toThrow(/block number/i);
   });
@@ -243,7 +244,7 @@ describe('readCurrentDexAsyncTerminalPage', () => {
   });
 
   it.each([
-    { label: 'another candidate', candidate: 'cheap-exit' as const, quote: asyncQuote() },
+    { label: 'another candidate', candidate: 'cheap-exit' as unknown as 'cheap-history', quote: asyncQuote() },
     { label: 'wrong Core', candidate: 'cheap-history' as const, quote: asyncQuote({ core: owner }) },
     { label: 'malformed Quote hash', candidate: 'cheap-history' as const, quote: asyncQuote({ hash: '0x12' }) },
     { label: 'non-async Quote', candidate: 'cheap-history' as const, quote: asyncQuote({ kind: 'fast-quote' }) },

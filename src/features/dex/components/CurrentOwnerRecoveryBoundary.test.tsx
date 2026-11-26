@@ -2,14 +2,9 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import CurrentLimitWorkspace from './CurrentLimitWorkspace';
 import CurrentPoolPositionsWorkspace from './CurrentPoolPositionsWorkspace';
-import { CURRENT_CHEAP_DEX_CANDIDATE as c } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c } from '../../../lib/dexV2Deployment';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
-// Historical position fallback awaits the retained native recovery method.
-vi.mock('../../../lib/dexV2Deployment', async original => {
-  const actual = await original<typeof import('../../../lib/dexV2Deployment')>();
-  return { ...actual, CURRENT_CHEAP_DEX_CANDIDATE: actual.resolveCurrentCheapDexCandidate('cheap-native') };
-});
 const hooks = vi.hoisted(() => ({ index:0, refIndex:0, states:[] as unknown[], refs:[] as {current:unknown}[] }));
 vi.mock('react', async original => ({...await original<typeof import('react')>(),
   useEffect:vi.fn(),
@@ -28,13 +23,13 @@ function fixture(operation:Operation, Positions=CurrentPoolPositionsWorkspace, p
   const isPosition=operation.startsWith('position');
   const metadata=vi.fn(async()=>null), privateRead=vi.fn(async()=>null), writes=vi.fn(async()=>{throw new Error('Unexpected send');});
   const sender={checkCurrentCheapCandidate:vi.fn(async()=>({...c,owner:session.walletAddress})),recoverPendingLimitAttempt:metadata,
-    recoverCurrentNativePoolPositionResult:privateRead,recoverPendingPoolPositionAttempt:metadata,submitLimit:writes,submitLimitOwner:writes,submitPoolPositionAction:writes};
+    recoverCurrentNativePoolPositionResult:privateRead,recoverCurrentPreparedPoolPositionResult:privateRead,recoverPendingPoolPositionAttempt:metadata,submitLimit:writes,submitLimitOwner:writes,submitPoolPositionAction:writes};
   const capability={prepareLimit:vi.fn(async()=>null)};
   const getSender=vi.fn(async()=>sender),prepareSnapshot=vi.fn(async()=>null);
   const session={walletAddress:owner,chainId:Number(c.chainId),browserProvider:{request:vi.fn(async()=>({number:'0x1',hash:`0x${'11'.repeat(32)}`}))},
     browserWalletId:'metamask',activeSignerSource:'browser',sessionOnboardInfo:{[owner]:{aesKey:'fixture-only'}},walletAesHealthByAddress:{},
     actions:{getCurrentDexSubmissionCapability:getSender,getCurrentDexLimitCapability:vi.fn(async()=>capability),getCurrentDexPoolPositionCapability:vi.fn()}} as unknown as SharedWalletSession;
-  const render=()=>{hooks.index=0;hooks.refIndex=0;return isPosition?Positions({sharedWalletSession:session,...(!publicFallback?{candidateKey:'cheap-native' as const}:{})}):CurrentLimitWorkspace({sharedWalletSession:session});};
+  const render=()=>{hooks.index=0;hooks.refIndex=0;return isPosition?Positions({sharedWalletSession:session,...(!publicFallback?{candidateKey:'cheap-history' as const}:{})}):CurrentLimitWorkspace({sharedWalletSession:session,selectedPair:['HBR','BCN']});};
   render();if(!isPosition){hooks.states[1]='10';hooks.states[2]='1';render();}
   // Limit states after index 3 and refs moved by one for the approval-mode hook; busy is state 5 in both panels.
   if(operation==='limit-snapshot'){hooks.states[9]={value:{positionId:9n,prepareSnapshot},scope:hooks.refs[1].current};render();}
@@ -81,7 +76,7 @@ it('inspects an already-held snapshot without invoking its retained private reco
   expect(f.status()).toContain('mined');expect(f.status()).toContain('original verification reason was not retained');
   expect(f.store.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(hooks.states[6]).toBe(true);expect(f.writes).not.toHaveBeenCalled();
 });
-for(const operation of ['limit-create','limit-status','limit-snapshot','position-issuer','position-fallback'] as const)describe(`retained native ${operation}`,()=>{
+for(const operation of ['limit-create','limit-status','limit-snapshot','position-issuer','position-fallback'] as const)describe(`retained current ${operation}`,()=>{
   it.each(changes)('stops at the awaited boundary after %s changes',async kind=>{
     const f=fixture(operation);await f.startDelayed();f.change(kind);f.finish();await f.idle();
     expect(f.metadata).not.toHaveBeenCalled();expect(f.sender.checkCurrentCheapCandidate).not.toHaveBeenCalled();
@@ -95,13 +90,4 @@ for(const operation of ['limit-create','limit-status','limit-snapshot','position
     else if(operation==='limit-snapshot'){expect(f.status()).toContain('cancelled');expect(f.getSender).not.toHaveBeenCalled();}
     else{expect(f.metadata).toHaveBeenCalledOnce();expect(f.status()).toContain('No pending');}
   });
-});
-
-it.each(changes)('actual current position public fallback stops after %s changes',async kind=>{
-  vi.doMock('../../../lib/dexV2Deployment',()=>vi.importActual('../../../lib/dexV2Deployment'));vi.resetModules();
-  const {default:Positions}=await import('./CurrentPoolPositionsWorkspace');
-  const f=fixture('position-fallback',Positions,true);await f.startDelayed();f.change(kind);f.finish();await f.idle();
-  expect(f.metadata).toHaveBeenCalledOnce();expect(f.privateRead).not.toHaveBeenCalled();
-  expect(f.getSender).toHaveBeenCalledWith(BigInt(c.chainId),undefined);
-  expect(f.status()).toMatch(/session changed|Refresh this position/);expect(f.writes).not.toHaveBeenCalled();expect(f.store.size).toBe(0);
 });

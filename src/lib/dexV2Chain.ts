@@ -11,8 +11,8 @@ import type {
   DexV2AppManifest,
   DexV2ComponentKey
 } from './dexV2Deployment';
-import { assertDexV2AppManifest, CURRENT_SHARED_POOL_CANDIDATE, resolveCurrentCheapDexCandidate,
-  currentCheapDexCandidateKey, currentCheapDexStages, currentCheapDexQuoteProtocol, STAGED_TWO_POOL_CANDIDATE, STAGED_POOL_REFERENCE_CANDIDATE, STAGED_NATIVE_DEX_CANDIDATE, STAGED_D06_DEX_CANDIDATE,
+import { assertDexV2AppManifest, resolveCurrentCheapDexCandidate,
+  currentCheapDexCandidateKey, currentCheapDexStages, currentCheapDexQuoteProtocol,
   type CurrentCheapDexIdentity, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { decodeCurrentDexOperation, encodeCurrentDexOperationRead, decodeCurrentDexReceipt, encodeCurrentDexReceiptRead, decodeCurrentDexQuoteIssue,
   decodeCurrentCheapDexOperation, encodeCurrentCheapDexOperationRead, type CurrentCheapDexProfile } from './currentDexOperation';
@@ -624,13 +624,13 @@ export const readCurrentDexGraph = async ({ capability, manifestJson, expectedMa
 };
 
 /** Exact deployed shared-Pool trial identity. Public reads only; no submission admission. */
-export const readCurrentSharedPoolDexGraph = async ({ capability, blockNumber, blockHash, candidate = 'shared-pool' }: {
+export const readCurrentSharedPoolDexGraph = async ({ capability, blockNumber, blockHash, candidate = 'cheap-history' }: {
   capability: DexV2ReadCapability; blockNumber: bigint; blockHash: string;
-  candidate?: 'shared-pool' | CurrentCheapDexCandidateKey;
+  candidate?: CurrentCheapDexCandidateKey;
 }) => {
   const binding = bindingFor(capability);
   try {
-    const m = candidate === 'shared-pool' ? CURRENT_SHARED_POOL_CANDIDATE : resolveCurrentCheapDexCandidate(candidate);
+    const m = resolveCurrentCheapDexCandidate(candidate);
     if (binding.chainId !== BigInt(m.chainId) || typeof blockNumber !== 'bigint' || blockNumber < 0n || blockNumber > UINT64_MAX) {
       throw new Error('Shared-Pool DEX read identity is invalid.');
     }
@@ -810,7 +810,7 @@ export type PreparedDexMarket = Readonly<{
 }>;
 
 /** All six accepted prepared markets at one canonical block. Public reads only. */
-export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, blockHash, candidate = 'cheap-prepared' }: {
+export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, blockHash, candidate = 'cheap-history' }: {
   capability: DexV2ReadCapability; blockNumber: bigint; blockHash: string; candidate?: CurrentCheapDexCandidateKey;
 }) => {
   const binding = bindingFor(capability), scope = resolvePreparedDexScope(candidate), m = scope.candidate;
@@ -912,9 +912,6 @@ export async function readCurrentDexOperation({ capability, expected, operationI
   if (selected && (!cheapProfile || core.toLowerCase() !== selected.core || expected.chainId !== BigInt(selected.chainId) ||
       runtimeHash !== selected.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2] || releaseId !== selected.releaseId)) {
     throw new Error('Current DEX read differs from its exact candidate.');
-  }
-  if (cheapProfile && !selected && [STAGED_TWO_POOL_CANDIDATE.core, STAGED_POOL_REFERENCE_CANDIDATE.core, STAGED_NATIVE_DEX_CANDIDATE.core, STAGED_D06_DEX_CANDIDATE.core].includes(core.toLowerCase())) {
-    throw new Error('Successor DEX read requires graph, package and Core binding.');
   }
   if ((expected.blockNumber === undefined) !== (expected.blockHash === undefined) ||
       (expected.originBlockNumber === undefined) !== (expected.originBlockHash === undefined)) {

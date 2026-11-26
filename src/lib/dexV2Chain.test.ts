@@ -5,20 +5,16 @@ import {
   assertAttestedDexV2Deployment,
   attestDexV2Deployment,
   createDexV2ReadCapability,
-  readCurrentDexIssuedQuote,
   readCurrentDexOperation,
-  readCurrentDexPrincipalReceipt,
   readCurrentSharedPoolDexGraph,
   readPreparedDexMarketRegistry
 } from './dexV2Chain';
-import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI, CURRENT_DEX_RECEIPT_ABI,
-  CURRENT_FAST_DEX_RECEIPT_ABI, encodeCurrentCheapDexOperationRead, encodeCurrentDexReceiptRead,
-  decodeCurrentCheapDexOperation, type CurrentCheapDexProfile } from './currentDexOperation';
+import { CURRENT_CHEAP_DEX_OPERATION_ABI } from './currentDexOperation';
 import {
   DEX_V2_COMPONENT_KEYS,
   hashDexV2AppManifestBody,
   parseDexV2AppManifest,
-  CURRENT_CHEAP_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE, resolveCurrentCheapDexCandidate, currentCheapDexStages, assertCurrentCheapDexNativeAdmission,
+  STAGED_SHARED_HISTORY_DEX_CANDIDATE,
   type DexV2AppManifest,
   type DexV2ComponentKey
 } from './dexV2Deployment';
@@ -523,140 +519,7 @@ const makeProvider = (manifest: DexV2AppManifest, mutate?: {
 };
 
 describe('dexV2Chain', () => {
-  const currentFixture = (profile: CurrentCheapDexProfile, stage: number, fault = '') => {
-    const candidate = resolveCurrentCheapDexCandidate('cheap-archived');
-    const core = candidate.core, principal = address(22), context = hash('current-context');
-    const originHash = hash('issue-50'), currentHash = hash('current-55'), releaseId = candidate.releaseId;
-    const originNumber = BigInt(candidate.attestationBlock.number) + 50n, headNumber = originNumber + 5n;
-    const runtimeHash = candidate.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2];
-    fixtureCodeHashes.set('0xcafe3202', runtimeHash);
-    const opening = new Interface(CURRENT_CHEAP_DEX_QUOTE_ABI), state = new Interface(CURRENT_CHEAP_DEX_OPERATION_ABI);
-    const receipts = new Interface(profile === 'fast-pool' ? CURRENT_FAST_DEX_RECEIPT_ABI : CURRENT_DEX_RECEIPT_ABI);
-    const release = new Interface(['function releaseId() view returns(bytes32)']);
-    const zero = `0x${'00'.repeat(32)}`;
-    const terms = [address(33), address(44), principal, 100n, [[1n, 2n], '0x12'], [[7n, 8n], '0x9a'], [[3n, 4n], '0x34'], [5n, '0x56'], [6n, '0x78']];
-    const data = opening.encodeFunctionData(profile === 'fast-pool' ? 'quoteFastPoolV1' : 'quoteCheapAsyncV1', profile === 'fast-pool' ? terms : [terms]);
-    const issue = {
-      expected: { transactionHash: hash('quote-tx'), chainId: 7082400n, core, principal, calldata: data,
-        inputToken: address(33), outputToken: address(44), destination: principal, deadline: 100n, releaseId },
-      transaction: { hash: hash('quote-tx'), chainId: 7082400n, from: principal, to: core, data, value: 0n, blockNumber: Number(originNumber), blockHash: originHash },
-      receipt: { hash: hash('quote-tx'), from: principal, to: core, status: 1, blockNumber: Number(originNumber), blockHash: originHash,
-        logs: [{ address: core, ...opening.encodeEventLog(opening.getEvent(profile === 'fast-pool' ? 'FastPoolQuoteIssued' : 'CheapAsyncAdvanced')!,
-          profile === 'fast-pool' ? [7n, context, 100n] : [7n, 1, zero]) }] }
-    };
-    let originReads = 0, headReads = 0, chainReads = 0, receiptRead = false, current = true;
-    const methods: string[] = [];
-    const provider = { request: async ({ method, params = [] }: { method: string; params?: readonly unknown[] | object }) => {
-      methods.push(method);
-      const values = params as readonly unknown[];
-      if (method === 'eth_chainId') return fault === 'chain' && ++chainReads > 1 ? '0x1' : '0x6c11a0';
-      if (method === 'eth_getBlockByNumber') {
-        if (values[0] === '0x0') return { number: '0x0', hash: candidate.genesisHash };
-        if (values[0] === `0x${BigInt(candidate.attestationBlock.number).toString(16)}`) return { number: values[0], hash: candidate.attestationBlock.hash };
-        if (values[0] === `0x${originNumber.toString(16)}`) {
-          ++originReads;
-          return { number: values[0], timestamp: '0x5a', hash: fault === 'origin' || (fault === 'origin-during-read' && originReads > 1) ||
-            (fault === 'origin-during-receipt' && receiptRead) ? hash('reorg') : originHash };
-        }
-        ++headReads;
-        return { number: `0x${headNumber.toString(16)}`, timestamp: fault === 'expired' ? '0x64' : '0x63',
-          hash: fault === 'head-during-read' && headReads > 2 || fault === 'head-during-receipt' && receiptRead ? hash('reorg') : currentHash };
-      }
-      if (method === 'eth_getCode') {
-        expect(values).toEqual([core, { blockHash: currentHash, requireCanonical: true }]);
-        return fault === 'runtime' ? '0x6001' : '0xcafe3202';
-      }
-      if (method === 'eth_call') {
-        const [call, block] = values as [{ from?: string; to: string; data: string }, unknown];
-        expect(call.to).toBe(core);
-        expect(block).toEqual({ blockHash: currentHash, requireCanonical: true });
-        if (call.data === release.encodeFunctionData('releaseId')) return release.encodeFunctionResult('releaseId', [fault === 'release' ? hash('other-release') : releaseId]);
-        if (call.data === encodeCurrentDexReceiptRead(7n, profile)) {
-          receiptRead = true;
-          expect(call.from).toBe(principal);
-          if (fault === 'receipt-session') current = false;
-          if (fault === 'receipt-access') throw new Error('ReceiptAccessDenied');
-          const raw = receipts.encodeFunctionResult(profile === 'fast-pool' ? 'fastPoolPrincipalReceipt' : 'principalReceipt',
-            [[[11n, 22n], ...Array(6).fill([[111n, 222n], [333n, 444n]])]]);
-          return fault === 'receipt-malformed' ? raw + '00' : raw;
-        }
-        expect(call.data).toBe(encodeCurrentCheapDexOperationRead(7n, profile));
-        if (fault === 'session') current = false;
-        if (fault === 'malformed') return '0x';
-        return profile === 'fast-pool' ? state.encodeFunctionResult('fastPoolQuotePublic',
-          [fault === 'context' ? hash('other-context') : stage === 0 ? zero : context, fault === 'deadline' ? 101n : stage === 0 ? 0n : 100n, stage === 4]) :
-          state.encodeFunctionResult('cheapAsyncPublic', [stage, stage >= 4 ? context : zero, fault === 'deadline' ? 101n : stage === 0 ? 0n : 100n]);
-      }
-      throw new Error(`Unexpected ${method}`);
-    } };
-    const capability = createDexV2ReadCapability({ provider, chainId: 7082400n, assertCurrent: () => { if (!current) throw new Error('Session revoked'); } });
-    return { capability, candidate, runtimeHash, issue, profile, originNumber, headNumber,
-      expected: { core, chainId: 7082400n, releaseId, runtimeHash, originBlockNumber: originNumber, originBlockHash: originHash }, methods, context };
-  };
-
-  it.each(['fast-pool', 'cheap-async'] as const)('integrates retained archived %s issue, pending and receipt reads without legacy state', async profile => {
-    const stages = profile === 'fast-pool' ? [4, 6] : [1, 2, 3, 4, 5, 6, 7];
-    for (const stage of stages) {
-      const f = currentFixture(profile, stage);
-      const snapshot = await readCurrentDexIssuedQuote(f);
-      expect(snapshot.operationId).toBe(7n);
-      expect(snapshot.originBlock.number).toBe(f.originNumber);
-      expect(snapshot.block.number).toBe(f.headNumber);
-      expect(snapshot.candidate).toBe(f.candidate);
-      expect(snapshot.operation.profile).toBe(profile);
-      expect(snapshot).not.toHaveProperty('epochId');
-      expect(snapshot.operation).not.toHaveProperty('status');
-      const result = readCurrentDexPrincipalReceipt({ ...f, operationId: snapshot.operationId, principal: f.issue.expected.principal });
-      if (stage < 4) await expect(result).rejects.toThrow('receipt is not available');
-      else {
-        const receipt = await result;
-        expect(receipt.kind).toBe(profile === 'fast-pool' && stage !== 4 ? 'unverified' : stage === 4 ? 'quote' : stage === 5 ? 'pending' : 'terminal');
-        expect(receipt.encrypted.filled).toBe(22n);
-        expect(receipt.encrypted.refund).toEqual({ ciphertextHigh: 333n, ciphertextLow: 444n });
-        expect(JSON.stringify(receipt.encrypted, (_k, value) => typeof value === 'bigint' ? String(value) : value)).not.toContain('111');
-      }
-      expect(f.methods.every(method => ['eth_chainId', 'eth_getBlockByNumber', 'eth_getCode', 'eth_call'].includes(method))).toBe(true);
-    }
-    const expired = currentFixture(profile, 4, 'expired');
-    expect((await readCurrentDexIssuedQuote(expired)).operation.phase).toBe('expired-unrecovered');
-    const missing = currentFixture(profile, 0);
-    expect((await readCurrentDexOperation({ ...missing, operationId: 7n })).operation.phase).toBe('not-found');
-    await expect(readCurrentDexIssuedQuote(missing)).rejects.toThrow('does not match Core');
-  });
-
-  it.each(['fast-pool', 'cheap-async'] as const)('rejects stale canonical %s identities and receipt faults', async profile => {
-    for (const fault of ['chain', 'runtime', 'release', 'origin', 'origin-during-read', 'head-during-read', 'session', 'malformed', 'deadline', ...(profile === 'fast-pool' ? ['context'] : [])]) {
-      await expect(readCurrentDexIssuedQuote(currentFixture(profile, 4, fault)), fault).rejects.toThrow();
-    }
-    for (const fault of ['receipt-session', 'receipt-access', 'receipt-malformed', 'origin-during-receipt', 'head-during-receipt']) {
-      const f = currentFixture(profile, 4, fault);
-      await expect(readCurrentDexPrincipalReceipt({ ...f, operationId: 7n, principal: f.issue.expected.principal }), fault).rejects.toThrow();
-    }
-  });
-
-  it('keeps actual current d06 stages distinct from the archived reader fixture and rejects mixed identity', async () => {
-    const current = CURRENT_CHEAP_DEX_CANDIDATE, archived = resolveCurrentCheapDexCandidate('cheap-archived');
-    expect(current).toBe(resolveCurrentCheapDexCandidate('cheap-d06'));
-    expect(currentCheapDexStages(current)).toEqual({ workCalls: 4, ready: 5, funded: 6, settled: 7, released: 8 });
-    expect(currentCheapDexStages(archived)).toEqual({ workCalls: 3, ready: 4, funded: 5, settled: 6, released: 7 });
-    const state = new Interface(CURRENT_CHEAP_DEX_OPERATION_ABI), context = hash('current-context'), zero = `0x${'00'.repeat(32)}`;
-    const encoded = (stage: number, ctx = context) => state.encodeFunctionResult('cheapAsyncPublic', [stage, ctx, 100n]);
-    for (const [stage, phase, ready] of [[4, 'preparing-quote', false], [5, 'quote-prepared', true], [6, 'settling', false], [7, 'settled', false], [8, 'released', false]] as const) {
-      const data = encoded(stage, stage === 4 ? zero : context);
-      expect(decodeCurrentCheapDexOperation(data, 99n, 'cheap-async', current)).toMatchObject({ stage, phase, ready });
-      expect(decodeCurrentCheapDexOperation(data, 99n, 'cheap-async')).toMatchObject({ stage, phase, ready });
-    }
-    expect(() => decodeCurrentCheapDexOperation(encoded(4), 99n, 'cheap-async', current)).toThrow('Inconsistent current quote state');
-    expect(decodeCurrentCheapDexOperation(encoded(4), 99n, 'cheap-async', archived).ready).toBe(true);
-    expect(() => decodeCurrentCheapDexOperation(encoded(5, zero), 99n, 'cheap-async', current)).toThrow('Inconsistent current quote state');
-    expect(() => decodeCurrentCheapDexOperation(encoded(9), 99n, 'cheap-async', current)).toThrow('Inconsistent current quote state');
-    const f = currentFixture('cheap-async', 4);
-    await expect(readCurrentDexIssuedQuote({ ...f, candidate: current })).rejects.toThrow('protocol differs from its exact candidate');
-    await expect(readCurrentDexOperation({ ...f, candidate: current, operationId: 7n })).rejects.toThrow('differs from its exact candidate');
-    expect(f.methods).toEqual([]);
-    expect(() => assertCurrentCheapDexNativeAdmission(current)).toThrow('native App submission admission');
-  });
-
+  // decision-034: the retained archived and d06 operation-reader fixtures were removed with those candidates.
   it('attests all seven runtimes, immutable bindings, the registered pair, and finality anchors', async () => {
     const manifest = makeManifest();
     let currentChecks = 0;

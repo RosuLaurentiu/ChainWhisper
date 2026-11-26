@@ -1,6 +1,6 @@
 import { getAddress } from '@coti-io/coti-ethers';
 import { COTI_TESTNET_NETWORK } from './chainWhisperNetworks';
-import { CURRENT_CHEAP_DEX_CANDIDATE } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './dexV2Deployment';
 
 export const OFFICIAL_COTI_TESTNET_FAUCET_URL = 'https://faucet.testnet.coti.io/';
 // Display catalog observed 2026-10-03. These addresses have no private DEX admission.
@@ -39,7 +39,7 @@ export const readOfficialTestnetGas = async ({ request, owner, chainId }: {
   const call = (method: string, params: unknown[] = []) => request({ method, params });
   if (quantity(await call('eth_chainId')) !== BigInt(chainId)) throw new Error('The wallet network changed. Check gas again.');
   const genesis = block(await call('eth_getBlockByNumber', ['0x0', false]));
-  if (genesis.number !== 0n || genesis.hash !== CURRENT_CHEAP_DEX_CANDIDATE.genesisHash.toLowerCase()) throw new Error('Testnet genesis does not match.');
+  if (genesis.number !== 0n || genesis.hash !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.genesisHash.toLowerCase()) throw new Error('Testnet genesis does not match.');
   const head = block(await call('eth_getBlockByNumber', ['latest', false]));
   const balance = quantity(await call('eth_getBalance', [account, { blockHash: head.hash, requireCanonical: true }]));
   const after = block(await call('eth_getBlockByNumber', [`0x${head.number.toString(16)}`, false]));

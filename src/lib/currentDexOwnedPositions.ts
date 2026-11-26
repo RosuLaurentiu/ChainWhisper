@@ -3,10 +3,10 @@ import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { PREPARED_POOL_LAYOUT, type PreparedPoolBlock } from './currentDexPreparedPoolSnapshot';
 
 export const readCurrentDexOwnedPositionIds = async ({candidate,owner,block,rpc,assertCurrent}: {
-  candidate:'cheap-exit'|'cheap-history'; owner:string; block:PreparedPoolBlock;
+  candidate:'cheap-history'; owner:string; block:PreparedPoolBlock;
   rpc:(method:string,params:readonly unknown[])=>Promise<unknown>; assertCurrent:()=>void|Promise<void>;
 }) => {
-  if((candidate!=='cheap-exit'&&candidate!=='cheap-history')||!/^0x[0-9a-f]{40}$/i.test(owner)||BigInt(owner)===0n||typeof block.number!=='bigint'||block.number<0n||
+  if(!/^0x[0-9a-f]{40}$/i.test(owner)||BigInt(owner)===0n||typeof block.number!=='bigint'||block.number<0n||
     !/^0x[0-9a-f]{64}$/i.test(block.hash)||BigInt(block.hash)===0n)throw new Error('Invalid owner position read scope.');
   const prepared=resolvePreparedDexScope(candidate).candidate,nft=prepared.companions.find(([name])=>name==='ChainWhisperDexPositionNFT')![1];
   const mapping=(key:bigint|string,root:bigint,type='uint256')=>keccak256(AbiCoder.defaultAbiCoder().encode([type,'uint256'],[key,root]));

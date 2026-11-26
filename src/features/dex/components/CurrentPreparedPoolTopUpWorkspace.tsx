@@ -29,7 +29,7 @@ export type PreparedTopUpPosition = Readonly<{ positionId: bigint; context: stri
 
 /** Reuses the existing owner capabilities and one pending journal. All private
  * preview/result authority stays in this mounted owner/session scope. */
-export default function CurrentPreparedPoolTopUpWorkspace({ session, position, disabled, onVerified, onManaged, onBegin, onReleased, candidateKey = 'cheap-prepared' }: {
+export default function CurrentPreparedPoolTopUpWorkspace({ session, position, disabled, onVerified, onManaged, onBegin, onReleased, candidateKey = 'cheap-history' }: {
   session: SharedWalletSession; position: PreparedTopUpPosition; disabled: boolean; candidateKey?: CurrentCheapDexCandidateKey;
   onVerified: (producerHash: string) => Promise<void>;
   onManaged: () => void;

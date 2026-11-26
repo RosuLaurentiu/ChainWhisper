@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ARCHIVED_CHEAP_DEX_CANDIDATE, type CurrentCheapDexCandidate } from './dexV2Deployment';
+import { type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { STAGED_BUILD13_DEX_CANDIDATE as native } from './currentDexBuild13Candidate';
 import { CURRENT_DEX_DAILY_PRICE_CONFIG, type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
 import { COTI_TESTNET_NETWORK } from './chainWhisperNetworks';
@@ -26,11 +26,10 @@ describe('current native history read binding', () => {
     expect(currentNativeDexDailyPriceConfig(native,[manifest.symbols[1],manifest.symbols[0]]).status).toBe('active');
     expect(currentNativeDexDailyPriceConfig(native,['BCN','unknown'])).toEqual({status:'inactive'});
   });
-  it.each(['archived', 'graph', 'package', 'chain', 'genesis', 'core', 'release', 'market', 'token', 'duplicate-token',
+  it.each(['graph', 'package', 'chain', 'genesis', 'core', 'release', 'market', 'token', 'duplicate-token',
     'token-runtime', 'runtime', 'runtime-address', 'missing-runtime', 'companion', 'malformed-token',
     'reviewed-tokens', 'fee', 'lifetime', 'attestation', 'attestation-number', 'attestation-hash'])('leaves %s identity inactive', fault => {
     let patch: Partial<CurrentCheapDexCandidate> = {};
-    if (fault === 'archived') { expect(currentNativeDexDailyPriceConfig(ARCHIVED_CHEAP_DEX_CANDIDATE).status).toBe('inactive'); return; }
     if (fault === 'graph') patch = { graph: '00'.repeat(32) };
     if (fault === 'package') patch = { packageSha256: '00'.repeat(32) };
     if (fault === 'chain') patch = { chainId: '1' };
@@ -45,18 +44,18 @@ describe('current native history read binding', () => {
     if (fault === 'attestation-number') patch = { attestationBlock: { ...native.attestationBlock, number: '1' } };
     if (fault === 'attestation-hash') patch = { attestationBlock: { ...native.attestationBlock, hash: `0x${'44'.repeat(32)}` } };
     if (fault === 'token' || fault === 'malformed-token') patch = { tokens: native.tokens.map((row, i) =>
-      i ? row : [fault === 'token' ? `0x${'44'.repeat(20)}` : 'invalid', row[1]] as const) as CurrentCheapDexCandidate['tokens'] };
-    if (fault === 'duplicate-token') patch = { tokens: [native.tokens[0], native.tokens[0]] };
-    if (fault === 'token-runtime') patch = { tokens: native.tokens.map(([address], i) => [address, i ? native.tokens[i][1] : `0x${'44'.repeat(32)}`] as const) as CurrentCheapDexCandidate['tokens'] };
+      i ? row : [fault === 'token' ? `0x${'44'.repeat(20)}` : 'invalid', row[1]] as const) as unknown as CurrentCheapDexCandidate['tokens'] };
+    if (fault === 'duplicate-token') patch = { tokens: [native.tokens[0], native.tokens[0]] as unknown as CurrentCheapDexCandidate['tokens'] };
+    if (fault === 'token-runtime') patch = { tokens: native.tokens.map(([address], i) => [address, i ? native.tokens[i][1] : `0x${'44'.repeat(32)}`] as const) as unknown as CurrentCheapDexCandidate['tokens'] };
     if (fault === 'runtime' || fault === 'runtime-address') patch = { runtimes: native.runtimes.map(([role, address, hash], i) =>
-      [role, i || fault === 'runtime' ? address : native.tokens[0][0], i || fault === 'runtime-address' ? hash : `0x${'44'.repeat(32)}`] as const) as CurrentCheapDexCandidate['runtimes'] };
-    if (fault === 'missing-runtime') patch = { runtimes: native.runtimes.slice(1) as CurrentCheapDexCandidate['runtimes'] };
+      [role, i || fault === 'runtime' ? address : native.tokens[0][0], i || fault === 'runtime-address' ? hash : `0x${'44'.repeat(32)}`] as const) as unknown as CurrentCheapDexCandidate['runtimes'] };
+    if (fault === 'missing-runtime') patch = { runtimes: native.runtimes.slice(1) as unknown as CurrentCheapDexCandidate['runtimes'] };
     if (fault === 'companion') patch = { companions: native.companions.map(([role, address, hash], i) =>
-      [role, address, i ? hash : `0x${'44'.repeat(32)}`] as const) as CurrentCheapDexCandidate['companions'] };
+      [role, address, i ? hash : `0x${'44'.repeat(32)}`] as const) as unknown as CurrentCheapDexCandidate['companions'] };
     expect(currentNativeDexDailyPriceConfig({ ...native, ...patch },manifest.symbols).status).toBe('inactive');
   });
   it('requires the exact candidate token order and a selected current pair',()=>{
-    const config=currentNativeDexDailyPriceConfig({...native,tokens:[...native.tokens].reverse() as CurrentCheapDexCandidate['tokens']},manifest.symbols);
+    const config=currentNativeDexDailyPriceConfig({...native,tokens:[...native.tokens].reverse() as unknown as CurrentCheapDexCandidate['tokens']},manifest.symbols);
     expect(config).toEqual({status:'inactive'});
     expect(currentNativeDexDailyPriceConfig(native)).toEqual({status:'inactive'});
     expect(config).not.toHaveProperty('priceE18');

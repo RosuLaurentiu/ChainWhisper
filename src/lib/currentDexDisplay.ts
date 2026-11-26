@@ -1,25 +1,9 @@
 import { formatUnits, parseUnits } from '@coti-io/coti-ethers';
-import {
-  CURRENT_CHEAP_DEX_CANDIDATE, CURRENT_CHEAP_POOL_TOKENS, STAGED_PREPARED_DEX_CANDIDATE, STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE,
-  currentCheapDexCandidateKey, type CurrentCheapDexIdentity
-} from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, currentCheapDexCandidateKey, type CurrentCheapDexIdentity } from './dexV2Deployment';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt, type CurrentDexRecordScope } from './currentDexPendingAttempt';
 
-// Safe labels identify addresses in the admitted trial; they do not claim token symbols.
 // Its token-funding admission requires 18 decimals before any funds can move.
 export const CURRENT_DEX_TOKEN_DECIMALS = 18;
-export const CURRENT_DEX_DISPLAY_TOKENS = Object.freeze(CURRENT_CHEAP_DEX_CANDIDATE.tokens.map(([address], index) =>
-  Object.freeze({ address, label: `Test token ${index}`, decimals: CURRENT_DEX_TOKEN_DECIMALS })));
-export const CURRENT_DEX_DISPLAY_PAIR = Object.freeze([
-  CURRENT_DEX_DISPLAY_TOKENS[0].label, CURRENT_DEX_DISPLAY_TOKENS[1].label
-] as const);
-export const currentDexTokenLabel = (address: string): string => {
-  const token = CURRENT_DEX_DISPLAY_TOKENS.find(token => token.address.toLowerCase() === address.toLowerCase());
-  if (!token) throw new Error('Token is outside the current DEX pair.');
-  return token.label;
-};
-export const CURRENT_DEX_POOL_LABELS = Object.freeze(CURRENT_CHEAP_POOL_TOKENS.map(([address]) => currentDexTokenLabel(address)));
-
 export const parseCurrentDexTokenAmount = (value: string, field: string, positive = false): bigint => {
   const input = value.trim();
   if (!/^(0|[1-9][0-9]*)(?:\.[0-9]{1,18})?$/.test(input)) {
@@ -37,7 +21,7 @@ export type CurrentDexDisplayPair = Readonly<{
   tokens: readonly [CurrentDexDisplayToken, CurrentDexDisplayToken];
 }>;
 
-const preparedDisplay = (candidate: typeof STAGED_PREPARED_DEX_CANDIDATE | typeof STAGED_EXIT_PREVIEW_DEX_CANDIDATE | typeof STAGED_SHARED_HISTORY_DEX_CANDIDATE) => {
+const preparedDisplay = (candidate: typeof STAGED_SHARED_HISTORY_DEX_CANDIDATE) => {
 const tokens = Object.freeze(candidate.tokenMetadata.map(token =>
   Object.freeze({ address: token.address, label: token.symbol, decimals: token.decimals })));
 const pairs = Object.freeze(candidate.pairs.map(pair => Object.freeze({
@@ -50,29 +34,23 @@ const pairs = Object.freeze(candidate.pairs.map(pair => Object.freeze({
 })));
 return Object.freeze({ tokens, pairs });
 };
-const PREPARED_DISPLAY = preparedDisplay(STAGED_PREPARED_DEX_CANDIDATE);
-const EXIT_DISPLAY = preparedDisplay(STAGED_EXIT_PREVIEW_DEX_CANDIDATE);
+// decision-034: one contract version. Display metadata does not grant signing or token-funding admission.
 const HISTORY_DISPLAY = preparedDisplay(STAGED_SHARED_HISTORY_DEX_CANDIDATE);
-const CURRENT_DISPLAY = Object.freeze({
-  tokens: CURRENT_DEX_DISPLAY_TOKENS,
-  pairs: Object.freeze([Object.freeze({
-    marketId: CURRENT_CHEAP_DEX_CANDIDATE.marketId,
-    tokens: Object.freeze(CURRENT_CHEAP_POOL_TOKENS.map(([address]) =>
-      CURRENT_DEX_DISPLAY_TOKENS.find(token => token.address === address)!)) as readonly [CurrentDexDisplayToken, CurrentDexDisplayToken]
-  })])
-});
+const PRIMARY_PAIR = HISTORY_DISPLAY.pairs.find(pair => pair.marketId === STAGED_SHARED_HISTORY_DEX_CANDIDATE.marketId) ?? HISTORY_DISPLAY.pairs[0];
+export const CURRENT_DEX_DISPLAY_TOKENS = HISTORY_DISPLAY.tokens;
+export const CURRENT_DEX_DISPLAY_PAIR = Object.freeze([PRIMARY_PAIR.tokens[0].label, PRIMARY_PAIR.tokens[1].label] as const);
+export const CURRENT_DEX_POOL_LABELS: readonly string[] = CURRENT_DEX_DISPLAY_PAIR;
+export const currentDexTokenLabel = (address: string): string => {
+  const token = CURRENT_DEX_DISPLAY_TOKENS.find(token => token.address.toLowerCase() === address.toLowerCase());
+  if (!token) throw new Error('Token is outside the current DEX pair.');
+  return token.label;
+};
 
-// Display metadata does not grant signing or token-funding admission.
-// Resolve the complete identity before using the maintained token decimals.
 export const readCurrentDexDisplay = (identity: CurrentCheapDexIdentity): Readonly<{
   tokens: readonly CurrentDexDisplayToken[]; pairs: readonly CurrentDexDisplayPair[]
 }> => {
-  const key = currentCheapDexCandidateKey(identity);
-  if (key === 'cheap-prepared') return PREPARED_DISPLAY;
-  if (key === 'cheap-exit') return EXIT_DISPLAY;
-  if (key === 'cheap-history') return HISTORY_DISPLAY;
-  if (key === currentCheapDexCandidateKey(CURRENT_CHEAP_DEX_CANDIDATE)) return CURRENT_DISPLAY;
-  throw new Error('Display metadata is absent for this DEX candidate.');
+  currentCheapDexCandidateKey(identity);
+  return HISTORY_DISPLAY;
 };
 
 export const currentDexDisplayToken = (identity: CurrentCheapDexIdentity, address: string): CurrentDexDisplayToken => {

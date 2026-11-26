@@ -6,7 +6,7 @@ import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } fro
 import type { CurrentOwnedLimit } from '../../../lib/currentDexOwnedLimits';
 type Capability=Awaited<ReturnType<NonNullable<NonNullable<SharedWalletSession['actions']>['getCurrentDexLimitCapability']>>>;
 type Inventory=Awaited<ReturnType<Capability['readOwnedOrders']>>;
-export default function CurrentOwnedLimits({session,candidateKey='cheap-exit',selectedPair,visible,disabled=false,refreshToken='',selectedId,onSelect,managementNavigation}:{
+export default function CurrentOwnedLimits({session,candidateKey='cheap-history',selectedPair,visible,disabled=false,refreshToken='',selectedId,onSelect,managementNavigation}:{
   session?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;selectedPair:readonly[string,string];visible:boolean;disabled?:boolean;refreshToken?:string;selectedId?:string;managementNavigation?:ReactNode;onSelect:(order:CurrentOwnedLimit)=>void;
 }){
   const candidate=resolveCurrentCheapDexCandidate(candidateKey),display=readCurrentDexDisplay(candidate);

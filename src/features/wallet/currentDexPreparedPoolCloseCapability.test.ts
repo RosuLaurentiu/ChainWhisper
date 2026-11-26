@@ -1,7 +1,7 @@
 import { Interface, toBeHex } from '@coti-io/coti-ethers';
 import { describe, expect, it, vi } from 'vitest';
 import { issueCurrentDexPoolPositionCapability, assertCurrentPoolPositionPrepared } from './currentDexPoolPositionCapability';
-import { STAGED_PREPARED_DEX_CANDIDATE as c } from '../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c } from '../../lib/dexV2Deployment';
 import { currentPoolPositionAbi as abi, currentPoolNftAbi as nft } from '../../lib/currentDexPoolPosition';
 import type { PreparedPoolStoredState } from '../../lib/currentDexPreparedPoolSnapshot';
 
@@ -75,7 +75,7 @@ async function fixture(pairIndex = 0) {
   mocks.wide.mockImplementation(async (_, value) => ({ ciphertext: { ciphertextHigh: 1n, ciphertextLow: value }, signature: `0x${'44'.repeat(65)}` }));
   mocks.decrypt.mockImplementation((_, value) => value.ciphertextLow);
   mocks.issue.mockImplementation(async args => args.bindCapability({ signer, readProvider: provider, ownerAddress: owner, chainId: BigInt(c.chainId), assertCurrent: guard, assertSnapshotCurrent: () => {} }));
-  const issue = () => issueCurrentDexPoolPositionCapability({ candidate: 'cheap-prepared' } as never), cap = await issue();
+  const issue = () => issueCurrentDexPoolPositionCapability({ candidate: 'cheap-history' } as never), cap = await issue();
   const request = { positionId: id, action: 'close' as const, expectedContext: before.claim[13], producerHash: sourceHash,
     minimums: [20n, 40n] as const, confirm: vi.fn(async () => true) };
   const prepare = async () => { const p = (await cap.prepareAction(request))!; closeData = p.data; return p; };

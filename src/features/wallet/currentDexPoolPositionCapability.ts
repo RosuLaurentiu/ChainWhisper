@@ -5,7 +5,6 @@ import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi, currentPool
   checkCurrentPoolPositionValues, decodeCurrentPoolNftTransfer, type CurrentPoolOwnerAction } from '../../lib/currentDexPoolPosition';
 import { decryptPrivateUint256Output, encryptPrivateUint128Input, encryptPrivateUint256Input } from '../../lib/privateUint256';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
-import { STAGED_NATIVE_DEX_CANDIDATE } from '../../lib/dexV2Deployment';
 import { createCurrentOwnerPoolSnapshotReader } from '../../lib/currentDexNativePoolSnapshotReader';
 import { currentNativePoolSession, requireCurrentNativePoolSession } from '../../lib/currentDexNativePoolPolicy';
 import { currentNativePoolSnapshotAbi, checkCurrentPoolSnapshotOnlyChange, checkCurrentPoolFinancialTransition, requireCurrentPoolProof } from '../../lib/currentDexNativePoolSnapshot';
@@ -60,7 +59,7 @@ const uint = (v: bigint, bits: number, positive = false) => {
   if (typeof v !== 'bigint' || v < (positive ? 1n : 0n) || v >= 1n << BigInt(bits)) throw new Error('Invalid position action amount.');
 };
 const transfer = new Interface(['event Transfer(address indexed from,address indexed to,(uint256 ciphertextHigh,uint256 ciphertextLow) senderValue,(uint256 ciphertextHigh,uint256 ciphertextLow) receiverValue)']);
-export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey = 'cheap-current', ...args}: IssueArgs) => issueOwnerCotiMetaMaskCapability({
+export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey = 'cheap-history', ...args}: IssueArgs) => issueOwnerCotiMetaMaskCapability({
   ...args, capabilityLabel: 'current Pool position owner', requirePrivacy: true,
   bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, chainId, ownerAddress }) => {
     const candidate = resolveCurrentCheapDexCandidate(candidateKey), nft = candidate.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
@@ -107,11 +106,10 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       return Object.freeze({status:state.status as bigint,context:state.context as string,positionRevision:state.positionRevision as bigint,
         ownershipRevision:state.ownershipRevision as bigint,lifecycleRevision:state.lifecycleRevision as bigint});
     };
-    const nativeReader = candidate.graph === STAGED_NATIVE_DEX_CANDIDATE.graph ? createCurrentOwnerPoolSnapshotReader({
-      signer, owner: ownerAddress, candidate, provider: readProvider, guard, attest: checkGraph }) : null;
-    const preparedScope = candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidate) : null;
+    const nativeReader = null as ReturnType<typeof createCurrentOwnerPoolSnapshotReader> | null;
+    const preparedScope = resolvePreparedDexScope(candidate);
     const isPrepared = !!preparedScope;
-    const exitCandidate = preparedScope?.key === 'cheap-exit' || preparedScope?.key === 'cheap-history';
+    const exitCandidate = true;
     const preparedReaders = new Map<string, ReturnType<typeof createPreparedOwnerPoolSnapshotReader>>();
     const preparedProducers = new Map<bigint, PreparedPoolSnapshotProducer>();
     const snapshotSourceKey = (id: bigint) => `${chainId}:${ownerAddress.toLowerCase()}:${candidate.graph}:${candidate.packageSha256}:${candidate.core.toLowerCase()}:${id}`;
@@ -532,7 +530,6 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
     };
     return Object.freeze({readPosition, verifyPlainSnapshot, verifySupersededPlainSnapshot, prepareSnapshot, prepareExitPreview, restoreExitPreview,
       readOwnedPositions: async () => {
-        if(candidateKey!=='cheap-exit'&&candidateKey!=='cheap-history')throw new Error('Position discovery requires a supported DEX deployment.');
         const block=await head(), inventory=await readCurrentDexOwnedPositionIds({candidate:candidateKey,owner:ownerAddress,block,
           rpc:(method,params)=>readProvider.send(method,[...params]),assertCurrent:guard});
         const positions:Readonly<{positionId:bigint;status:bigint;context:string}>[]=[];

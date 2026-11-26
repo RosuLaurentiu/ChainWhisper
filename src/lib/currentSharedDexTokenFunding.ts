@@ -2,7 +2,7 @@ import { Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { resolveCurrentSharedTokenDistribution, CURRENT_SHARED_DEX_TOKENS } from './currentSharedDexTokenDistribution';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
-import { assertCurrentAppInitialClaimAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, isCurrentAppCanonicalClaimRepair } from './currentDexC1SwapPolicy';
+import { assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, isCurrentAppCanonicalClaimRepair } from './currentDexC1SwapPolicy';
 import type { readCurrentSharedDexTokenFunds } from './currentSharedDexTokenFunds';
 import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, CURRENT_NATIVE_RECOVERY_RESERVE, type CurrentTransport, type CurrentCheapDexPreparedQuote } from './currentDexSubmission';
 import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash, readCurrentDexOperationLookups, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
@@ -26,10 +26,9 @@ export const CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM = (1n << 256n) - 1n;
 export const assertCurrentSharedTokenFundingAppAuthority = (value?: unknown, signerOrToken?: unknown): void => {
   const signer = signerOrToken && typeof signerOrToken === 'object' ? signerOrToken : undefined;
   const scope=value&&typeof value==='object'?value as {candidate?:string;owner?:string;token?:string;action?:string}:undefined;
-  if(!scope || scope.candidate!=='cheap-exit'&&scope.candidate!=='cheap-history'||typeof scope.owner!=='string'||typeof scope.token!=='string'||typeof scope.action!=='string')
+  if(!scope || scope.candidate!=='cheap-history'||typeof scope.owner!=='string'||typeof scope.token!=='string'||typeof scope.action!=='string')
     throw new Error('Beta token signing is held: connected App-wallet trial remains inactive.');
-  if(scope.candidate==='cheap-history')return assertCurrentAppSharedFundingAuthority(resolvePreparedDexScope(scope.candidate).candidate.graph,scope.owner,scope.token,scope.action,signer);
-  assertCurrentAppInitialClaimAuthority(resolvePreparedDexScope(scope.candidate).candidate.graph,scope.owner,scope.token,scope.action);
+  return assertCurrentAppSharedFundingAuthority(resolvePreparedDexScope(scope.candidate).candidate.graph,scope.owner,scope.token,scope.action,signer);
 };
 type Head = Awaited<ReturnType<CurrentTransport['readHead']>>;
 type Funds = Awaited<ReturnType<typeof readCurrentSharedDexTokenFunds>>;
@@ -81,7 +80,7 @@ const prunedState = (error: unknown) => {
 
 // Reuse the owner transport and one shared pending record. Admission is supplied
 // by the exact consumer; the App consumer keeps its explicit owner hold.
-export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-prepared', signer, ownerAddress, chainId, transport,
+export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-history', signer, ownerAddress, chainId, transport,
   readFunds, readReceiptBlock, decrypt, encrypt, assertAdmission, assertApprovalAdmission = assertCurrentSharedTokenFundingAppAuthority,
   assertSwapApprovalAdmission = assertCurrentSharedTokenFundingAppAuthority,
   authorizeSwapApprovalSigning, authorizeInitialClaimSigning, rememberSwapApprovalHash, completeSwapAllowanceCleanup,
@@ -247,7 +246,6 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
   const swapApprovals = new WeakMap<object, { before: Funds; deadline: bigint; targetAllowance: bigint; assertReviewCurrent: () => void | Promise<void>; preparedQuote?: CurrentCheapDexPreparedQuote }>();
   const cleanupSnapshots = new Map<string, Funds>();
   const swapReview = (token: string, amount: bigint, cleanup?: true): CurrentSharedSwapApprovalReview => {
-    if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new FundingProofError('Swap approval requires a supported current DEX candidate.');
     indexOf(token);
     if (typeof amount !== 'bigint' || (cleanup ? amount !== 0n : amount <= 0n) || amount >= 1n << 256n || amount > CURRENT_SHARED_SWAP_APPROVAL_MAXIMUM) throw new FundingProofError('Invalid exact swap allowance.');
     return Object.freeze({ candidate, owner, token: getAddress(token), spender: policy.core, amount, ...(cleanup ? { cleanup } : {}), ...identity });
@@ -359,7 +357,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
   };
   const requireLimitFundingIdentity = (funding: CurrentLimitFundingReview) => {
     assertCurrentLimitPrepared(funding, signer);
-    if ((candidate !== 'cheap-exit' && candidate !== 'cheap-history') || funding.phase !== 'limit-funding-review' || !['create', 'topup'].includes(funding.kind) ||
+    if (funding.phase !== 'limit-funding-review' || !['create', 'topup'].includes(funding.kind) ||
         funding.readyToSign !== false || funding.chainId !== chainId || !same(funding.from, owner) || !same(funding.to, policy.core) ||
         funding.graph !== policy.graph || funding.packageSha256 !== policy.packageSha256 ||
         typeof funding.amount !== 'bigint' || funding.amount <= 0n || funding.amount >= 1n << 256n) {
@@ -503,7 +501,6 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-p
     },
     recoverPendingSharedLimitApproval: () => recoverPendingApproval(),
     recoverPendingSharedSwapApproval: async (knownHash?: string) => {
-      if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new Error('Swap approval requires a supported current DEX candidate.');
       return recoverPendingApproval(knownHash);
     },
     verifySharedSwapAllowanceCleanup: async (request: Request, transactionHash: string) => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveBrowserWalletPrivacyState, type SharedWalletSession } from '../../../lib/walletSession';
-import { CURRENT_CHEAP_DEX_CANDIDATE, currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate,
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate,
   type CurrentCheapDexIdentity, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { currentDexDisplayPair, formatDexCandidateTokenAmount, type CurrentDexDisplayToken } from '../../../lib/currentDexDisplay';
 
@@ -10,17 +10,17 @@ export type CurrentTrialBalanceSelection = Readonly<{
 
 export default function useCurrentTrialBalances(session: SharedWalletSession | undefined, result: string,
   selection?: CurrentTrialBalanceSelection, visible = true) {
-  const identity = selection?.candidate ?? CURRENT_CHEAP_DEX_CANDIDATE;
+  const identity = selection?.candidate ?? STAGED_SHARED_HISTORY_DEX_CANDIDATE;
   const { graph, packageSha256 } = identity, core = identity.core.toLowerCase();
   const hasExplicitPair = Boolean(selection?.tokens);
-  const tokenIn = (selection?.tokens?.[0] ?? CURRENT_CHEAP_DEX_CANDIDATE.tokens[0][0]).toLowerCase();
-  const tokenOut = (selection?.tokens?.[1] ?? CURRENT_CHEAP_DEX_CANDIDATE.tokens[1][0]).toLowerCase();
+  const tokenIn = (selection?.tokens?.[0] ?? STAGED_SHARED_HISTORY_DEX_CANDIDATE.tokens[0][0]).toLowerCase();
+  const tokenOut = (selection?.tokens?.[1] ?? STAGED_SHARED_HISTORY_DEX_CANDIDATE.tokens[1][0]).toLowerCase();
   const selected = useMemo((): Readonly<{ prepared: boolean; key: CurrentCheapDexCandidateKey; chain: bigint; candidate: CurrentCheapDexIdentity;
     tokens: readonly [CurrentDexDisplayToken, CurrentDexDisplayToken] }> | undefined => {
     try {
       const identity = { graph, core, packageSha256 };
       const key = currentCheapDexCandidateKey(identity);
-      const prepared = key === 'cheap-prepared' || key === 'cheap-exit' || key === 'cheap-history';
+      const prepared = true;
       if (prepared && !hasExplicitPair) throw new Error('Select a prepared DEX pair.');
       const pair = currentDexDisplayPair(identity, tokenIn, tokenOut);
       const candidate = resolveCurrentCheapDexCandidate(key);
@@ -36,7 +36,8 @@ export default function useCurrentTrialBalances(session: SharedWalletSession | u
   const getFunds = session?.actions?.getCurrentSharedDexTokenFundsCapability;
   const context = { owner, chain: session?.chainId, provider: session?.browserProvider,
     source: session?.activeSignerSource, walletId: session?.browserWalletId, privacyReady, getSender, getFunds,
-    graph, core, packageSha256, tokenIn, tokenOut, visible,
+    // CW-140.10: a cleared selection must change the scope; the default tokens equal the first current pair.
+    graph, core, packageSha256, tokenIn, tokenOut, hasExplicitPair, visible,
     privacyKey: privacy?.ownerAesKey,
     onboard: owner ? session?.sessionOnboardInfo?.[owner] : undefined,
     onboardSession: session?.sessionOnboardInfo, health: session?.walletAesHealthByAddress };
@@ -46,7 +47,7 @@ export default function useCurrentTrialBalances(session: SharedWalletSession | u
   const sequence = useRef(0);
   const [state, setState] = useState<{ scope: object; status: 'loading' | 'ready' | 'error'; values?: string[] } | null>(null);
   const eligible = Boolean(visible && selected && owner && context.chain === Number(selected.chain) && context.provider &&
-    (selected.prepared ? getFunds : getSender) && privacyReady);
+    getFunds && privacyReady);
   const refresh = useCallback(async () => {
     if (!eligible || !selected || scope.current !== captured) return;
     const request = ++sequence.current;
@@ -56,7 +57,7 @@ export default function useCurrentTrialBalances(session: SharedWalletSession | u
     setState({ scope: captured, status: 'loading' });
     try {
       let values: string[];
-      if (selected.prepared) {
+      {
         const reader = await getFunds!(selected.chain, { candidate: selected.key });
         if (scope.current !== captured || sequence.current !== request) return;
         const funds = await reader.readSwap([tokenIn, tokenOut], assertReadCurrent);
@@ -70,14 +71,6 @@ export default function useCurrentTrialBalances(session: SharedWalletSession | u
             throw new Error('Private funds token metadata changed.');
           }
           return formatDexCandidateTokenAmount(selected.candidate, token.address, matches[0].balance);
-        });
-      } else {
-        const sender = await getSender!(selected.chain);
-        if (scope.current !== captured || sequence.current !== request) return;
-        const funds = await Promise.all([sender.readCurrentTokenFunding(0), sender.readCurrentTokenFunding(1)]);
-        values = selected.tokens.map(token => {
-          const index = CURRENT_CHEAP_DEX_CANDIDATE.tokens.findIndex(([address]) => address.toLowerCase() === token.address.toLowerCase());
-          return formatDexCandidateTokenAmount(selected.candidate, token.address, funds[index].balance);
         });
       }
       if (scope.current !== captured || sequence.current !== request) return;

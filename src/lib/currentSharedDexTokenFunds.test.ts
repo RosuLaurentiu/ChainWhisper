@@ -20,7 +20,7 @@ const empty = () => ({ ciphertextHigh: 0n, ciphertextLow: 0n });
 const snapshot = () => ({ owner, head, core: p.core, graph: p.graph, packageSha256: p.packageSha256, vault: p.vault, readyToSign: false as const,
   tokens: tokens.map(t => ({ ...t, claimed: true, initialClaimAvailability: 'claimed' as const, refillAvailability: 'ready' as const,
     quota: p.initialQuota, nextClaimAt: 0n, initialAmount: p.initialAmount, refillAmount: p.refillAmount })) });
-function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-prepared') {
+function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-history') {
   const p = resolveCurrentSharedTokenDistribution(candidate);
   let active = true, code = '0x', recipient = zero, suffix = '', lastHash = head.hash, storageWord = `0x${'00'.repeat(32)}`;
   const balances = [0n, 11_000_000000n, (1n << 192n) + 7n, (1n << 256n) - 1n];
@@ -52,7 +52,9 @@ afterEach(() => vi.restoreAllMocks());
 describe('selected swap input funds', () => {
   const captures = [
     '../../reports/limit-directory-adoption-2026-11-04/public-binding/public-capture-1.json',
-    '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json'
+    '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json',
+    // Build 13, the single App candidate (decision-034).
+    '../../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/native-bob-dense-1/APP_PUBLIC_CAPTURE.json'
   ].map(file => JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8')));
   function swapFixture(fault = '') {
     const f = fixture('cheap-history'), policy = resolveCurrentSharedTokenDistribution('cheap-history');
@@ -125,10 +127,10 @@ describe('selected swap input funds', () => {
 });
 describe('four-token owner private funds', () => {
   it('reads allowance for the current Core and refuses an earlier-Core distribution', async () => {
-    const f = fixture('cheap-exit'), result = await f.run();
-    expect(result.core).toBe(resolveCurrentSharedTokenDistribution('cheap-exit').core);
+    const f = fixture('cheap-history'), result = await f.run();
+    expect(result.core).toBe(resolveCurrentSharedTokenDistribution('cheap-history').core);
     expect(result.tokens.map(t => t.allowance)).toEqual(f.allowances);
-    expect(readCurrentSharedDexTokenDistribution).toHaveBeenCalledWith(expect.objectContaining({ candidate: 'cheap-exit' }));
+    expect(readCurrentSharedDexTokenDistribution).toHaveBeenCalledWith(expect.objectContaining({ candidate: 'cheap-history' }));
     vi.mocked(readCurrentSharedDexTokenDistribution).mockResolvedValueOnce(snapshot());
     await expect(f.run()).rejects.toThrow('candidate changed');
   });
@@ -150,7 +152,7 @@ describe('four-token owner private funds', () => {
     const f = fixture(); f.viewer[3] = empty(); f.approvals[3] = empty(); const result = await f.run();
     expect(result.tokens[3]).toMatchObject({ balance: 0n, allowance: 0n }); expect(f.decrypt).toHaveBeenCalledTimes(6);
     const coder = AbiCoder.defaultAbiCoder(), at = (address: string, root: bigint) => BigInt(keccak256(coder.encode(['address', 'uint256'], [address, root])));
-    const b = at(owner, 4n), a = at(p.core, at(owner, 5n));
+    const b = at(owner, 4n), a = at(resolveCurrentSharedTokenDistribution('cheap-history').core, at(owner, 5n));
     expect(new Set(f.rpc.mock.calls.filter(([method]) => method === 'eth_getStorageAt').map(([, args]) => args[1]))).toEqual(new Set([b, b + 1n, a, a + 1n].map(n => `0x${n.toString(16)}`)));
   });
   it.each(['balance', 'allowance'])('rejects missing %s owner envelope with nonempty system storage', async kind => {

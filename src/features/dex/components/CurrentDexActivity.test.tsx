@@ -331,11 +331,10 @@ describe('read-only private Activity view', () => {
     expect(html).toContain('canonical owner token receipts'); expect(html).toContain('Original Quote-rate reconstruction is unavailable');
     expect(html).not.toContain('Latest saved async operation'); expect(html).toContain('dateTime=');
   });
-  it.each(['wallet', 'privacy', 'candidate', 'hidden'] as const)('revokes visible amounts immediately on %s change', async reason => {
+  it.each(['wallet', 'privacy', 'hidden'] as const)('revokes visible amounts immediately on %s change', async reason => {
     const f = fixture(); await f.load();
     if (reason === 'wallet') f.session.walletAddress = `0x${'44'.repeat(20)}`;
     if (reason === 'privacy') f.session.sessionOnboardInfo = {};
-    if (reason === 'candidate') f.props.candidateKey = 'cheap-prepared';
     if (reason === 'hidden') f.props.visible = false;
     expect(f.render()).not.toContain('1.355299 BCN');
   });

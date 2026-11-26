@@ -10,11 +10,11 @@ vi.mock('react',async original=>({...await original<typeof import('react')>(),
   useRef:(initial:unknown)=>{const i=hooks.refIndex++;return hooks.refs[i]??(hooks.refs[i]={current:initial});},useEffect:(effect:EffectCallback)=>{hooks.effect=effect;}
 }));
 function fixture(){
-  const owner=`0x${'22'.repeat(20)}`,pair=resolvePreparedDexScope('cheap-exit').candidate.pairs[0];
+  const owner=`0x${'22'.repeat(20)}`,pair=resolvePreparedDexScope('cheap-history').candidate.pairs[0];
   const read=vi.fn(async()=>({orders:[{positionId:43n,marketId:pair.marketId,poolTokens:pair.tokens,status:0n,closed:false,context:'bound'}],complete:true}));
   const getOrders=vi.fn(async()=>({readOwnedOrders:read}));
   const session={walletAddress:owner,chainId:7082400,browserProvider:{},browserWalletId:'metamask',activeSignerSource:'browser',sessionOnboardInfo:{[owner]:{aesKey:'local-test-only'}},walletAesHealthByAddress:{},actions:{getCurrentDexLimitCapability:getOrders}}as unknown as SharedWalletSession;
-  const props:ComponentProps<typeof CurrentOwnedLimits>={session,candidateKey:'cheap-exit',selectedPair:pair.tokens,visible:true,disabled:false,onSelect:vi.fn()};
+  const props:ComponentProps<typeof CurrentOwnedLimits>={session,candidateKey:'cheap-history',selectedPair:pair.tokens,visible:true,disabled:false,onSelect:vi.fn()};
   const render=()=>{hooks.index=0;hooks.refIndex=0;return renderToStaticMarkup(CurrentOwnedLimits(props));};
   const load=async()=>{render();hooks.effect!();await vi.waitFor(()=>expect(hooks.states[1]).toMatchObject({state:'ready'}));};
   return{read,getOrders,props,session,render,load};
@@ -28,29 +28,12 @@ describe('My Orders current wallet list',()=>{
   });
   it('lists owned orders with their pair and no private amount or routine ID input',async()=>{
     const f=fixture();await f.load();expect(f.render()).toContain('Open Limit NFT 43');
-    expect(f.getOrders).toHaveBeenCalledWith(7082400n,{candidate:'cheap-exit',selectedPair:f.props.selectedPair});expect(f.read).toHaveBeenCalledWith(expect.any(Function));
+    expect(f.getOrders).toHaveBeenCalledWith(7082400n,{candidate:'cheap-history',selectedPair:f.props.selectedPair});expect(f.read).toHaveBeenCalledWith(expect.any(Function));
     expect(f.render()).not.toContain('Private price');expect(f.render()).not.toContain('Claimable');
   });
-  it('uses selected candidate display labels and clears prior orders on candidate change',async()=>{
-    const f=fixture();await f.load();f.props.candidateKey='cheap-history';
-    const historyPair=resolvePreparedDexScope('cheap-history').candidate.pairs[0];
-    f.props.selectedPair=historyPair.tokens;
-    expect(f.render()).not.toContain('Open Limit NFT 43');hooks.effect!();
-    await vi.waitFor(()=>expect(f.getOrders).toHaveBeenLastCalledWith(7082400n,{candidate:'cheap-history',selectedPair:historyPair.tokens}));
-    await vi.waitFor(()=>expect(hooks.states[1]).toMatchObject({state:'ready'}));
+  it('uses selected candidate display labels',async()=>{
+    const f=fixture();await f.load();
     const html=f.render();expect(html).toContain(resolvePreparedDexScope('cheap-history').candidate.tokenMetadata[0].symbol);
-  });
-  it('ignores an old candidate inventory that resolves after the new candidate',async()=>{
-    const f=fixture();let resolveOld!:(value:{orders:{positionId:bigint;marketId:string;poolTokens:readonly[string,string];status:bigint;closed:boolean;context:string}[];complete:boolean})=>void;
-    const oldInventory=new Promise<{orders:{positionId:bigint;marketId:string;poolTokens:readonly[string,string];status:bigint;closed:boolean;context:string}[];complete:boolean}>(resolve=>{resolveOld=resolve;});
-    f.getOrders.mockImplementationOnce(async()=>({readOwnedOrders:vi.fn(async()=>await oldInventory)}));
-    f.render();const cleanupOld=hooks.effect!();
-    const historyPair=resolvePreparedDexScope('cheap-history').candidate.pairs[0];
-    f.props.candidateKey='cheap-history';f.props.selectedPair=historyPair.tokens;f.render();if(typeof cleanupOld==='function')cleanupOld();hooks.effect!();
-    await vi.waitFor(()=>expect(hooks.states[1]).toMatchObject({state:'ready'}));
-    expect(f.render()).toContain('Open Limit NFT 43');
-    resolveOld({orders:[{positionId:99n,marketId:'old',poolTokens:['old-a','old-b'],status:0n,closed:false,context:'old'}],complete:true});await oldInventory;
-    await Promise.resolve();expect(f.render()).toContain('Open Limit NFT 43');expect(f.render()).not.toContain('Open Limit NFT 99');
   });
   it('shows closed orders without inferring the reason from their old status',async()=>{
     const f=fixture();const inventory=await f.read();inventory.orders[0].closed=true;f.read.mockResolvedValue(inventory);

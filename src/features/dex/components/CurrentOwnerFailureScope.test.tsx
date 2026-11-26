@@ -4,15 +4,8 @@ import CurrentPoolWorkspace from './CurrentPoolWorkspace';
 import CurrentPoolPositionsWorkspace from './CurrentPoolPositionsWorkspace';
 import CurrentLimitWorkspace from './CurrentLimitWorkspace';
 import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
-import { CURRENT_CHEAP_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
 import type { SharedWalletSession } from '../../../lib/walletSession';
-// Retained native recovery tests select their candidate before component import.
-vi.mock('../../../lib/dexV2Deployment', async original => {
-  const actual = await original<typeof import('../../../lib/dexV2Deployment')>();
-  return { ...actual, CURRENT_CHEAP_DEX_CANDIDATE: actual.resolveCurrentCheapDexCandidate('cheap-native'),
-    resolveCurrentCheapDexCandidate: (key: Parameters<typeof actual.resolveCurrentCheapDexCandidate>[0]) =>
-      actual.resolveCurrentCheapDexCandidate(key === 'cheap-current' ? 'cheap-native' : key) };
-});
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[] }));
 // Position effects only write wallet diagnostics; these tests do not check them.
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(), useEffect: () => {},
@@ -36,6 +29,8 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
   const pendingRead = vi.fn(async () => deferred);
   const sender = { recoverCurrentNativePoolFundingResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
     recoverCurrentNativePoolPositionResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
+    recoverCurrentPreparedPoolFundingResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
+    recoverCurrentPreparedPoolPositionResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
     recoverPendingLimitAttempt: pendingRead, recoverPendingPoolAttempt: publicRecovery ? pendingRead : vi.fn(async () => null),
     recoverPendingPoolPositionAttempt: publicRecovery ? pendingRead : vi.fn(async () => null) };
   const session = { walletAddress: owner, chainId: Number(candidate.chainId), browserProvider: { request: vi.fn() },
@@ -43,7 +38,7 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
     actions: { getCurrentDexSubmissionCapability: vi.fn(async () => sender), getCurrentDexPoolFundingCapability: vi.fn(), getCurrentDexPoolPositionCapability: vi.fn(), getCurrentDexLimitCapability: vi.fn() },
   } as unknown as SharedWalletSession;
   const render = () => { hooks.index = 0; hooks.refIndex = 0;
-    return panel === 'pool' ? components.pool({ sharedWalletSession: session }) : panel === 'position' ? components.position({ sharedWalletSession: session }) : CurrentLimitWorkspace({ sharedWalletSession: session, view: 'manage' }); };
+    return panel === 'pool' ? components.pool({ sharedWalletSession: session, selectedPair: ['HBR', 'BCN'] }) : panel === 'position' ? components.position({ sharedWalletSession: session }) : CurrentLimitWorkspace({ sharedWalletSession: session, view: 'manage', selectedPair: ['HBR', 'BCN'] }); };
   const button = (label: string) => elements(render()).find(node => node.type === 'button' && text(node.props.children) === label)!;
   // A locked Pool panel shows the shared locked notice in place of its status line (CW-095).
   const status = () => { const nodes = elements(render()); const notice = nodes.find(node => node.type === PrivacyLockedNotice) as ReactElement<{ message: string }> | undefined;
@@ -67,7 +62,7 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
     idle: async () => { await vi.waitFor(() => expect(hooks.states[5]).toBe(false)); } };
 }
 afterEach(() => { hooks.states = []; hooks.refs = []; vi.unstubAllGlobals(); });
-describe.each(['pool', 'position', 'limit'] as const)('retained native %s error session', panel => {
+describe.each(['pool', 'position', 'limit'] as Panel[])('retained current %s error session', panel => {
   it('retains the exact failure and recovery control for an unchanged session', async () => {
     const f = fixture(panel); await f.start(); await f.finish(); expect(f.status()).toBe(errorText);
     expect(f.button(f.statusLabel).props.disabled).toBe(false);
@@ -88,7 +83,7 @@ it.each(['pool', 'position'] as const)('keeps actual current %s public recovery 
   const [pool, position] = await Promise.all([import('./CurrentPoolWorkspace'), import('./CurrentPoolPositionsWorkspace')]);
   const f = fixture(panel, { pool: pool.default, position: position.default }, true);
   await f.start(); await f.finish(); expect(f.status()).toBe(errorText);
-  expect(f.session.actions!.getCurrentDexSubmissionCapability).toHaveBeenCalledWith(BigInt(candidate.chainId), undefined);
+  expect(f.session.actions!.getCurrentDexSubmissionCapability).toHaveBeenCalledWith(BigInt(candidate.chainId), { candidate: 'cheap-history' });
   expect(f.sender.recoverCurrentNativePoolFundingResult).not.toHaveBeenCalled(); expect(f.sender.recoverCurrentNativePoolPositionResult).not.toHaveBeenCalled();
   expect(f.pendingRead).toHaveBeenCalledOnce(); f.change('health'); expect(f.status()).not.toContain(errorText);
 });

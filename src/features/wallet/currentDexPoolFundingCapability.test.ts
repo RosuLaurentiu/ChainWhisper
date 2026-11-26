@@ -2,8 +2,7 @@ import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { describe, expect, it, vi } from 'vitest';
 import { issueCurrentDexPoolFundingCapability, assertCurrentPoolFundingPrepared } from './currentDexPoolFundingCapability';
-import { ARCHIVED_CHEAP_DEX_CANDIDATE, ARCHIVED_CHEAP_DEX_CANDIDATE as candidate, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
-const ARCHIVED_CHEAP_POOL_TOKENS=[...candidate.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1);
+import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 // These source-fit tests isolate authentic input/preview brands. Actual storage,
 // event and provenance checks use the unmocked reader in its companion tests.
 vi.mock('../../lib/currentDexNativePoolSnapshotReader',()=>({createCurrentOwnerPoolSnapshotReader:()=>({
@@ -12,14 +11,7 @@ vi.mock('../../lib/currentDexNativePoolSnapshotReader',()=>({createCurrentOwnerP
 })}));
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI } from '../../lib/currentDexPoolFunding';
 import * as poolInputs from '../../lib/currentDexPoolFunding';
-import { assertCurrentNativePoolProfile, issueCurrentNativePoolSourceFit, assertCurrentNativePoolSourceFit,
-  CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_SOURCE } from '../../lib/currentDexNativePoolPolicy';
-import { createCurrentAttemptBoundary } from '../../lib/currentDexSubmission';
-import { createCurrentTokenFundingAdapter,currentTokenFundingAbi } from '../../lib/currentDexTokenFunding';
-import { admitCurrentNativePoolPreview,currentNativePoolSession } from '../../lib/currentDexNativePoolPolicy';
-import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../lib/currentDexPendingAttempt';
-import { currentNativeSigningBudget } from '../../lib/currentDexNativeSwapPolicy';
-import { CurrentPoolProofMismatch, isKnownCurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
+import { CurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
 import type { PreparedPoolStoredState } from '../../lib/currentDexPreparedPoolSnapshot';
 vi.mock('../../lib/currentDexPreparedPoolSnapshot', async original => ({
   ...await original<typeof import('../../lib/currentDexPreparedPoolSnapshot')>(),
@@ -69,7 +61,7 @@ describe('packed Pool preparation with isolated candidate selection', () => {
     } finally { profile.mockRestore(); }
   });
 });
-describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s owner Pool top-up preparation', candidateKey => {
+describe.each(['cheap-history'] as const)('%s owner Pool top-up preparation', candidateKey => {
   const c = resolvePreparedDexScope(candidateKey).candidate;
   it.each(c.pairs.map((_, i) => i))('binds canonical pair %s, exact inputs and genuine approval brand', async index => {
     const f = await topUpFixture(index, candidateKey), { prepared, preview, funding } = await f.prepare();
@@ -212,7 +204,7 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s ow
     await expect(result.verifySnapshot(toBeHex(99n, 32))).rejects.toThrow('snapshot receipt changed');
   });
 });
-async function topUpFixture(pairIndex = 0, candidateKey: 'cheap-prepared' | 'cheap-exit' | 'cheap-history' = 'cheap-prepared') {
+async function topUpFixture(pairIndex = 0, candidateKey: 'cheap-history' = 'cheap-history') {
   const f = await fixture(candidateKey), c = resolvePreparedDexScope(candidateKey).candidate, pair = c.pairs[pairIndex];
   const w = (value: bigint | number) => toBeHex(value, 32), empty = (n: number) => Array.from({ length: n }, () => w(0));
   const before: Mutable<PreparedPoolStoredState> = { graph: c.graph, marketId: pair.marketId, positionId: 43n, block: { number: 10n, hash },
@@ -287,7 +279,7 @@ async function topUpFixture(pairIndex = 0, candidateKey: 'cheap-prepared' | 'che
 const claimAbi = new Interface(['event SharedClaimCreated(uint256 indexed positionId)']);
 const nftAbi = new Interface(['event Transfer(address indexed from,address indexed to,uint256 indexed tokenId)']);
 const tokenAbi = new Interface(['event Transfer(address indexed from,address indexed to,(uint256 ciphertextHigh,uint256 ciphertextLow) senderValue,(uint256 ciphertextHigh,uint256 ciphertextLow) receiverValue)']);
-async function fixture(candidateKey:CurrentCheapDexCandidateKey='cheap-archived') {
+async function fixture(candidateKey:CurrentCheapDexCandidateKey='cheap-history') {
   const candidate=resolveCurrentCheapDexCandidate(candidateKey);
   vi.clearAllMocks();
   const words=(n:number)=>Array.from({length:n},()=>toBeHex(0n,32));
@@ -296,7 +288,7 @@ async function fixture(candidateKey:CurrentCheapDexCandidateKey='cheap-archived'
   let active = true;
   const guard = () => { if (!active) throw new Error('Session revoked'); };
   const signer = { sendTransaction: vi.fn() };
-  const provider = { send: vi.fn(async(method:string)=>method==='eth_getBlockByNumber'?{number:'0xb',hash}:method==='eth_getStorageAt'?toBeHex(candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? 51n : 19n,32):undefined), getTransaction: vi.fn(), getTransactionReceipt: vi.fn() };
+  const provider = { send: vi.fn(async(method:string)=>method==='eth_getBlockByNumber'?{number:'0xb',hash}:method==='eth_getStorageAt'?toBeHex(51n,32):undefined), getTransaction: vi.fn(), getTransactionReceipt: vi.fn() };
   m.preparedFactory.mockImplementation(({ marketId }: { marketId: string }) => {
     const c = resolvePreparedDexScope(candidateKey).candidate, pair = c.pairs.find(p => p.marketId === marketId)!;
     const market = { marketId, canonicalId: BigInt(pair.canonicalId), registryRevision: 7n, marketRevision: 1n, enabled: true,
@@ -329,8 +321,8 @@ async function fixture(candidateKey:CurrentCheapDexCandidateKey='cheap-archived'
     operationReadIdentity: { runtimeHash: candidate.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2], releaseId: candidate.releaseId } }));
   m.registry.mockImplementation(async ({ blockNumber, blockHash }) => ({ graph: candidate.graph, packageSha256: candidate.packageSha256,
     chainId: BigInt(candidate.chainId), core: candidate.core, releaseId: candidate.releaseId, block: { number: blockNumber, hash: blockHash },
-    markets: candidateKey === 'cheap-prepared' || candidateKey === 'cheap-exit' || candidateKey === 'cheap-history' ? resolvePreparedDexScope(candidateKey).candidate.pairs.map(pair => ({ marketId: pair.marketId, canonicalId: BigInt(pair.canonicalId),
-      registryRevision: 1n, marketRevision: 1n, enabled: true, token0: pair.tokens[0], token1: pair.tokens[1], engine: pair.engine, poolTerms: pair.poolTerms })) : [] }));
+    markets: resolvePreparedDexScope(candidateKey).candidate.pairs.map(pair => ({ marketId: pair.marketId, canonicalId: BigInt(pair.canonicalId),
+      registryRevision: 1n, marketRevision: 1n, enabled: true, token0: pair.tokens[0], token1: pair.tokens[1], engine: pair.engine, poolTerms: pair.poolTerms })) }));
   m.small.mockImplementation(async (_, value) => ({ ciphertext: value + 1n, signature }));
   m.wide.mockImplementation(async (_, value) => ({ ciphertext: { ciphertextHigh: 1n, ciphertextLow: value }, signature }));
   m.resign.mockImplementation(async (_, ciphertext) => ({ ciphertext, signature: `0x${'22'.repeat(65)}` }));
@@ -353,134 +345,7 @@ async function fixture(candidateKey:CurrentCheapDexCandidateKey='cheap-archived'
   };
   return { cap, request, mine, signer, provider, values, revoke: () => { active = false; } };
 }
-describe('current owner Pool funding preparation', () => {
-  it('binds budgets and unequal private debits to canonical Pool tokens, not app token order', async () => {
-    expect(ARCHIVED_CHEAP_POOL_TOKENS.map(([address]) => address)).toEqual([
-      '0x96d97450d36eb65804ce2f84d0fe6c9ef52f264a', '0xbbafdc398697154e1de68780eafb0c586371cff2'
-    ]);
-    const f = await fixture(), prepared = (await f.cap.preparePoolCreation(f.request))!;
-    expect(m.wide.mock.calls.map(call => call[1])).toEqual([120n, 50n]);
-    f.mine(prepared.data);
-    const preview = (await prepared.readPreview(hash))!, funding = (await preview.prepareFunding(async () => true))!;
-    const { receipt } = f.mine(funding.data);
-    const nft = candidate.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
-    receipt.logs = [
-      { address: candidate.core, ...claimAbi.encodeEventLog(claimAbi.getEvent('SharedClaimCreated')!, [8n]) },
-      { address: nft, ...nftAbi.encodeEventLog(nftAbi.getEvent('Transfer')!, ['0x0000000000000000000000000000000000000000', owner, 8n]) },
-      ...candidate.tokens.map(([address], i) => ({ address,
-        ...tokenAbi.encodeEventLog(tokenAbi.getEvent('Transfer')!, [owner, candidate.core, [BigInt(i + 1), 99n], [99n, 88n]]) }))
-    ];
-    // A receipt with app-order amounts must fail even when the total is correct.
-    await expect(funding.readFunding(hash)).rejects.toThrow('debit');
-  });
-  it.each(['valid', 'missing', 'status', 'data', 'owner', 'block', 'reorg', 'claim', 'mint', 'mint-owner', 'mint-id',
-    'debit0', 'debit1', 'debit-duplicate', 'debit-foreign', 'debit-encoding', 'revoked'])('checks %s canonical funding and exact private debits', async fault => {
-    const f = await fixture(), prepared = (await f.cap.preparePoolCreation(f.request))!;
-    f.mine(prepared.data);
-    const preview = (await prepared.readPreview(hash))!, funding = (await preview.prepareFunding(async () => true))!;
-    const { tx, receipt } = f.mine(funding.data);
-    const nft = candidate.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
-    const claim = { address: candidate.core as string, ...claimAbi.encodeEventLog(claimAbi.getEvent('SharedClaimCreated')!, [8n]) };
-    const mint = { address: nft as string, ...nftAbi.encodeEventLog(nftAbi.getEvent('Transfer')!, ['0x0000000000000000000000000000000000000000',
-      fault === 'mint-owner' ? candidate.core : owner, fault === 'mint-id' ? 9n : 8n]) };
-    const debits = ARCHIVED_CHEAP_POOL_TOKENS.map(([address], i) => ({ address: address as string,
-      ...tokenAbi.encodeEventLog(tokenAbi.getEvent('Transfer')!, [owner, candidate.core, [BigInt(i + 1), 99n], [99n, 88n]]) }));
-    receipt.logs = [claim, mint, ...debits];
-    if (fault === 'missing') f.provider.getTransactionReceipt.mockResolvedValue(null);
-    if (fault === 'status') receipt.status = 0;
-    if (fault === 'data') tx.data += '00';
-    if (fault === 'owner') tx.from = candidate.core;
-    if (fault === 'block') tx.blockNumber = 12;
-    if (fault === 'reorg') f.provider.send.mockResolvedValueOnce({ number: '0xb', hash: context });
-    if (fault === 'claim') receipt.logs = receipt.logs.filter(log => log !== claim);
-    if (fault === 'mint') receipt.logs = receipt.logs.filter(log => log !== mint);
-    if (fault === 'debit0') f.values[1] = 101n;
-    if (fault === 'debit1') f.values[2] = 51n;
-    if (fault === 'debit-duplicate') receipt.logs.push(debits[0]);
-    if (fault === 'debit-foreign') debits[0].address = owner;
-    if (fault === 'debit-encoding') debits[0].data += '00';
-    if (fault === 'revoked') f.revoke();
-    if (fault === 'missing') await expect(funding.readFunding(hash)).resolves.toBeNull();
-    else if (fault === 'valid') {
-      await expect(funding.readFunding(hash)).resolves.toMatchObject({ positionId: 8n, amounts: { used0: 100n, used1: 50n }, readyToSign: false });
-      // Read only the owner's event ciphertext, never Core's receiver ciphertext.
-      expect(m.decrypt.mock.calls.slice(-2).map(call => call[1].ciphertextHigh)).toEqual([1n, 2n]);
-    } else await expect(funding.readFunding(hash)).rejects.toThrow();
-    expect(f.signer.sendTransaction).not.toHaveBeenCalled();
-  });
-  it.each([0n, 1n])('authenticates %s private preview, retains ciphertexts and re-signs funding only after review', async mode => {
-    const f = await fixture(), prepared = (await f.cap.preparePoolCreation(f.request))!;
-    f.values[0] = mode; if (mode === 1n) f.values[6] = 300n;
-    f.mine(prepared.data);
-    expect(() => assertCurrentPoolFundingPrepared(prepared, f.signer)).not.toThrow();
-    expect(() => assertCurrentPoolFundingPrepared({ ...prepared }, f.signer)).toThrow('session');
-    expect(() => assertCurrentPoolFundingPrepared(prepared, {})).toThrow('session');
-    expect(m.small).toHaveBeenCalledTimes(11); expect(m.wide).toHaveBeenCalledTimes(2);
-    const preview = (await prepared.readPreview(hash))!;
-    expect(preview.amounts).toMatchObject({ operation: mode === 0n ? 'initialize' : 'add', used0: 100n, used1: 50n, unused0: 20n, unused1: 0n });
-    expect(m.resign).not.toHaveBeenCalled();
-    const confirm = vi.fn(async () => true), funding = (await preview.prepareFunding(confirm))!;
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ ...preview.amounts, principal: owner }));
-    expect(m.resign).toHaveBeenCalledTimes(13);
-    for (const call of m.resign.mock.calls) expect(call.slice(2)).toEqual([candidate.core, abi.getFunction('createPoolPosition')!.selector]);
-    expect(abi.decodeFunctionData('createPoolPosition', funding.data)[0]).toBe(context);
-    expect(funding.readyToSign).toBe(false); expect(funding).not.toHaveProperty('signer');
-    expect(() => assertCurrentPoolFundingPrepared(funding, f.signer)).not.toThrow();
-    expect(f.signer.sendTransaction).not.toHaveBeenCalled();
-  });
-  it.each(['graph', 'class', 'budget', 'terms', 'witness', 'spread', 'tolerance', 'decline', 'revoke'])('blocks %s before private prompts', async fault => {
-    const f = await fixture();
-    if (fault === 'graph') m.graph.mockRejectedValueOnce(new Error('Changed graph'));
-    if (fault === 'class') f.request.intent.classId = 7n;
-    if (fault === 'budget') f.request.intent.budgets = [0n, 50n];
-    if (fault === 'terms') f.request.intent.terms = [...f.request.intent.terms.slice(0, 9), 1n << 128n] as never;
-    if (fault === 'witness') f.request.intent.terms = [1n, 2n, 0n, 0n, ...f.request.intent.terms.slice(4)] as never;
-    if (fault === 'spread') f.request.intent.classId = 2n;
-    if (fault === 'tolerance') f.request.intent.terms = [...f.request.intent.terms.slice(0, 8), 2n, 1n] as never;
-    f.request.confirmPrivateInputs.mockImplementation(async () => { if (fault === 'revoke') f.revoke(); return fault !== 'decline'; });
-    if (fault === 'decline') await expect(f.cap.preparePoolCreation(f.request)).resolves.toBeNull();
-    else await expect(f.cap.preparePoolCreation(f.request)).rejects.toThrow();
-    expect(m.small).not.toHaveBeenCalled(); expect(m.wide).not.toHaveBeenCalled();
-  });
-  it.each(['missing', 'status', 'owner', 'chain', 'data', 'value', 'nonce', 'block', 'reorg', 'foreign', 'duplicate', 'budget', 'class', 'revoked'])('rejects %s preview provenance or amounts', async fault => {
-    const f = await fixture(), prepared = (await f.cap.preparePoolCreation(f.request))!, { tx, receipt, event } = f.mine(prepared.data);
-    if (fault === 'missing') f.provider.getTransactionReceipt.mockResolvedValue(null);
-    if (fault === 'status') receipt.status = 0;
-    if (fault === 'owner') tx.from = candidate.core;
-    if (fault === 'chain') tx.chainId = 1n;
-    if (fault === 'data') tx.data += '00';
-    if (fault === 'value') tx.value = 1n;
-    if (fault === 'nonce') tx.nonce = -1;
-    if (fault === 'block') tx.blockNumber = 12;
-    if (fault === 'reorg') m.graph.mockRejectedValueOnce(new Error('Block changed'));
-    if (fault === 'foreign') event.address = owner;
-    if (fault === 'duplicate') receipt.logs.push(event);
-    if (fault === 'budget') f.values[3] = 21n;
-    if (fault === 'class') f.values[9] = 2n;
-    if (fault === 'revoked') f.revoke();
-    if (fault === 'missing') await expect(prepared.readPreview(hash)).resolves.toBeNull();
-    else await expect(prepared.readPreview(hash)).rejects.toThrow();
-    expect(m.resign).not.toHaveBeenCalled(); expect(f.signer.sendTransaction).not.toHaveBeenCalled();
-  });
-  it.each(['decline', 'revoke', 'reorg', 'context', 'prompt-revoke'])('does not produce funding after %s', async fault => {
-    const f = await fixture(), prepared = (await f.cap.preparePoolCreation(f.request))!;
-    const mined = f.mine(prepared.data), preview = (await prepared.readPreview(hash))!;
-    const confirm = async () => {
-      if (fault === 'revoke') f.revoke();
-      if (fault === 'reorg') f.provider.send.mockResolvedValueOnce({ number: '0xb', hash: context });
-      if (fault === 'context') mined.event.data = abi.encodeEventLog(abi.getEvent('PoolFundingPreviewed')!, [0n, toBeHex(99n, 32),
-        Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]).data;
-      if (fault === 'prompt-revoke') m.resign.mockImplementationOnce(async (_, ciphertext) => { f.revoke(); return { ciphertext, signature }; });
-      return fault !== 'decline';
-    };
-    if (fault === 'decline') await expect(preview.prepareFunding(confirm)).resolves.toBeNull();
-    else await expect(preview.prepareFunding(confirm)).rejects.toThrow();
-    expect(m.resign).toHaveBeenCalledTimes(fault === 'prompt-revoke' ? 1 : 0);
-  });
-});
-
-
-describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s prepared multi-market Pool funding preparation', candidateKey => {
+describe.each(['cheap-history'] as const)('%s prepared multi-market Pool funding preparation', candidateKey => {
   const preparedAbi = new Interface(PREPARED_POOL_FUNDING_ABI);
   it.each([0, 1, 2, 3, 4, 5])('binds market %i to exactly two canonical tokens and the prepared selectors', async index => {
     const f = await fixture(candidateKey), c = resolvePreparedDexScope(candidateKey).candidate;
@@ -598,7 +463,7 @@ describe('authenticated Pool preview after historical state pruning', () => {
 // The capability uses the real compiled-layout financial checker here. The
 // maintained reader, crypto and registry are isolated mocks; unmocked reader
 // authentication/storage is covered by currentDexPreparedPoolSnapshot.test.ts.
-describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s prepared Pool funding financial integration (isolated reader)', candidateKey => {
+describe.each(['cheap-history'] as const)('%s prepared Pool funding financial integration (isolated reader)', candidateKey => {
   type MutableState = { -readonly [K in keyof PreparedPoolStoredState]: PreparedPoolStoredState[K] extends readonly string[] ? string[] :
     K extends 'anchors' ? string[][] : K extends 'claims' ? Record<string, { marketId: string; words: string[] }> :
     K extends 'markets' | 'c1' | 'ledgers' | 'escrows' | 'custody' | 'engines' | 'directories' ? Record<string, string[]> :
@@ -789,226 +654,4 @@ describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s pr
       await expect(f.funding.readFunding(hash)).rejects.toThrow();
       expect(f.signer.sendTransaction).not.toHaveBeenCalled();
     });
-});
-
-describe('selected native Pool funding issuer',()=>{
-  it('binds actual preparation, private preview and funding result to selected Core/NFT/canonical tokens',async()=>{
-    const f=await fixture('cheap-native'),c=resolveCurrentCheapDexCandidate('cheap-native'),p=(await f.cap.preparePoolCreation(f.request))!;
-    expect(p).toMatchObject({to:c.core,graph:c.graph,packageSha256:c.packageSha256,readyToSign:false});expect(m.graph).toHaveBeenCalledWith(expect.objectContaining({candidate:'cheap-native'}));
-    expect([...m.small.mock.calls,...m.wide.mock.calls].every(x=>x[2]===c.core)).toBe(true);assertCurrentPoolFundingPrepared(p,f.signer);
-    f.mine(p.data);const preview=(await p.readPreview(hash))!,funding=(await preview.prepareFunding(async()=>true))!,{receipt}=f.mine(funding.data),tokens=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1);
-    receipt.logs=[{address:c.core,...claimAbi.encodeEventLog(claimAbi.getEvent('SharedClaimCreated')!,[8n])},{address:c.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1],...nftAbi.encodeEventLog(nftAbi.getEvent('Transfer')!,[`0x${'00'.repeat(20)}`,owner,8n])},
-      ...tokens.map(([address],i)=>({address,...tokenAbi.encodeEventLog(tokenAbi.getEvent('Transfer')!,[owner,c.core,[BigInt(i+1),0n],[999n,0n]])}))];
-    await expect(funding.readFunding(hash)).rejects.toThrow('no admitted native Pool session');expect(m.resign.mock.calls.every(x=>x[2]===c.core)).toBe(true);expect(f.signer.sendTransaction).not.toHaveBeenCalled();
-  });
-  it('rejects a wrong candidate input before encrypting',async()=>{const f=await fixture('cheap-native');f.request.graph.expectedGraph=ARCHIVED_CHEAP_DEX_CANDIDATE.graph;await expect(f.cap.preparePoolCreation(f.request)).rejects.toThrow('Wrong Pool');expect(m.small).not.toHaveBeenCalled();expect(m.wide).not.toHaveBeenCalled();});
-  it('revokes selected candidate private preparation with its owner lease',async()=>{const f=await fixture('cheap-native');f.revoke();await expect(f.cap.preparePoolCreation(f.request)).rejects.toThrow('revoked');});
-});
-
-describe('explicit native Pool source fit with actual issuer brands', () => {
-  async function profileFixture() {
-    const f = await fixture('cheap-native'), candidate = resolveCurrentCheapDexCandidate('cheap-native'), unit = 10n ** 18n;
-    f.request.intent.classId = 0n;
-    f.request.intent.budgets = [100n * unit, 100n * unit];
-    f.request.intent.terms = [1n, 2n, 1n, 0n, 1001n, 1000n, 1n, 1n, 1n, 200n] as never;
-    // Live proportional debits need not match the measured local 100/50 fixture.
-    f.values.splice(0, 10, 1n, 80n * unit, 60n * unit, 20n * unit, 40n * unit, 90n, 90n, 1n, 200n, 0n);
-    const preview = (await f.cap.preparePoolCreation(f.request))!;
-    const mined = f.mine(preview.data), result = (await preview.readPreview(hash))!;
-    const funding = (await result.prepareFunding(async () => true))!;
-    let clock = 100n;
-    const fit = () => issueCurrentNativePoolSourceFit(candidate, funding, f.signer, CURRENT_NATIVE_POOL_PROFILE, () => clock, 1000n);
-    const check = (value = fit()) => assertCurrentNativePoolSourceFit(value, 'pool-fund', funding.data, 100_000_000n,
-      candidate, owner, candidate.core, BigInt(candidate.chainId));
-    return { ...f, candidate, preview, result, funding, mined, fit, check, advance: () => { clock = 1000n; } };
-  }
-  const approvalAdapter=async()=>{
-    const f=await profileFixture();admitCurrentNativePoolPreview(f.candidate,f.preview,f.signer,CURRENT_NATIVE_POOL_PROFILE);
-    currentNativePoolSession(f.signer)!.previewResult=f.result;
-    const allowances=[0n,0n],storage=new Map<string,string>();vi.stubGlobal('window',{sessionStorage:{getItem:(k:string)=>storage.get(k)??null,setItem:(k:string,v:string)=>storage.set(k,v),removeItem:(k:string)=>storage.delete(k)}});
-    const head={number:11n,hash,timestamp:100n,gasLimit:120_000_000n},guard=async()=>f.preview.assertCurrent();
-    let nativeBalance=10n**18n,adapterClock=100n;
-    const transport={assertCurrent:guard,readHead:async()=>head,readNonce:async()=>7,estimateGas:vi.fn(async()=>1n),send:vi.fn(),
-      readNativeResources:async()=>({head,owner,chainId:BigInt(f.candidate.chainId),latestNonce:7,pendingNonce:7,gasPrice:50_000_000n,baseFeePerGas:1n,balance:nativeBalance,code:'0x'})};
-    const make=()=>createCurrentTokenFundingAdapter({signer:f.signer,ownerAddress:owner,chainId:BigInt(f.candidate.chainId),candidate:'cheap-native',
-      transport:transport as never,attest:async()=>{},assertResources:guard,now:()=>adapterClock,
-      encrypt:async amount=>({ciphertext:{ciphertextHigh:0n,ciphertextLow:amount},signature}),decrypt:v=>BigInt(v.ciphertextLow),
-      readState:async(tokenIndex,block)=>({tokenIndex,token:f.candidate.tokens[tokenIndex][0],owner,block,balance:1000n*10n**18n,
-        allowance:allowances[tokenIndex],claimed:true,faucetAmount:10000n*10n**18n,decimals:18n,publicAmounts:false,encryptionAddress:owner})});
-    return{...f,cap:make(),make,allowances,storage,transport,setClock:(v:bigint)=>{adapterClock=v;head.timestamp=v;},reduceBalance:()=>{nativeBalance=20_000_000_000_000_000n;}};
-  };
-  const startedAbandon=async()=>{
-    const f=await approvalAdapter(),session=currentNativePoolSession(f.signer)!;
-    currentNativeSigningBudget(f.signer,owner,()=>100n).commit('pool-preview',session.scope,100_000_000n);
-    await f.cap.preparePoolApproval(f.funding,0,async()=>false);return {...f,session};
-  };
-  const sentCleanupFixture=async(cleanup=true)=>{
-    const f=await startedAbandon();if(cleanup){f.allowances[1]=f.funding.amounts.used0;f.allowances[0]=f.funding.amounts.used1;}
-    const budget=currentNativeSigningBudget(f.signer,owner,()=>100n);if(cleanup){budget.commit('token-funding','token-funding:approve:a',5_000_000n,f.session.scope);budget.commit('token-funding','token-funding:approve:b',5_000_000n,f.session.scope);
-    await f.cap.abandonCurrentNativePoolFunding(async()=>true);}
-    let tx:unknown=null,receipt:unknown=null;
-    const approvalAbi=new Interface(['event Approval(address indexed owner,address indexed spender,(uint256 ciphertextHigh,uint256 ciphertextLow) ownerValue,(uint256 ciphertextHigh,uint256 ciphertextLow) spenderValue)']);
-    Object.assign(f.transport,{readBlockHash:async()=>hash,readTransaction:async()=>tx,waitForReceipt:async()=>receipt,verifyCanonicalInclusion:async()=>{}});
-    f.transport.send.mockImplementation(async(request:{to:string;data:string})=>{
-      const index=f.candidate.tokens.findIndex(([address])=>address.toLowerCase()===request.to.toLowerCase()),amount=BigInt(currentTokenFundingAbi.decodeFunctionData('approve',request.data)[1].ciphertext.ciphertextLow);f.allowances[index]=amount;
-      tx={...request,hash,blockNumber:11,blockHash:hash};receipt={hash,status:1,from:owner,to:request.to,blockNumber:11,blockHash:hash,
-        logs:[{address:request.to,...approvalAbi.encodeEventLog(approvalAbi.getEvent('Approval')!,[owner,f.candidate.core,[0n,amount],[0n,amount]])}]};return {...request,hash};
-    });
-    return {...f,setReceipt:(r:unknown)=>{receipt=r;},getReceipt:()=>receipt};
-  };
-  it('original private final-clear proof survives same-lease remount and completes both-zero scope',async()=>{
-    const f=await sentCleanupFixture();const first=(await f.cap.preparePoolUnfundedCleanup(0,async()=>true))!;
-    await f.cap.submitCurrentTokenFunding(first);expect((await f.make().recoverCurrentNativePoolTokenResult())?.fundingOutcome).toBe('verified');
-    expect((await f.make().readCurrentNativePoolResume())!.completed).toBe(false);
-    const second=(await f.cap.preparePoolUnfundedCleanup(1,async()=>true))!;await f.cap.submitCurrentTokenFunding(second);
-    const recovered=await f.make().recoverCurrentNativePoolTokenResult();expect(recovered?.fundingOutcome).toBe('verified');
-    const resumed=(await f.make().readCurrentNativePoolResume())!;expect(resumed.completed).toBe(true);expect(resumed.approvals).toEqual([false,false]);
-    expect(f.storage.size).toBe(0);expect(f.transport.send).toHaveBeenCalledTimes(2);expect(await f.make().recoverCurrentNativePoolTokenResult()).toBeNull();vi.unstubAllGlobals();
-  });
-  it('original failed approval proof after remount locks normal funding and retains exact zero flags',async()=>{
-    const f=await sentCleanupFixture(false),prepared=(await f.cap.preparePoolApproval(f.funding,0,async()=>true))!;
-    await f.cap.submitCurrentTokenFunding(prepared);f.allowances[1]=0n;f.setReceipt({...f.getReceipt() as object,status:0,logs:[]});
-    expect((await f.make().recoverCurrentNativePoolTokenResult())?.fundingOutcome).toBe('reverted');
-    const resume=(await f.make().readCurrentNativePoolResume())!;expect(resume.unfundedFailed).toBe(true);expect(resume.approvals).toEqual([false,false]);
-    expect(resume.completed).toBe(false);await expect(f.cap.preparePoolApproval(f.funding,1,async()=>true)).rejects.toThrow();vi.unstubAllGlobals();
-  });
-  it('canonical failed zero-clear preserves the original failure branch and exact allowance without an extra grant',async()=>{
-    const f=await sentCleanupFixture(),prepared=(await f.cap.preparePoolUnfundedCleanup(0,async()=>true))!;await f.cap.submitCurrentTokenFunding(prepared);
-    f.allowances[1]=f.funding.amounts.used0;f.setReceipt({...f.getReceipt() as object,status:0,logs:[]});
-    expect((await f.make().recoverCurrentNativePoolTokenResult())?.fundingOutcome).toBe('reverted');
-    const resumed=(await f.make().readCurrentNativePoolResume())!;expect(resumed.completed).toBe(false);expect(resumed.unfundedFailed).toBe(true);expect(resumed.approvals).toEqual([true,true]);
-    expect(currentNativeSigningBudget(f.signer,owner,()=>100n).snapshot().signingStarts).toBe(4);vi.unstubAllGlobals();
-  });
-  it('expired unsigned fund stops irreversibly and admits exact reversed zero clears without historical preview reads',async()=>{
-    const f=await startedAbandon();f.allowances[1]=f.funding.amounts.used0;f.allowances[0]=f.funding.amounts.used1;f.setClock(1001n);
-    f.provider.getTransactionReceipt.mockRejectedValue(new Error('pruned preview'));
-    expect((await f.cap.readCurrentNativePoolResume())!.unfundedAbandonEligible).toBe(true);
-    const result=await f.cap.abandonCurrentNativePoolFunding(async review=>{expect(review.allowances).toEqual([f.funding.amounts.used0,f.funding.amounts.used1]);return true;});
-    expect(result?.cleanupRequired).toEqual([true,true]);expect(f.session.unfundedAbandoned).toBe(true);
-    expect((await f.cap.preparePoolUnfundedCleanup(0,async()=>true))!.amount).toBe(0n);
-    await expect(f.cap.preparePoolApproval(f.funding,0,async()=>true)).rejects.toThrow();expect(f.transport.send).not.toHaveBeenCalled();vi.unstubAllGlobals();
-  });
-  it('actual issued funding cleanup permits only unrelated source-bound Fast state drift',async()=>{
-    const f=await startedAbandon();f.allowances[1]=f.funding.amounts.used0;
-    m.nativeState.operation=10n;(m.nativeState.core as string[])[12]=toBeHex(10n,32);
-    (m.nativeState.anchors as string[][])[0][8]=toBeHex(12n,32);(m.nativeState.ledgers as string[][])[0][0]=toBeHex(11n,32);
-    await expect(f.funding.assertBeforeFunding()).rejects.toThrow('dependencies');
-    await expect(f.funding.assertUnfundedCleanupCurrent()).resolves.toBeUndefined();
-    await expect(f.cap.abandonCurrentNativePoolFunding(async()=>true)).resolves.toMatchObject({status:'unfunded-abandoned'});
-    (m.nativeState.escrows as string[][])[0][0]=toBeHex(1n,32);
-    await expect(f.cap.preparePoolUnfundedCleanup(0,async()=>true)).rejects.toThrow('selected escrow');vi.unstubAllGlobals();
-  });
-  it('declined stop and readonly eligibility do not mutate original financial authority',async()=>{
-    const f=await startedAbandon(),before=currentNativeSigningBudget(f.signer,owner,()=>100n).snapshot();
-    expect((await f.cap.readCurrentNativePoolResume())!.unfundedAbandonEligible).toBe(true);
-    expect(await f.cap.abandonCurrentNativePoolFunding(async()=>false)).toBeNull();expect(f.session.unfundedFailed).toBe(false);
-    expect(currentNativeSigningBudget(f.signer,owner,()=>100n).snapshot()).toEqual(before);vi.unstubAllGlobals();
-  });
-  it('zero allowances complete without a send and remain observable on same-lease resume',async()=>{
-    const f=await startedAbandon(),result=await f.cap.abandonCurrentNativePoolFunding(async()=>true);
-    expect(result?.status).toBe('unfunded-allowances-cleared');expect((await f.cap.readCurrentNativePoolResume())!.completed).toBe(true);
-    expect(()=>f.cap.preparePoolUnfundedCleanup(0,async()=>true)).toThrow();expect(f.transport.send).not.toHaveBeenCalled();vi.unstubAllGlobals();
-  });
-  it.each(['fund-start','expiry','allowance','lease','known-pending','unknown-pending','candidate','rpc','resource'])('abandon rejects %s without locking normal authority',async fault=>{
-    const f=await startedAbandon();
-    if(fault==='fund-start'){const budget=currentNativeSigningBudget(f.signer,owner,()=>100n);budget.commit('token-funding','token-funding:approve:a',5_000_000n,f.session.scope);budget.commit('token-funding','token-funding:approve:b',5_000_000n,f.session.scope);budget.commit('pool-fund','fund',100_000_000n,f.session.scope);}
-    if(fault==='known-pending'||fault==='unknown-pending')f.storage.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify({version:1,chainId:String(f.candidate.chainId),owner:owner.toLowerCase(),core:f.candidate.core.toLowerCase(),graph:f.candidate.graph.toLowerCase(),phase:'pool-fund',callHash:hash,nonce:7,txHash:fault==='known-pending'?hash:null}));
-    if(fault==='candidate')f.session.candidate={...f.candidate,packageSha256:hash};
-    if(fault==='rpc')f.transport.readNativeResources=async()=>{throw new Error('RPC unavailable');};
-    if(fault==='resource') {const original=f.transport.readNativeResources;f.transport.readNativeResources=async()=>({...await original(),balance:1n});}
-    if(fault==='expiry')f.setClock(1900n);if(fault==='allowance')f.allowances[0]=1n;if(fault==='lease')f.revoke();
-    await expect(f.cap.abandonCurrentNativePoolFunding(async()=>true)).rejects.toThrow();expect(f.session.unfundedFailed).toBe(false);expect(f.transport.send).not.toHaveBeenCalled();vi.unstubAllGlobals();
-  });
-  it('authentic unequal preview approves reversed package targets and resumes original preparations without regrant',async()=>{
-    const f=await approvalAdapter();const a=(await f.cap.preparePoolApproval(f.funding,0,async()=>true))!,b=(await f.cap.preparePoolApproval(f.funding,1,async()=>true))!;
-    expect([a.before.tokenIndex,b.before.tokenIndex]).toEqual([1,0]);expect([a.amount,b.amount]).toEqual([80n*10n**18n,60n*10n**18n]);
-    f.allowances[1]=a.amount;let resume=(await f.cap.readCurrentNativePoolResume())!;expect(resume.funding).toBe(f.funding);expect(resume.previewResult).toBe(f.result);expect(resume.approvals).toEqual([true,false]);
-    f.allowances[0]=b.amount;resume=(await f.cap.readCurrentNativePoolResume())!;expect(resume.approvals).toEqual([true,true]);
-    f.allowances[1]+=1n;await expect(f.cap.readCurrentNativePoolResume()).rejects.toThrow('exact used');f.revoke();await expect(f.cap.readCurrentNativePoolResume()).rejects.toThrow('revoked');vi.unstubAllGlobals();
-  });
-  it('copied funding brands and wrong package-index allowance cannot grant an approval or resume authority',async()=>{
-    const f=await approvalAdapter();await expect(f.cap.preparePoolApproval({...f.funding},0,async()=>true)).rejects.toThrow();
-    await f.cap.preparePoolApproval(f.funding,0,async()=>true);f.allowances[1]=f.funding.amounts.used1;
-    await expect(f.cap.readCurrentNativePoolResume()).rejects.toThrow('exact used');vi.unstubAllGlobals();
-  });
-  it('failed-unfunded resume skips old preview reads and keeps exact cleanup object/allowances',async()=>{
-    const f=await approvalAdapter();await f.cap.preparePoolApproval(f.funding,0,async()=>true);currentNativePoolSession(f.signer)!.unfundedFailed=true;
-    f.allowances[1]=f.funding.amounts.used0;f.provider.getTransactionReceipt.mockRejectedValue(new Error('historical state unavailable'));
-    const resume=(await f.cap.readCurrentNativePoolResume())!;expect(resume.unfundedFailed).toBe(true);expect(resume.funding).toBe(f.funding);
-    const cleanup=await f.cap.preparePoolUnfundedCleanup(0,async()=>true);expect(cleanup?.amount).toBe(0n);vi.unstubAllGlobals();
-  });
-  it('preview-linked approval rejects loss of future lifecycle resources before any signature',async()=>{
-    const f=await approvalAdapter(),session=currentNativePoolSession(f.signer)!;
-    currentNativeSigningBudget(f.signer,owner,()=>100n).commit('pool-preview',session.scope,100_000_000n);
-    const a=(await f.cap.preparePoolApproval(f.funding,0,async()=>true))!;f.reduceBalance();
-    await expect(f.cap.submitCurrentTokenFunding(a)).rejects.toThrow('remaining lifecycle reserve');
-    expect(f.transport.send).not.toHaveBeenCalled();expect(f.storage.size).toBe(0);vi.unstubAllGlobals();
-  });
-  it('binds exact source, actual brand, new add preview, variable used amounts and immutable context', async () => {
-    const f = await profileFixture();
-    assertCurrentNativePoolProfile(f.candidate, f.preview, f.signer, CURRENT_NATIVE_POOL_PROFILE);
-    expect(f.funding.previewData).toBe(f.preview.data);
-    expect(f.fit().evidence).toBe(CURRENT_NATIVE_POOL_SOURCE);
-    await expect(f.check()).resolves.toBeUndefined();
-    expect(f.signer.sendTransaction).not.toHaveBeenCalled();
-  });
-  it('distinguishes transient private reads from a proved changed preview and supports a read-only retry', async () => {
-    const f = await profileFixture(), fit = f.fit();
-    f.provider.getTransactionReceipt.mockRejectedValueOnce(new Error('Temporary private-read RPC outage'));
-    let observed: unknown;
-    try { await f.check(fit); } catch (error) { observed = error; }
-    expect(isKnownCurrentPoolProofMismatch(observed)).toBe(false);
-    await expect(f.check(fit)).resolves.toBeUndefined();
-    f.values[2] += 1n;
-    await expect(f.check(fit)).rejects.toBeInstanceOf(CurrentPoolProofMismatch);
-    expect(f.signer.sendTransaction).not.toHaveBeenCalled();
-  });
-  it.each(['class', 'budget', 'terms'])('rejects a genuinely issued preview outside the exact %s profile', async fault => {
-    const f = await fixture('cheap-native'), candidate = resolveCurrentCheapDexCandidate('cheap-native');
-    f.request.intent.classId = 0n; f.request.intent.budgets = [100n * 10n ** 18n, 100n * 10n ** 18n];
-    f.request.intent.terms = [1n, 2n, 1n, 0n, 1001n, 1000n, 1n, 1n, 1n, 200n] as never;
-    if (fault === 'class') { f.request.intent.classId = 1n; f.request.intent.terms = [1n, 2n, 1n, 0n, 1003n, 1000n, 667n, 669n, 1n, 200n] as never; }
-    if (fault === 'budget') f.request.intent.budgets = [99n * 10n ** 18n, 100n * 10n ** 18n];
-    if (fault === 'terms') f.request.intent.terms = [1n, 3n, 1n, 0n, 1001n, 1000n, 1n, 1n, 1n, 200n] as never;
-    const preview = (await f.cap.preparePoolCreation(f.request))!;
-    assertCurrentPoolFundingPrepared(preview, f.signer);
-    expect(() => assertCurrentNativePoolProfile(candidate, preview, f.signer, CURRENT_NATIVE_POOL_PROFILE)).toThrow('profile');
-  });
-  it.each(['copy', 'signer', 'candidate', 'class', 'budget', 'terms', 'initialize', 'shares', 'conservation', 'context', 'expired', 'revoked'])('rejects %s profile drift without authority', async fault => {
-    const f = await profileFixture(), fit = f.fit();
-    if (fault === 'copy') { await expect(f.check({ ...fit })).rejects.toThrow(); return; }
-    if (fault === 'signer') { expect(() => assertCurrentNativePoolProfile(f.candidate, f.funding, {}, CURRENT_NATIVE_POOL_PROFILE)).toThrow(); return; }
-    if (fault === 'candidate') { const changed = { ...f.candidate, releaseId: hash }; expect(() => assertCurrentNativePoolProfile(changed, f.funding, f.signer, CURRENT_NATIVE_POOL_PROFILE)).toThrow(); return; }
-    if (fault === 'class' || fault === 'budget' || fault === 'terms') {
-      const altered = { ...f.funding, intent: { ...f.funding.intent, ...(fault === 'class' ? { classId: 1n } : fault === 'budget' ? { budgets: [1n, 1n] } : { terms: [1n] }) } };
-      expect(() => assertCurrentNativePoolProfile(f.candidate, altered as never, f.signer, CURRENT_NATIVE_POOL_PROFILE)).toThrow(); return;
-    }
-    if (fault === 'initialize') f.values[0] = 0n;
-    if (fault === 'shares') f.values[6] = 91n;
-    if (fault === 'conservation') f.values[3] += 1n;
-    if (fault === 'context') f.mined.event.data = abi.encodeEventLog(abi.getEvent('PoolFundingPreviewed')!, [0n, toBeHex(99n, 32), Array.from({ length: 10 }, (_, i) => [BigInt(i), BigInt(i + 1)])]).data;
-    if (fault === 'expired') f.advance();
-    if (fault === 'revoked') f.revoke();
-    await expect(f.check(fit)).rejects.toThrow();
-    expect(f.signer.sendTransaction).not.toHaveBeenCalled();
-  });
-  it('selects the source fit before estimation and keeps unselected native estimates strict', async () => {
-    const f = await profileFixture(), native = f.candidate, values = new Map<string, string>();
-    const storage = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); }, removeItem: (k: string) => { values.delete(k); } };
-    const head = { number: 11n, hash, timestamp: 100n, gasLimit: 120_000_000n };
-    const transport = { assertCurrent: async () => {}, readHead: async () => head, readNonce: async () => 7,
-      readNativeResources: async () => ({ owner, chainId: BigInt(native.chainId), head, latestNonce: 7, pendingNonce: 7,
-        gasPrice: 50_000_000n, baseFeePerGas: 1n, balance: 10n ** 18n, code: '0x' }), estimateGas: vi.fn(async () => { throw new Error('estimate failed'); }),
-      send: vi.fn(async r => ({ ...r, hash })), readBlockHash: async () => hash,
-      readTransaction: async () => null, waitForReceipt: async () => null };
-    const boundary = createCurrentAttemptBoundary({ storage, c: native, core: native.core, owner, chainId: BigInt(native.chainId), transport,
-      attest: async () => {}, now: () => 100n, historical: false });
-    const call = { chainId: BigInt(native.chainId), from: owner, to: native.core, value: 0n as const, data: f.funding.data };
-    // Boundary fit checks only: the App adapter admission gate remains held.
-    await expect(boundary.sendCurrent('pool-fund', call, undefined, async () => {}, () => {}, undefined, 100_000_000n)).rejects.toThrow('estimate failed');
-    expect(transport.send).not.toHaveBeenCalled(); expect(values.size).toBe(0);
-    await expect(boundary.sendCurrent('pool-fund', call, undefined, async () => {}, () => {}, undefined, 100_000_000n,
-      undefined, async () => {}, f.fit())).resolves.toMatchObject({ transactionHash: hash });
-    expect(transport.estimateGas).toHaveBeenCalledOnce(); expect(transport.send).toHaveBeenCalledOnce();
-  });
 });

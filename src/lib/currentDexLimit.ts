@@ -1,5 +1,5 @@
 import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
-import { CURRENT_CHEAP_DEX_CANDIDATE as candidate, currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, type CurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate, currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { currentPoolNftAbi, decodeCurrentPoolNftTransfer } from './currentDexPoolPosition';
 
@@ -47,19 +47,14 @@ export const packedLimitAbi=new Interface([
 export const PACKED_LIMIT_INPUT_GRAPH='5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239';
 // Encoding profile only; exact deployment and native signing admission are separate.
 export const usesPackedLimitInputs=(candidate:Readonly<{graph:string}>)=>candidate.graph===PACKED_LIMIT_INPUT_GRAPH;
-export const currentLimitAbiForCandidate=(key:CurrentCheapDexCandidateKey='cheap-current')=>key==='cheap-history'&&usesPackedLimitInputs(resolveCurrentCheapDexCandidate(key))?packedLimitAbi:key==='cheap-exit'||key==='cheap-history'?exitLimitAbi:key==='cheap-prepared'?preparedLimitAbi:currentLimitAbi;
+export const currentLimitAbiForCandidate=(key:CurrentCheapDexCandidateKey='cheap-history')=>usesPackedLimitInputs(resolveCurrentCheapDexCandidate(key))?packedLimitAbi:exitLimitAbi;
 /** Public pair scope only. This does not grant signing or amount authority. */
-export const resolveCurrentLimitScope=(key:CurrentCheapDexCandidateKey='cheap-current',selectedPair?:readonly[string,string])=>{
+export const resolveCurrentLimitScope=(key:CurrentCheapDexCandidateKey='cheap-history',selectedPair?:readonly[string,string])=>{
   const c=resolveCurrentCheapDexCandidate(key);
-  if(key==='cheap-prepared'||key==='cheap-exit'||key==='cheap-history'){
-    const {candidate:prepared}=resolvePreparedDexScope(key);
-    const pair=selectedPair&&prepared.pairs.find(pair=>selectedPair.length===2&&pair.tokens.every(token=>selectedPair.some(address=>typeof address==='string'&&address.toLowerCase()===token)));
-    if(!pair)throw new Error('Select an exact Limit market pair.');
-    return Object.freeze({candidate:c,key,marketId:pair.marketId,poolTokens:pair.tokens,engine:pair.engine,prepared:true});
-  }
-  const tokens=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1),poolTokens=Object.freeze([tokens[0][0],tokens[1][0]])as readonly[string,string];
-  if(selectedPair&&(selectedPair.length!==2||!poolTokens.every(token=>selectedPair.some(address=>typeof address==='string'&&address.toLowerCase()===token))))throw new Error('Select the historical Limit market pair.');
-  return Object.freeze({candidate:c,key,marketId:undefined,poolTokens,engine:c.companions.find(([role])=>role==='ChainWhisperFixedEngine')![1],prepared:false});
+  const {candidate:prepared}=resolvePreparedDexScope(key);
+  const pair=selectedPair&&prepared.pairs.find(pair=>selectedPair.length===2&&pair.tokens.every(token=>selectedPair.some(address=>typeof address==='string'&&address.toLowerCase()===token)));
+  if(!pair)throw new Error('Select an exact Limit market pair.');
+  return Object.freeze({candidate:c,key,marketId:pair.marketId,poolTokens:pair.tokens,engine:pair.engine,prepared:true});
 };
 export const currentLimitBindingAbi=new Interface(['function bindingCommitment() view returns(bytes32)']);
 export const CURRENT_LIMIT_CREATE_GAS_CAP=30_000_000n;
@@ -67,22 +62,18 @@ export const CURRENT_LIMIT_SNAPSHOT_GAS_CAP=10_000_000n;
 export type CurrentLimitOwnerAction='refresh'|'claim'|'pause'|'resume'|'close'|'topup'|'reprice';
 // Every action still requires a fresh native estimate within its cap.
 export const CURRENT_LIMIT_OWNER_GAS_CAPS=Object.freeze({refresh:10_000_000n,claim:30_000_000n,pause:10_000_000n,resume:10_000_000n,close:30_000_000n,topup:30_000_000n,reprice:30_000_000n});
-// Current graph04ea: native Limit30 Pause/Resume/snapshot proof, 2026-10-02.
-// Evidence: validation/current-integration/app-limit-owner-proof/ROOT_NATIVE_CHECKPOINT.md.
-export const CURRENT_LIMIT_OWNER_NATIVE_ADMISSION=Object.freeze({refresh:true,claim:true,pause:true,resume:true,close:true,topup:false,reprice:false});
-const heldOwnerAdmission=Object.freeze({refresh:false,claim:false,pause:false,resume:false,close:false,topup:false,reprice:false});
 // b2aa Limits51/52/53: native owner exits and exact top-up/reprice, 2026-10-13.
 // Evidence: reports/owned-limit-2026-10-13/{POSITIVE_REFUND_RESULT,EDIT_NATIVE_RESULT}.json.
 // Technical phase proof does not lift connected-wallet authority holds.
 const exitOwnerAdmission=Object.freeze({refresh:true,claim:true,pause:true,resume:true,close:true,topup:true,reprice:true});
 // 7b67 controls plus exact 7bed source reuse and native create/reprice/Close:
 // reports/limit-input-signatures-2026-11-12/app-admission/RESULT.md. Wallet holds are separate.
-export const currentLimitOwnerNativeAdmission=(key:CurrentCheapDexCandidateKey='cheap-current')=>key==='cheap-exit'||key==='cheap-history'?exitOwnerAdmission:key==='cheap-prepared'?heldOwnerAdmission:CURRENT_LIMIT_OWNER_NATIVE_ADMISSION;
+export const currentLimitOwnerNativeAdmission=(_key?:CurrentCheapDexCandidateKey)=>exitOwnerAdmission;
 /** Technical phase proof only; the shared send boundary retains wallet holds. */
 export const assertCurrentLimitNativeAdmission=(key:CurrentCheapDexCandidateKey,phase:'limit-create'|'limit-snapshot'|'limit-owner',action?:CurrentLimitOwnerAction)=>{
   if(key==='cheap-history'&&(phase==='limit-create'||phase==='limit-snapshot'))return;
-  if((key==='cheap-exit'||key==='cheap-history')&&phase==='limit-owner'&&action&&currentLimitOwnerNativeAdmission(key)[action])return;
-  assertCurrentCheapDexNativeAdmission(resolveCurrentCheapDexCandidate(key));
+  if(phase==='limit-owner'&&action&&currentLimitOwnerNativeAdmission(key)[action])return;
+  throw new Error('Successor DEX native App submission admission is absent.');
 };
 export const currentLimitOwnerMethod=(action:CurrentLimitOwnerAction)=>action==='topup'?'topUpPrivateOrder':action==='reprice'?'repricePrivateOrder':action==='refresh'?'privateOrderSnapshot':action==='claim'?'claimPrivateOrderProceeds':action==='close'?'closePrivateOrder':'managePrivateOrderStatus';
 export const currentLimitTokens=(sellToken0:boolean,selected:CurrentCheapDexCandidate=candidate,pair?:readonly[string,string])=>{const {poolTokens}=resolveCurrentLimitScope(currentCheapDexCandidateKey(selected),pair);return[poolTokens[sellToken0?0:1],poolTokens[sellToken0?1:0]]as const;};

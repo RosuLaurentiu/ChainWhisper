@@ -3,7 +3,7 @@ import { isValidElement,type ComponentProps,type ReactElement,type ReactNode } f
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import CurrentLimitWorkspace,{currentLimitIntent} from './CurrentLimitWorkspace';
 import type { SharedWalletSession } from '../../../lib/walletSession';
-import { CURRENT_CHEAP_DEX_CANDIDATE as c,resolveCurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c,resolveCurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
 import CurrentOwnedLimits from './CurrentOwnedLimits';
 import CurrentLimitFills from './CurrentLimitFills';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
@@ -21,12 +21,12 @@ beforeEach(()=>{
 afterEach(()=>{hooks.enabled=false;hooks.states=[];hooks.refs=[];vi.unstubAllGlobals();});
 const elements=(node:ReactNode):ReactElement<{children?:ReactNode;disabled?:boolean;onClick?:()=>void}>[]=>Array.isArray(node)?node.flatMap(elements):isValidElement<{children?:ReactNode}>(node)?[node,...elements(node.props.children)]:[];
 const text=(node:ReactNode):string=>Array.isArray(node)?node.map(text).join(''):isValidElement<{children?:ReactNode}>(node)?text(node.props.children):typeof node==='string'||typeof node==='number'?String(node):'';
-function ownerView(candidateKey:'cheap-current'|'cheap-history'='cheap-current',owner=`0x${'22'.repeat(20)}`,view:'create'|'manage'='manage',selectedPair:readonly[string,string]=['HBR','BCN']){
+function ownerView(candidateKey:'cheap-history'='cheap-history',owner=`0x${'22'.repeat(20)}`,view:'create'|'manage'='manage',selectedPair:readonly[string,string]=['HBR','BCN']){
   hooks.states=[];hooks.refs=[];hooks.index=0;hooks.refIndex=0;
   hooks.enabled=true;const active=resolveCurrentCheapDexCandidate(candidateKey),result={positionId:9n,context:'context',status:0n,closed:false,refreshRequired:false,amounts:{unspent:100n,proceeds:7n,sellToken0:true,priceNumerator:3n,priceDenominator:1n,makerMinimum:1n}},capability={prepareOwnerAction:vi.fn(async()=>({data:'call'}))},recover=vi.fn(async()=>({...result,amounts:null,values:null,refreshRequired:true})),sender={submitLimitOwner:vi.fn(async()=>({transactionHash:'hash',recover})),recoverPendingLimitAttempt:vi.fn(async()=>null),checkCurrentCheapCandidate:vi.fn(async()=>({graph:active.graph,core:active.core,owner})),prepareSharedLimitApproval:vi.fn(async()=>null)};
   const limitCapability={...capability,prepareLimit:vi.fn(async()=>null),prepareFundingReview:vi.fn(async()=>({funding:true}))};
   const session={walletAddress:owner,chainId:Number(active.chainId),browserProvider:{request:vi.fn(async()=>({number:'0x1',hash:`0x${'11'.repeat(32)}`}))},sessionOnboardInfo:{[owner]:{aesKey:'session-only'}},walletAesHealthByAddress:{},actions:{getCurrentDexLimitCapability:vi.fn(async()=>limitCapability),getCurrentDexSubmissionCapability:vi.fn(async()=>sender)}}as unknown as SharedWalletSession;
-  const render=(priceDisplayInverted=false)=>{hooks.index=0;hooks.refIndex=0;return CurrentLimitWorkspace({sharedWalletSession:session,view,candidateKey,priceDisplayInverted,...(candidateKey==='cheap-history'?{selectedPair}:{})});};render();hooks.states[11]='9';render();hooks.states[12]={value:result,capability:limitCapability,scope:hooks.refs[1].current};
+  const render=(priceDisplayInverted=false)=>{hooks.index=0;hooks.refIndex=0;return CurrentLimitWorkspace({sharedWalletSession:session,view,candidateKey,priceDisplayInverted,selectedPair});};render();hooks.states[11]='9';render();hooks.states[12]={value:result,capability:limitCapability,scope:hooks.refs[1].current};
   const button=(name:string)=>elements(render()).find(x=>x.type==='button'&&text(x.props.children)===name)!;
   return{session,render,button,capability:limitCapability,recover,sender,result};
 }
@@ -47,16 +47,16 @@ describe('current exact Limit form',()=>{
     const connectBrowserWallet=vi.fn(async()=>undefined);
     const session={walletAddress:'',browserWalletId:'metamask',actions:{connectBrowserWallet}} as unknown as SharedWalletSession;
     hooks.enabled=true;hooks.states=[];hooks.refs=[];hooks.index=0;hooks.refIndex=0;
-    const tree=CurrentLimitWorkspace({sharedWalletSession:session,view:'create'});
+    const tree=CurrentLimitWorkspace({sharedWalletSession:session,view:'create',selectedPair:['HBR','BCN']});
     const named=(name:string)=>elements(tree).filter(x=>x.type==='button'&&text(x.props.children)===name);
     expect(named('Connect wallet')).toHaveLength(1);expect(named('Review order')).toHaveLength(0);
     named('Connect wallet')[0].props.onClick!();expect(connectBrowserWallet).toHaveBeenCalledWith('metamask');
-    hooks.enabled=false;expect(renderToStaticMarkup(<CurrentLimitWorkspace view="create"/>)).toContain('Review order');
+    hooks.enabled=false;expect(renderToStaticMarkup(<CurrentLimitWorkspace view="create" selectedPair={['HBR','BCN']}/>)).toContain('Review order');
   });
   it('shows separate order regions and an empty selection without private values',()=>{
-    const html=renderToStaticMarkup(<CurrentLimitWorkspace view="manage"/>);
+    const html=renderToStaticMarkup(<CurrentLimitWorkspace view="manage" selectedPair={['HBR','BCN']}/>);
     expect(html).toContain('aria-label="Order list"');expect(html).toContain('aria-label="Order details"');
-    expect(html).toContain('Select an order to see its details.');expect(html).not.toContain('Unspent Test token');
+    expect(html).toContain('Select an order to see its details.');expect(html).not.toContain('Unspent HBR');
     const f=ownerView();expect(text(f.render())).toContain('Claim Limit proceeds');expect(text(f.render())).not.toContain('Select an order to see its details.');
   });
   it('keeps both claim controls under the same guard and action',async()=>{
@@ -66,7 +66,7 @@ describe('current exact Limit form',()=>{
   });
   it.each(['create','manage'] as const)('keeps saved recovery open in %s',view=>{
     window.sessionStorage.setItem('chainwhisper:dex:current-pending-attempt:v1',JSON.stringify({version:1,chainId:'7082400',owner:`0x${'22'.repeat(20)}`,core:`0x${'33'.repeat(20)}`,graph:`0x${'44'.repeat(32)}`,phase:'limit-owner',callHash:`0x${'55'.repeat(32)}`,nonce:1,txHash:null}));
-    const html=renderToStaticMarkup(<CurrentLimitWorkspace view={view}/>);expect(html).toContain('A saved action needs a status check');expect(html).toMatch(/<details class="dex-owner-footer" open=""/);
+    const html=renderToStaticMarkup(<CurrentLimitWorkspace view={view} selectedPair={['HBR','BCN']}/>);expect(html).toContain('A saved action needs a status check');expect(html).toMatch(/<details class="dex-owner-footer" open=""/);
     if(view==='manage')expect(html.indexOf('aria-label="Order details"')).toBeLessThan(html.indexOf('Status and recovery'));
   });
   it('automatically verifies one submitted private refresh and stays busy until its result is authenticated',async()=>{
@@ -126,28 +126,28 @@ describe('current exact Limit form',()=>{
     expect(over.session.actions!.getCurrentDexLimitCapability).toHaveBeenCalledOnce();expect(over.sender.checkCurrentCheapCandidate).toHaveBeenCalledOnce();expect(over.capability.prepareLimit).toHaveBeenCalledWith(expect.objectContaining({intent:expect.objectContaining({amount:1_000_001n})}));
   });
   it.each(['0','1e3','-1','1.5',''])('rejects invalid offered budget %s',amount=>expect(()=>currentLimitIntent(true,amount,'1','0')).toThrow());
-  it('does not enable a legacy writer without an owner session',()=>{const html=renderToStaticMarkup(<CurrentLimitWorkspace/>);expect(html).toContain('when matched at your price.');expect(html).toContain('Minimum fill');expect(html).toMatch(/disabled=""[^>]*>Review order/);expect(html).not.toContain('lot size');});
+  it('does not enable a legacy writer without an owner session',()=>{const html=renderToStaticMarkup(<CurrentLimitWorkspace selectedPair={['HBR','BCN']}/>);expect(html).toContain('when matched at your price.');expect(html).toContain('Minimum fill');expect(html).toMatch(/disabled=""[^>]*>Review order/);expect(html).not.toContain('lot size');});
   it('shows Unlock privacy as the main button while privacy is locked',()=>{
     hooks.enabled=true;hooks.states=[];hooks.refs=[];const owner=`0x${'22'.repeat(20)}`,unlockPrivacy=vi.fn(async()=>undefined);
     const session={walletAddress:owner,chainId:Number(c.chainId),browserProvider:{request:vi.fn()},sessionOnboardInfo:{},walletAesHealthByAddress:{},actions:{getCurrentDexLimitCapability:vi.fn(),getCurrentDexSubmissionCapability:vi.fn(),unlockPrivacy}}as unknown as SharedWalletSession;
-    const buttons=()=>{hooks.index=0;hooks.refIndex=0;return elements(CurrentLimitWorkspace({sharedWalletSession:session})).filter(x=>x.type==='button');};
+    const buttons=()=>{hooks.index=0;hooks.refIndex=0;return elements(CurrentLimitWorkspace({sharedWalletSession:session,selectedPair:['HBR','BCN']})).filter(x=>x.type==='button');};
     const names=buttons().map(x=>text(x.props.children));expect(names).toContain('Unlock privacy');expect(names).not.toContain('Review order');
     buttons().find(x=>text(x.props.children)==='Unlock privacy')!.props.onClick!();expect(unlockPrivacy).toHaveBeenCalledOnce();
   });
   it.each(['Claim Limit proceeds','Pause Limit'])('%s clears private amounts and requires explicit refresh',async label=>{
     const f=ownerView();expect(f.button(label).props.disabled).toBe(false);f.button(label).props.onClick!();expect(text(f.render())).toContain('Checking your order');await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(f.sender.submitLimitOwner).toHaveBeenCalledTimes(1);expect(text(f.render())).not.toContain('Unspent Test token 10.0000000000000001');f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
+    expect(f.sender.submitLimitOwner).toHaveBeenCalledTimes(1);expect(text(f.render())).not.toContain('Unspent HBR0.0001');f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(f.recover).toHaveBeenCalledTimes(1);expect(f.button('Claim Limit proceeds').props.disabled).toBe(true);expect(f.button('Load private order').props.disabled).toBeFalsy();expect(text(f.render())).toContain('Private amount authority is cleared');
   });
-  it('hides authenticated amounts and actions on NFT selection change and permits Resume only from an authenticated paused snapshot',()=>{const f=ownerView();expect(text(f.render())).toContain('Unspent Test token 10.0000000000000001');expect(f.button('Resume Limit').props.disabled).toBe(true);f.result.status=1n;expect(f.button('Resume Limit').props.disabled).toBe(false);hooks.states[11]='10';expect(text(f.render())).not.toContain('Unspent Test token 10.0000000000000001');expect(f.button('Close Limit and return funds')).toBeUndefined();});
+  it('hides authenticated amounts and actions on NFT selection change and permits Resume only from an authenticated paused snapshot',()=>{const f=ownerView();expect(text(f.render())).toContain('Unspent HBR0.0001');expect(f.button('Resume Limit').props.disabled).toBe(true);f.result.status=1n;expect(f.button('Resume Limit').props.disabled).toBe(false);hooks.states[11]='10';expect(text(f.render())).not.toContain('Unspent HBR0.0001');expect(f.button('Close Limit and return funds')).toBeUndefined();});
   it('shows verified closed amounts without enabling further owner actions',async()=>{const f=ownerView();f.recover.mockResolvedValue({...f.result,closed:true,refreshRequired:false,amounts:{...f.result.amounts,unspent:0n,proceeds:0n},values:null}as never);f.button('Close Limit and return funds').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));expect(text(f.render())).toContain('closed owner tombstone verified');expect(f.button('Close Limit and return funds').props.disabled).toBe(true);});
   it('does not replace a known private accounting failure with public reload success',async()=>{const f=ownerView();f.recover.mockRejectedValue(new Error('Wrong private payout'));f.button('Claim Limit proceeds').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));f.button('Check Limit status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));expect(f.sender.recoverPendingLimitAttempt).not.toHaveBeenCalled();expect(hooks.states[6]).toBe(true);expect(f.button('Load private order').props.disabled).toBe(true);expect(text(f.render())).toContain('Wrong private payout');});
   it.each([[true,false],[false,false],[true,true],[false,true]])('converts displayed amounts exactly with side %s and inversion %s before preparing a Limit',async(sellToken0,priceDisplayInverted)=>{
     hooks.enabled=true;const owner=`0x${'22'.repeat(20)}`,prepareLimit=vi.fn(async()=>null),submitLimit=vi.fn();
     const session={walletAddress:owner,chainId:Number(c.chainId),browserProvider:{request:vi.fn(async()=>({number:'0x1',hash:`0x${'11'.repeat(32)}`}))},actions:{getCurrentDexLimitCapability:vi.fn(async()=>({prepareLimit})),getCurrentDexSubmissionCapability:vi.fn(async()=>({checkCurrentCheapCandidate:async()=>({graph:c.graph,core:c.core,owner}),submitLimit}))}}as unknown as SharedWalletSession;
-    const render=()=>{hooks.index=0;hooks.refIndex=0;return CurrentLimitWorkspace({sharedWalletSession:session,priceDisplayInverted});};render();hooks.states[0]=sellToken0;hooks.states[1]='1.25';hooks.states[2]='2';hooks.states[3]='0.1';
+    const render=()=>{hooks.index=0;hooks.refIndex=0;return CurrentLimitWorkspace({sharedWalletSession:session,priceDisplayInverted,selectedPair:['HBR','BCN']});};render();hooks.states[0]=sellToken0;hooks.states[1]='1.25';hooks.states[2]='2';hooks.states[3]='0.1';
     const button=elements(render()).find(x=>x.type==='button'&&text(x.props.children)==='Review order')!;expect(button.props.disabled).toBe(false);button.props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(prepareLimit).toHaveBeenCalledWith(expect.objectContaining({intent:{sellToken0,amount:1250000000000000000n,terms:priceDisplayInverted?[1n,2n,100000000000000000n,1n,0n]:[2n,1n,100000000000000000n,1n,1n]}}));expect(submitLimit).not.toHaveBeenCalled();
+    expect(prepareLimit).toHaveBeenCalledWith(expect.objectContaining({intent:{sellToken0,amount:1250000n,terms:priceDisplayInverted?[2n,1n,100000n,1n,1n]:[1n,2n,100000n,1n,0n]}}));expect(submitLimit).not.toHaveBeenCalled();
   });
 });
 

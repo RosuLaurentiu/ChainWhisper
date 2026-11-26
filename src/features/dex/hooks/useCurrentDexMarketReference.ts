@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Eip1193Provider } from '@coti-io/coti-ethers';
-import { CURRENT_CHEAP_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
 import { CURRENT_DEX_DISPLAY_PAIR } from '../../../lib/currentDexDisplay';
 import { COTI_TESTNET_NETWORK } from '../../../lib/chainWhisperNetworks';
 import { CurrentDexDailyPriceError, getCurrentDexPriceReadProvider, isVerifiedCurrentDexPublicReference, readCurrentDexPublicReference, type CurrentDexDailyPriceView, type CurrentDexPublicReferenceView } from '../../../lib/currentDexDailyPrice';
@@ -24,7 +24,7 @@ export async function loadCurrentDexMarketReference({candidate,pair,provider,ass
   }
 }
 
-export default function useCurrentDexMarketReference(active: boolean,candidate:CurrentCheapDexCandidate=CURRENT_CHEAP_DEX_CANDIDATE,pair:readonly[string,string]=CURRENT_DEX_DISPLAY_PAIR) {
+export default function useCurrentDexMarketReference(active: boolean,candidate:CurrentCheapDexCandidate=STAGED_SHARED_HISTORY_DEX_CANDIDATE,pair:readonly[string,string]=CURRENT_DEX_DISPLAY_PAIR) {
   let direct=false;
   if(candidate.graph===STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph){
     try{direct=resolvePreparedDexScope(candidate).key==='cheap-history';}catch{/* A changed descriptor cannot reuse a settled reference. */}

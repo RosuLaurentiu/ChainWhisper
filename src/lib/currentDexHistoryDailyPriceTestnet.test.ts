@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { AbiCoder,keccak256 } from '@coti-io/coti-ethers';
 import { describe,expect,it, vi } from 'vitest';
 import { STAGED_GAP_DEX_CANDIDATE as candidate } from './currentDexGapCandidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './dexV2Deployment';
+import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './currentDexExitCandidate';
 import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT } from './packedInputDexDailyPriceArtifact';
 import { readCurrentDexDisplay } from './currentDexDisplay';
 import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE,type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';

@@ -1,6 +1,4 @@
 const browserContexts = vi.hoisted(() => new WeakMap<object,{owner:string;guard:()=>void}>());
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 const beta = vi.hoisted(() => ({ active: false }));
 vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
@@ -10,13 +8,9 @@ vi.mock('./currentDexOwnerBetaPolicy', async importOriginal => {
 vi.mock('../features/wallet/ownerCotiMetaMaskCapability',()=>({hasCurrentDexBrowserSigner:(signer:object|undefined,owner:string)=>{const row=signer&&browserContexts.get(signer);if(!row||row.owner!==owner.toLowerCase())return false;row.guard();return true;}}));
 const bindCurrentDexBrowserSigner=(signer:object,owner:string,_chain:bigint,guard:()=>void)=>{browserContexts.set(signer,{owner:owner.toLowerCase(),guard});};
 afterEach(() => { beta.active = false; });
-import { STAGED_D06_DEX_CANDIDATE as d06, STAGED_NATIVE_DEX_CANDIDATE as historical,
-  assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
-import { CURRENT_D06_SWAP_GAS_CAPS as caps, assertCurrentD06AppAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, CURRENT_APP_POOL_ENGINEERING_OWNERS, isCurrentAppCanonicalClaimRepair, isCurrentAppLimitTopUpRepair, assertCurrentAppSigningCount, currentAppSigningStartLimit, CURRENT_APP_SWAP_OWNER, CURRENT_APP_REPLACEMENT_TRIAL, CURRENT_APP_FURTHER_TRIAL } from './currentDexC1SwapPolicy';
-import { currentCheapDexGasCaps } from './currentDexSubmission';
-import { assertCurrentSwapCandidate, isCurrentNativeSwapCandidate, usesCurrentNativeSwapChecks } from './currentDexNativeSwapPolicy';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as current } from './currentDexExitCandidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './currentDexHistoryCandidate';
+import { assertCurrentD06AppAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, CURRENT_APP_POOL_ENGINEERING_OWNERS, isCurrentAppLimitTopUpRepair, assertCurrentAppSigningCount, currentAppSigningStartLimit, CURRENT_APP_SWAP_OWNER, CURRENT_APP_REPLACEMENT_TRIAL } from './currentDexC1SwapPolicy';
+import { assertCurrentSwapCandidate } from './currentDexNativeSwapPolicy';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './dexV2Deployment';
 import { CURRENT_APP_PARTIAL_REFUND_TRIAL, hasCurrentPartialRefundProof } from './currentDexC1SwapPolicy';
 
 const partialRefundPrior = [
@@ -33,8 +27,9 @@ const partialRefundPrior = [
   ['accept',165,'0x2af62aa18799348b848617c93a64515f482d7179b610a209d6a8aa684dc655e2']
 ].map(([phase,nonce,hash])=>({phase:phase as string,nonce:nonce as number,hash:hash as string,scope:`quote:0x${'77'.repeat(32)}`}));
 
-const root = new URL('../../../ChainWhisper Contracts V2/validation/candidates/core-advance-boundary-2026-10-06/', import.meta.url);
-describe('d06 phase ceilings and separate authority', () => {
+// A graph of no admitted candidate. Each policy keeps it held.
+const other = { graph: '00'.repeat(32) };
+describe('current App signing authority', () => {
   it('retains all eleven starts and admits six more only after exact completed Fast7 proof',()=>{
     expect(CURRENT_APP_PARTIAL_REFUND_TRIAL).toMatchObject({approvedAt:1792441435n,expiresAt:1792448635n,
       maximumInput:3n,additionalSigningStarts:6,retainedLedgerStarts:11,maximumSigningStarts:17,
@@ -49,7 +44,7 @@ describe('d06 phase ceilings and separate authority', () => {
     }
     for(const scope of ['',undefined,`quote:0x${'88'.repeat(32)}`])expect(hasCurrentPartialRefundProof(history.graph,CURRENT_APP_SWAP_OWNER,
       partialRefundPrior.map((row,i)=>i===10?{...row,scope}:row))).toBe(false);
-    for(const [graph,owner] of [[current.graph,CURRENT_APP_SWAP_OWNER],[history.graph,history.core],
+    for(const [graph,owner] of [[other.graph,CURRENT_APP_SWAP_OWNER],[history.graph,history.core],
       [history.graph,'0x8b749251cf1f712d4e39fd048c53394af03e10be']]){
       expect(hasCurrentPartialRefundProof(graph,owner,partialRefundPrior)).toBe(false);
       expect(currentAppSigningStartLimit(graph,owner,partialRefundPrior,8)).toBe(8);
@@ -73,11 +68,11 @@ describe('d06 phase ceilings and separate authority', () => {
   it('limits the approved top-up receipt repair to its exact owner, candidate, mined identity and amount',()=>{
     const proof={graph:'7b67bcbb7c5941a24471e62ba5a0d939c0800671b0bf121e81bad14cca737456',owner:CURRENT_APP_SWAP_OWNER,core:'0xab5374daddea783c3e58de19db497b54c79fd4cc',hash:'0x99d43c33f95061f794fe6ead07e2eb2c2305653788974235398b70d797347a5f',nonce:205,blockNumber:10152730,blockHash:'0x8c96934c343ac7193f3cb35679e327bb858208b01b42ba7c573f4f445d7a89fa',positionId:55n,amount:250000n};
     expect(isCurrentAppLimitTopUpRepair(proof)).toBe(true);
-    for(const change of [{graph:current.graph},{owner:history.core},{core:CURRENT_APP_SWAP_OWNER},{hash:`0x${'99'.repeat(32)}`},{nonce:206},{blockNumber:10152729},{blockHash:`0x${'88'.repeat(32)}`},{positionId:54n},{amount:250001n}])expect(isCurrentAppLimitTopUpRepair({...proof,...change})).toBe(false);
+    for(const change of [{graph:other.graph},{owner:history.core},{core:CURRENT_APP_SWAP_OWNER},{hash:`0x${'99'.repeat(32)}`},{nonce:206},{blockNumber:10152729},{blockHash:`0x${'88'.repeat(32)}`},{positionId:54n},{amount:250001n}])expect(isCurrentAppLimitTopUpRepair({...proof,...change})).toBe(false);
   });
   it('limits zero-allowance cleanup to the current graph and admitted Pool owners', () => {
     for (const owner of CURRENT_APP_POOL_ENGINEERING_OWNERS) expect(() => assertCurrentAppPoolAllowanceCleanupAuthority(history.graph, owner)).not.toThrow();
-    expect(() => assertCurrentAppPoolAllowanceCleanupAuthority(current.graph, CURRENT_APP_SWAP_OWNER)).toThrow('hold');
+    expect(() => assertCurrentAppPoolAllowanceCleanupAuthority(other.graph, CURRENT_APP_SWAP_OWNER)).toThrow('hold');
     expect(() => assertCurrentAppPoolAllowanceCleanupAuthority(history.graph, history.core)).toThrow('hold');
     expect(() => assertCurrentAppPoolAuthority(history.graph, { owner: CURRENT_APP_SWAP_OWNER, action: 'create' })).toThrow('hold');
     expect(() => assertCurrentAppSigningCount(history.graph, CURRENT_APP_SWAP_OWNER, 'quote', [{ phase: 'quote' }])).toThrow('reserved');
@@ -86,7 +81,7 @@ describe('d06 phase ceilings and separate authority', () => {
     for (const token of history.tokenMetadata) for (const action of ['initial', 'refill']) {
       expect(() => assertCurrentAppSharedFundingAuthority(history.graph, CURRENT_APP_SWAP_OWNER, token.address, action)).not.toThrow();
       for (const invalid of [
-        [current.graph, CURRENT_APP_SWAP_OWNER, token.address, action],
+        [other.graph, CURRENT_APP_SWAP_OWNER, token.address, action],
         [history.graph, history.core, token.address, action],
         [history.graph, CURRENT_APP_SWAP_OWNER, history.core, action],
         [history.graph, CURRENT_APP_SWAP_OWNER, token.address, 'approve']
@@ -133,7 +128,7 @@ describe('d06 phase ceilings and separate authority', () => {
     for(const changes of [{owner:'0x4444444444444444444444444444444444444444'},{owner:history.core},{budgets:[0n,1n] as const},{budgets:[1n,1_000_001n] as const},
       {budgets:undefined},{classId:7n},{tolerance:[2n,100n] as const},{tolerance:[1n,0n] as const},{action:'quote' as never}])
       expect(()=>assertCurrentAppPoolAuthority(history.graph,{...scope,...changes})).toThrow('hold');
-    expect(()=>assertCurrentAppPoolAuthority(current.graph,scope)).toThrow('hold');
+    expect(()=>assertCurrentAppPoolAuthority(other.graph,scope)).toThrow('hold');
     for(const action of ['top-up','approve-top-up','clear-top-up'] as const){
       expect(()=>assertCurrentAppPoolAuthority(history.graph,{...scope,action,positionId:11n})).not.toThrow();
       expect(()=>assertCurrentAppPoolAuthority(history.graph,{...scope,action})).toThrow('hold');
@@ -166,7 +161,7 @@ describe('d06 phase ceilings and separate authority', () => {
       expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner,action})).not.toThrow();
       expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner:history.core,action})).toThrow('hold');
       expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner,action,amount:1n})).toThrow('hold');
-      expect(()=>assertCurrentAppLimitAuthority(current.graph,{owner,action})).toThrow('hold');
+      expect(()=>assertCurrentAppLimitAuthority(other.graph,{owner,action})).toThrow('hold');
     }
     expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner:history.core,action:'refresh'})).toThrow('hold');
     expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner,action:'quote' as never})).toThrow('hold');
@@ -189,90 +184,6 @@ describe('d06 phase ceilings and separate authority', () => {
     expect(() => assertCurrentAppSigningCount(history.graph, owner, 'quote', [{ phase: 'quote' }])).toThrow('reserved');
     expect(() => assertCurrentAppSigningCount(history.graph, owner, 'token-funding', [{ phase: 'token-funding' }])).toThrow('reserved');
   });
-  it('admits only one fourth Quote after all recorded closures and the failed Accept', () => {
-    const charges = [{phase:'token-faucet'},{phase:'token-funding'},
-      {phase:'quote',hash:CURRENT_APP_REPLACEMENT_TRIAL.quoteHash},{phase:'cancel',hash:CURRENT_APP_REPLACEMENT_TRIAL.cancelHash},
-      {phase:'quote',hash:CURRENT_APP_FURTHER_TRIAL.quoteHash},{phase:'cancel',hash:CURRENT_APP_FURTHER_TRIAL.cancelHash},
-      {phase:'quote',hash:'0x69f5725311a615b3b557271011d2a20f5788ec20b103f152f82807e37ef427e0'},
-      {phase:'accept',hash:'0xb288ce7bd300366f1284a25ec12258c97c1ffbe64906151ed02b380fe2f42d87'},
-      {phase:'cancel',hash:'0xc4d01d7adc3182dbebb88f20af3a10d69303f6ec58b2b0592dcd92e17533b511'}];
-    expect(currentAppSigningStartLimit(current.graph,CURRENT_APP_SWAP_OWNER,charges,8)).toBe(12);
-    expect(()=>assertCurrentAppSigningCount(current.graph,CURRENT_APP_SWAP_OWNER,'quote',charges)).not.toThrow();
-    for(const missing of [6,7,8]) {
-      const rows=charges.filter((_,i)=>i!==missing);
-      expect(currentAppSigningStartLimit(current.graph,CURRENT_APP_SWAP_OWNER,rows,8)).toBe(9);
-      if(missing!==6)expect(()=>assertCurrentAppSigningCount(current.graph,CURRENT_APP_SWAP_OWNER,'quote',rows)).toThrow('reserved');
-    }
-    expect(()=>assertCurrentAppSigningCount(current.graph,CURRENT_APP_SWAP_OWNER,'quote',[...charges,{phase:'quote'}])).toThrow('reserved');
-    for(const phase of ['token-faucet','token-funding'])expect(()=>assertCurrentAppSigningCount(current.graph,CURRENT_APP_SWAP_OWNER,phase,charges)).toThrow('reserved');
-    expect(currentAppSigningStartLimit(current.graph,current.core,charges,8)).toBe(8);
-  });
-  it('admits one third Quote only after both recorded cancellations, without another claim or approval', () => {
-    const charges = [{phase:'token-faucet'},{phase:'token-funding'},
-      {phase:'quote',hash:CURRENT_APP_REPLACEMENT_TRIAL.quoteHash},{phase:'cancel',hash:CURRENT_APP_REPLACEMENT_TRIAL.cancelHash},
-      {phase:'quote',hash:'0x0ca44a17515a6e5680e0eb354fef7c21a5d6391dfbcbb024435f65ec1b004413'},
-      {phase:'cancel',hash:'0xe3f6c912683251e6b8f53d5fd318ca2d9ae89dc43afd0bb5411f8423a1396dd8'}];
-    expect(()=>assertCurrentAppSigningCount(current.graph,CURRENT_APP_SWAP_OWNER,'quote',charges)).not.toThrow();
-    for (const rows of [charges.slice(0,5),charges.map((row,i)=>i===5?{...row,hash:`0x${'aa'.repeat(32)}`}:row),[...charges,{phase:'quote'}]])
-      expect(()=>assertCurrentAppSigningCount(current.graph,CURRENT_APP_SWAP_OWNER,'quote',rows)).toThrow('reserved');
-    for (const phase of ['token-faucet','token-funding'])
-      expect(()=>assertCurrentAppSigningCount(current.graph,CURRENT_APP_SWAP_OWNER,phase,charges)).toThrow('reserved');
-  });
-  it('recognizes only the diagnosed legacy SDK claim; it grants no signing scope', () => {
-    const claim = { graph: current.graph, owner: '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', token: current.tokenMetadata[1].address,
-      hash: '0xf3593926823ab7f1f49d4a0a565352fc8d3044d1739c945091f42f39a38c2350', nonce: 137, blockNumber: 10044433,
-      blockHash: '0x7a530c54117b72345d9746c533dd2e09530dda8855106b68b062733b35bef41d' };
-    expect(isCurrentAppCanonicalClaimRepair(claim)).toBe(true);
-    for (const changed of [{ graph: d06.graph }, { owner: current.core }, { token: current.tokenMetadata[0].address },
-      { hash: `0x${'11'.repeat(32)}` }, { nonce: 138 }, { blockNumber: 10044434 }, { blockHash: null }])
-      expect(isCurrentAppCanonicalClaimRepair({ ...claim, ...changed })).toBe(false);
-    expect(() => assertCurrentD06AppAuthority(current.graph)).toThrow('hold');
-  });
-  it('admits only the approved owner async HBR to BCN scope while default and other actions stay held', () => {
-    const scope = { principal: '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', destination: '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d',
-      profile: 'cheap-async', inputToken: current.tokenMetadata[1].address, outputToken: current.tokenMetadata[0].address, maximumInput: 1_000_000n };
-    expect(() => assertCurrentD06AppAuthority(current.graph, scope)).not.toThrow();
-    for (const changes of [{ principal: historical.core }, { destination: historical.core }, { profile: 'fast-pool' },
-      { inputToken: scope.outputToken }, { outputToken: scope.inputToken }, { maximumInput: 1_000_001n }, { maximumInput: 0n }])
-      expect(() => assertCurrentD06AppAuthority(current.graph, { ...scope, ...changes })).toThrow('hold');
-    expect(() => assertCurrentD06AppAuthority(d06.graph, scope)).toThrow('hold');
-  });
-  it('keeps the current b2aa owner hold separate from technical admission', () => {
-    expect(current.nativeScope.connectedAppWalletHeld).toBe(true);
-    expect(() => assertCurrentD06AppAuthority(current.graph)).toThrow('connected App-wallet hold');
-    expect(() => assertCurrentSwapCandidate(current)).toThrow('connected App-wallet hold');
-    expect(() => assertCurrentD06AppAuthority(historical.graph)).not.toThrow();
-  });
-  it('binds retained Fast and current async signed ceilings without relabeling historical receipts', () => {
-    const raw = readFileSync(new URL('handoff/cost-ledger.json', root));
-    expect(createHash('sha256').update(raw).digest('hex')).toBe('1d9360a82279ba768744b8dcc7fb4efccbc48e53277e8a308b494e0bfab4032d');
-    const rows = JSON.parse(raw.toString()).transactions as { graph: string; action: string; gasLimit: string; gasUsed: string }[];
-    for (const phase of ['quote', 'accept'] as const) {
-      const fast = rows.filter(r => r.action === `fast-${phase}`);
-      expect(fast).toHaveLength(2);
-      for (const r of fast) { expect(r.graph).toBe('73ab416f398abb28d6572088a5dcf4c80641805415550334e75a038d398ee8c2'); expect(BigInt(r.gasLimit)).toBe(caps['fast-pool'][phase]); }
-      const async = rows.filter(r => r.graph === d06.graph && /^op[23]-/.test(r.action) && r.action.endsWith(phase === 'quote' ? '-issue' : '-accept'));
-      expect(async).toHaveLength(2);
-      for (const r of async) expect(BigInt(r.gasLimit)).toBe(caps['cheap-async'][phase]);
-    }
-    const unfunded = JSON.parse(readFileSync(new URL('unfunded-manifest-1.json', root), 'utf8'));
-    expect(unfunded.graph).toBe(d06.graph); expect(unfunded.core.toLowerCase()).toBe(d06.core);
-    expect(BigInt(unfunded.steps.find((s: { name: string }) => s.name === 'cancel').gas)).toBe(caps['cheap-async'].cancel);
-    // Recovery cap is a proposed ceiling, not an invented d06 native receipt.
-    expect(caps['cheap-async'].recover).toBe(50_000_000n);
-  });
-  it('keeps the real owner hold and owner/funding permission closed despite accessible ceilings', () => {
-    expect(currentCheapDexGasCaps(d06)).toBe(caps);
-    expect(() => assertCurrentD06AppAuthority(d06.graph)).toThrow('connected App-wallet hold');
-    expect(() => assertCurrentSwapCandidate(d06)).toThrow('admission is absent');
-    expect(() => assertCurrentCheapDexNativeAdmission(d06)).toThrow('admission is absent');
-    expect(isCurrentNativeSwapCandidate(d06)).toBe(false);
-    expect(usesCurrentNativeSwapChecks(d06)).toBe(true);
-    expect(isCurrentNativeSwapCandidate(historical)).toBe(true);
-  });
-  it.each(['core', 'packageSha256', 'releaseId', 'reviewedTokenSet', 'attestationSha256'])('rejects changed %s before selecting d06 ceilings', field => {
-    expect(() => currentCheapDexGasCaps({ ...d06, [field]: '0x00' })).toThrow('identity changed');
-  });
 });
 
 describe('Decision-030 selected owner terms', () => {
@@ -287,7 +198,7 @@ describe('Decision-030 selected owner terms', () => {
     expect(()=>assertCurrentAppLimitAuthority(history.graph,{owner,action:'create',amount:100_000_000n})).toThrow();
     for(const token of history.tokenMetadata)for(const action of ['initial','refill'])expect(()=>assertCurrentAppSharedFundingAuthority(history.graph,owner,token.address,action,signer)).not.toThrow();
     expect(()=>assertCurrentAppSharedFundingAuthority(history.graph,owner,history.core,'initial',signer)).toThrow();
-    expect(()=>assertCurrentAppPoolAuthority(current.graph,pool,signer)).toThrow();
+    expect(()=>assertCurrentAppPoolAuthority(other.graph,pool,signer)).toThrow();
   });
   it('admits all six direct pairs and modes above the former trial amount cap', () => {
     beta.active = true;
@@ -298,7 +209,7 @@ describe('Decision-030 selected owner terms', () => {
       for (const change of [{ maximumInput:1n<<256n },{ maximumInput:0n },{ inputToken:scope.outputToken },{ destination:history.core },{ principal:history.core },{ inputToken:history.core },{ profile:'intermediate' }]) {
         expect(() => assertCurrentD06AppAuthority(history.graph,{...scope,...change},signer)).toThrow();
       }
-      expect(() => assertCurrentD06AppAuthority(current.graph,scope,signer)).toThrow();
+      expect(() => assertCurrentD06AppAuthority(other.graph,scope,signer)).toThrow();
     }
   });
   it('removes owner Pool/Limit trial amount caps while retaining other actor limits', () => {

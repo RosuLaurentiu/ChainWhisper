@@ -14,15 +14,16 @@ vi.mock('../../../lib/appChain', () => ({ readCurrentSharedDexTestTokens: vi.fn(
 vi.mock('../../trading/hooks/useTradeActionConfirmationState', () => ({ default: () => ({ confirmation: null, requestConfirmation: async () => true, resolveConfirmation: () => {} }) }));
 const elements = (node: ReactNode): ReactElement<{ children?: ReactNode; disabled?: boolean; onClick?: () => void }>[] => Array.isArray(node) ? node.flatMap(elements) : isValidElement<{ children?: ReactNode }>(node) ? [node, ...elements(node.props.children)] : [];
 const text = (node: ReactNode): string => Array.isArray(node) ? node.map(text).join('') : isValidElement<{ children?: ReactNode }>(node) ? text(node.props.children) : typeof node === 'string' || typeof node === 'number' ? String(node) : '';
+const current = resolveCurrentSharedTokenDistribution('cheap-history');
 const snapshot = () => ({ owner: p.vault.recovery, head: { number: 9951288n, hash: `0x${'11'.repeat(32)}`, timestamp: 1791340000n },
-  core: p.core, graph: p.graph, packageSha256: p.packageSha256, vault: p.vault, readyToSign: false as const,
+  core: current.core, graph: current.graph, packageSha256: current.packageSha256, vault: p.vault, readyToSign: false as const,
   tokens: CURRENT_SHARED_DEX_TOKENS.map((token, i) => ({ ...token, claimed: i !== 3, initialClaimAvailability: i === 3 ? 'ready' as const : 'claimed' as const,
     refillAvailability: i === 3 ? 'initial-claim-required' as const : 'cooldown' as const, quota: 999000n * 10n ** 6n,
     nextClaimAt: 1791400000n, initialAmount: p.initialAmount, refillAmount: p.refillAmount })) });
 function fixture() {
   hooks.enabled = true;
   const session = { walletAddress: p.vault.recovery, chainId: 7082400, browserProvider: { request: vi.fn() }, browserWalletId: 'metamask', activeSignerSource: 'metamask' } as unknown as SharedWalletSession;
-  let candidateKey: CurrentCheapDexCandidateKey = 'cheap-prepared';
+  let candidateKey: CurrentCheapDexCandidateKey = 'cheap-history';
   const render = () => { hooks.stateIndex = 0; hooks.refIndex = 0; return CurrentSharedTestTokenControls({ sharedWalletSession: session, candidateKey }); };
   const button = () => elements(render()).find(e => e.type === 'button')!;
   render(); return { session, render, button, click: () => button().props.onClick!(), select: (key: CurrentCheapDexCandidateKey) => { candidateKey = key; } };
@@ -63,22 +64,9 @@ describe('four-asset beta funding controls', () => {
     expect(writes.every(button => button.props.disabled === false && text(button.props.children).startsWith(action === 'initial' ? 'Claim' : 'Refill'))).toBe(true);
     expect(text(f.render())).not.toContain('Token signing is held'); expect(getSender).not.toHaveBeenCalled();
   });
-  it('shows the legacy hold when all remaining displayed actions are refills', async () => {
-    const f = fixture(), owner = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', policy = resolveCurrentSharedTokenDistribution('cheap-exit');
-    f.select('cheap-exit'); f.session.walletAddress = owner;
-    f.session.sessionOnboardInfo = { [owner]: { aesKey: 'synthetic-test-session' } } as never;
-    vi.stubGlobal('window', { sessionStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() } });
-    const funds = { ...snapshot(), owner, core: policy.core, graph: policy.graph, packageSha256: policy.packageSha256, privateFundsVerified: true,
-      tokens: snapshot().tokens.map(token => ({ ...token, claimed: true, initialClaimAvailability: 'claimed', refillAvailability: 'ready', balance: 0n, allowance: 0n })) };
-    f.session.actions = { getCurrentSharedDexTokenFundsCapability: async () => ({ read: async () => funds }), getCurrentDexSubmissionCapability: vi.fn() } as never;
-    elements(f.render()).find(e => e.type === 'button' && text(e.props.children) === 'Check balances and refills')!.props.onClick!();
-    await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
-    expect(text(f.render())).toContain('Token signing is held');
-    expect(elements(f.render()).filter(e => e.type === 'button' && /^Refill /.test(text(e.props.children))).every(button => button.props.disabled)).toBe(true);
-  });
   it('uses the saved known hash for blocked-claim reconciliation without manual hash entry', async () => {
-    const f = fixture(), owner = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', policy = resolveCurrentSharedTokenDistribution('cheap-exit');
-    f.select('cheap-exit'); f.session.walletAddress = owner;
+    const f = fixture(), owner = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', policy = resolveCurrentSharedTokenDistribution('cheap-history');
+    f.select('cheap-history'); f.session.walletAddress = owner;
     f.session.sessionOnboardInfo = { [owner]: { aesKey: 'synthetic-test-session' } } as never;
     const hash = `0x${'33'.repeat(32)}`, failedRecover = vi.fn();
     let pending: string | null = JSON.stringify({ version: 1, chainId: '7082400', owner, core: policy.core.toLowerCase(),
@@ -98,8 +86,8 @@ describe('four-asset beta funding controls', () => {
     expect(text(f.render())).toContain('Claim confirmed. Your private balance is updated.');
   });
   it.each(['verified', 'reverted', 'pending', 'private-failure'] as const)('checks a known claim automatically and shows %s accurately', async outcome => {
-    const f = fixture(), owner = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', policy = resolveCurrentSharedTokenDistribution('cheap-exit');
-    f.select('cheap-exit'); f.session.walletAddress = owner;
+    const f = fixture(), owner = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d', policy = resolveCurrentSharedTokenDistribution('cheap-history');
+    f.select('cheap-history'); f.session.walletAddress = owner;
     vi.stubGlobal('window', { sessionStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() } });
     f.session.sessionOnboardInfo = { [owner]: { aesKey: 'synthetic-test-session' } } as never;
     const funds = { ...snapshot(), owner, core: policy.core, graph: policy.graph, packageSha256: policy.packageSha256,
@@ -141,9 +129,9 @@ describe('four-asset beta funding controls', () => {
     }
     expect(walletText).toContain('Confirm the claim in your wallet.');
   });
-  it('binds current private funds and discards them on deployment change', async () => {
-    const f = fixture(), policy = resolveCurrentSharedTokenDistribution('cheap-exit');
-    f.select('cheap-exit');
+  it('binds current private funds to the current deployment', async () => {
+    const f = fixture(), policy = resolveCurrentSharedTokenDistribution('cheap-history');
+    f.select('cheap-history');
     const getFunds = vi.fn(async () => ({ read: async () => ({ ...snapshot(), core: policy.core, graph: policy.graph,
       packageSha256: policy.packageSha256, privateFundsVerified: true,
       tokens: snapshot().tokens.map(t => ({ ...t, balance: 987654321n, allowance: 0n })) }) }));
@@ -151,14 +139,13 @@ describe('four-asset beta funding controls', () => {
     f.session.sessionOnboardInfo = { [f.session.walletAddress.toLowerCase()]: { aesKey: 'synthetic-test-session' } } as never;
     elements(f.render()).filter(e => e.type === 'button')[0].props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
-    expect(getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-exit' });
+    expect(getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-history' });
     expect(text(f.render())).toContain('987.65');
-    f.select('cheap-prepared'); expect(text(f.render())).not.toContain('987.65');
   });
   it('refuses an old-Core private result for the current candidate', async () => {
-    const f = fixture(); f.select('cheap-exit');
+    const f = fixture(); f.select('cheap-history');
     f.session.actions = { getCurrentSharedDexTokenFundsCapability: async () => ({ read: async () => ({ ...snapshot(),
-      privateFundsVerified: true, tokens: snapshot().tokens.map(t => ({ ...t, balance: 987654321n, allowance: 0n })) }) }) } as never;
+      core: p.core, graph: p.graph, packageSha256: p.packageSha256, privateFundsVerified: true, tokens: snapshot().tokens.map(t => ({ ...t, balance: 987654321n, allowance: 0n })) }) }) } as never;
     f.session.sessionOnboardInfo = { [f.session.walletAddress.toLowerCase()]: { aesKey: 'synthetic-test-session' } } as never;
     elements(f.render()).filter(e => e.type === 'button')[0].props.onClick!();
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false));
@@ -181,7 +168,7 @@ describe('four-asset beta funding controls', () => {
     expect(text(orbt)).toContain('Initial claim available');
     expect(elements(orbt).filter(e => e.type === 'button' && /^(Claim|Refill) /.test(text(e.props.children)))).toHaveLength(1);
     expect(text(orbt)).toMatch(/Claim [\d,.]+ ORBT/);
-    expect(text(f.render())).toMatch(/Token signing is held|previous transaction needs confirmation/); expect(elements(f.render()).filter(e => e.type === 'button')).toHaveLength(6);
+    expect(text(f.render())).not.toContain('Token signing is held'); expect(elements(f.render()).filter(e => e.type === 'button')).toHaveLength(6);
     expect(elements(f.render()).filter(e => e.type === 'button' && /^(Claim|Refill) /.test(text(e.props.children)))).toHaveLength(4);
   });
   it('rejects duplicate reads and hides the old result after owner changes', async () => {
@@ -197,7 +184,7 @@ describe('four-asset beta funding controls', () => {
     expect(text(f.render())).toContain('Distribution runtime changed'); expect(text(f.render())).not.toContain('Refill available');
   });
   it.each([1, 2632500])('disables current-candidate reads on network %s and discards an in-flight result', async chainId => {
-    const f = fixture(); f.select('cheap-exit'); f.session.chainId = chainId;
+    const f = fixture(); f.select('cheap-history'); f.session.chainId = chainId;
     expect(f.button().props.disabled).toBe(true); f.click(); expect(readCurrentSharedDexTestTokens).not.toHaveBeenCalled();
     f.session.chainId = 7082400;
     let resolve!: (value: ReturnType<typeof snapshot>) => void;
@@ -222,7 +209,7 @@ describe('four-asset beta funding controls', () => {
     expect(text(f.render())).toContain('checked at block 9951288');
     expect(read).toHaveBeenCalledOnce();
     expect(text(f.render())).toContain('DEX allowance 1.0');
-    expect(text(f.render())).toContain('Balances and refills checked.'); expect(getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-prepared' });
+    expect(text(f.render())).toContain('Balances and refills checked.'); expect(getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-history' });
     f.session.sessionOnboardInfo = {}; expect(text(f.render())).not.toContain('123.46');
     expect(text(reveal().props.children)).toBe('Check refills');
   });
@@ -235,15 +222,6 @@ describe('four-asset beta funding controls', () => {
     f.session.walletAddress = '0x23aBDe1d22019D52852D6845c9444326Dde1D99e'; f.render();
     finish({ ...snapshot(), privateFundsVerified: true, tokens: snapshot().tokens.map(t => ({ ...t, balance: 1000000n, allowance: 0n })) });
     await vi.waitFor(() => expect(hooks.states[1]).toBe(false)); expect(text(f.render())).not.toContain('Balances and refills checked.');
-  });
-  it('keeps all four-token writes held even with unlocked funds and an available sender', async () => {
-    const f = fixture(), sender = vi.fn();
-    f.session.actions = { getCurrentDexSubmissionCapability: sender } as never;
-    f.session.sessionOnboardInfo = { [f.session.walletAddress.toLowerCase()]: { aesKey: 'synthetic-test-session' } } as never;
-    const writes = elements(f.render()).filter(e => e.type === 'button' && /^(Claim|Refill) /.test(text(e.props.children)));
-    expect(writes).toHaveLength(4);
-    for (const button of writes) { expect(button.props.disabled).toBe(true); button.props.onClick!(); }
-    expect(sender).not.toHaveBeenCalled();
   });
   it('hides unread private balances and keeps the initial action disabled until verified', () => {
     const html = renderToStaticMarkup(<CurrentSharedTestTokenControls />);

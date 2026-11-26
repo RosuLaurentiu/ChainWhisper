@@ -35,7 +35,7 @@ const same=(a:string|null,b:string)=>typeof a==='string'&&a.toLowerCase()===b.to
 const transfer=new Interface(['event Transfer(address indexed from,address indexed to,(uint256 ciphertextHigh,uint256 ciphertextLow) senderValue,(uint256 ciphertextHigh,uint256 ciphertextLow) receiverValue)']);
 const approvalEvent=new Interface(['event Approval(address indexed owner,address indexed spender,(uint256 ciphertextHigh,uint256 ciphertextLow) ownerValue,(uint256 ciphertextHigh,uint256 ciphertextLow) spenderValue)']);
 const uint=(v:bigint,bits:number,positive=false)=>{if(typeof v!=='bigint'||v<(positive?1n:0n)||v>=1n<<BigInt(bits))throw new Error('Invalid exact Limit amount or terms.');};
-export const issueCurrentDexLimitCapability=({candidate='cheap-current',selectedPair,...args}:IssueArgs)=>issueOwnerCotiMetaMaskCapability({...args,capabilityLabel:'current plain Limit preparation',requirePrivacy:true,
+export const issueCurrentDexLimitCapability=({candidate='cheap-history',selectedPair,...args}:IssueArgs)=>issueOwnerCotiMetaMaskCapability({...args,capabilityLabel:'current plain Limit preparation',requirePrivacy:true,
   bindCapability:async({signer,readProvider,ownerAddress,chainId,assertCurrent,assertSnapshotCurrent})=>{
     const scope=resolveCurrentLimitScope(candidate,selectedPair),c=scope.candidate,abi=currentLimitAbiForCandidate(candidate);
     const poolTokens=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1),marketFields=Object.freeze({marketId:scope.marketId,poolTokens:scope.poolTokens});
@@ -119,7 +119,7 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       request=Object.freeze({...request,...(request.newTerms?{newTerms:Object.freeze([...request.newTerms])as CurrentLimitIntent['terms']}:{})});
       const {positionId:id,action,topUpAmount,newTerms}=request;if(!['refresh','claim','pause','resume','close','topup','reprice'].includes(action)||typeof request.confirm!=='function')throw new Error('Invalid Limit owner action or confirmation.');
       if(Object.keys(request).some(k=>!['positionId','action','snapshot','expectedContext','topUpAmount','newTerms','confirm'].includes(k))||action!=='topup'&&topUpAmount!==undefined||action!=='reprice'&&newTerms!==undefined)throw new Error('Unexpected Limit owner intent fields.');
-      if(action==='topup'||action==='reprice'){if(candidate!=='cheap-exit'&&candidate!=='cheap-history')throw new Error('Limit edits require the current deployment.');if(action==='topup')uint(topUpAmount!,256,true);else{if(!newTerms||newTerms.length!==5)throw new Error('Invalid exact Limit price witness.');newTerms.forEach(v=>uint(v,128));const [n,d,,u,v]=newTerms;if(n===0n||d===0n||n*u-d*v!==1n)throw new Error('Invalid exact Limit price witness.');}}
+      if(action==='topup'||action==='reprice'){if(action==='topup')uint(topUpAmount!,256,true);else{if(!newTerms||newTerms.length!==5)throw new Error('Invalid exact Limit price witness.');newTerms.forEach(v=>uint(v,128));const [n,d,,u,v]=newTerms;if(n===0n||d===0n||n*u-d*v!==1n)throw new Error('Invalid exact Limit price witness.');}}
       const origin=await head(),before=await ownerState(id,origin);if(before.status===2n)throw new Error('Pending Limit requires recipient activation, outside this owner scope.');
       let prior:CurrentLimitOwnerResult|null=null;
       if(action!=='refresh'){
@@ -148,7 +148,6 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       const prepared=Object.freeze({...marketFields,from:ownerAddress,to:c.core,chainId,value:0n as const,data,graph:c.graph,packageSha256:c.packageSha256,phase:'limit-owner' as const,action,positionId:id,expectedLifecycleRevision:before.lifecycle,expectedTermsRevision:before.terms,...(action==='topup'?{topUpAmount,fundingToken}:{}),...(action==='reprice'?{newTerms}:{}),assertCurrent:guard,assertAuthority,readResult,readyToSign:false as const});sessions.set(prepared,signer);return prepared;
     };
     const verifyMinedTopUp=async({transactionHash,positionId:id,expectedAmount}:Readonly<{transactionHash:string;positionId:bigint;expectedAmount:bigint}>):Promise<CurrentLimitReconciledTopUp>=>{
-      if(candidate!=='cheap-exit'&&candidate!=='cheap-history')throw new Error('Limit top-up reconciliation requires the current deployment.');
       uint(expectedAmount,256,true);uint(id,256,true);
       if(id<8n||!/^0x[0-9a-fA-F]{64}$/.test(transactionHash)||BigInt(transactionHash)===0n)throw new Error('Invalid mined Limit top-up identity.');
       await guard();const [tx,receipt]=await Promise.all([readProvider.getTransaction(transactionHash),readProvider.getTransactionReceipt(transactionHash)]);await guard();
@@ -191,7 +190,7 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
     };
     const prepareFundingReview=async(input:CurrentLimitFundingRequest):Promise<CurrentLimitFundingReview>=>{
       const request=Object.freeze({...input});uint(request.amount,256,true);
-      if(candidate!=='cheap-exit'&&candidate!=='cheap-history'||!['create','topup'].includes(request.kind)||Object.keys(request).some(k=>!(request.kind==='create'?['kind','sellToken0','amount']:['kind','positionId','snapshot','expectedContext','amount']).includes(k)))throw new Error('Invalid current Limit funding review.');
+      if(!['create','topup'].includes(request.kind)||Object.keys(request).some(k=>!(request.kind==='create'?['kind','sellToken0','amount']:['kind','positionId','snapshot','expectedContext','amount']).includes(k)))throw new Error('Invalid current Limit funding review.');
       const origin=await head(),originMarket=await graph(origin);let before:State|undefined,sellToken0:boolean;
       if(request.kind==='topup'){
         before=await ownerState(request.positionId,origin);const saved=authenticated.get(request.snapshot);
@@ -204,7 +203,6 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       const review=Object.freeze({...marketFields,phase:'limit-funding-review' as const,kind:request.kind,from:ownerAddress,to:c.core,chainId,graph:c.graph,packageSha256:c.packageSha256,fundingToken,amount:request.amount,readyToSign:false as const,assertCurrent:guard,assertAuthority});sessions.set(review,signer);return review;
     };
     const readClosedOrder=async({positionId:id,expectedContext}:{positionId:bigint;expectedContext?:string}):Promise<CurrentLimitOwnerResult>=>{
-      if(candidate!=='cheap-exit'&&candidate!=='cheap-history')throw new Error('Closed order restoration requires a supported DEX deployment.');
       const block=await head(),state=await ownerState(id,block,true);
       if(expectedContext!==undefined&&expectedContext!==state.context)throw new Error('Closed Limit context changed. Refresh orders.');
       const values=ownerValues(state),amounts=checkCurrentLimitOwnerValues(values);
@@ -233,7 +231,6 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
       }finally{readScope.close();}
     };
     return Object.freeze({prepareOwnerAction,verifyMinedTopUp,prepareFundingReview,readClosedOrder,readFills,readOwnedOrders:async(assertCallerCurrent:()=>void=()=>{})=>{
-      if(candidate!=='cheap-exit'&&candidate!=='cheap-history')throw new Error('Order discovery requires a supported DEX deployment.');
       const readScope=createBrowserWalletRuntimeReadGuard(()=>{assertCallerCurrent();assertSnapshotCurrent();});
       const check=async()=>{readScope.assertCurrent();await guard();readScope.assertCurrent();};
       const rpc=async(method:string,params:readonly unknown[])=>{

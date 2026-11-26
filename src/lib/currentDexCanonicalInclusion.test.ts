@@ -141,7 +141,7 @@ describe('current DEX canonical inclusion transport', () => {
     const f = setup(), snapshot = vi.fn(), sendTransaction = vi.fn();
     wiring.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.guard, assertSnapshotCurrent: snapshot,
       chainId: 7082400n, ownerAddress: a('2'), readProvider: { send: f.rpc }, signer: { sendTransaction } }));
-    await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-native' } as never);
+    await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never);
     expect(wiring.transport?.verifyCanonicalInclusion).toBeTypeOf('function');
     await wiring.transport!.verifyCanonicalInclusion!(transaction, receipt);
     expect(snapshot).toHaveBeenCalledTimes(9); expect(sendTransaction).not.toHaveBeenCalled();
@@ -154,7 +154,7 @@ describe('current DEX canonical inclusion transport', () => {
     wiring.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.guard, assertSnapshotCurrent: vi.fn(),
       chainId: 7082400n, ownerAddress: a('2'), readProvider: { send: f.rpc,
         getTransactionReceipt: async () => ({ ...receipt, logs: [sdkLog] }) }, signer: { sendTransaction: vi.fn() } }));
-    await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-native' } as never);
+    await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never);
     const mapped = await wiring.transport!.waitForReceipt(transaction.hash);
     await wiring.transport!.verifyCanonicalInclusion!(transaction, mapped!);
     (f.rec.logs as Record<string, unknown>[])[0].removed = true;

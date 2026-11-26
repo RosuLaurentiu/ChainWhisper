@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SharedWalletSession } from '../../../lib/walletSession';
-import { CURRENT_CHEAP_DEX_CANDIDATE as current, STAGED_PREPARED_DEX_CANDIDATE as prepared, STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit, STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from '../../../lib/dexV2Deployment';
+// An earlier deployment, used only as a result or selection the current App must refuse.
+import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from '../../../lib/currentDexExitCandidate';
 import useCurrentTrialBalances, { type CurrentTrialBalanceSelection } from './useCurrentTrialBalances';
 
 // Small hook harness: retain state, compare dependencies and run effect cleanup.
@@ -40,9 +42,9 @@ vi.mock('react', async original => {
 });
 
 const owner = `0x${'22'.repeat(20)}`, other = `0x${'33'.repeat(20)}`;
-const snapshot = () => ({ owner, core: prepared.core, graph: prepared.graph, packageSha256: prepared.packageSha256,
+const snapshot = () => ({ owner, core: history.core, graph: history.graph, packageSha256: history.packageSha256,
   privateFundsVerified: true, readyToSign: false,
-  tokens: prepared.tokenMetadata.map((token, index) => ({ ...token, balance: index === 0 ? 1n : 9007199254740993000001n, allowance: 0n })) });
+  tokens: history.tokenMetadata.map((token, index) => ({ ...token, balance: index === 0 ? 1n : 9007199254740993000001n, allowance: 0n })) });
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
@@ -59,7 +61,7 @@ function fixture() {
     sessionOnboardInfo: { [owner]: { aesKey: 'local-fixture-only' } }, walletAesHealthByAddress: {},
     actions: { getCurrentSharedDexTokenFundsCapability: getFunds, getCurrentDexSubmissionCapability: getSender }
   } as unknown as SharedWalletSession;
-  let selection: CurrentTrialBalanceSelection | undefined = { candidate: prepared, tokens: [prepared.tokens[0][0], prepared.tokens[1][0]] };
+  let selection: CurrentTrialBalanceSelection | undefined = { candidate: history, tokens: [history.tokens[0][0], history.tokens[1][0]] };
   let visible = true;
   const Render = (effects = true) => {
     hooks.index = 0;
@@ -82,11 +84,10 @@ describe('selected DEX private balance display', () => {
     f.setVisible(true); f.render(); await f.settle();
     expect(f.read).toHaveBeenCalledOnce();
     f.setVisible(false); f.render();
-    f.select({ candidate: exit, tokens: [exit.tokens[0][0], exit.tokens[1][0]] }); f.render();
+    f.select({ candidate: history, tokens: [history.tokens[1][0], history.tokens[0][0]] }); f.render();
     expect(f.read).toHaveBeenCalledOnce();
-    f.read.mockResolvedValue({ ...snapshot(), core: exit.core, graph: exit.graph, packageSha256: exit.packageSha256 } as never);
     f.setVisible(true); f.render(); await f.settle();
-    expect(f.getFunds).toHaveBeenLastCalledWith(7082400n, { candidate: 'cheap-exit' });
+    expect(f.getFunds).toHaveBeenLastCalledWith(7082400n, { candidate: 'cheap-history' });
     expect(f.read).toHaveBeenCalledTimes(2);
   });
   it.each([[0,1],[3,0]])('uses the current shared reader for 7b67 token direction %s -> %s', async (input,output) => {
@@ -100,32 +101,32 @@ describe('selected DEX private balance display', () => {
     expect(f.getSender).not.toHaveBeenCalled(); expect(f.legacyRead).not.toHaveBeenCalled();
   });
   it('selects current Core allowances and rejects an earlier candidate result', async () => {
-    const f = fixture(); f.select({ candidate: exit, tokens: [exit.tokens[3][0], exit.tokens[0][0]] });
-    f.read.mockResolvedValueOnce({ ...snapshot(), core: exit.core, graph: exit.graph, packageSha256: exit.packageSha256 } as never);
+    const f = fixture(); f.select({ candidate: history, tokens: [history.tokens[3][0], history.tokens[0][0]] });
     f.render(); expect((await f.settle()).labels).toEqual(['9007199254740993.000001', '0.000001']);
-    expect(f.getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-exit' });
+    expect(f.getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-history' });
     expect(f.getSender).not.toHaveBeenCalled();
+    f.read.mockResolvedValue({ ...snapshot(), core: exit.core, graph: exit.graph, packageSha256: exit.packageSha256 } as never);
     await f.render().refresh(); expect(f.render().labels).toEqual(['Unavailable', 'Unavailable']);
   });
 
-  it('discards a private result when the selected deployment changes during reading', async () => {
+  it('discards a private result when the selection changes to an earlier deployment during reading', async () => {
     const f = fixture(), pending = deferred<ReturnType<typeof snapshot>>();
     f.read.mockReturnValueOnce(pending.promise); f.render();
     f.select({ candidate: exit, tokens: [exit.tokens[0][0], exit.tokens[1][0]] });
-    expect(f.render(false).labels).toEqual(['Loading…', 'Loading…']);
+    expect(f.render(false).labels).toEqual(['Unavailable', 'Unavailable']);
     pending.resolve(snapshot()); await Promise.resolve(); await Promise.resolve();
-    expect(f.render(false).labels).toEqual(['Loading…', 'Loading…']);
+    expect(f.render(false).labels).toEqual(['Unavailable', 'Unavailable']);
     f.render(); await f.settle(); expect(f.render().labels).toEqual(['Unavailable', 'Unavailable']);
   });
   it('reads only the existing read capability and keeps exact selected direction', async () => {
     const f = fixture(); f.render();
     expect((await f.settle()).labels).toEqual(['0.000001', '9007199254740993.000001']);
-    expect(f.getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-prepared' });
+    expect(f.getFunds).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-history' });
     expect(f.getSender).not.toHaveBeenCalled();
-    f.select({ candidate: { graph: prepared.graph, core: prepared.core.toUpperCase(), packageSha256: prepared.packageSha256 },
-      tokens: [prepared.tokens[0][0].toUpperCase(), prepared.tokens[1][0]] });
+    f.select({ candidate: { graph: history.graph, core: history.core.toUpperCase(), packageSha256: history.packageSha256 },
+      tokens: [history.tokens[0][0].toUpperCase(), history.tokens[1][0]] });
     f.render(); await f.settle(); expect(f.read).toHaveBeenCalledOnce();
-    f.select({ candidate: prepared, tokens: [prepared.tokens[1][0], prepared.tokens[0][0]] });
+    f.select({ candidate: history, tokens: [history.tokens[1][0], history.tokens[0][0]] });
     expect(f.render(false).labels).toEqual(['Loading…', 'Loading…']);
     f.render(); expect((await f.settle()).labels).toEqual(['9007199254740993.000001', '0.000001']);
   });
@@ -134,7 +135,7 @@ describe('selected DEX private balance display', () => {
     'rejects funds with wrong %s evidence', async kind => {
       const f = fixture(), funds = snapshot();
       if (kind === 'owner') funds.owner = other;
-      if (kind === 'core') funds.core = current.core as typeof funds.core;
+      if (kind === 'core') funds.core = exit.core as typeof funds.core;
       if (kind === 'graph') funds.graph = 'wrong' as typeof funds.graph;
       if (kind === 'package') funds.packageSha256 = 'wrong' as typeof funds.packageSha256;
       if (kind === 'token') funds.tokens.shift();
@@ -155,14 +156,14 @@ describe('selected DEX private balance display', () => {
       const waiting = deferred<ReturnType<typeof snapshot>>(); f.read.mockImplementationOnce(() => waiting.promise);
       const oldRefresh = f.render().refresh, pending = oldRefresh();
       await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
-      if (kind === 'pair') f.select({ candidate: prepared, tokens: [prepared.tokens[2][0], prepared.tokens[3][0]] });
+      if (kind === 'pair') f.select({ candidate: history, tokens: [history.tokens[2][0], history.tokens[3][0]] });
       if (kind === 'owner') f.session.walletAddress = other;
       if (kind === 'privacy') f.session.sessionOnboardInfo = {};
       if (kind === 'privacy-key') f.session.sessionOnboardInfo[owner].aesKey = 'changed-local-fixture';
       if (kind === 'provider') f.session.browserProvider = { request: vi.fn() };
       if (kind === 'candidate') f.select(undefined);
-      if (kind === 'package') f.select({ candidate: { ...prepared, packageSha256: 'wrong' }, tokens: [prepared.tokens[0][0], prepared.tokens[1][0]] });
-      if (kind === 'core') f.select({ candidate: { ...prepared, core: current.core }, tokens: [prepared.tokens[0][0], prepared.tokens[1][0]] });
+      if (kind === 'package') f.select({ candidate: { ...history, packageSha256: 'wrong' }, tokens: [history.tokens[0][0], history.tokens[1][0]] });
+      if (kind === 'core') f.select({ candidate: { ...history, core: exit.core }, tokens: [history.tokens[0][0], history.tokens[1][0]] });
       if (kind === 'reader') f.session.actions!.getCurrentSharedDexTokenFundsCapability = vi.fn() as never;
       if (kind === 'health') f.session.walletAesHealthByAddress = {};
       if (kind === 'onboard') f.session.sessionOnboardInfo = { ...f.session.sessionOnboardInfo };
@@ -192,19 +193,13 @@ describe('selected DEX private balance display', () => {
       if (kind === 'no-reader') delete f.session.actions!.getCurrentSharedDexTokenFundsCapability;
       if (kind === 'locked') f.session.sessionOnboardInfo = {};
       if (kind === 'mismatch') f.session.walletAesHealthByAddress = { [owner]: { status: 'key-mismatch' } } as never;
-      if (kind === 'invalid-identity') f.select({ candidate: { ...prepared, graph: 'wrong' }, tokens: [prepared.tokens[0][0], prepared.tokens[1][0]] });
-      if (kind === 'no-pair') f.select({ candidate: prepared });
-      if (kind === 'same-token') f.select({ candidate: prepared, tokens: [prepared.tokens[0][0], prepared.tokens[0][0]] });
-      if (kind === 'unknown-token') f.select({ candidate: prepared, tokens: [prepared.tokens[0][0], current.tokens[0][0]] });
+      if (kind === 'invalid-identity') f.select({ candidate: { ...history, graph: 'wrong' }, tokens: [history.tokens[0][0], history.tokens[1][0]] });
+      if (kind === 'no-pair') f.select({ candidate: history });
+      if (kind === 'same-token') f.select({ candidate: history, tokens: [history.tokens[0][0], history.tokens[0][0]] });
+      if (kind === 'unknown-token') f.select({ candidate: history, tokens: [history.tokens[0][0], `0x${'44'.repeat(20)}`] });
       const view = f.render(); await view.refresh();
       expect(view.eligible).toBe(false); expect(f.getFunds).not.toHaveBeenCalled(); expect(f.getSender).not.toHaveBeenCalled();
       expect(view.labels).toEqual(kind === 'locked' || kind === 'mismatch' ? ['Unlock privacy', 'Unlock privacy'] : ['Unavailable', 'Unavailable']);
     });
 
-  it('retains the default current two-token 18-decimal read', async () => {
-    const f = fixture(); f.select(undefined); f.render();
-    expect((await f.settle()).labels).toEqual(['0.000000000000000001', '0.000000000000000002']);
-    expect(f.getFunds).not.toHaveBeenCalled(); expect(f.getSender).toHaveBeenCalledWith(BigInt(current.chainId));
-    expect(f.legacyRead.mock.calls.map(([index]) => index)).toEqual([0, 1]);
-  });
 });

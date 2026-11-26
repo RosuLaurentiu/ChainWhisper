@@ -3,16 +3,12 @@ import { Interface, Network, toBeHex, toQuantity, getBytes, hexlify, type Transa
 import { loadCotiStartupReadProvider, sendCotiScopedRead } from '../../lib/appShared/core';
 import { createBrowserWalletRuntimeReadGuard } from '../../lib/browserWalletRuntimeScope';
 import {
-  createCurrentDexSubmissionAdapter,
-  createCurrentSharedPoolSubmissionAdapter,
   createCurrentCheapDexSubmissionAdapter,
-  createArchivedCheapDexRecovery,
   type CurrentDexSubmissionAdmission,
   type CurrentTransport
 } from '../../lib/currentDexSubmission';
 import { createDexV2ReadCapability, readCurrentDexOperation, readCurrentSharedPoolDexGraph } from '../../lib/dexV2Chain';
-import { CURRENT_SHARED_POOL_CANDIDATE,
-  resolveCurrentCheapDexCandidate, currentCheapDexCandidateKey, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, currentCheapDexCandidateKey, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { currentDexDisplayPair } from '../../lib/currentDexDisplay';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { readCurrentDexPendingAttempt, currentDexPendingStorage } from '../../lib/currentDexPendingAttempt';
@@ -40,7 +36,6 @@ import { readCurrentDexActivityDiscoveryPage, readCurrentDexAsyncTerminalPage, c
   type CurrentDexActivityCursor } from '../../lib/currentDexActivityDiscovery';
 import { readCurrentDexActivityReceipt, type CurrentDexActivityRow } from '../../lib/currentDexActivityReceipt';
 import { CURRENT_LIMIT_FILL_HISTORY_GRAPHS, readCurrentLimitFillHistoryPage, type CurrentDexLimitFill } from '../../lib/currentDexLimitFillHistory';
-
 import { assertCurrentCheapDexPreparedQuote } from './currentDexQuoteCapability';
 import { assertCurrentNativeSwapIntent } from '../../lib/currentDexNativeSwapPolicy';
 import { isCurrentDexBrowserSigner } from '../../lib/currentDexBrowserPolicy';
@@ -49,7 +44,7 @@ type IssueArgs = Omit<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>, 'bindCapabi
   Readonly<{ admission: CurrentDexSubmissionAdmission<'quote'> | null; candidate?: CurrentCheapDexCandidateKey;
     nativePoolProfile?: typeof CURRENT_NATIVE_POOL_PROFILE }>;
 
-export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'cheap-current', nativePoolProfile, ...args }: IssueArgs) => issueOwnerCotiMetaMaskCapability({
+export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'cheap-history', nativePoolProfile, ...args }: IssueArgs) => issueOwnerCotiMetaMaskCapability({
   ...args,
   capabilityLabel: 'current DEX submission',
   requirePrivacy: false,
@@ -176,52 +171,10 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           gasLimit: BigInt(head.gasLimit) });
       }
     };
-    const legacy = createCurrentDexSubmissionAdapter({ quoteAdmission: admission, transport });
     const readCapability = createDexV2ReadCapability({ chainId, assertCurrent, qualificationScope: readProvider,
       provider: { request: ({ method, params }) => readProvider.send(method, params ?? []) } });
-    const attest = async (head: { number: bigint; hash: string }) => {
-      const graph = await readCurrentSharedPoolDexGraph({ capability: readCapability,
-        blockNumber: head.number, blockHash: head.hash });
-      if (graph.graph !== CURRENT_SHARED_POOL_CANDIDATE.graph ||
-          graph.packageSha256 !== CURRENT_SHARED_POOL_CANDIDATE.packageSha256 ||
-          graph.core.toLowerCase() !== CURRENT_SHARED_POOL_CANDIDATE.core) {
-        throw new Error('Current shared-Pool graph changed.');
-      }
-      await assertCurrent(); assertSnapshotCurrent();
-    };
-    let receiptCapability: Awaited<ReturnType<typeof issueCurrentDexReceiptCapability>> | null = null;
-    const current = createCurrentSharedPoolSubmissionAdapter({ signer, ownerAddress, chainId, transport, attest,
-      readOperation: async (operationId, origin) => readCurrentDexOperation({ capability: readCapability,
-        profile: 'shared-pool', operationId,
-        expected: { chainId, core: CURRENT_SHARED_POOL_CANDIDATE.core,
-          runtimeHash: CURRENT_SHARED_POOL_CANDIDATE.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2],
-          releaseId: CURRENT_SHARED_POOL_CANDIDATE.releaseId,
-          originBlockNumber: origin?.number, originBlockHash: origin?.hash } }),
-      reviewAcceptance: async (issued, confirm) => {
-        if (!receiptCapability) receiptCapability = await issueCurrentDexReceiptCapability(args);
-        const reader = receiptCapability;
-        const readReceipt = async () => {
-          const receipt = await reader.read({ operationId: issued.operationId, profile: 'shared-pool',
-            expected: { chainId, core: issued.core, runtimeHash: issued.runtimeHash, releaseId: issued.releaseId,
-              originBlockNumber: issued.originBlock.number, originBlockHash: issued.originBlock.hash } });
-          if (receipt.operation.contextHash !== issued.operation.contextHash ||
-              receipt.operation.epochId !== issued.operation.epochId ||
-              receipt.operation.canonicalMarketId !== issued.operation.canonicalMarketId ||
-              receipt.operation.marketRevision !== issued.operation.marketRevision ||
-              receipt.operation.registryRevision !== issued.operation.registryRevision) {
-            throw new Error('Current shared-Pool private receipt changed operation.');
-          }
-          await attest(receipt.block);
-          return receipt;
-        };
-        const inputIsToken0 = issued.intent.inputToken.toLowerCase() === CURRENT_SHARED_POOL_CANDIDATE.tokens[0][0];
-        return prepareCurrentDexAcceptance({ intent: issued.intent, now: () => BigInt(Math.floor(Date.now() / 1000)),
-          input: { symbol: inputIsToken0 ? 'token0 atoms' : 'token1 atoms', decimals: 0 },
-          output: { symbol: inputIsToken0 ? 'token1 atoms' : 'token0 atoms', decimals: 0 },
-          readReceipt, confirm });
-      } });
     const cheapCandidate = resolveCurrentCheapDexCandidate(candidate);
-    const sharedCandidate = candidate === 'cheap-prepared' || candidate === 'cheap-exit' || candidate === 'cheap-history' ? candidate : undefined;
+    const sharedCandidate = candidate;
     const attestCandidate = async (head: { number: bigint; hash: string }, key: CurrentCheapDexCandidateKey) => {
       const selected = resolveCurrentCheapDexCandidate(key);
       const graph = await readCurrentSharedPoolDexGraph({ capability: readCapability, candidate: key,
@@ -237,6 +190,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       await attestCandidate(head, candidate);
       if (head.number === checked.number && head.hash === checked.hash) fundingHeads.set(head, checked);
     };
+    let receiptCapability: Awaited<ReturnType<typeof issueCurrentDexReceiptCapability>> | null = null;
     const reviewReceipts = new WeakMap<object, { issued: object; privacy: string }>();
     const readCheapReceipt = async (issued: Parameters<Parameters<typeof createCurrentCheapDexSubmissionAdapter>[0]['readReceipt']>[0],
       origin?: {number:bigint;hash:string}, observation?:{number:bigint;hash:string}) => {
@@ -344,7 +298,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           releaseId: cheapCandidate.releaseId, originBlockNumber: origin?.number, originBlockHash: origin?.hash } }),
       readReceipt: readCheapReceipt,
       verifySwapAllowanceCleanup: (request, transactionHash) => sharedFunding.verifySharedSwapAllowanceCleanup(request, transactionHash),
-      ...(candidate === 'cheap-exit' || candidate === 'cheap-history' ? {
+      ...{
         verifyOwnerTokens: async ({ issued, amounts, phase, receipt, contextHash }) => {
           await transport.assertCurrent();
           if (!signer.getUserOnboardInfo()?.aesKey?.trim()) throw new Error('Unlock privacy before checking owner token delivery.');
@@ -434,12 +388,12 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
           const phase = call.name === 'advanceFixedWork' ? 'terminal' as const : call.name === 'recoverSwap' ? 'recover' as const : 'cancel' as const;
           return { receipt, phase };
         }
-      } : {}),
+      },
       requireFunding: (prepared, head, beforeApproval) => {
         const attested = fundingHeads.get(head);
         fundingHeads.delete(head);
         return requirePrivateFunding(prepared.intent.inputToken, prepared.intent.maximumInput, head, candidate,
-          candidate === 'cheap-exit' || candidate === 'cheap-history', beforeApproval ? 0n : prepared.intent.maximumInput,
+          true, beforeApproval ? 0n : prepared.intent.maximumInput,
           attested?.number === head.number && attested.hash === head.hash);
       },
       reviewAcceptance: async (issued, confirm, initialReceipt) => {
@@ -573,7 +527,6 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
     };
     const sharedFunding = createCurrentSharedDexTokenFundingAdapter({ candidate: sharedCandidate, signer, ownerAddress, chainId, transport,
       assertAdmission: (action,token) => assertCurrentSharedTokenFundingAppAuthority({candidate,owner:ownerAddress,token,action},signer),
-      authorizeInitialClaimSigning: candidate === 'cheap-exit' ? cheap.authorizeCurrentCheapInitialClaim : undefined,
       assertSwapApprovalAdmission: async (review, preparedQuote) => {
         if (!preparedQuote) throw new Error('Original branded swap approval scope is absent.');
         assertCurrentCheapDexPreparedQuote(preparedQuote,signer);assertCurrentNativeSwapIntent(preparedQuote,BigInt(Math.floor(Date.now()/1000)),Boolean(review.cleanup),false,signer);
@@ -601,7 +554,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         if (!block || BigInt(block.number) !== BigInt(number) || !/^0x[0-9a-fA-F]{64}$/.test(block.hash)) throw new Error('Beta funding receipt block is unavailable.');
         return Object.freeze({ number: BigInt(block.number), hash: block.hash, timestamp: BigInt(block.timestamp), gasLimit: BigInt(block.gasLimit) });
       } });
-    return Object.freeze({ ...legacy, ...current, ...cheap, ...pool, ...positions, ...limit, ...funding, ...refill, ...sharedFunding,
+    return Object.freeze({ ...cheap, ...pool, ...positions, ...limit, ...funding, ...refill, ...sharedFunding,
       readSharedSwapInputFunding: async (inputToken: string, outputToken: string) => {
         if (!sharedCandidate) throw new Error('Swap input funds require the selected shared candidate.');
         const scope = fundingReadScope(); await scope.assertCurrent();
@@ -610,7 +563,6 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       },
       readCurrentDexActivityPage: async ({ cursor, head: savedHead, onProgress, assertCurrent: assertCallerCurrent = () => {} }: { cursor: CurrentDexActivityCursor;
         head?: { number: bigint; hash: string }; onProgress?: (checked: number, total: number, phase?: string) => void; assertCurrent?: () => void }) => {
-        if (candidate !== 'cheap-exit' && candidate !== 'cheap-history') throw new Error('History requires a supported DEX deployment.');
         const key = signer.getUserOnboardInfo()?.aesKey?.trim();
         const readScope = createBrowserWalletRuntimeReadGuard(() => { assertCallerCurrent(); assertSnapshotCurrent(); });
         const guard = async () => { readScope.assertCurrent(); await transport.assertCurrent(); readScope.assertCurrent();
@@ -761,21 +713,8 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       recoverPendingCurrentCheapAttempt: async (transactionHash?: string) => {
         const pending = readCurrentDexPendingAttempt(currentDexPendingStorage({ chainId, graph: cheapCandidate.graph, owner: ownerAddress }));
         if (!pending || pending.graph === `0x${cheapCandidate.graph}` && pending.core === cheapCandidate.core) return cheap.recoverPendingCurrentCheapAttempt(transactionHash);
-        const savedKey = (['cheap-archived', 'cheap-current', 'cheap-slippage', 'cheap-two-pool', 'cheap-reference', 'cheap-native', 'cheap-d06', 'cheap-prepared', 'cheap-exit'] as const).find(key => {
-          const c = resolveCurrentCheapDexCandidate(key); return pending.graph === `0x${c.graph}` && pending.core === c.core;
-        });
-        if (!savedKey) throw new Error('Pending DEX attempt belongs to an unknown candidate.');
-        const old = resolveCurrentCheapDexCandidate(savedKey);
-        const recover = createArchivedCheapDexRecovery({ candidate: savedKey, signer, ownerAddress, chainId, transport,
-          attest: async head => {
-            const graph = await readCurrentSharedPoolDexGraph({ capability: readCapability, candidate: savedKey, blockNumber: head.number, blockHash: head.hash });
-            if (graph.graph !== old.graph || graph.packageSha256 !== old.packageSha256 || graph.core.toLowerCase() !== old.core) throw new Error('Archived DEX graph changed.');
-            await assertCurrent(); assertSnapshotCurrent();
-          },
-          readOperation: (profile, operationId, origin) => readCurrentDexOperation({ capability: readCapability, candidate: old, profile, operationId,
-            expected: { chainId, core: old.core, runtimeHash: old.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2],
-              releaseId: old.releaseId, originBlockNumber: origin?.number, originBlockHash: origin?.hash } }) });
-        return recover(transactionHash);
+        // decision-034: the App uses one contract version. A record of another version is kept and not recovered here.
+        throw new Error('The saved action belongs to another contract version. This App does not recover it. Do not resend.');
       },
       waitForCurrentCheapReceipt: async (transactionHash: string) => {
         await assertCurrent(); assertSnapshotCurrent();

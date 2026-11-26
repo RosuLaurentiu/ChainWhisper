@@ -1,5 +1,5 @@
 import { getAddress, keccak256 } from '@coti-io/coti-ethers';
-import { resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
 import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash } from './currentDexPendingAttempt';
 import { currentTokenFundingAbi, CURRENT_TOKEN_FAUCET_AMOUNT, type CurrentTokenFundingState } from './currentDexTokenFunding';
@@ -27,7 +27,7 @@ const receiptSnapshot = (r: NonNullable<Awaited<ReturnType<CurrentTransport['wai
 
 // The caller supplies a receipt-bound vault and the release gate. This module does not admit deployments.
 export const createCurrentTokenRefillSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest, binding: suppliedBinding,
-  assertRefillAdmission, readState, rpc, readReceiptBlock, decrypt, assertResources, candidate = 'cheap-native',
+  assertRefillAdmission, readState, rpc, readReceiptBlock, decrypt, assertResources, candidate = 'cheap-history',
   now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
   signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport; attest: (head: Head) => Promise<void>;
   binding: CurrentTokenRefillBinding; assertRefillAdmission: (binding: CurrentTokenRefillBinding) => void | Promise<void>;
@@ -44,7 +44,7 @@ export const createCurrentTokenRefillSubmissionAdapter = ({ signer, ownerAddress
   const metadata = <T extends object>(result: T) => Object.freeze({ ...result, ...(isCurrentNativeSwapCandidate(c) ? { readyToSign: false as const } : {}) });
   const admission = async () => {
     if (isCurrentNativeSwapCandidate(c)) { assertCurrentSwapCandidate(c); assertCurrentNativeTokenRefillBinding(candidate, binding); }
-    else assertCurrentCheapDexNativeAdmission(c);
+    else rejectUnprovenNativeAdmission();
     await assertRefillAdmission(binding);
   };
   const guard = async (resources = false) => { await transport.assertCurrent(); if (resources) await assertResources(); await transport.assertCurrent(); };

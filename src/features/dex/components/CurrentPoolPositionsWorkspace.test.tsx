@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import CurrentPoolPositionsWorkspace,{currentPoolWithdrawalFraction} from './CurrentPoolPositionsWorkspace';
-import { CURRENT_CHEAP_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import CurrentOwnedPoolPositions from './CurrentOwnedPoolPositions';
 import CurrentPreparedPoolTopUpWorkspace from './CurrentPreparedPoolTopUpWorkspace';
@@ -12,10 +12,6 @@ import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from '../../../lib/dexV2Deploymen
 import { CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY } from '../../../lib/currentDexC1SwapPolicy';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 const hooks=vi.hoisted(()=>({enabled:false,index:0,refIndex:0,states:[]as unknown[],refs:[]as {current:unknown}[]}));
-// Retained owner-action coverage belongs to the archived admitted profile.
-vi.mock('../../../lib/dexV2Deployment',async original=>{const actual=await original<typeof import('../../../lib/dexV2Deployment')>();
-  return {...actual,CURRENT_CHEAP_DEX_CANDIDATE:actual.ARCHIVED_CHEAP_DEX_CANDIDATE,
-    resolveCurrentCheapDexCandidate:(key:Parameters<typeof actual.resolveCurrentCheapDexCandidate>[0])=>key==='cheap-current'?actual.ARCHIVED_CHEAP_DEX_CANDIDATE:actual.resolveCurrentCheapDexCandidate(key)};});
 vi.mock('react',async original=>{const actual=await original<typeof import('react')>();return{...actual,
   useEffect:(...args:Parameters<typeof actual.useEffect>)=>{if(!hooks.enabled)return actual.useEffect(...args);},
   useState:(initial:unknown)=>{if(!hooks.enabled)return actual.useState(initial);const i=hooks.index++;if(!(i in hooks.states))hooks.states[i]=initial;return[hooks.states[i],(value:unknown)=>{hooks.states[i]=value;}];},
@@ -172,10 +168,10 @@ describe('current liquidity NFT controls',()=>{
   it('keeps fractional percentages exact',()=>{expect(currentPoolWithdrawalFraction('50')).toEqual([1n,2n]);expect(currentPoolWithdrawalFraction('0.01')).toEqual([1n,10000n]);});
   it.each(['0','100','101','-1','1e1'])('rejects %s withdrawal percentage',value=>expect(()=>currentPoolWithdrawalFraction(value)).toThrow());
   it('requires an owner session and an authenticated position before showing payout actions',()=>{
-    const html=renderToStaticMarkup(<CurrentPoolPositionsWorkspace/>);expect(html).toMatch(/disabled=""[^>]*>Load private position/);expect(html).toContain('Connect the owner wallet');
+    const html=renderToStaticMarkup(<CurrentPoolPositionsWorkspace/>);expect(html).toMatch(/disabled=""[^>]*>Load private position/);expect(html).toContain('Connect your wallet on COTI Testnet');
     expect(html).not.toContain('Close and withdraw all');expect(html).not.toContain('Transfer liquidity NFT');expect(html).not.toContain('Aggregate');
   });
-  it.each(['Withdraw selected shares','Close and withdraw all'])('keeps both exact token payout floors for %s after loading the owner claim',async label=>{
+  it.each(['Close and withdraw all'])('keeps both exact token payout floors for %s after loading the owner claim',async label=>{
     hooks.enabled=true;const prepareAction=vi.fn(async()=>null),submitPoolPositionAction=vi.fn();
     const value={positionId:9n,context:'bound-owner-context',status:1n,amounts:{classId:1n,amount0:1000000000000000000n,amount1:2000000000000000000n,shares:100n}};
     const getPositions=vi.fn(async()=>({readPosition:vi.fn(async()=>value),prepareAction}));

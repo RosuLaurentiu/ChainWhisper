@@ -1,8 +1,8 @@
 import { Interface, getAddress, hexlify, keccak256, toUtf8Bytes, toBeHex } from '@coti-io/coti-ethers';
-import { readCurrentDexGraph, readCurrentDexIssuedQuote, readCurrentDexOperation } from '../../lib/appChain';
+import { readCurrentDexIssuedQuote, readCurrentDexOperation } from '../../lib/appChain';
 import { createDexV2ReadCapability, readCurrentSharedPoolDexGraph } from '../../lib/dexV2Chain';
-import { CURRENT_SHARED_POOL_CANDIDATE, currentCheapDexQuoteProtocol, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
-import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_DEX_OPEN_ABI, encodeCurrentDexQuoteRequest, packCurrentDexMinimumRate, type CurrentCheapDexProfile } from '../../lib/currentDexOperation';
+import { currentCheapDexQuoteProtocol, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
+import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, encodeCurrentDexQuoteRequest, packCurrentDexMinimumRate, type CurrentCheapDexProfile } from '../../lib/currentDexOperation';
 import { decryptPrivateUint256Output, encryptPrivateUint256Input } from '../../lib/privateUint256';
 import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonicalInclusion';
 import { isCurrentDexBrowserSigner } from '../../lib/currentDexBrowserPolicy';
@@ -23,14 +23,9 @@ export type CurrentDexKeeperNomination = Readonly<{
   operationId: string; quoteHash: string; origin: Readonly<{ number: string; hash: string }>;
   deadline: string; toleranceBps: number;
 }>;
-const opening = new Interface(CURRENT_DEX_OPEN_ABI);
-const selector = opening.getFunction('openSinglePassSwapV2')!.selector;
-const sharedPoolManifestHash = keccak256(toUtf8Bytes(JSON.stringify(CURRENT_SHARED_POOL_CANDIDATE)));
 type SharedPoolGraphRequest = Readonly<{ candidate: 'shared-pool'; expectedGraph: string;
   expectedPackageSha256: string; blockNumber: bigint; blockHash: string }>;
 const issuedQuotes = new WeakSet<object>();
-const sharedPoolPreparedSessions = new WeakMap<object, object>();
-const sharedPoolIssuedSessions = new WeakMap<object, object>();
 const cheapPreparedSessions = new WeakMap<object, object>();
 const cheapIssuedSessions = new WeakMap<object, object>();
 const restoredPlans = new WeakMap<object, CurrentCheapDexPreparedQuote>();
@@ -54,16 +49,6 @@ export const assertCurrentCheapDexIssuedQuote = (value: unknown, signer: object)
     throw new Error('Current-mode Quote was not issued in this owner wallet session.');
   }
 };
-export const assertCurrentSharedPoolPreparedQuote = (value: unknown, signer: object): void => {
-  if (!value || typeof value !== 'object' || sharedPoolPreparedSessions.get(value) !== signer) {
-    throw new Error('Shared-Pool Quote was not prepared in this owner wallet session.');
-  }
-};
-export const assertCurrentSharedPoolIssuedQuote = (value: unknown, signer: object): void => {
-  if (!value || typeof value !== 'object' || sharedPoolIssuedSessions.get(value) !== signer) {
-    throw new Error('Shared-Pool operation was not issued in this owner wallet session.');
-  }
-};
 export const assertCurrentDexIssuedQuote = (value: unknown): void => {
   if (!value || typeof value !== 'object' || !issuedQuotes.has(value)) {
     throw new Error('Current DEX quote was not issued by the owner wallet capability.');
@@ -85,138 +70,6 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
   bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, chainId, ownerAddress }) => {
     const capability = createDexV2ReadCapability({ chainId, assertCurrent, qualificationScope: readProvider,
       provider: { request: ({ method, params }) => readProvider.send(method, params ?? []) } });
-    const legacy = Object.freeze({ prepareQuote: async (request: {
-      graph: Omit<Parameters<typeof readCurrentDexGraph>[0], 'capability'> | SharedPoolGraphRequest;
-      terms: Terms;
-      confirmPrivateInputs: (review: Terms & Readonly<{ core: string; principal: string; chainId: bigint }>) => Promise<boolean>;
-    }) => {
-      const terms = Object.freeze({ ...request.terms, inputToken: getAddress(request.terms.inputToken),
-        outputToken: getAddress(request.terms.outputToken), destination: getAddress(request.terms.destination) });
-      const graphRequest = Object.freeze({ ...request.graph });
-      const confirm = request.confirmPrivateInputs;
-      if (terms.toleranceBps !== undefined) throw new Error('Historical Quote does not support tolerance.');
-      uint(terms.maximumInput, 256, true); uint(terms.minimumInput, 256); uint(terms.minimumOutput, 256);
-      if (terms.minimumInput > terms.maximumInput) throw new Error('Minimum input exceeds maximum input.');
-      uint(terms.rateNumerator, 128, true); uint(terms.rateDenominator, 128, true); uint(terms.deadline, 256, true);
-      if (BigInt(terms.inputToken) === 0n || BigInt(terms.outputToken) === 0n ||
-          terms.inputToken === terms.outputToken || BigInt(terms.destination) === 0n || typeof confirm !== 'function') {
-        throw new Error('Invalid quote preparation request.');
-      }
-      const sharedPool = 'candidate' in graphRequest;
-      if (sharedPool && (graphRequest.candidate !== 'shared-pool' ||
-          graphRequest.expectedGraph !== CURRENT_SHARED_POOL_CANDIDATE.graph ||
-          graphRequest.expectedPackageSha256 !== CURRENT_SHARED_POOL_CANDIDATE.packageSha256)) {
-        throw new Error('Shared-Pool quote candidate differs from the reviewed deployment.');
-      }
-      const checkedSharedPool = async (blockNumber: bigint, blockHash: string) => {
-        const identity = await readCurrentSharedPoolDexGraph({ capability, blockNumber, blockHash });
-        if (identity.graph !== CURRENT_SHARED_POOL_CANDIDATE.graph ||
-            identity.packageSha256 !== CURRENT_SHARED_POOL_CANDIDATE.packageSha256 ||
-            identity.chainId !== chainId || identity.genesisHash !== CURRENT_SHARED_POOL_CANDIDATE.genesisHash ||
-            identity.core.toLowerCase() !== CURRENT_SHARED_POOL_CANDIDATE.core ||
-            identity.inputToken.toLowerCase() !== CURRENT_SHARED_POOL_CANDIDATE.tokens[0][0] ||
-            identity.outputToken.toLowerCase() !== CURRENT_SHARED_POOL_CANDIDATE.tokens[1][0] ||
-            identity.block.number !== blockNumber || identity.block.hash.toLowerCase() !== blockHash.toLowerCase() ||
-            identity.operationReadIdentity.releaseId !== CURRENT_SHARED_POOL_CANDIDATE.releaseId ||
-            identity.operationReadIdentity.runtimeHash !== CURRENT_SHARED_POOL_CANDIDATE.runtimes.find(([role]) => role === 'ChainWhisperDexCore')?.[2]) {
-          throw new Error('Shared-Pool quote identity differs from the reviewed deployment.');
-        }
-        return identity;
-      };
-      const graph = sharedPool
-        ? Object.freeze({ ...await checkedSharedPool(graphRequest.blockNumber, graphRequest.blockHash), manifestHash: sharedPoolManifestHash })
-        : await readCurrentDexGraph({ ...graphRequest, capability });
-      const same = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
-      if (!((same(terms.inputToken, graph.inputToken) && same(terms.outputToken, graph.outputToken)) ||
-          (same(terms.inputToken, graph.outputToken) && same(terms.outputToken, graph.inputToken))) ||
-          same(terms.destination, graph.core) || graph.chainId !== chainId ||
-          terms.deadline <= graph.block.timestamp || terms.deadline - graph.block.timestamp > graph.maxWorkLifetime) {
-        throw new Error('Quote destination or deadline is invalid.');
-      }
-      const guard = async () => {
-        await assertCurrent(); assertSnapshotCurrent();
-        const now = BigInt(Math.floor(Date.now() / 1000));
-        if (now < graph.block.timestamp || now >= terms.deadline) throw new Error('Quote preparation expired or clock is behind the checked block.');
-      };
-      await guard();
-      if (await confirm(Object.freeze({ ...terms, core: graph.core, principal: ownerAddress, chainId })) !== true) return null;
-      const wide = async (value: bigint) => {
-        await guard();
-        const input = await encryptPrivateUint256Input(signer, value, graph.core, selector);
-        await guard();
-        uint(input.ciphertext.ciphertextHigh, 256); uint(input.ciphertext.ciphertextLow, 256);
-        return Object.freeze({ ciphertext: Object.freeze({ ...input.ciphertext }), signature: inputSignature(input.signature) });
-      };
-      const rate = async (value: bigint) => {
-        await guard();
-        const input = await signer.encryptValue(value, graph.core, selector);
-        await guard();
-        if (!input || !('ciphertext' in input) || typeof input.ciphertext !== 'bigint') throw new Error('Invalid private rate input.');
-        uint(input.ciphertext, 256);
-        return Object.freeze({ ciphertext: input.ciphertext, signature: inputSignature(input.signature) });
-      };
-      // Sequential prompts keep each message tied to one captured owner intent.
-      const maximum = await wide(terms.maximumInput), minimumInput = await wide(terms.minimumInput);
-      const minimumOutput = await wide(terms.minimumOutput);
-      const numerator = await rate(terms.rateNumerator), denominator = await rate(terms.rateDenominator);
-      const data = opening.encodeFunctionData('openSinglePassSwapV2', [terms.inputToken, terms.outputToken,
-        terms.destination, terms.deadline, maximum, minimumInput, minimumOutput, numerator, denominator]);
-      await guard();
-      const intent = Object.freeze({ ...terms, principal: ownerAddress, chainId, core: graph.core,
-        runtimeHash: graph.operationReadIdentity.runtimeHash, releaseId: graph.operationReadIdentity.releaseId });
-      const prepared = Object.freeze({ chainId, from: ownerAddress, to: graph.core, value: 0n, data, readyToSign: false as const,
-        graph: graph.graph, manifestHash: graph.manifestHash, block: graph.block,
-        intent,
-        // Read after expiry too: an expired operation still needs inspection and recovery.
-        readIssue: async (transactionHash: string) => {
-          if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash) || BigInt(transactionHash) === 0n) throw new Error('Invalid quote transaction hash.');
-          await assertCurrent(); assertSnapshotCurrent();
-          const [transaction, receipt] = await Promise.all([
-            readProvider.getTransaction(transactionHash), readProvider.getTransactionReceipt(transactionHash)
-          ]);
-          await assertCurrent(); assertSnapshotCurrent();
-          if (!transaction || !receipt) return null;
-          const observed = await readCurrentDexIssuedQuote({ capability, runtimeHash: intent.runtimeHash,
-            profile: sharedPool ? 'shared-pool' : 'legacy',
-            issue: { transaction, receipt, expected: { transactionHash, chainId, core: intent.core,
-              principal: ownerAddress, calldata: data, inputToken: terms.inputToken, outputToken: terms.outputToken,
-              destination: terms.destination, deadline: terms.deadline,
-              releaseId: intent.releaseId } } });
-          if (observed.originBlock.number < graph.block.number) throw new Error('Quote issue predates preparation.');
-          if (sharedPool) await checkedSharedPool(observed.block.number, observed.block.hash);
-          await assertCurrent(); assertSnapshotCurrent();
-          const readCurrent = async () => {
-            await assertCurrent(); assertSnapshotCurrent();
-            const expected = { chainId, core: intent.core, runtimeHash: intent.runtimeHash, releaseId: intent.releaseId };
-            const current = await readCurrentDexOperation({ capability, operationId: observed.operationId,
-              profile: sharedPool ? 'shared-pool' : 'legacy',
-              expected: { ...expected, originBlockNumber: observed.originBlock.number, originBlockHash: observed.originBlock.hash } });
-            if (current.operation.status === 0 || current.operation.contextHash !== observed.operation.contextHash ||
-                current.operation.epochId !== observed.operation.epochId || current.operation.deadline !== terms.deadline ||
-                (sharedPool && (current.operation.canonicalMarketId !== observed.operation.canonicalMarketId ||
-                  current.operation.marketRevision !== observed.operation.marketRevision ||
-                  current.operation.registryRevision !== observed.operation.registryRevision))) {
-              throw new Error('Current quote no longer matches its mined Open operation.');
-            }
-            if (sharedPool) await checkedSharedPool(current.block.number, current.block.hash);
-            await assertCurrent(); assertSnapshotCurrent();
-            const refreshed = Object.freeze({ ...observed, ...current, readyToSign: false as const,
-              intent: Object.freeze({ ...intent, operationId: observed.operationId, contextHash: observed.operation.contextHash }),
-              readCurrent });
-            issuedQuotes.add(refreshed);
-            if (sharedPool) sharedPoolIssuedSessions.set(refreshed, signer);
-            return refreshed;
-          };
-          const issued = Object.freeze({ ...observed, readyToSign: false as const,
-            intent: Object.freeze({ ...intent, operationId: observed.operationId, contextHash: observed.operation.contextHash }),
-            readCurrent });
-          issuedQuotes.add(issued);
-          if (sharedPool) sharedPoolIssuedSessions.set(issued, signer);
-          return issued;
-        } });
-      if (sharedPool) sharedPoolPreparedSessions.set(prepared, signer);
-      return prepared;
-    } });
     const prepareCurrentQuote = async (request: {
       profile: CurrentCheapDexProfile;
       graph: Omit<SharedPoolGraphRequest, 'candidate'> & { candidate: CurrentCheapDexCandidateKey };
@@ -356,13 +209,13 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
       if (restoredData) restoredPrepared.add(prepared);
       return prepared;
     };
-    return Object.freeze({ ...legacy, prepareCurrentQuote: (request: Parameters<typeof prepareCurrentQuote>[0]) => prepareCurrentQuote(request),
+    return Object.freeze({ prepareCurrentQuote: (request: Parameters<typeof prepareCurrentQuote>[0]) => prepareCurrentQuote(request),
       restoreCurrentQuote: async ({ quoteHash, operationId }: { quoteHash: string; operationId?: bigint }) => {
         if (!/^0x[0-9a-fA-F]{64}$/.test(quoteHash) || BigInt(quoteHash) === 0n) throw new Error('Invalid original Quote hash.');
         await assertCurrent(); assertSnapshotCurrent();
         const [transaction, receipt] = await Promise.all([readProvider.getTransaction(quoteHash), readProvider.getTransactionReceipt(quoteHash)]);
         await assertCurrent(); assertSnapshotCurrent();
-        const candidateKey = (['cheap-exit', 'cheap-history'] as const).find(key =>
+        const candidateKey = (['cheap-history'] as const).find(key =>
           resolveCurrentCheapDexCandidate(key).core === transaction?.to?.toLowerCase());
         if (!candidateKey) throw new Error('Original Quote transaction belongs to an unsupported DEX deployment.');
         const candidate = resolveCurrentCheapDexCandidate(candidateKey);

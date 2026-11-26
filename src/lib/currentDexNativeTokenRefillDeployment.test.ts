@@ -12,13 +12,8 @@ it('binds the actual accepted native vault without releasing the DEX candidate',
   expect(deployment.transactionHash).toBe(proof.transactions[0].hash);
   expect(deployment.blockNumber).toBe(BigInt(proof.transactions[0].blockNumber));
   expect(deployment.blockHash).toBe(proof.transactions[0].blockHash);
-  expect(() => assertCurrentNativeTokenRefillBinding('cheap-native', binding)).not.toThrow();
-  expect(resolveCurrentCheapDexCandidate('cheap-native').readyToSign).toBe(false);
 });
-it.each(['address', 'runtimeHash', 'recovery', 'expiresAt'] as const)('rejects changed native refill %s', key => {
-  const changed = { ...binding, [key]: key === 'expiresAt' ? binding.expiresAt + 1n : key === 'runtimeHash' ? `0x${'11'.repeat(32)}` : `0x${'11'.repeat(20)}` };
-  expect(() => assertCurrentNativeTokenRefillBinding('cheap-native', changed)).toThrow('no current native admission');
-});
-it('does not transfer native refill admission to the archived candidate', () => {
-  expect(() => assertCurrentNativeTokenRefillBinding('cheap-current', binding)).toThrow('no current native admission');
+it('does not transfer native refill admission to the current candidate', () => {
+  expect(resolveCurrentCheapDexCandidate('cheap-history').graph).not.toBe(deployment.graph);
+  expect(() => assertCurrentNativeTokenRefillBinding('cheap-history', binding)).toThrow('no current native admission');
 });

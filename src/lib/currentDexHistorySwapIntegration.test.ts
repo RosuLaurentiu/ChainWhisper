@@ -4,11 +4,7 @@ import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as b2aa } from './currentDexExitCandidate';
 import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 import { currentCheapDexGasCaps } from './currentDexSubmission';
-import { CURRENT_EXIT_SWAP_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
-import { currentNativeSigningBudget, currentNativeSwapCheckpoint,
-  currentNativeSwapChargeGasPrice, recordCurrentNativeSwapHash, restoreCurrentNativeSwapCheckpoint,
-  usesCurrentNativeSwapChecks, validateCurrentNativeSwapCheckpoint } from './currentDexNativeSwapPolicy';
-import { CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
+import { currentNativeSigningBudget, currentNativeSwapCheckpoint, recordCurrentNativeSwapHash, restoreCurrentNativeSwapCheckpoint, usesCurrentNativeSwapChecks, validateCurrentNativeSwapCheckpoint } from './currentDexNativeSwapPolicy';
 
 const hash = (byte: string) => `0x${byte.repeat(32)}`;
 const owner = `0x${'12'.repeat(20)}`;
@@ -71,18 +67,4 @@ describe('selected candidate swap technical integration', () => {
       i === 0 ? { ...row, gasCap: '100000000' } : row) }, owner, history)).toThrow();
   });
 
-  it('preserves b2aa 52M charges and legacy fee-less charges', () => {
-    const scope = `quote:${hash('41')}`, signer = {};
-    const budget = currentNativeSigningBudget(signer, owner, () => 100n, b2aa);
-    budget.commit('quote', scope, 110_000_000n, scope, 21);
-    recordCurrentNativeSwapHash(signer, 21, scope.slice(6), hash('42'));
-    const saved = currentNativeSwapCheckpoint(signer);
-    expect(saved.charges[0].gasPrice).toBe(String(CURRENT_EXIT_SWAP_FIXED_GAS_PRICE));
-    expect(() => validateCurrentNativeSwapCheckpoint(saved, owner, b2aa)).not.toThrow();
-
-    const legacy = { ...saved, committedWei: '5500000000000000',
-      charges: saved.charges.map(({ gasPrice: _gasPrice, ...row }) => row) };
-    expect(() => validateCurrentNativeSwapCheckpoint(legacy, owner, b2aa)).not.toThrow();
-    expect(currentNativeSwapChargeGasPrice(legacy.charges[0])).toBe(CURRENT_NATIVE_FIXED_GAS_PRICE);
-  });
 });

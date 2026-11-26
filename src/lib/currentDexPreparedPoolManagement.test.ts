@@ -1,9 +1,7 @@
 import { MAX_TOKEN_ALLOWANCE } from './tokenAllowance';
-import { createRequire } from 'node:module';
-import { createHash } from 'node:crypto';
 import { toBeHex } from '@coti-io/coti-ethers';
 import { describe, expect, it } from 'vitest';
-import { STAGED_PREPARED_DEX_CANDIDATE as candidate } from './dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from './dexV2Deployment';
 import { checkPreparedPoolManagementTransition as transition, checkPreparedPoolManagementSnapshot as snapshot,
   checkPreparedPoolOwnershipTransition as ownership, type PreparedPoolManagementExpectation } from './currentDexPreparedPoolManagement';
 import type { PreparedPoolStoredState, PreparedPoolSelectedState } from './currentDexPreparedPoolSnapshot';
@@ -85,7 +83,7 @@ describe('prepared Pool management accounting', () => {
       raw[4]=w(BigInt(candidate.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1]));raw[5]=w(BigInt(pair.poolTerms));
       const {c1:_c1,engines:_engines,directories:_directories,fixedSources:_fixedSources,...common}=s;
       const ids=[...raw.slice(18,25).map(v=>String(BigInt(v))),String(s.positionId)];
-      return {...common,scope:'selected-pool-accounting',candidateKey:'cheap-prepared',packageSha256:candidate.packageSha256,coreAddress:candidate.core,owner,
+      return {...common,scope:'selected-pool-accounting',candidateKey:'cheap-history',packageSha256:candidate.packageSha256,coreAddress:candidate.core,owner,
         markets:{[s.marketId]:raw},claims:Object.fromEntries(ids.map(id=>[id,s.claims[id]])),nftOwners:{[String(s.positionId)]:s.nftOwners[String(s.positionId)]},
         nftMinted:{[String(s.positionId)]:s.nftMinted[String(s.positionId)]},positionMarket:s.marketId,sourceIdForPosition:w(0),everPoolFunded:w(1)};
     };
@@ -142,7 +140,7 @@ describe('prepared Pool management accounting', () => {
     expect(transition({ ...f.input, candidate })).toEqual(f.check());
     const duplicate = { ...candidate, pairs: [candidate.pairs[0], ...candidate.pairs.slice(0, 5)] };
     const spoof = { ...candidate, tokens: [candidate.tokens[0], candidate.tokens[0], ...candidate.tokens.slice(2)] };
-    for (const supplied of [duplicate, spoof]) expect(() => transition({ ...f.input, candidate: supplied })).toThrow('candidate changed');
+    for (const supplied of [duplicate, spoof]) expect(() => transition({ ...f.input, candidate: supplied as never })).toThrow('candidate changed');
   });
   it('rejects a common wrong graph, extra market, pair companion or duplicate wallet in both states', () => {
     for (const fault of ['graph', 'market', 'companion', 'wallet'] as const) {
@@ -163,19 +161,6 @@ describe('prepared Pool management accounting', () => {
     expect(snapshot(args).privateAccountingVerified).toBe(true);
     f.input.managed.graph = 'same-wrong-graph'; f.after.graph = 'same-wrong-graph';
     expect(() => snapshot(args)).toThrow('candidate or position scope');
-  });
-  it('binds exact compiled build-6 layout and shared action semantics', () => {
-    const frozen = createRequire(import.meta.url)('../../../ChainWhisper Contracts V2/validation/candidates/shared-core-prepared-markets-2026-10-07/candidate.cjs').frozen();
-    expect(candidate.graph).toBe('85767f8adefa7323ca97b190b4d959ce8ee08b38be02e568c2415decf028052c');
-    const sources = frozen.info.input.sources as Record<string, { content: string }>;
-    const digests = ['ChainWhisperSharedPoolClaims', 'ChainWhisperSharedPoolMath', 'ChainWhisperDexPositionCommands', 'ChainWhisperPoolOwner'].map(name =>
-      createHash('sha256').update(sources[`contracts/dex/${name}.sol`].content).digest('hex'));
-    expect(digests).toEqual(COMPILED_SOURCE_HASHES);
-    const types = frozen.info.output.contracts['contracts/dex/ChainWhisperDexCore.sol'].ChainWhisperDexCore.storageLayout.types as
-      Record<string, { label: string; members?: { label: string; slot: string }[] }>;
-    const layout = Object.values(types).find(v => v.label === 'struct ChainWhisperPoolOwner.Position')!.members!;
-    expect(Object.fromEntries(layout.filter(v => ['snapshot', 'shares', 'privateClass', 'sharedClaim', 'closeOwner'].includes(v.label)).map(v => [v.label, v.slot])))
-      .toEqual({ snapshot: '14', shares: '60', privateClass: '63', sharedClaim: '59', closeOwner: '12' });
   });
   it.each(candidate.pairs.map((_, i) => i))('proves top-up and separate snapshot for pair %s', index => {
     const f = fixture('top-up', index);
@@ -303,12 +288,6 @@ describe('prepared Pool management accounting', () => {
       managedWallets: f.input.managedWallets, snapshotWallets: wallets })).toThrow();
   });
 });
-
-const COMPILED_SOURCE_HASHES = ['0456f8efe324302b6cce266747f39e38f478be1412661251ea27875bf22db93f',
-  'e4b860e4ebd12829fcc68fcace32f499f2491e06034767bbb907fde3083435a1',
-  '1c45a07f22b55ef198fb75d7282c307eef712918296de2f3fdc0b5c62a1e901b',
-  '84f3b7fcd638eb26e0c9f5ecc7001eb64680e345fb8974bbc563f086a541e7a9'];
-
 
 it.each([31n, MAX_TOKEN_ALLOWANCE])('accounts for sufficient Pool allowance %s after exact debit', allowance => {
   const f=fixture('top-up');

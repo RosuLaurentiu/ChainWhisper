@@ -1,5 +1,4 @@
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
-import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import type { SharedWalletSession } from './walletSession';
 import type { CurrentDexActivityCursor } from './currentDexActivityDiscovery';
 import type { CurrentDexActivityRow } from './currentDexActivityReceipt';
@@ -62,44 +61,3 @@ export type CurrentDexActivitySwap = Readonly<{
   amounts: Pick<Amounts, 'filled' | 'actualInput' | 'netOutput' | 'refund'> | null;
 }>;
 
-// Read accounting without restoring signing state; never seed history from reports.
-export const readCurrentDexActivitySwap = async (
-  session: SharedWalletSession, candidateKey: CurrentCheapDexCandidateKey, assertCurrent: () => void
-): Promise<CurrentDexActivitySwap | null> => {
-  assertCurrent();
-  if (candidateKey !== 'cheap-exit') throw new Error('Saved private history is unavailable for this candidate.');
-  const candidate = resolveCurrentCheapDexCandidate(candidateKey), actions = session.actions;
-  if (session.chainId !== Number(candidate.chainId) || !actions?.getCurrentDexSubmissionCapability || !actions.getCurrentDexQuoteCapability) {
-    throw new Error('Connect the owner wallet on COTI Testnet to read private activity.');
-  }
-  const sender = await actions.getCurrentDexSubmissionCapability(BigInt(candidate.chainId), { candidate: candidateKey });
-  assertCurrent();
-  const hint = sender.readCurrentCheapRestoreHint();
-  if (!hint) return null;
-  if (!hint.quoteHash) throw new Error('The saved signing request has no known Quote hash. Check its status first.');
-  const reader = await actions.getCurrentDexQuoteCapability(BigInt(candidate.chainId));
-  assertCurrent();
-  const issued = await reader.restoreCurrentQuote({ quoteHash: hint.quoteHash });
-  assertCurrent();
-  const current = await issued.readCurrent();
-  assertCurrent();
-  let exact = false;
-  try { exact = resolvePreparedDexScope(current.intent.candidate).key === candidateKey; } catch { /* Reject changed identity. */ }
-  if (!exact || current.intent.profile !== 'cheap-async' || current.transactionHash.toLowerCase() !== hint.quoteHash.toLowerCase() ||
-      current.intent.destination.toLowerCase() !== session.walletAddress.toLowerCase()) throw new Error('Saved activity identity changed.');
-  const base = { operationId: current.operationId, quoteHash: current.transactionHash, inputToken: current.intent.inputToken,
-    outputToken: current.intent.outputToken, mode: 'cheap-async' as const, quoteBlock: current.originBlock.number,
-    originalQuoteRateVerification: 'unavailable' as const };
-  if (![7, 8].includes(current.operation.stage ?? 0)) return Object.freeze({ ...base, amounts: null, unusedInput: false,
-    status: current.operation.stage === 5 ? 'Quote ready; not a completed trade' : current.operation.stage === 6 ? 'Confirmed; private result pending' : 'Preparing Quote' });
-  const receipt = await sender.readCurrentCheapActivityReceipt(current);
-  assertCurrent();
-  if (!receipt.privateAccountingVerified || receipt.readyToSign !== false || receipt.nativeAdmission !== false ||
-      receipt.originalQuoteRateVerification !== 'unavailable' || receipt.kind !== 'terminal' || ![7, 8].includes(receipt.operation.stage ?? 0) ||
-      receipt.operation.stage === 8 && !receipt.releaseAction) throw new Error('Private activity result is not terminal.');
-  const a = receipt.amounts, unusedInput = receipt.releaseAction === 'cancel';
-  const status = unusedInput ? 'Quote cancelled' : receipt.releaseAction === 'recover' ? 'Recovered; refunded' :
-    !a.filled ? 'No fill; refunded' : a.actualInput < current.intent.maximumInput ? 'Partially filled' : 'Delivered';
-  return Object.freeze({ ...base, status, unusedInput,
-    amounts: Object.freeze({ filled: a.filled, actualInput: a.actualInput, netOutput: a.netOutput, refund: a.refund }) });
-};

@@ -37,7 +37,7 @@ describe('selected-owner beta funds capability', () => {
       expectedOwnerAddress: owner, sessionOnboardInfo: wrongChain ? { [owner]: { aesKey: key } } : {} } as never)).toThrow('Unlock');
     expect(issueOwnerCotiMetaMaskCapability).not.toHaveBeenCalled();
   });
-  it.each(['cheap-prepared', 'cheap-exit'] as const)('uses the exact owner issuer and guarded %s reading', async candidate => {
+  it.each(['cheap-history'] as const)('uses the exact owner issuer and guarded %s reading', async candidate => {
     const guard = vi.fn(async () => {}), snapshot = vi.fn(), send = vi.fn(async () => ({ number: '0x97d700', timestamp: '0x6ac00000', hash: `0x${'22'.repeat(32)}` }));
     let aes: string | undefined = key;
     vi.mocked(issueOwnerCotiMetaMaskCapability).mockImplementation(async args => {

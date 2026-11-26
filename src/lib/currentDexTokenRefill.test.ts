@@ -15,7 +15,7 @@ const producer = new Interface([
 ]);
 const owner = `0x${'11'.repeat(20)}`, vault = `0x${'22'.repeat(20)}`, recovery = `0x${'33'.repeat(20)}`, hash = `0x${'44'.repeat(32)}`, code = '0x123456';
 function fixture(index: 0 | 1 = 0) {
-  const c = resolveCurrentCheapDexCandidate('cheap-native');
+  const c = resolveCurrentCheapDexCandidate('cheap-history');
   const values: Record<string, unknown> = { CHAIN_ID: 7082400n, TOKEN_A: c.tokens[0][0], TOKEN_B: c.tokens[1][0],
     TOKEN_RUNTIME: c.tokens[0][1], CLAIM_AMOUNT: 1000n * 10n ** 18n, INITIAL_QUOTA: 1000000n * 10n ** 18n,
     COOLDOWN: 86400n, expiresAt: 3000000n, recovery, remainingQuota: 999000n * 10n ** 18n, nextClaimAt: 0n };
@@ -33,7 +33,7 @@ function fixture(index: 0 | 1 = 0) {
     return producer.encodeFunctionResult(call.name, [values[call.name]]) + suffix;
   });
   const args = { binding: { address: vault, runtimeHash: keccak256(code), recovery, expiresAt: 3000000n },
-    candidate: 'cheap-native' as const, tokenIndex: index, owner, initialClaimed: true,
+    candidate: 'cheap-history' as const, tokenIndex: index, owner, initialClaimed: true,
     head: { number: 30n, hash, timestamp: 100000n }, rpc, assertCurrent };
   return { args, values, rpc, setCode: (v: string) => { rawCode = v; }, corrupt: () => { suffix = '00'.repeat(32); }, revoke: () => { active = false; } };
 }

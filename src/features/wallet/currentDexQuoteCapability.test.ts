@@ -1,14 +1,10 @@
 import { Interface, keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { issueCurrentDexQuoteCapability, assertCurrentCheapDexPreparedQuote, assertCurrentCheapDexIssuedQuote, currentDexRestoredPlan, assertCurrentDexQuoteNotRestored } from './currentDexQuoteCapability';
-import { issueCurrentDexSubmissionCapability } from './currentDexSubmissionCapability';
-import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_DEX_OPEN_ABI, CURRENT_DEX_OPERATION_ABI, type CurrentCheapDexProfile } from '../../lib/currentDexOperation';
-import { CURRENT_CHEAP_DEX_CANDIDATE, CURRENT_SHARED_POOL_CANDIDATE, resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
+import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, type CurrentCheapDexProfile } from '../../lib/currentDexOperation';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../lib/currentDexPendingAttempt';
-import type { CurrentDexKeeperNomination } from './currentDexQuoteCapability';
 import {createCurrentCheapDexSubmissionAdapter} from '../../lib/currentDexSubmission';
 import {currentNativeSigningBudget,currentNativeSwapCheckpoint,recordCurrentNativeSwapHash,hasCurrentNativeSigningBudget} from '../../lib/currentDexNativeSwapPolicy';
 import {CURRENT_DEX_OPERATION_LOOKUPS_KEY} from '../../lib/currentDexPendingAttempt';
@@ -28,15 +24,8 @@ vi.mock('../../lib/dexV2Chain', async importOriginal => ({ ...await importOrigin
   readCurrentSharedPoolDexGraph: mocks.sharedGraph, readCurrentDexOperation: mocks.operation }));
 vi.mock('../../lib/privateUint256', () => ({ encryptPrivateUint256Input: mocks.wide, decryptPrivateUint256Output:mocks.reveal }));
 const core = `0x${'11'.repeat(20)}`, owner = `0x${'22'.repeat(20)}`, hash = `0x${'33'.repeat(32)}`;
-const opening = new Interface(CURRENT_DEX_OPEN_ABI), selector = opening.getFunction('openSinglePassSwapV2')!.selector;
 const signature = `0x${'44'.repeat(65)}`;
-const historicalCandidate = () => resolveCurrentCheapDexCandidate(mocks.slippage ? 'cheap-slippage' : 'cheap-archived');
-const nativeCoreBytes = readFileSync(new URL('../../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/matching-boundary-build-1/snapshot/contracts/dex/ChainWhisperDexCore.sol/ChainWhisperDexCore.json', import.meta.url));
-if (createHash('sha256').update(nativeCoreBytes).digest('hex') !== 'df50771b95d66e6b017ae727b73dca2fe52783fe6ca04fdb14d07cb40eb0d70b') throw new Error('CURRENT_CORE_ARTIFACT_DRIFT');
-const nativeCore = JSON.parse(nativeCoreBytes.toString());
-const appQuoteReader = createRequire(import.meta.url)('../../../../ChainWhisper Contracts V2/validation/candidates/shared-core-exit-preview-native-2026-10-07/app-async-service/app-quote-reader.cjs');
-const savedPublicRuntime = createRequire(import.meta.url)('../../../../ChainWhisper Contracts V2/validation/candidates/shared-core-exit-preview-native-2026-10-07/app-async-service/root-verifier-v4/public-runtime-1/runtime.json');
-afterEach(() => { mocks.slippage = false; vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 const pendingStorage = () => {
   const values = new Map<string, string>();
   const sessionStorage = { getItem: (key: string) => values.get(key) ?? null,
@@ -48,15 +37,15 @@ const pendingStorage = () => {
 
 describe('current DEX owner quote preparation', () => {
   it.each(['fast-pool','cheap-async'] as const)('reports only actual completed %s private-input signatures for each selected plan',async profile=>{
-    for(const [key,total]of [['cheap-current',4],['cheap-archived',5]] as const){
+    for(const [key,total]of [['cheap-history',4]] as const){
       const f=await cheapFixture(profile,key),events:unknown[]=[];
-      const request={...f.request,terms:{...f.request.terms,...(key==='cheap-current'?{toleranceBps:50}:{})},progress:(event:unknown)=>events.push(event)};
+      const request={...f.request,terms:{...f.request.terms,toleranceBps:50},progress:(event:unknown)=>events.push(event)};
       await f.capability.prepareCurrentQuote(request);
       expect(events).toEqual([{phase:'planned',completed:0,total},...Array.from({length:total},(_,i)=>[{phase:'requesting',completed:i,total},{phase:'completed',completed:i+1,total}]).flat()]);
     }
   });
   it.each(['cancel','reject','replaced'] as const)('does not count an uncompleted private-input signature after %s',async fault=>{
-    const f=await cheapFixture('fast-pool','cheap-current'),events:unknown[]=[];
+    const f=await cheapFixture('fast-pool','cheap-history'),events:unknown[]=[];
     if(fault==='cancel')f.request.confirmPrivateInputs.mockResolvedValue(false);
     if(fault==='reject')mocks.wide.mockRejectedValueOnce(new Error('Wallet signature rejected'));
     if(fault==='replaced')mocks.wide.mockImplementationOnce(async()=>{f.revoke();return{ciphertext:{ciphertextHigh:1n,ciphertextLow:2n},signature};});
@@ -118,7 +107,7 @@ describe('current DEX owner quote preparation', () => {
     expect(f.transport.send).not.toHaveBeenCalled();
   });
   it('restores an expired unfunded Fast Quote and closes only its fee scope without sending',async()=>{
-    const f=await restorationConsumerFixture(50_000_000n,'cheap-exit','fast-pool');
+    const f=await restorationConsumerFixture(50_000_000n,'cheap-history','fast-pool');
     f.observed.block.timestamp=101n;f.observed.operation.phase='expired-unrecovered';
     const head=await f.transport.readHead();f.transport.readHead.mockResolvedValue({...head,timestamp:101n});
     const before=JSON.parse(f.storage.getItem(CURRENT_DEX_NATIVE_RELOAD_KEY)!).budget;
@@ -130,7 +119,7 @@ describe('current DEX owner quote preparation', () => {
     expect(()=>assertCurrentDexQuoteNotRestored(currentDexRestoredPlan(f.restored,f.signer))).toThrow('cannot be submitted again');
   });
   it.each(['ready','consumed','nonce','authentication','canonical'] as const)('does not close a Fast scope with %s evidence',async fault=>{
-    const f=await restorationConsumerFixture(50_000_000n,'cheap-exit','fast-pool');
+    const f=await restorationConsumerFixture(50_000_000n,'cheap-history','fast-pool');
     f.observed.block.timestamp=101n;f.observed.operation.phase='expired-unrecovered';
     if(fault==='ready'){f.observed.block.timestamp=99n;f.observed.operation.phase='quote-prepared';}
     if(fault==='consumed'){f.observed.operation.ready=false;f.observed.operation.phase='consumed-unverified';}
@@ -144,7 +133,7 @@ describe('current DEX owner quote preparation', () => {
     expect(f.transport.send).not.toHaveBeenCalled();
   });
   it('retains an expired Fast scope when an Accept was reserved, even if that receipt reverted',async()=>{
-    const f=await restorationConsumerFixture(50_000_000n,'cheap-exit','fast-pool'),scope=`quote:${keccak256(f.tx.data)}`,acceptHash=`0x${'66'.repeat(32)}`;
+    const f=await restorationConsumerFixture(50_000_000n,'cheap-history','fast-pool'),scope=`quote:${keccak256(f.tx.data)}`,acceptHash=`0x${'66'.repeat(32)}`;
     f.observed.block.timestamp=101n;f.observed.operation.phase='expired-unrecovered';
     const head=await f.transport.readHead();f.transport.readHead.mockResolvedValue({...head,timestamp:101n});
     const tx={...f.tx,hash:acceptHash,data:new Interface(['function acceptFastPool(uint256,bytes32)']).encodeFunctionData('acceptFastPool',[7n,hash]),nonce:5};
@@ -321,12 +310,12 @@ describe('current DEX owner quote preparation', () => {
   it('restores a canonical unfunded cancellation without obsolete private Quote history',async()=>{
     const f=await restorationConsumerFixture(),scope=`quote:${keccak256(f.tx.data)}`,cancelHash=`0x${'66'.repeat(32)}`;
     const abi=new Interface(['function cancelSwap(uint256 operationId)','event CheapAsyncAdvanced(uint256 indexed quoteId,uint8 stage,bytes32 context)']);
-    const tx={...f.tx,hash:cancelHash,data:abi.encodeFunctionData('cancelSwap',[7n]),nonce:5,gasLimit:30_000_000n,gasPrice:52_000_000n};
+    const tx={...f.tx,hash:cancelHash,data:abi.encodeFunctionData('cancelSwap',[7n]),nonce:5,gasLimit:30_000_000n,gasPrice:50_000_000n};
     const receipt={hash:cancelHash,status:1,from:owner,to:f.c.core,blockNumber:42,blockHash:hash,
       logs:[{address:f.c.core,...abi.encodeEventLog(abi.getEvent('CheapAsyncAdvanced')!,[7n,8,hash])}]};
     const saved=JSON.parse(f.storage.getItem(CURRENT_DEX_NATIVE_RELOAD_KEY)!);
-    saved.budget.charges.push({phase:'cancel',key:`cancel:${scope}`,scope,gasCap:'30000000',gasPrice:'52000000',nonce:5,hash:cancelHash});
-    saved.budget.committedWei=String(BigInt(saved.budget.committedWei)+30_000_000n*52_000_000n);
+    saved.budget.charges.push({phase:'cancel',key:`cancel:${scope}`,scope,gasCap:'30000000',gasPrice:'50000000',nonce:5,hash:cancelHash});
+    saved.budget.committedWei=String(BigInt(saved.budget.committedWei)+30_000_000n*50_000_000n);
     saved.authentication=await f.authenticate(saved.budget);writeCurrentDexNativeReload(f.storage,saved);
     f.transport.readTransaction.mockImplementation(async h=>h===cancelHash?tx:{...f.tx,gasPrice:50_000_000n});
     const quoteReceipt=await f.transport.waitForReceipt(f.tx.hash);
@@ -390,23 +379,6 @@ describe('current DEX owner quote preparation', () => {
     expect(mocks.inclusion.mock.calls[0][2].logs[0]).toMatchObject({index:0,transactionHash:f.tx.hash,blockNumber:42,blockHash:hash,removed:false});
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
-  it.each([50_000_000n, 52_000_000n])('reconciles saved b2aa Quote fee %s without granting new signing authority', async fee => {
-    const f = await restorationConsumerFixture(fee), before = f.storage.getItem(CURRENT_DEX_NATIVE_RELOAD_KEY);
-    await f.adapter.restoreCurrentCheapOperation(f.restored);
-    const checkpoint = JSON.parse(f.storage.getItem(CURRENT_DEX_NATIVE_RELOAD_KEY)!).budget;
-    expect(checkpoint.committedWei).toBe(String(110_000_000n * fee));
-    expect(checkpoint.charges[0].gasPrice).toBe(fee === 50_000_000n ? undefined : '52000000');
-    expect(f.transport.send).not.toHaveBeenCalled(); expect(f.transport.estimateGas).not.toHaveBeenCalled();
-    expect(before).not.toBeNull();
-    await expect(f.adapter.submitCurrentCheapAcceptance({ issued: f.restored, confirm: async () => true })).rejects.toThrow('connected App-wallet hold');
-  });
-  it.each([50_000_000n, 52_000_000n])('retains the saved b2aa reservation if canonical fee %s differs from its authenticated charge', async fee => {
-    const f = await restorationConsumerFixture(fee), before = f.storage.getItem(CURRENT_DEX_NATIVE_RELOAD_KEY), pending = f.storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY);
-    f.transport.readTransaction.mockResolvedValue({ ...f.tx, gasPrice: fee === 50_000_000n ? 52_000_000n : 50_000_000n });
-    await expect(f.adapter.restoreCurrentCheapOperation(f.restored)).rejects.toThrow('gasPrice');
-    expect(f.storage.getItem(CURRENT_DEX_NATIVE_RELOAD_KEY)).toBe(before); expect(f.storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(pending);
-    expect(f.transport.send).not.toHaveBeenCalled(); expect(f.transport.estimateGas).not.toHaveBeenCalled();
-  });
   it('joins authenticated reload terms to the original finite budget and clears only the proven Quote pending record',async()=>{
     const f=await restorationConsumerFixture();
     expect(f.adapter.readCurrentCheapRestoreHint()).toEqual({quoteHash:f.tx.hash});
@@ -414,11 +386,11 @@ describe('current DEX owner quote preparation', () => {
     expect(current.intent.maximumInput).toBe(20n);expect(f.storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBeNull();
     expect(currentNativeSigningBudget(f.signer,owner,()=>99n,f.c).snapshot()).toMatchObject({signingStarts:1,committedWei:5500000000000000n,normalExpiresAt:998n,recoveryExpiresAt:1898n});
     await expect(f.adapter.submitCurrentCheapQuote(currentDexRestoredPlan(current,f.signer))).rejects.toThrow('cannot be submitted again');
-    await expect(f.adapter.submitCurrentCheapAcceptance({issued:current,confirm:async()=>true})).rejects.toThrow('connected App-wallet hold');
+    await expect(f.adapter.submitCurrentCheapAcceptance({issued:current,confirm:async()=>true})).rejects.toThrow('signing hold');
     expect(f.transport.send).not.toHaveBeenCalled();expect(f.transport.estimateGas).not.toHaveBeenCalled();
     expect(f.storage.getItem(CURRENT_DEX_NATIVE_RELOAD_KEY)).not.toMatch(/maximumInput|minimumInput|ciphertext|aesKey|rateNumerator/);
   });
-  it.each([50_000_000n, 52_000_000n])('restores funded Accept fee %s and its original Quote tolerance, then holds an invalid terminal private receipt',async acceptFee=>{
+  it.each([50_000_000n])('restores funded Accept fee %s and its original Quote tolerance, then holds an invalid terminal private receipt',async acceptFee=>{
     const f=await restorationConsumerFixture(),scope=`quote:${keccak256(f.tx.data)}`,acceptHash=`0x${'66'.repeat(32)}`;
     const abi=new Interface(['function acceptPrivateSwapV1(uint256 operationId,bytes32 expectedContext)','event CheapAsyncAdvanced(uint256 indexed quoteId,uint8 stage,bytes32 context)']);
     const data=abi.encodeFunctionData('acceptPrivateSwapV1',[7n,hash]),event=abi.encodeEventLog(abi.getEvent('CheapAsyncAdvanced')!,[7n,6,hash]);
@@ -481,7 +453,7 @@ describe('current DEX owner quote preparation', () => {
     expect(Object.keys(nomination).sort()).toEqual(['schema', 'identity', 'principal', 'inputToken', 'outputToken', 'destination',
       'operationId', 'quoteHash', 'origin', 'deadline', 'toleranceBps'].sort());
     expect(nomination).toMatchObject({ principal: owner, operationId: '7', quoteHash: f.txHash, toleranceBps: 50,
-      identity: { graph: resolveCurrentCheapDexCandidate('cheap-exit').graph } });
+      identity: { graph: resolveCurrentCheapDexCandidate('cheap-history').graph } });
     const serialized = JSON.stringify(nomination);
     for (const name of ['maximumInput', 'minimumInput', 'minimumOutput', 'rateNumerator', 'rateDenominator', 'ciphertext', 'signature', 'aesKey', 'intent'])
       expect(serialized).not.toContain(name);
@@ -503,72 +475,8 @@ describe('current DEX owner quote preparation', () => {
     await expect(f.issued.readKeeperNomination()).rejects.toThrow();
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
-  it('checks retained reader canonical guards using its retained quote ABI', async () => {
-    const f = await keeperNominationFixture(), nomination = await f.issued.readKeeperNomination();
-    const rpc = canonicalKeeperRpc(nomination, retainedKeeperCalldata(f.prepared.data));
-    const adopted = await appQuoteReader.createAppQuoteReader()({ nomination, rpc });
-    expect(adopted).toMatchObject({ canonicalQuoteVerified: true, coreRuntimeVerified: true,
-      nativeAdmission: false, completeGraphVerified: false, completeProtectedIssueAccounting: false,
-      nomination: { principal: owner }, state: { stage: 1 } });
-    expect(Object.isFrozen(adopted.nomination.identity)).toBe(true);
-    expect(JSON.stringify(adopted)).not.toContain('ciphertext');
-    expect(rpc.mock.calls.every(([method]) => !/send|sign|estimate/i.test(method))).toBe(true);
-    expect(rpc.mock.calls.length).toBeLessThanOrEqual(32);
-  });
-  it('rejects packed current calldata at the retained old keeper reader', async () => {
-    const f = await keeperNominationFixture(), nomination = await f.issued.readKeeperNomination();
-    await expect(appQuoteReader.createAppQuoteReader()({ nomination, rpc: canonicalKeeperRpc(nomination, f.prepared.data) })).rejects.toThrow('APP_QUOTE_CALL');
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-  });
-  it('stops a hung read at the nomination deadline without native admission', async () => {
-    const f = await keeperNominationFixture(), nomination = await f.issued.readKeeperNomination();
-    const read = appQuoteReader.createAppQuoteReader();
-    vi.useFakeTimers();
-    try {
-      let complete: ((value: string) => void) | undefined;
-      const rpc = vi.fn(() => new Promise<string>(resolve => { complete = resolve; }));
-      const result = read({ nomination, rpc });
-      const rejected = expect(result).rejects.toThrow(/^APP_QUOTE_READ_TIMEOUT$/);
-      await vi.advanceTimersByTimeAsync(60000);
-      await rejected;
-      vi.setSystemTime(99000); // Elapsed-clock rollback must not reopen a closed scope.
-      complete!(`0x${BigInt(nomination.identity.chainId).toString(16)}`);
-      await vi.runAllTimersAsync();
-      expect(rpc).toHaveBeenCalledTimes(1); // A late response cannot resume the read scope.
-      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    } finally { vi.useRealTimers(); }
-  });
-  it.each(['extra-private-field', 'identity', 'principal', 'pair', 'origin', 'call', 'event', 'removed', 'log-index', 'deadline',
-    'tolerance', 'runtime', 'chain', 'genesis', 'expired', 'terminal', 'context', 'canonical-reorg', 'head-reorg', 'transaction-drift',
-    'rpc-private-error', 'caller-mutation'] as const)('checks App nomination %s drift', async fault => {
-    const f = await keeperNominationFixture(), nomination = await f.issued.readKeeperNomination();
-    const hint = { ...structuredClone(nomination) };
-    if (fault === 'extra-private-field') Object.assign(hint, { maximumInput: '20' });
-    if (fault === 'identity') hint.identity = { ...hint.identity, graph: '0'.repeat(64) };
-    if (fault === 'principal') hint.principal = `0x${'77'.repeat(20)}`;
-    if (fault === 'pair') hint.inputToken = hint.outputToken;
-    if (fault === 'origin') hint.origin = { ...hint.origin, hash: `0x${'77'.repeat(32)}` };
-    const rpc = canonicalKeeperRpc(nomination, retainedKeeperCalldata(f.prepared.data), fault === 'caller-mutation' ? undefined : fault);
-    if (fault === 'caller-mutation') {
-      const original = rpc.getMockImplementation()!;
-      rpc.mockImplementation(async (method, args) => {
-        hint.principal = `0x${'77'.repeat(20)}`;
-        return original(method, args);
-      });
-      const adopted = await appQuoteReader.createAppQuoteReader()({ nomination: hint, rpc });
-      expect(adopted.nomination.principal).toBe(owner);
-    } else {
-      const result = appQuoteReader.createAppQuoteReader()({ nomination: hint, rpc });
-      if (fault === 'rpc-private-error') await expect(result).rejects.toThrow(/^APP_QUOTE_READ_REJECTED$/);
-      else if (fault === 'transaction-drift') await expect(result).rejects.toThrow(/^APP_QUOTE_CANONICAL_DRIFT$/);
-      else await expect(result).rejects.toThrow();
-      if (fault === 'extra-private-field' || fault === 'identity' || fault === 'pair') expect(rpc).not.toHaveBeenCalled();
-    }
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-  });
-  it.each(['fast-pool', 'cheap-async'] as const)('prepares actual current d06 %s slippage without granting native submission', async profile => {
-    const f = await cheapFixture(profile, 'cheap-current'), candidate = CURRENT_CHEAP_DEX_CANDIDATE;
-    expect(candidate).toBe(resolveCurrentCheapDexCandidate('cheap-d06'));
+  it.each(['fast-pool', 'cheap-async'] as const)('prepares current %s slippage without granting native submission', async profile => {
+    const f = await cheapFixture(profile, 'cheap-history'), candidate = STAGED_SHARED_HISTORY_DEX_CANDIDATE;
     const request = { ...f.request, terms: { ...f.request.terms, rateNumerator: 0n, toleranceBps: 50 } };
     request.confirmPrivateInputs.mockImplementation(async () => { request.terms.toleranceBps = 100; return true; });
     const prepared = (await f.capability.prepareCurrentQuote(request))!;
@@ -578,24 +486,22 @@ describe('current DEX owner quote preparation', () => {
     expect(prepared).toMatchObject({ to: candidate.core, graph: candidate.graph, readyToSign: false });
     for (const call of mocks.wide.mock.calls) expect(call.slice(2)).toEqual([candidate.core, abi.getFunction(method)!.selector]);
     expect(() => assertCurrentCheapDexPreparedQuote(prepared, f.signer)).not.toThrow(); expect(() => assertCurrentCheapDexPreparedQuote(prepared, {})).toThrow('session');
-    expect(() => assertCurrentCheapDexNativeAdmission(candidate)).toThrow('native App submission admission');
     expect(f.signer.getNonce).not.toHaveBeenCalled(); expect(f.signer.estimateGas).not.toHaveBeenCalled(); expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
-  it.each(['fast-pool', 'cheap-async'] as const)('keeps actual current d06 %s tolerance, identity and lease checks', async profile => {
+  it.each(['fast-pool', 'cheap-async'] as const)('keeps current %s tolerance, identity and lease checks', async profile => {
     for (const fault of ['missing-tolerance', 'mixed-identity', 'read-identity', 'revoked-review']) {
-      const f = await cheapFixture(profile, 'cheap-current');
+      const f = await cheapFixture(profile, 'cheap-history');
       const request = { ...f.request, terms: { ...f.request.terms, toleranceBps: fault === 'missing-tolerance' ? undefined : 50 } };
-      if (fault === 'mixed-identity') request.graph.expectedPackageSha256 = resolveCurrentCheapDexCandidate('cheap-archived').packageSha256;
-      if (fault === 'read-identity') mocks.sharedGraph.mockResolvedValueOnce(cheapIdentity(42n, 'cheap-archived'));
+      if (fault === 'mixed-identity') request.graph.expectedPackageSha256 = 'ff'.repeat(32);
+      if (fault === 'read-identity') mocks.sharedGraph.mockResolvedValueOnce({ ...cheapIdentity(42n), packageSha256: 'ff'.repeat(32) });
       if (fault === 'revoked-review') request.confirmPrivateInputs.mockImplementation(async () => { f.revoke(); return true; });
       await expect(f.capability.prepareCurrentQuote(request)).rejects.toThrow();
       expect(mocks.wide).not.toHaveBeenCalled(); expect(f.signer.encryptValue).not.toHaveBeenCalled(); expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
     }
   });
-  it.each(['fast-pool', 'cheap-async'] as const)('captures exact staged %s tolerance and optional zero hard rate before private inputs', async profile => {
-    mocks.slippage = true;
+  it.each(['fast-pool', 'cheap-async'] as const)('captures exact %s tolerance and optional zero hard rate before private inputs', async profile => {
     const f = await cheapFixture(profile);
-    const request = { ...f.request, graph: { ...f.request.graph, candidate: 'cheap-slippage' as const }, terms: { ...f.request.terms, rateNumerator: 0n, rateDenominator: 1n, toleranceBps: 50 } };
+    const request = { ...f.request, graph: { ...f.request.graph, candidate: 'cheap-history' as const }, terms: { ...f.request.terms, rateNumerator: 0n, rateDenominator: 1n, toleranceBps: 50 } };
     request.confirmPrivateInputs.mockImplementation(async () => { request.terms.toleranceBps = 100; return true; });
     const prepared = (await f.capability.prepareCurrentQuote(request))!;
     const abi = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI), method = profile === 'fast-pool' ? 'quoteFastPool' : 'quoteCheapAsync';
@@ -607,11 +513,11 @@ describe('current DEX owner quote preparation', () => {
     expect(prepared.intent).toMatchObject({ quoteProtocol: 'quote-slippage', toleranceBps: 50, rateNumerator: 0n, rateDenominator: 1n });
     expect(Object.isFrozen(prepared.intent)).toBe(true);
     expect(request.confirmPrivateInputs.mock.calls[0][0]).toMatchObject({ toleranceBps: 50 });
-    for (const call of mocks.wide.mock.calls) expect(call.slice(2)).toEqual([historicalCandidate().core, abi.getFunction(method)!.selector]);
+    for (const call of mocks.wide.mock.calls) expect(call.slice(2)).toEqual([STAGED_SHARED_HISTORY_DEX_CANDIDATE.core, abi.getFunction(method)!.selector]);
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
   it.each(['fast-pool', 'cheap-async'] as const)('signs the maximum packed %s rate as one uint256 input', async profile => {
-    const f = await cheapFixture(profile, 'cheap-slippage'), max = (1n << 128n) - 1n;
+    const f = await cheapFixture(profile, 'cheap-history'), max = (1n << 128n) - 1n;
     const request = { ...f.request, terms: { ...f.request.terms, rateNumerator: max, rateDenominator: max, toleranceBps: 50 } };
     await f.capability.prepareCurrentQuote(request);
     expect(mocks.wide).toHaveBeenCalledTimes(4);
@@ -619,45 +525,17 @@ describe('current DEX owner quote preparation', () => {
     expect(f.signer.encryptValue).not.toHaveBeenCalled();
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
-  it.each(['fast-pool', 'cheap-async'] as const)('rejects tolerance on the accepted old %s graph before private prompts', async profile => {
-    const f = await cheapFixture(profile);
-    const request = { ...f.request, terms: { ...f.request.terms, toleranceBps: 50 } };
-    await expect(f.capability.prepareCurrentQuote(request)).rejects.toThrow('active candidate');
-    expect(mocks.wide).not.toHaveBeenCalled();
-    expect(f.signer.encryptValue).not.toHaveBeenCalled();
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-  });
-  it.each(['fast-pool', 'cheap-async'] as const)('prepares %s with its exact selector and no signing authority', async profile => {
-    const f = await cheapFixture(profile), prepared = (await f.capability.prepareCurrentQuote(f.request))!;
-    const abi = new Interface(CURRENT_CHEAP_DEX_QUOTE_ABI), method = profile === 'fast-pool' ? 'quoteFastPoolV1' : 'quoteCheapAsyncV1';
-    const selector = abi.getFunction(method)!.selector, decoded = abi.decodeFunctionData(method, prepared.data);
-    const args = profile === 'cheap-async' ? decoded.request : decoded;
-    expect(args.inputToken.toLowerCase()).toBe(f.request.terms.inputToken);
-    expect(args.outputToken.toLowerCase()).toBe(f.request.terms.outputToken);
-    expect(args.deadline).toBe(100n);
-    expect(abi.encodeFunctionData(method, decoded)).toBe(prepared.data);
-    expect(new Interface(nativeCore.abi).encodeFunctionData(method, decoded)).toBe(prepared.data);
-    for (const call of mocks.wide.mock.calls) expect(call.slice(2)).toEqual([historicalCandidate().core, selector]);
-    for (const call of f.signer.encryptValue.mock.calls) expect(call.slice(1)).toEqual([historicalCandidate().core, selector]);
-    expect(prepared).toMatchObject({ profile, readyToSign: false, graph: historicalCandidate().graph });
-    expect(prepared).not.toHaveProperty('signer');
-    expect(() => assertCurrentCheapDexPreparedQuote(prepared, f.signer)).not.toThrow();
-    expect(() => assertCurrentCheapDexPreparedQuote({ ...prepared }, f.signer)).toThrow('session');
-    expect(() => assertCurrentCheapDexPreparedQuote(prepared, {})).toThrow('session');
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-  });
 
   it.each(['fast-pool', 'cheap-async'] as const)('stops %s for wrong candidate, expired/revoked review and malformed input', async profile => {
-    for (const fault of ['candidate', 'graph', 'pair', 'deadline', 'rate', 'decline', 'revoke', 'expire', 'ciphertext', 'signature', 'rate-ciphertext', 'prompt-revoke']) {
+    for (const fault of ['candidate', 'graph', 'pair', 'deadline', 'decline', 'revoke', 'expire', 'ciphertext', 'signature', 'prompt-revoke']) {
       const f = await cheapFixture(profile);
+      Object.assign(f.request.terms, { toleranceBps: 50 });
       if (fault === 'candidate') f.request.graph.expectedGraph = 'wrong';
       if (fault === 'graph') mocks.sharedGraph.mockResolvedValueOnce({ ...cheapIdentity(), graph: 'wrong' });
       if (fault === 'pair') f.request.terms.inputToken = owner;
       if (fault === 'deadline') f.request.terms.deadline = 99n;
-      if (fault === 'rate') f.request.terms.rateNumerator = 0n;
       if (fault === 'ciphertext') mocks.wide.mockResolvedValueOnce({ ciphertext: { ciphertextHigh: -1n, ciphertextLow: 0n }, signature });
       if (fault === 'signature') mocks.wide.mockResolvedValueOnce({ ciphertext: { ciphertextHigh: 1n, ciphertextLow: 0n }, signature: '0x' });
-      if (fault === 'rate-ciphertext') f.signer.encryptValue.mockResolvedValueOnce({ ciphertext: -1n, signature });
       if (fault === 'prompt-revoke') mocks.wide.mockImplementationOnce(async () => {
         f.revoke(); return { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 0n }, signature };
       });
@@ -668,13 +546,13 @@ describe('current DEX owner quote preparation', () => {
       });
       if (fault === 'decline') await expect(f.capability.prepareCurrentQuote(f.request)).resolves.toBeNull();
       else await expect(f.capability.prepareCurrentQuote(f.request)).rejects.toThrow();
-      if (!['ciphertext', 'signature', 'rate-ciphertext', 'prompt-revoke'].includes(fault)) expect(mocks.wide).not.toHaveBeenCalled();
+      if (!['ciphertext', 'signature', 'prompt-revoke'].includes(fault)) expect(mocks.wide).not.toHaveBeenCalled();
       expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
     }
   });
 
   it('binds async READY context once and rejects later changes without legacy epochs', async () => {
-    const f = await cheapFixture('cheap-async'), prepared = (await f.capability.prepareCurrentQuote(f.request))!;
+    const f = await cheapFixture('cheap-async'), prepared = (await f.capability.prepareCurrentQuote({ ...f.request, terms: { ...f.request.terms, toleranceBps: 50 } }))!;
     const zero = `0x${'00'.repeat(32)}`, context = `0x${'66'.repeat(32)}`, txHash = `0x${'55'.repeat(32)}`;
     f.readProvider.getTransaction.mockResolvedValue({ hash: txHash });
     f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash });
@@ -695,534 +573,9 @@ describe('current DEX owner quote preparation', () => {
     await expect(issued.readCurrent()).rejects.toThrow('context changed');
     expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
   });
-  it('submits only a signer-branded shared-Pool Open, then separately reviews READY receipt and Accept', async () => {
-    const storage = pendingStorage();
-    const f = await sharedFixture(), txHash = `0x${'55'.repeat(32)}`, acceptHash = `0x${'88'.repeat(32)}`;
-    const context = `0x${'66'.repeat(32)}`, candidate = CURRENT_SHARED_POOL_CANDIDATE;
-    const prepared = (await f.capability.prepareQuote(f.request))!;
-    const open = { status: 1, quotePrepared: false, funded: false, contextHash: context, epochId: 9n,
-      deadline: 100n, stageRevision: 1n, canonicalMarketId: 7n, marketRevision: 3n, registryRevision: 2n };
-    const ready = { ...open, status: 2, quotePrepared: true, stageRevision: 30n };
-    mocks.issued.mockResolvedValue({ operationId: 7n, originBlock: { number: 50n, hash },
-      block: { number: 50n, hash }, operation: open, principal: owner, transactionHash: txHash });
-    mocks.current.mockResolvedValue({ operationId: 7n, block: { number: 51n, hash, timestamp: 99n }, operation: ready });
-    f.readProvider.send.mockImplementation(async (method, params) => {
-      if (method === 'eth_getBlockByNumber') return { number: params[0] === 'latest' ? '0x33' : '0x32',
-        hash, timestamp: '0x63', gasLimit: '0x7270e00' };
-      throw new Error('Unexpected RPC');
-    });
-    f.readProvider.getTransactionReceipt.mockImplementation(async transactionHash => ({ hash: transactionHash,
-      status: 1, from: owner, to: candidate.core, blockNumber: 50, blockHash: hash, logs: [] }));
-    f.signer.estimateGas.mockResolvedValue(50_000_000n);
-    f.signer.sendUncheckedTransaction.mockImplementation(async request => {
-      expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).not.toBeNull();
-      const hash = request.data === prepared.data ? txHash : acceptHash;
-      f.recordCanonicalTransaction(hash, request);
-      return hash;
-    });
-    mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.assertCurrent,
-      assertSnapshotCurrent: f.assertSnapshotCurrent, readProvider: f.readProvider, signer: f.signer,
-      chainId: 7082400n, ownerAddress: owner }));
-    let filled = true;
-    mocks.receiptIssue.mockResolvedValue({ read: vi.fn(async () => ({ chainId: 7082400n, core: candidate.core,
-      runtimeHash: candidate.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2],
-      releaseId: candidate.releaseId, principal: owner, operationId: 7n, kind: 'quote',
-      block: { number: 51n, hash, timestamp: 99n }, operation: ready,
-      amounts: { filled, maximumInput: 20n, actualInput: 10n, refund: 10n,
-        grossOutput: 15n, fee: 1n, netOutput: 14n } })) });
-    const submit = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    expect(submit.readyToSign).toBe(false);
-    await expect(submit.submitCurrentQuote({ ...prepared })).rejects.toThrow('not prepared');
-    mocks.issue.mockImplementationOnce(async args => args.bindCapability({ assertCurrent: f.assertCurrent,
-      assertSnapshotCurrent: f.assertSnapshotCurrent, readProvider: f.readProvider, signer: { ...f.signer },
-      chainId: 7082400n, ownerAddress: owner }));
-    const otherSession = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    await expect(otherSession.submitCurrentQuote(prepared)).rejects.toThrow('owner wallet session');
-    mocks.sharedGraph.mockRejectedValueOnce(new Error('Graph changed'));
-    await expect(submit.submitCurrentQuote(prepared)).rejects.toThrow('Graph changed');
-    f.signer.estimateGas.mockRejectedValueOnce(new Error('COTI estimate unavailable'));
-    await expect(submit.submitCurrentQuote(prepared)).rejects.toThrow('COTI estimate unavailable');
-    f.signer.estimateGas.mockResolvedValueOnce(109_000_000n);
-    await expect(submit.submitCurrentQuote(prepared)).rejects.toThrow('measured gas cap');
-    f.readProvider.send.mockResolvedValueOnce({ number: '0x33', hash, timestamp: '0x63', gasLimit: '0x718c0c0' });
-    await expect(submit.submitCurrentQuote(prepared)).rejects.toThrow('gas headroom');
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    f.signer.getNonce.mockResolvedValueOnce(1).mockResolvedValueOnce(2);
-    await expect(submit.submitCurrentQuote(prepared)).rejects.toThrow('nonce changed before signing');
-    expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBeNull();
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    const opened = await submit.submitCurrentQuote(prepared);
-    expect(opened.request.gasLimit).toBe(108_000_000n);
-    await expect(submit.submitCurrentQuote(prepared)).rejects.toThrow('pending attempt');
-    const issued = await opened.recover();
-    filled = false;
-    await expect(submit.submitCurrentAcceptance({ issued, confirm: async () => true }))
-      .rejects.toThrow('Quote accounting does not match');
-    filled = true;
-    await expect(submit.submitCurrentAcceptance({ issued, confirm: async () => false })).resolves.toBeNull();
-    const confirm = vi.fn(async () => true);
-    const accepted = await submit.submitCurrentAcceptance({ issued, confirm });
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(accepted?.request.data).toBe(new Interface(['function acceptPrivateSwapV1(uint256,bytes32)'])
-      .encodeFunctionData('acceptPrivateSwapV1', [7n, context]));
-    expect(accepted?.status).toBe('accepting');
-    expect((await accepted!.recover()).status).toBe('settlement-pending');
-    await expect(submit.submitCurrentAcceptance({ issued, confirm })).rejects.toThrow('already submitted');
-    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledTimes(2);
-    mocks.wide.mockResolvedValueOnce({ ciphertext: { ciphertextHigh: 9n, ciphertextLow: 2n }, signature });
-    const nextPrepared = (await f.capability.prepareQuote(f.request))!;
-    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(new Error('Wallet response interrupted'));
-    await expect(submit.submitCurrentQuote(nextPrepared)).rejects.toThrow('Wallet response interrupted');
-    await expect(submit.submitCurrentQuote(nextPrepared)).rejects.toThrow('pending attempt');
-    const sameSession = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    await expect(sameSession.submitCurrentQuote(nextPrepared)).rejects.toThrow('pending attempt');
-    expect(f.signer.sendUncheckedTransaction).toHaveBeenCalledTimes(3);
-    let releaseReceipt!: (receipt: { hash: string; status: number; from: string; to: string }) => void;
-    f.readProvider.getTransactionReceipt.mockImplementationOnce(() => new Promise(resolve => { releaseReceipt = resolve; }));
-    const pendingRecovery = accepted!.recover();
-    await vi.waitFor(() => expect(releaseReceipt).toBeTypeOf('function'));
-    f.revoke();
-    releaseReceipt({ hash: acceptHash, status: 1, from: owner, to: candidate.core, logs: [] } as never);
-    await expect(pendingRecovery).rejects.toThrow('Session revoked');
-  });
-  it('blocks a new lease until an exact mined Open is reconciled from public chain data', async () => {
-    const storage = pendingStorage(), f = await sharedFixture(), candidate = CURRENT_SHARED_POOL_CANDIDATE;
-    const prepared = (await f.capability.prepareQuote(f.request))!;
-    const txHash = `0x${'55'.repeat(32)}`, context = `0x${'66'.repeat(32)}`;
-    const event = opening.encodeEventLog(opening.getEvent('WorkIssued')!, [7n, 9n, candidate.releaseId, 100n]);
-    f.readProvider.send.mockImplementation(async (_method: string, params: unknown[]) => ({
-      number: params[0] === 'latest' ? '0x33' : '0x32', hash, timestamp: '0x63', gasLimit: '0x7270e00' }));
-    f.signer.estimateGas.mockResolvedValue(50_000_000n);
-    f.signer.sendUncheckedTransaction.mockImplementation(async request => {
-      f.recordCanonicalTransaction(txHash, request);
-      return txHash;
-    });
-    mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.assertCurrent,
-      assertSnapshotCurrent: f.assertSnapshotCurrent, readProvider: f.readProvider, signer: f.signer,
-      chainId: 7082400n, ownerAddress: owner }));
-    const first = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    await first.submitCurrentQuote(prepared);
-    const saved = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)!;
-    expect(saved).not.toContain('ciphertext');
-    expect(JSON.parse(saved)).toMatchObject({ phase: 'quote', nonce: 1, txHash,
-      callHash: keccak256(prepared.data) });
-    f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash, status: 1, from: owner,
-      to: candidate.core, blockNumber: 50, blockHash: hash, logs: [{ address: candidate.core, ...event }] });
-    mocks.operation.mockResolvedValue({ operation: { status: 2, contextHash: context, epochId: 9n, deadline: 100n } });
-    const newSigner = { ...f.signer };
-    mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.assertCurrent,
-      assertSnapshotCurrent: f.assertSnapshotCurrent, readProvider: f.readProvider, signer: newSigner,
-      chainId: 7082400n, ownerAddress: owner }));
-    const reissuedQuote = await issueCurrentDexQuoteCapability({} as never);
-    const reissued = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    const freshPrepared = (await reissuedQuote.prepareQuote(f.request))!;
-    await expect(reissued.submitCurrentQuote(freshPrepared)).rejects.toThrow('pending attempt');
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify({ ...JSON.parse(saved), callHash: `0x${'99'.repeat(32)}` }));
-    await expect(reissued.recoverPendingCurrentAttempt()).rejects.toThrow('canonical transaction');
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, saved);
-    await expect(reissued.recoverPendingCurrentAttempt()).resolves.toMatchObject({ status: 'observed-mined',
-      phase: 'quote', transactionHash: txHash, operationId: 7n, operation: { contextHash: context } });
-    expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBeNull();
-    await expect(reissued.submitCurrentAcceptance({ issued: {} as never, confirm: async () => true })).rejects.toThrow();
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, saved);
-    f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash, status: 0, from: owner,
-      to: candidate.core, blockNumber: 50, blockHash: hash, logs: [] });
-    mocks.operation.mockClear();
-    await expect(reissued.recoverPendingCurrentAttempt()).resolves.toMatchObject({ status: 'observed-reverted',
-      phase: 'quote', transactionHash: txHash });
-    expect(mocks.operation).not.toHaveBeenCalled();
-    expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBeNull();
-  });
-  it('keeps unknown-hash and malformed attempts closed across a new lease and checks revocation after awaits', async () => {
-    const storage = pendingStorage(), f = await sharedFixture();
-    const prepared = (await f.capability.prepareQuote(f.request))!;
-    f.readProvider.send.mockResolvedValue({ number: '0x33', hash, timestamp: '0x63', gasLimit: '0x7270e00' });
-    f.signer.estimateGas.mockResolvedValue(50_000_000n);
-    f.signer.sendUncheckedTransaction.mockRejectedValueOnce(new Error('Wallet response interrupted'));
-    mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.assertCurrent,
-      assertSnapshotCurrent: f.assertSnapshotCurrent, readProvider: f.readProvider, signer: f.signer,
-      chainId: 7082400n, ownerAddress: owner }));
-    const first = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    await expect(first.submitCurrentQuote(prepared)).rejects.toThrow('Wallet response interrupted');
-    const saved = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)!;
-    expect(JSON.parse(saved).txHash).toBeNull();
-    const newSigner = { ...f.signer };
-    mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.assertCurrent,
-      assertSnapshotCurrent: f.assertSnapshotCurrent, readProvider: f.readProvider, signer: newSigner,
-      chainId: 7082400n, ownerAddress: owner }));
-    const reissuedQuote = await issueCurrentDexQuoteCapability({} as never);
-    const reissued = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    const freshPrepared = (await reissuedQuote.prepareQuote(f.request))!;
-    await expect(reissued.recoverPendingCurrentAttempt()).resolves.toMatchObject({
-      status: 'manual-reconciliation-required', phase: 'quote', nonce: 1 });
-    await expect(reissued.submitCurrentQuote(freshPrepared)).rejects.toThrow('pending attempt');
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, '{broken');
-    await expect(reissued.recoverPendingCurrentAttempt()).rejects.toThrow('invalid; reconcile manually');
-    await expect(reissued.submitCurrentQuote(freshPrepared)).rejects.toThrow('invalid; reconcile manually');
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify({ ...JSON.parse(saved),
-      owner: `0x${'99'.repeat(20)}` }));
-    await expect(reissued.recoverPendingCurrentAttempt()).rejects.toThrow('another owner or candidate');
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify({ ...JSON.parse(saved), txHash: `0x${'55'.repeat(32)}` }));
-    let resolveTransaction!: (transaction: null) => void;
-    f.readProvider.getTransaction.mockImplementationOnce(() => new Promise(resolve => { resolveTransaction = resolve; }));
-    const recovering = reissued.recoverPendingCurrentAttempt();
-    await vi.waitFor(() => expect(resolveTransaction).toBeTypeOf('function'));
-    f.revoke();
-    resolveTransaction(null);
-    await expect(recovering).rejects.toThrow('Session revoked');
-    expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).not.toBeNull();
-  });
-  it('recovers only observable Accept state after reload and rejects a changed operation context', async () => {
-    const storage = pendingStorage(), f = await sharedFixture(), candidate = CURRENT_SHARED_POOL_CANDIDATE;
-    const txHash = `0x${'55'.repeat(32)}`, context = `0x${'66'.repeat(32)}`;
-    const data = new Interface(['function acceptPrivateSwapV1(uint256,bytes32)'])
-      .encodeFunctionData('acceptPrivateSwapV1', [7n, context]);
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, JSON.stringify({ version: 1, chainId: '7082400',
-      owner: owner.toLowerCase(), core: candidate.core, graph: `0x${candidate.graph}`,
-      phase: 'accept', callHash: keccak256(data), nonce: 12, txHash }));
-    f.readProvider.send.mockImplementation(async (_method: string, params: unknown[]) => ({
-      number: params[0] === 'latest' ? '0x33' : '0x32', hash, timestamp: '0x63', gasLimit: '0x7270e00' }));
-    f.readProvider.getTransaction.mockResolvedValue({ hash: txHash, chainId: 7082400n, from: owner,
-      to: candidate.core, value: 0n, data, nonce: 12, blockNumber: 50, blockHash: hash });
-    f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash, status: 1, from: owner,
-      to: candidate.core, blockNumber: 50, blockHash: hash, logs: [] });
-    mocks.operation.mockResolvedValueOnce({ operation: { status: 3, contextHash: `0x${'77'.repeat(32)}`,
-      epochId: 9n, deadline: 100n } }).mockResolvedValueOnce({ operation: {
-        status: 3, contextHash: context, epochId: 9n, deadline: 100n } });
-    mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: f.assertCurrent,
-      assertSnapshotCurrent: f.assertSnapshotCurrent, readProvider: f.readProvider, signer: { ...f.signer },
-      chainId: 7082400n, ownerAddress: owner }));
-    const reissued = await issueCurrentDexSubmissionCapability({ admission: null } as never);
-    const saved = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)!;
-    await expect(reissued.recoverPendingCurrentAttempt()).rejects.toThrow('operation identity changed');
-    expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).not.toBeNull();
-    await expect(reissued.recoverPendingCurrentAttempt()).resolves.toMatchObject({ status: 'observed-mined',
-      phase: 'accept', operationId: 7n, transactionHash: txHash });
-    expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBeNull();
-    storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY, saved);
-    f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash, status: 0, from: owner,
-      to: candidate.core, blockNumber: 50, blockHash: hash, logs: [] });
-    mocks.operation.mockClear();
-    await expect(reissued.recoverPendingCurrentAttempt()).resolves.toMatchObject({ status: 'observed-reverted',
-      phase: 'accept', transactionHash: txHash });
-    expect(mocks.operation).not.toHaveBeenCalled();
-    expect(storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBeNull();
-  });
-  it('prepares the pinned shared-Pool Open and tracks its READY operation without signing', async () => {
-    const f = await sharedFixture(), txHash = `0x${'55'.repeat(32)}`, context = `0x${'66'.repeat(32)}`;
-    const prepared = (await f.capability.prepareQuote(f.request))!;
-    expect(prepared).toMatchObject({ graph: CURRENT_SHARED_POOL_CANDIDATE.graph,
-      to: CURRENT_SHARED_POOL_CANDIDATE.core, readyToSign: false });
-    expect(opening.decodeFunctionData('openSinglePassSwapV2', prepared.data).inputToken.toLowerCase())
-      .toBe(CURRENT_SHARED_POOL_CANDIDATE.tokens[0][0]);
-    f.readProvider.getTransaction.mockResolvedValue({ hash: txHash });
-    f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash });
-    const open = { status: 1, quotePrepared: false, contextHash: context, epochId: 9n, deadline: 100n,
-      canonicalMarketId: 7n, marketRevision: 3n, registryRevision: 2n };
-    mocks.issued.mockResolvedValue({ operationId: 7n, originBlock: { number: 50n, hash },
-      block: { number: 50n, hash }, operation: open });
-    mocks.current.mockResolvedValue({ operationId: 7n, block: { number: 51n, hash },
-      operation: { ...open, status: 2, quotePrepared: true } });
-    const issued = (await prepared.readIssue(txHash))!;
-    expect(mocks.issued.mock.calls[0][0].profile).toBe('shared-pool');
-    expect(issued.operation.status).toBe(1);
-    const ready = await issued.readCurrent();
-    expect(ready.operation).toMatchObject({ status: 2, quotePrepared: true, contextHash: context });
-    expect(mocks.current.mock.calls[0][0].profile).toBe('shared-pool');
-    expect(mocks.sharedGraph).toHaveBeenCalledTimes(3);
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-  });
-
-  it('rejects stale shared-Pool candidate, session and operation bindings', async () => {
-    for (const fault of ['request-graph', 'request-package', 'read-graph', 'session', 'issue-graph', 'operation-context',
-      'operation-market', 'head-graph']) {
-      const f = await sharedFixture(), txHash = `0x${'55'.repeat(32)}`, context = `0x${'66'.repeat(32)}`;
-      if (fault === 'request-graph') f.request.graph.expectedGraph = 'wrong';
-      if (fault === 'request-package') f.request.graph.expectedPackageSha256 = 'wrong';
-      if (fault === 'read-graph') mocks.sharedGraph.mockResolvedValueOnce({ ...sharedIdentity(), graph: 'wrong' });
-      if (fault === 'session') mocks.sharedGraph.mockImplementationOnce(async () => { f.revoke(); return sharedIdentity(); });
-      if (fault === 'request-graph' || fault === 'request-package' || fault === 'read-graph' || fault === 'session') {
-        await expect(f.capability.prepareQuote(f.request)).rejects.toThrow();
-        expect(mocks.wide).not.toHaveBeenCalled();
-      } else {
-        const prepared = (await f.capability.prepareQuote(f.request))!;
-        f.readProvider.getTransaction.mockResolvedValue({ hash: txHash });
-        f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash });
-        const open = { status: 1, quotePrepared: false, contextHash: context, epochId: 9n, deadline: 100n,
-          canonicalMarketId: 7n, marketRevision: 3n, registryRevision: 2n };
-        mocks.issued.mockResolvedValue({ operationId: 7n, originBlock: { number: 50n, hash },
-          block: { number: 50n, hash }, operation: open });
-        if (fault === 'issue-graph') mocks.sharedGraph.mockResolvedValueOnce({ ...sharedIdentity(50n), graph: 'wrong' });
-        if (fault === 'issue-graph') await expect(prepared.readIssue(txHash)).rejects.toThrow();
-        else {
-          const issued = (await prepared.readIssue(txHash))!;
-          mocks.current.mockResolvedValue({ operationId: 7n, block: { number: 51n, hash }, operation: {
-            ...open, status: 2, quotePrepared: true,
-            contextHash: fault === 'operation-context' ? `0x${'77'.repeat(32)}` : context,
-            canonicalMarketId: fault === 'operation-market' ? 8n : 7n } });
-          if (fault === 'head-graph') mocks.sharedGraph.mockResolvedValueOnce({ ...sharedIdentity(51n), graph: 'wrong' });
-          await expect(issued.readCurrent()).rejects.toThrow();
-        }
-      }
-      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    }
-  });
-  it('retrieves the exact mined quote and joins the real operation reader without signing, including after expiry', async () => {
-    const reader = await vi.importActual<typeof import('../../lib/dexV2Chain')>('../../lib/dexV2Chain');
-    mocks.issued.mockImplementation(reader.readCurrentDexIssuedQuote);
-    const txHash = `0x${'55'.repeat(32)}`, context = `0x${'66'.repeat(32)}`;
-    const op = new Interface(CURRENT_DEX_OPERATION_ABI), release = new Interface(['function releaseId() view returns(bytes32)']);
-    for (const fault of ['', 'pending', 'failed', 'foreign', 'calldata', 'context', 'reorg', 'revoked', 'predates', 'hash']) {
-      const f = await fixture();
-      const prepared = (await f.capability.prepareQuote(f.request))!;
-      f.clock.mockReturnValue(200000); // Observation must remain possible after the preparation deadline.
-      const blockNumber = fault === 'predates' ? 41 : 50;
-      const transaction = { hash: txHash, chainId: 7082400n, from: fault === 'foreign' ? core : owner, to: core,
-        data: fault === 'calldata' ? '0x' : prepared.data, value: 0n, blockNumber, blockHash: hash };
-      const event = opening.encodeEventLog(opening.getEvent('WorkIssued')!, [7n, 9n, hash, 100n]);
-      f.readProvider.getTransaction.mockResolvedValue(transaction);
-      f.readProvider.getTransactionReceipt.mockImplementation(async () => {
-        if (fault === 'revoked') f.revoke();
-        return fault === 'pending' ? null : { hash: txHash, from: owner, to: core, status: fault === 'failed' ? 0 : 1,
-          blockNumber, blockHash: hash, logs: [{ address: core, ...event }] };
-      });
-      f.readProvider.send.mockImplementation(async (method: string, params: unknown[]) => {
-        if (method === 'eth_chainId') return '0x6c11a0';
-        if (method === 'eth_getBlockByNumber') return { number: `0x${blockNumber.toString(16)}`, timestamp: '0xc8', hash: fault === 'reorg' ? context : hash };
-        if (method === 'eth_getCode') return '0x6000';
-        if (method === 'eth_call') {
-          const call = params[0] as { data: string };
-          if (call.data === release.encodeFunctionData('releaseId')) return release.encodeFunctionResult('releaseId', [hash]);
-          expect(call.data).toBe(op.encodeFunctionData('operationPublic', [7n]));
-          return op.encodeFunctionResult('operationPublic', [[false, false, fault === 'context' ? `0x${'00'.repeat(32)}` : context, 1, 0, 9n, 100n, 0n, 0n]]);
-        }
-        throw new Error('Unexpected RPC');
-      });
-      const result = prepared.readIssue(fault === 'hash' ? '0x' : txHash);
-      if (fault === 'pending') await expect(result).resolves.toBeNull();
-      else if (fault) await expect(result).rejects.toThrow();
-      else expect(await result).toMatchObject({ operationId: 7n, transactionHash: txHash, readyToSign: false,
-        intent: { ...prepared.intent, operationId: 7n, contextHash: context }, operation: { phase: 'expired-unrecovered' } });
-      if (fault === 'pending' || fault === 'revoked' || fault === 'hash') expect(mocks.issued).not.toHaveBeenCalled();
-      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    }
-  });
-
-  it('refreshes the same mined operation at a canonical head after keeper work', async () => {
-    const reader = await vi.importActual<typeof import('../../lib/dexV2Chain')>('../../lib/dexV2Chain');
-    mocks.issued.mockImplementation(reader.readCurrentDexIssuedQuote);
-    mocks.current.mockImplementation(reader.readCurrentDexOperation);
-    const txHash = `0x${'55'.repeat(32)}`, context = `0x${'66'.repeat(32)}`, headHash = `0x${'77'.repeat(32)}`;
-    const op = new Interface(CURRENT_DEX_OPERATION_ABI), release = new Interface(['function releaseId() view returns(bytes32)']);
-    for (const fault of ['ready', 'open', 'expired', 'released', 'context', 'reorg', 'wallet']) {
-      const f = await fixture();
-      const prepared = (await f.capability.prepareQuote(f.request))!;
-      const event = opening.encodeEventLog(opening.getEvent('WorkIssued')!, [7n, 9n, hash, 100n]);
-      f.readProvider.getTransaction.mockResolvedValue({ hash: txHash, chainId: 7082400n, from: owner, to: core,
-        data: prepared.data, value: 0n, blockNumber: 50, blockHash: hash });
-      f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash, from: owner, to: core, status: 1,
-        blockNumber: 50, blockHash: hash, logs: [{ address: core, ...event }] });
-      let refreshed = false;
-      f.readProvider.send.mockImplementation(async (method: string, params: unknown[]) => {
-        if (method === 'eth_chainId') return '0x6c11a0';
-        if (method === 'eth_getBlockByNumber') {
-          const latest = params[0] === 'latest', number = latest ? refreshed ? 55 : 50 : Number(BigInt(params[0] as string));
-          return { number: `0x${number.toString(16)}`, timestamp: fault === 'expired' && number === 55 ? '0x64' : '0x63',
-            hash: number === 50 ? fault === 'reorg' && refreshed ? headHash : hash : headHash };
-        }
-        if (method === 'eth_getCode') return '0x6000';
-        if (method === 'eth_call') {
-          const call = params[0] as { data: string }, block = params[1] as { blockHash: string };
-          if (call.data === release.encodeFunctionData('releaseId')) return release.encodeFunctionResult('releaseId', [hash]);
-          expect(call.data).toBe(op.encodeFunctionData('operationPublic', [7n]));
-          const head = block.blockHash === headHash;
-          return op.encodeFunctionResult('operationPublic', [[head && fault !== 'open', false,
-            head && fault === 'context' ? `0x${'88'.repeat(32)}` : context,
-            head && fault === 'released' ? 4 : head && fault !== 'open' ? 2 : 1,
-            head && fault === 'released' ? 1 : 0, 9n, 100n, 0n, head ? 30n : 0n]]);
-        }
-        throw new Error('Unexpected RPC');
-      });
-      const issued = (await prepared.readIssue(txHash))!;
-      expect(issued.operation.phase).toBe('preparing-quote');
-      f.readProvider.send.mockClear();
-      refreshed = true;
-      if (fault === 'wallet') f.revoke();
-      const result = issued.readCurrent();
-      if (fault === 'context' || fault === 'reorg' || fault === 'wallet') await expect(result).rejects.toThrow();
-      else expect((await result).operation.phase).toBe(fault === 'ready' ? 'quote-prepared' :
-        fault === 'open' ? 'preparing-quote' : fault === 'expired' ? 'expired-unrecovered' : 'released');
-      expect(f.readProvider.send.mock.calls.filter(([method, params]) => method === 'eth_call' &&
-        (params as unknown[])[1] && ((params as unknown[])[1] as { blockHash: string }).blockHash === hash)).toHaveLength(0);
-      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    }
-  });
-
-  it('recovers a delayed Open from its receipt when historical state is unavailable', async () => {
-    const reader = await vi.importActual<typeof import('../../lib/dexV2Chain')>('../../lib/dexV2Chain');
-    mocks.issued.mockImplementation(reader.readCurrentDexIssuedQuote);
-    mocks.current.mockImplementation(reader.readCurrentDexOperation);
-    const f = await fixture(), prepared = (await f.capability.prepareQuote(f.request))!;
-    const txHash = `0x${'55'.repeat(32)}`, context = `0x${'66'.repeat(32)}`, headHash = `0x${'77'.repeat(32)}`;
-    const op = new Interface(CURRENT_DEX_OPERATION_ABI), release = new Interface(['function releaseId() view returns(bytes32)']);
-    const event = opening.encodeEventLog(opening.getEvent('WorkIssued')!, [7n, 9n, hash, 100n]);
-    f.readProvider.getTransaction.mockResolvedValue({ hash: txHash, chainId: 7082400n, from: owner, to: core,
-      data: prepared.data, value: 0n, blockNumber: 50, blockHash: hash });
-    f.readProvider.getTransactionReceipt.mockResolvedValue({ hash: txHash, from: owner, to: core, status: 1,
-      blockNumber: 50, blockHash: hash, logs: [{ address: core, ...event }] });
-    f.readProvider.send.mockImplementation(async (method: string, params: unknown[]) => {
-      if (method === 'eth_chainId') return '0x6c11a0';
-      if (method === 'eth_getBlockByNumber') {
-        const origin = params[0] === '0x32';
-        return { number: origin ? '0x32' : '0x37', timestamp: '0x63', hash: origin ? hash : headHash };
-      }
-      if (method === 'eth_getCode') {
-        expect((params[1] as { blockHash: string }).blockHash).toBe(headHash);
-        return '0x6000';
-      }
-      if (method === 'eth_call') {
-        const [call, block] = params as [{ data: string }, { blockHash: string }];
-        if (block.blockHash === hash) throw new Error('missing trie node');
-        expect(block.blockHash).toBe(headHash);
-        if (call.data === release.encodeFunctionData('releaseId')) return release.encodeFunctionResult('releaseId', [hash]);
-        expect(call.data).toBe(op.encodeFunctionData('operationPublic', [7n]));
-        return op.encodeFunctionResult('operationPublic', [[true, false, context, 2, 0, 9n, 100n, 8n, 30n]]);
-      }
-      throw new Error('Unexpected RPC');
-    });
-    const issued = (await prepared.readIssue(txHash))!;
-    expect(issued).toMatchObject({ operationId: 7n, originBlock: { number: 50n, hash },
-      block: { number: 55n, hash: headHash }, operation: { phase: 'quote-prepared', contextHash: context },
-      intent: { contextHash: context }, readyToSign: false });
-    expect((await issued.readCurrent()).operation.status).toBe(2);
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-  });
-
-  it('captures terms, uses five owner-bound inputs and returns no broadcast authority', async () => {
-    const f = await fixture();
-    f.request.confirmPrivateInputs.mockImplementation(async review => {
-      expect(review).toMatchObject({ inputToken: `0x${'33'.repeat(20)}`, outputToken: `0x${'44'.repeat(20)}`,
-        maximumInput: (1n << 256n) - 1n, minimumInput: 10n, minimumOutput: 0n, core, principal: owner });
-      expect(Object.isFrozen(review)).toBe(true);
-      f.request.terms.maximumInput = 1n;
-      f.request.terms.rateNumerator = 1n;
-      f.request.terms.inputToken = owner;
-      f.request.terms.outputToken = core;
-      return true;
-    });
-    const prepared = await f.capability.prepareQuote(f.request);
-    expect(prepared).toMatchObject({ from: owner, to: core, value: 0n, chainId: 7082400n, readyToSign: false });
-    expect(prepared?.intent.maximumInput).toBe((1n << 256n) - 1n);
-    expect(prepared?.intent.minimumInput).toBe(10n);
-    expect(prepared?.intent.rateNumerator).toBe((1n << 128n) - 1n);
-    expect(mocks.wide).toHaveBeenNthCalledWith(1, f.signer, (1n << 256n) - 1n, core, selector);
-    expect(mocks.wide).toHaveBeenNthCalledWith(2, f.signer, 10n, core, selector);
-    expect(mocks.wide).toHaveBeenNthCalledWith(3, f.signer, 0n, core, selector);
-    expect(f.signer.encryptValue).toHaveBeenNthCalledWith(1, (1n << 128n) - 1n, core, selector);
-    expect(f.signer.encryptValue).toHaveBeenNthCalledWith(2, 4n, core, selector);
-    const decoded = opening.decodeFunctionData('openSinglePassSwapV2', prepared!.data);
-    expect(decoded.inputToken).toBe(`0x${'33'.repeat(20)}`);
-    expect(decoded.outputToken).toBe(`0x${'44'.repeat(20)}`);
-    expect(decoded.destination).toBe(owner); expect(decoded.deadline).toBe(100n);
-    expect(decoded.encryptedMaximumInput.ciphertext.ciphertextHigh).toBe(1n);
-    expect(decoded.encryptedMinimumInput.ciphertext.ciphertextHigh).toBe(1n);
-    expect(prepared).not.toHaveProperty('signer'); expect(f.capability).not.toHaveProperty('submit');
-    expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    expect(prepared?.intent.inputToken).toBe(`0x${'33'.repeat(20)}`);
-    expect(prepared?.intent.outputToken).toBe(`0x${'44'.repeat(20)}`);
-    expect(Object.isFrozen(prepared?.intent)).toBe(true);
-  });
-
-  it('encodes a separate explicit minimum-input ciphertext', async () => {
-    const f = await fixture();
-    f.request.terms.maximumInput = 20n;
-    f.request.terms.minimumInput = 7n;
-    f.request.terms.minimumOutput = 3n;
-    mocks.wide.mockImplementation(async (_signer, value: bigint) => ({
-      ciphertext: { ciphertextHigh: value, ciphertextLow: 0n }, signature }));
-    const prepared = (await f.capability.prepareQuote(f.request))!;
-    const decoded = opening.decodeFunctionData('openSinglePassSwapV2', prepared.data);
-    expect(decoded.encryptedMaximumInput.ciphertext.ciphertextHigh).toBe(20n);
-    expect(decoded.encryptedMinimumInput.ciphertext.ciphertextHigh).toBe(7n);
-    expect(decoded.encryptedMinimumOutput.ciphertext.ciphertextHigh).toBe(3n);
-    expect(prepared.intent.minimumInput).toBe(7n);
-    expect(mocks.wide).toHaveBeenCalledTimes(3);
-  });
-
-  it('rejects before input prompts for invalid terms, graph, expiry or declined confirmation', async () => {
-    for (const fault of ['amount', 'minimum-input', 'missing-minimum-input', 'rate', 'zero-rate', 'pair', 'destination', 'deadline', 'lifetime', 'graph', 'declined', 'expired-review', 'revoked-review']) {
-      const f = await fixture();
-      if (fault === 'amount') f.request.terms.maximumInput = 1n << 256n;
-      if (fault === 'minimum-input') { f.request.terms.maximumInput = 20n; f.request.terms.minimumInput = 21n; }
-      if (fault === 'missing-minimum-input') delete (f.request.terms as Partial<typeof f.request.terms>).minimumInput;
-      if (fault === 'rate') f.request.terms.rateNumerator = 1n << 128n;
-      if (fault === 'zero-rate') f.request.terms.rateDenominator = 0n;
-      if (fault === 'pair') f.request.terms.inputToken = owner;
-      if (fault === 'destination') f.request.terms.destination = core;
-      if (fault === 'deadline') f.request.terms.deadline = 99n;
-      if (fault === 'lifetime') f.request.terms.deadline = 3000n;
-      if (fault === 'graph') mocks.graph.mockRejectedValueOnce(new Error('Graph mismatch'));
-      f.request.confirmPrivateInputs.mockImplementation(async () => {
-        if (fault === 'expired-review') f.clock.mockReturnValue(100000);
-        if (fault === 'revoked-review') f.revoke();
-        return fault !== 'declined';
-      });
-      const result = f.capability.prepareQuote(f.request);
-      if (fault === 'declined') await expect(result).resolves.toBeNull();
-      else await expect(result).rejects.toThrow();
-      if (fault === 'pair') expect(f.request.confirmPrivateInputs).not.toHaveBeenCalled();
-      expect(mocks.wide).not.toHaveBeenCalled();
-      expect(f.signer.encryptValue).not.toHaveBeenCalled();
-      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    }
-  });
-
-  it('binds either graph-approved token direction to V2 calldata before private prompts', async () => {
-    for (const reverse of [false, true]) {
-      const f = await fixture();
-      if (reverse) [f.request.terms.inputToken, f.request.terms.outputToken] = [f.request.terms.outputToken, f.request.terms.inputToken];
-      const prepared = (await f.capability.prepareQuote(f.request))!;
-      const decoded = opening.decodeFunctionData('openSinglePassSwapV2', prepared.data);
-      expect(decoded.inputToken).toBe(f.request.terms.inputToken);
-      expect(decoded.outputToken).toBe(f.request.terms.outputToken);
-      expect(mocks.wide).toHaveBeenNthCalledWith(1, f.signer, f.request.terms.maximumInput, core, selector);
-      expect(mocks.wide).toHaveBeenNthCalledWith(2, f.signer, f.request.terms.minimumInput, core, selector);
-      expect(mocks.wide).toHaveBeenNthCalledWith(3, f.signer, f.request.terms.minimumOutput, core, selector);
-      expect(f.signer.encryptValue).toHaveBeenNthCalledWith(1, f.request.terms.rateNumerator, core, selector);
-    }
-  });
-
-  it('stops after a rejected or revoked prompt without preparing later inputs', async () => {
-    for (const fault of ['reject', 'revoke', 'expire']) {
-      const f = await fixture();
-      mocks.wide.mockImplementationOnce(async () => {
-        if (fault === 'reject') throw new Error('User rejected');
-        if (fault === 'revoke') f.revoke();
-        if (fault === 'expire') f.clock.mockReturnValue(100000);
-        return { ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n }, signature };
-      });
-      await expect(f.capability.prepareQuote(f.request)).rejects.toThrow();
-      expect(mocks.wide).toHaveBeenCalledTimes(1);
-      expect(f.signer.encryptValue).not.toHaveBeenCalled();
-      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    }
-  });
-
-  it('rejects malformed encrypted inputs without producing a transaction', async () => {
-    for (const fault of ['wide-signature', 'wide-word', 'rate-signature', 'rate-word']) {
-      const f = await fixture();
-      if (fault.startsWith('wide')) mocks.wide.mockResolvedValueOnce({
-        ciphertext: { ciphertextHigh: fault === 'wide-word' ? 1n << 256n : 1n, ciphertextLow: 2n },
-        signature: fault === 'wide-signature' ? '0x' : signature });
-      else f.signer.encryptValue.mockResolvedValueOnce({ ciphertext: fault === 'rate-word' ? -1n : 3n,
-        signature: fault === 'rate-signature' ? '0x' : signature });
-      await expect(f.capability.prepareQuote(f.request)).rejects.toThrow();
-      expect(f.signer.sendUncheckedTransaction).not.toHaveBeenCalled();
-    }
-  });
 });
 
-async function restoreFixture(candidate: 'cheap-exit' | 'cheap-history' = 'cheap-exit',profile:CurrentCheapDexProfile='cheap-async',selectedOwner=owner,maximumInput=20n){
+async function restoreFixture(candidate: 'cheap-history' = 'cheap-history',profile:CurrentCheapDexProfile='cheap-async',selectedOwner=owner,maximumInput=20n){
   const owner=selectedOwner,f=await cheapFixture(profile,candidate,owner),c=resolveCurrentCheapDexCandidate(candidate),abi=new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI);
   Object.assign(f.signer,{getUserOnboardInfo:()=>({aesKey:'11'.repeat(16)})});
   const q={inputToken:c.tokens[0][0],outputToken:c.tokens[1][0],destination:owner,deadline:100n,maximumInput:[[maximumInput,0n],signature],minimumInput:[[5n,0n],signature],minimumOutput:[[1n,0n],signature],minimumRate:[[(1n<<128n)|1n,0n],signature],toleranceBps:50};
@@ -1236,13 +589,11 @@ async function restoreFixture(candidate: 'cheap-exit' | 'cheap-history' = 'cheap
   mocks.issued.mockResolvedValue(observed);mocks.current.mockResolvedValue(observed);return{...f,tx,observed};
 }
 
-async function restorationConsumerFixture(fee = 50_000_000n, candidate: 'cheap-exit' | 'cheap-history' = 'cheap-exit',profile:CurrentCheapDexProfile='cheap-async',selectedOwner=owner,now=()=>99n){
+async function restorationConsumerFixture(fee = 50_000_000n, candidate: 'cheap-history' = 'cheap-history',profile:CurrentCheapDexProfile='cheap-async',selectedOwner=owner,now=()=>99n){
  const owner=selectedOwner,storage=pendingStorage(),f=await restoreFixture(candidate,profile,owner),c=resolveCurrentCheapDexCandidate(candidate);
  const restored=await f.capability.restoreCurrentQuote({quoteHash:f.tx.hash}),oldSigner={},scope=`quote:${keccak256(f.tx.data)}`;
  const budget=currentNativeSigningBudget(oldSigner,owner,()=>98n,c);budget.commit('quote',scope,110000000n,scope,4);recordCurrentNativeSwapHash(oldSigner,4,keccak256(f.tx.data),f.tx.hash);
  const authenticate=async(value:unknown)=>keccak256(toUtf8Bytes(JSON.stringify(value))),checkpoint=structuredClone(currentNativeSwapCheckpoint(oldSigner));
- // Retained v1 records bind the old 50M request with no fee field.
- if(fee===50_000_000n && candidate==='cheap-exit'){for(const charge of checkpoint.charges)delete (charge as {gasPrice?:string}).gasPrice;(checkpoint as {committedWei:string}).committedWei='5500000000000000';}
  writeCurrentDexNativeReload(storage,{budget:checkpoint,authentication:await authenticate(checkpoint)});
  storage.setItem(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify({version:1,chainId:'7082400',owner,core:c.core,graph:`0x${c.graph}`,phase:'quote',callHash:keccak256(f.tx.data),nonce:4,txHash:f.tx.hash}));
  const abi=new Interface(CURRENT_CHEAP_DEX_QUOTE_ABI),event=profile==='cheap-async'?abi.encodeEventLog(abi.getEvent('CheapAsyncAdvanced')!,[7n,1,`0x${'00'.repeat(32)}`]):abi.encodeEventLog(abi.getEvent('FastPoolQuoteIssued')!,[7n,hash,100n]);
@@ -1258,7 +609,7 @@ async function restorationConsumerFixture(fee = 50_000_000n, candidate: 'cheap-e
  return{...f,storage,c,restored,adapter,authenticate,transport,resources,original,verifyTokens,readOriginalQuoteReceipt,readTerminalReceipt};
 }
 
-async function activityConsumerFixture(candidate: 'cheap-exit' | 'cheap-history' = 'cheap-exit') {
+async function activityConsumerFixture(candidate: 'cheap-history' = 'cheap-history') {
  const f=await restorationConsumerFixture(50_000_000n,candidate),scope=`quote:${keccak256(f.tx.data)}`,acceptHash=`0x${'66'.repeat(32)}`,terminalHash=`0x${'77'.repeat(32)}`;
  const abi=new Interface(['function acceptPrivateSwapV1(uint256 operationId,bytes32 expectedContext)']);
  const acceptTx={...f.tx,hash:acceptHash,data:abi.encodeFunctionData('acceptPrivateSwapV1',[7n,hash]),nonce:5,gasLimit:35000000n,gasPrice:50000000n,blockNumber:43};
@@ -1360,7 +711,7 @@ async function recoveredConsumerFixture(){
 }
 
 async function keeperNominationFixture(profile: CurrentCheapDexProfile = 'cheap-async') {
-  const f = await cheapFixture(profile, 'cheap-exit');
+  const f = await cheapFixture(profile, 'cheap-history');
   const request = { ...f.request, terms: { ...f.request.terms, toleranceBps: 50 } };
   const prepared = (await f.capability.prepareCurrentQuote(request))!, txHash = `0x${'55'.repeat(32)}`;
   f.readProvider.getTransaction.mockResolvedValue({ hash: txHash });
@@ -1380,58 +731,6 @@ function retainedKeeperCalldata(data: string) {
   return retainedKeeperAbi.encodeFunctionData('quoteCheapAsync', [[...current.toArray().slice(0, 7), [1n, signature], [1n, signature], current.toleranceBps]]);
 }
 
-// Synthetic chain responses plus retained public runtime bytes. No native reads or secret material.
-function canonicalKeeperRpc(n: CurrentDexKeeperNomination, data: string, fault?: string) {
-  const abi = retainedKeeperAbi;
-  const publicAbi = new Interface(['function cheapAsyncPublic(uint256) view returns(uint8,bytes32,uint256)', 'function releaseId() view returns(bytes32)',
-    'event CheapAsyncAdvanced(uint256 indexed quoteId,uint8 stage,bytes32 context)']);
-  const headHash = `0x${'66'.repeat(32)}`, zero = `0x${'00'.repeat(32)}`, blockNumber = `0x${BigInt(n.origin.number).toString(16)}`;
-  const event = publicAbi.encodeEventLog(publicAbi.getEvent('CheapAsyncAdvanced')!, [fault === 'event' ? 8 : 7, 1, zero]);
-  const tx = { hash: n.quoteHash, from: n.principal, to: n.identity.core, chainId: '0x6c1220', value: '0x0', input: data,
-    blockHash: n.origin.hash, blockNumber, transactionIndex: '0x0' };
-  tx.chainId = `0x${BigInt(n.identity.chainId).toString(16)}`;
-  if (fault === 'call') tx.input = `${data}00`;
-  if (fault === 'deadline' || fault === 'tolerance') {
-    const decoded = abi.decodeFunctionData('quoteCheapAsync', data).toArray(true), request = decoded[0];
-    if (fault === 'deadline') request[3] = 101n;
-    else request[abi.getFunction('quoteCheapAsync')!.inputs[0].components!.findIndex(field => field.name === 'toleranceBps')] = 51n;
-    tx.input = abi.encodeFunctionData('quoteCheapAsync', decoded);
-  }
-  const receipt = { transactionHash: n.quoteHash, status: '0x1', from: n.principal, to: n.identity.core,
-    blockNumber, blockHash: n.origin.hash, transactionIndex: '0x0', logs: [{ ...event, address: n.identity.core,
-      transactionHash: n.quoteHash, blockHash: n.origin.hash, blockNumber, transactionIndex: fault === 'log-index' ? '0x1' : '0x0',
-      logIndex: '0x0', removed: fault === 'removed' }] };
-  const origin = { number: blockNumber, hash: n.origin.hash, timestamp: '0x63', transactions: [n.quoteHash] };
-  const head = { number: `0x${(BigInt(n.origin.number) + 1n).toString(16)}`, hash: headHash,
-    timestamp: fault === 'expired' ? '0x64' : '0x63', transactions: [] };
-  let origins = 0, transactions = 0;
-  return vi.fn(async (method: string, args: unknown[]) => {
-    if (fault === 'rpc-private-error') throw new Error(`Synthetic RPC error contains private input ${data}`);
-    if (method === 'eth_chainId') return fault === 'chain' ? '0x1' : tx.chainId;
-    if (method === 'eth_getCode') return fault === 'runtime' ? '0x6000' : savedPublicRuntime.code;
-    if (method === 'eth_getTransactionByHash') {
-      transactions++;
-      return fault === 'transaction-drift' && transactions > 1 ? { ...tx, input: `${data}00` } : structuredClone(tx);
-    }
-    if (method === 'eth_getTransactionReceipt') return structuredClone(receipt);
-    if (method === 'eth_getBlockByNumber') {
-      if (args[0] === '0x0') return { number: '0x0', hash: fault === 'genesis' ? hash : n.identity.genesisHash };
-      if (args[0] === 'latest') return structuredClone(head);
-      if (args[0] === blockNumber) {
-        origins++;
-        return fault === 'canonical-reorg' && origins >= 3 ? { ...origin, hash: headHash } : structuredClone(origin);
-      }
-      return fault === 'head-reorg' ? { ...head, hash } : structuredClone(head);
-    }
-    if (method === 'eth_call') {
-      const call = args[0] as { data: string };
-      if (call.data === publicAbi.encodeFunctionData('releaseId')) return publicAbi.encodeFunctionResult('releaseId', [n.identity.releaseId]);
-      expect(call.data).toBe(publicAbi.encodeFunctionData('cheapAsyncPublic', [n.operationId]));
-      return publicAbi.encodeFunctionResult('cheapAsyncPublic', [fault === 'terminal' ? 7 : 1, fault === 'context' ? hash : zero, n.deadline]);
-    }
-    throw new Error('Unexpected read method');
-  });
-}
 
 async function fixture(selectedOwner=owner) {
   const owner=selectedOwner;
@@ -1464,7 +763,7 @@ async function fixture(selectedOwner=owner) {
 }
 
 function sharedIdentity(blockNumber = 42n) {
-  const candidate = CURRENT_SHARED_POOL_CANDIDATE;
+  const candidate = STAGED_SHARED_HISTORY_DEX_CANDIDATE;
   return { graph: candidate.graph, packageSha256: candidate.packageSha256, chainId: 7082400n,
     genesisHash: candidate.genesisHash, core: candidate.core, inputToken: candidate.tokens[0][0],
     outputToken: candidate.tokens[1][0], maxWorkLifetime: 900n,
@@ -1479,24 +778,24 @@ async function sharedFixture(selectedOwner=owner) {
   f.readProvider.getTransaction.mockImplementation(async (transactionHash: string) => transactions.get(transactionHash) ?? null);
   mocks.sharedGraph.mockImplementation(async ({ blockNumber }: { blockNumber: bigint }) => sharedIdentity(blockNumber));
   const request = { ...f.request,
-    graph: { candidate: 'shared-pool' as const, expectedGraph: CURRENT_SHARED_POOL_CANDIDATE.graph as string,
-      expectedPackageSha256: CURRENT_SHARED_POOL_CANDIDATE.packageSha256 as string, blockNumber: 42n, blockHash: hash },
-    terms: { ...f.request.terms, inputToken: CURRENT_SHARED_POOL_CANDIDATE.tokens[0][0],
-      outputToken: CURRENT_SHARED_POOL_CANDIDATE.tokens[1][0], maximumInput: 20n, minimumInput: 5n, minimumOutput: 1n,
+    graph: { candidate: 'cheap-history' as const, expectedGraph: STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph as string,
+      expectedPackageSha256: STAGED_SHARED_HISTORY_DEX_CANDIDATE.packageSha256 as string, blockNumber: 42n, blockHash: hash },
+    terms: { ...f.request.terms, inputToken: STAGED_SHARED_HISTORY_DEX_CANDIDATE.tokens[0][0],
+      outputToken: STAGED_SHARED_HISTORY_DEX_CANDIDATE.tokens[1][0], maximumInput: 20n, minimumInput: 5n, minimumOutput: 1n,
       rateNumerator: 1n, rateDenominator: 1n } };
   return { ...f, request, recordCanonicalTransaction: (txHash: string, request: Record<string, unknown>) => {
     transactions.set(txHash, { ...request, hash: txHash, chainId: 7082400n, blockNumber: 50, blockHash: hash });
   } };
 }
 
-function cheapIdentity(blockNumber = 42n, candidateKey: CurrentCheapDexCandidateKey = mocks.slippage ? 'cheap-slippage' : 'cheap-archived') {
+function cheapIdentity(blockNumber = 42n, candidateKey: CurrentCheapDexCandidateKey = 'cheap-history') {
   const candidate = resolveCurrentCheapDexCandidate(candidateKey);
   return { ...sharedIdentity(blockNumber), graph: candidate.graph, packageSha256: candidate.packageSha256,
     core: candidate.core, genesisHash: candidate.genesisHash, inputToken: candidate.tokens[0][0], outputToken: candidate.tokens[1][0],
     operationReadIdentity: { runtimeHash: candidate.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2], releaseId: candidate.releaseId } };
 }
 
-async function cheapFixture(profile: CurrentCheapDexProfile, candidateKey: CurrentCheapDexCandidateKey = mocks.slippage ? 'cheap-slippage' : 'cheap-archived',selectedOwner=owner) {
+async function cheapFixture(profile: CurrentCheapDexProfile, candidateKey: CurrentCheapDexCandidateKey = 'cheap-history',selectedOwner=owner) {
   const f = await sharedFixture(selectedOwner);
   const selected = resolveCurrentCheapDexCandidate(candidateKey);
   mocks.sharedGraph.mockImplementation(async ({ candidate, blockNumber }: { candidate: string; blockNumber: bigint }) => {

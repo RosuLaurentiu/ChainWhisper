@@ -14,12 +14,6 @@ import { makeHistoryFixture, HISTORY_FIXTURE_DAY } from '../../../../tests/fixtu
 
 const hooks = vi.hoisted(() => ({ index: 0, refIndex: 0, states: [] as unknown[], refs: [] as { current: unknown }[], confirm: vi.fn(), allowNative: false }));
 // Only local capability wiring tests may pass the hold. The default uses the real gate.
-vi.mock('../../../lib/dexV2Deployment', async original => {
-  const actual = await original<typeof import('../../../lib/dexV2Deployment')>();
-  return { ...actual, assertCurrentCheapDexNativeAdmission: (value: Parameters<typeof actual.assertCurrentCheapDexNativeAdmission>[0]) => {
-    if (!hooks.allowNative) actual.assertCurrentCheapDexNativeAdmission(value);
-  } };
-});
 vi.mock('../../../lib/currentDexC1SwapPolicy', async original => {
   const actual = await original<typeof import('../../../lib/currentDexC1SwapPolicy')>();
   return { ...actual, assertCurrentAppPoolAuthority: (graph: string, scope: Parameters<typeof actual.assertCurrentAppPoolAuthority>[1]) => {
@@ -38,7 +32,7 @@ type Props = { children?: ReactNode; onClick?: () => void; disabled?: boolean; r
 const elements = (node: ReactNode): ReactElement<Props>[] => Array.isArray(node) ? node.flatMap(elements) : isValidElement<Props>(node) ? [node, ...elements(node.props.children)] : [];
 const text = (node: ReactNode): string => Array.isArray(node) ? node.map(text).join('') : isValidElement<Props>(node) ? text(node.props.children) : typeof node === 'string' || typeof node === 'number' ? String(node) : '';
 const owner = `0x${'22'.repeat(20)}`;
-describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s prepared consumers', key => {
+describe.each(['cheap-history'] as const)('%s prepared consumers', key => {
 const candidate = resolveCurrentCheapDexCandidate(key);
 function fixture() {
   vi.stubGlobal('window', { sessionStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() } });
@@ -334,13 +328,12 @@ describe('prepared Pool creation view', () => {
     await vi.waitFor(() => expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
     expect(f.getPool).not.toHaveBeenCalled(); expect(f.getSender).toHaveBeenCalledTimes(key==='cheap-history'?1:0); expect(f.request).not.toHaveBeenCalled(); expect(hooks.confirm).not.toHaveBeenCalled();
   });
-  it.each(['pair', 'candidate', 'owner'] as const)('hides an old private preview after %s changes', change => {
+  it.each(['pair', 'owner'] as const)('hides an old private preview after %s changes', change => {
     const f = fixture();
     hooks.states[9] = { scope: hooks.refs[2].current, value: { amounts: { operation: 'add', used0: 1234567n, used1: 2345678n,
       unused0: 0n, unused1: 0n, mintedShares: 17n, ownedShares: 17n, toleranceN: 1n, toleranceD: 200n } } };
     expect(text(f.render())).toContain('1.234567');
     if (change === 'pair') f.props.selectedPair = ['BCN', 'HBR'];
-    if (change === 'candidate') f.props.candidateKey = 'cheap-current';
     if (change === 'owner') f.props.sharedWalletSession = { ...f.props.sharedWalletSession, walletAddress: `0x${'33'.repeat(20)}` };
     expect(text(f.render())).not.toContain('1.234567');
     expect(elements(f.render()).some(element => element.props['aria-label'] === 'Authenticated Pool preview')).toBe(false);

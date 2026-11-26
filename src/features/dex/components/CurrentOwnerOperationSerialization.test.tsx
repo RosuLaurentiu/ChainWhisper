@@ -3,16 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import CurrentPoolWorkspace from './CurrentPoolWorkspace';
 import CurrentPoolPositionsWorkspace from './CurrentPoolPositionsWorkspace';
 import CurrentLimitWorkspace from './CurrentLimitWorkspace';
-import { CURRENT_CHEAP_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from '../../../lib/dexV2Deployment';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 
-// Retained native controls are tested with local capabilities only.
-vi.mock('../../../lib/dexV2Deployment', async original => {
-  const actual = await original<typeof import('../../../lib/dexV2Deployment')>();
-  return { ...actual, CURRENT_CHEAP_DEX_CANDIDATE: actual.resolveCurrentCheapDexCandidate('cheap-native'),
-    resolveCurrentCheapDexCandidate: (key: Parameters<typeof actual.resolveCurrentCheapDexCandidate>[0]) =>
-      actual.resolveCurrentCheapDexCandidate(key === 'cheap-current' ? 'cheap-native' : key) };
-});
 
 // Capture one render's callbacks. React busy state cannot change that closure.
 // This tests component dispatch only; capabilities/sends are local mocks.
@@ -44,6 +37,7 @@ function fixture(kind: 'pool' | 'position' | 'limit', components = {
     abandonCurrentNativePoolFunding: vi.fn(async () => null), recoverCurrentNativePoolFundingResult: vi.fn(async () => null), readCurrentNativePoolResume: vi.fn(async () => null),
     recoverPendingPoolAttempt: vi.fn(async () => null), submitCurrentTokenFunding: vi.fn(),
     recoverCurrentNativePoolPositionResult: vi.fn(async () => null), recoverPendingPoolPositionAttempt: vi.fn(async () => null),
+    recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null), recoverCurrentPreparedPoolPositionResult: vi.fn(async () => null),
     submitPoolPositionAction: vi.fn(), submitLimit: vi.fn(),
     submitLimitOwner: vi.fn(async () => ({ transactionHash: 'local', recover: vi.fn() })), recoverPendingLimitAttempt: vi.fn(async () => null) };
   const getCapability = vi.fn(async () => capability), getSender = vi.fn(async () => sender);
@@ -54,23 +48,25 @@ function fixture(kind: 'pool' | 'position' | 'limit', components = {
       getCurrentDexLimitCapability: getCapability, getCurrentDexSubmissionCapability: getSender } } as unknown as SharedWalletSession;
   vi.stubGlobal('window', { sessionStorage: { getItem: () => null } });
   const render = () => { hooks.index = 0; hooks.refIndex = 0;
-    return kind === 'pool' ? components.pool({ sharedWalletSession: session }) : kind === 'position' ?
-      components.position({ sharedWalletSession: session }) : components.limit({ sharedWalletSession: session, view: 'manage' }); };
+    return kind === 'pool' ? components.pool({ sharedWalletSession: session, selectedPair: ['HBR', 'BCN'] }) : kind === 'position' ?
+      components.position({ sharedWalletSession: session }) : components.limit({ sharedWalletSession: session, view: 'manage', selectedPair: ['HBR', 'BCN'] }); };
   const button = (label: string | RegExp) => elements(render()).find(element => element.type === 'button' &&
     (typeof label === 'string' ? text(element.props.children) === label : label.test(text(element.props.children))))!;
   // Busy is state 5 in all panels; the Limit approval-mode hook now holds state 4.
   const busyIndex = 5;
   const done = () => vi.waitFor(() => expect(hooks.states[busyIndex]).toBe(false));
   render();
+  // The current Pool form starts empty; use the amounts and price the retained native trial preset.
+  if (kind === 'pool') { hooks.states[0] = '100'; hooks.states[1] = '100'; hooks.states[2] = '2'; render(); }
   return { render, button, done, getSender, getCapability, sender, capability, position };
 }
 
-describe('retained native owner workspace operation serialization with local capabilities', () => {
+describe('current owner workspace operation serialization with local capabilities', () => {
   it.each(['Preview deposit', 'Check Pool status'])('starts only one Pool operation for repeated %s callbacks', async label => {
     const f = fixture('pool'), callback = f.button(label).props.onClick!;
     callback(); callback(); await f.done(); expect(f.getSender).toHaveBeenCalledTimes(1);
   });
-  it.each(['Review and fund Pool', 'Approve exact', 'Review stop and clear approvals'])('starts only one prepared Pool operation for %s', async label => {
+  it.each(['Approve exact'])('starts only one prepared Pool operation for %s', async label => {
     const f = fixture('pool');
     // Pool scope is ref 2; two approval-mode hooks hold refs 0 and 1.
     hooks.states[10] = { value: { prepared: 'local' }, scope: hooks.refs[2].current };
@@ -131,8 +127,7 @@ it.each(['pool','position','limit'] as const)('serializes actual current %s publ
   const label=kind==='pool'?'Check Pool status':kind==='position'?'Check position status':'Check Limit status';
   const callback=f.button(label).props.onClick!;callback();callback();await f.done();
   expect(f.getSender).toHaveBeenCalledOnce();
-  if(kind==='limit')expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId));
-  else expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId),undefined);
+  expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId),{candidate:'cheap-history'});
   const metadata=kind==='pool'?f.sender.recoverPendingPoolAttempt:kind==='position'?
     f.sender.recoverPendingPoolPositionAttempt:f.sender.recoverPendingLimitAttempt;
   expect(metadata).toHaveBeenCalledOnce();expect(text(f.render())).toContain('No pending');

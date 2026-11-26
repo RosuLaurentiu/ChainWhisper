@@ -6,7 +6,7 @@ import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI,
   decodeCurrentDexQuoteIssue, encodeCurrentDexQuoteRequest, type CurrentCheapDexProfile } from './currentDexOperation';
 import { buildCurrentDexQuoteReview, CURRENT_DEX_ACCEPT_ABI, CURRENT_SLIPPAGE_DEX_ACCEPT_ABI,
   DEFAULT_CURRENT_DEX_SLIPPAGE_PERCENT, parseCurrentDexSlippagePercent, prepareCurrentDexAcceptance } from './currentDexQuoteReview';
-import { CURRENT_CHEAP_DEX_CANDIDATE, STAGED_QUOTE_SLIPPAGE_IDENTITY, currentCheapDexQuoteProtocol, resolveCurrentCheapDexCandidate, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
+import { currentCheapDexQuoteProtocol, resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission } from './dexV2Deployment';
 
 const graph = '../../../ChainWhisper Contracts V2/validation/candidates/quote-slippage-2026-10-03/graph-build-3/';
 const artifactBytes = readFileSync(new URL(`${graph}snapshot/contracts/dex/ChainWhisperDexCore.sol/ChainWhisperDexCore.json`, import.meta.url));
@@ -53,20 +53,12 @@ const reviewFixture = (profile: CurrentCheapDexProfile) => {
 };
 
 describe('new quote-slippage unsigned client codec', () => {
-  it('selects slippage from exact candidate identity and keeps the archived old trial isolated', () => {
-    const archived = resolveCurrentCheapDexCandidate('cheap-archived');
-    expect(currentCheapDexQuoteProtocol(archived)).toBeUndefined();
-    expect(currentCheapDexQuoteProtocol(STAGED_QUOTE_SLIPPAGE_IDENTITY)).toBe('quote-slippage');
+  it('selects current slippage while keeping native App admission held', () => {
+    const current = resolveCurrentCheapDexCandidate('cheap-history');
+    expect(currentCheapDexQuoteProtocol(current)).toBe('quote-slippage');
+    expect(() => rejectUnprovenNativeAdmission()).toThrow('native App submission admission');
     for (const key of ['graph', 'packageSha256', 'core'] as const) {
-      expect(() => currentCheapDexQuoteProtocol({ ...STAGED_QUOTE_SLIPPAGE_IDENTITY, [key]: archived[key] })).toThrow('graph, package and Core');
-    }
-  });
-  it('selects actual current d06 slippage while keeping its real native App admission held', () => {
-    expect(CURRENT_CHEAP_DEX_CANDIDATE).toBe(resolveCurrentCheapDexCandidate('cheap-d06'));
-    expect(currentCheapDexQuoteProtocol(CURRENT_CHEAP_DEX_CANDIDATE)).toBe('quote-slippage');
-    expect(() => assertCurrentCheapDexNativeAdmission(CURRENT_CHEAP_DEX_CANDIDATE)).toThrow('native App submission admission');
-    for (const key of ['graph', 'packageSha256', 'core'] as const) {
-      expect(() => currentCheapDexQuoteProtocol({ ...CURRENT_CHEAP_DEX_CANDIDATE, [key]: STAGED_QUOTE_SLIPPAGE_IDENTITY[key] })).toThrow('graph, package and Core');
+      expect(() => currentCheapDexQuoteProtocol({ ...current, [key]: key === 'core' ? addr(9) : '00'.repeat(32) })).toThrow();
     }
   });
   it.each(['fast-pool', 'cheap-async'] as const)('encodes the complete %s request against the independent contract ABI', profile => {

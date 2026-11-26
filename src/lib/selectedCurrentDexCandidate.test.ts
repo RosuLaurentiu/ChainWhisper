@@ -12,7 +12,7 @@ import { assertCurrentPoolFundingNativeAdmission } from './currentDexPoolSubmiss
 import { assertCurrentPoolPositionNativeAdmission } from './currentDexPoolPositionSubmission';
 import { selectCurrentDexCandidate, STAGED_SHARED_HISTORY_DEX_CANDIDATE as selected,
   isFixedCurrentDexCandidate } from './selectedCurrentDexCandidate';
-import { resolveCurrentCheapDexCandidate, currentCheapDexCandidateKey, assertCurrentCheapDexNativeAdmission } from './dexV2Deployment';
+import { resolveCurrentCheapDexCandidate, currentCheapDexCandidateKey, rejectUnprovenNativeAdmission } from './dexV2Deployment';
 import { resolveCurrentDexAppCandidate } from './currentDexAppScope';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { readCurrentDexDisplay } from './currentDexDisplay';
@@ -47,7 +47,7 @@ describe('fixed current App candidate selection', () => {
     expect(currentCheapDexCandidateKey(selected)).toBe('cheap-history'); expect(readCurrentDexDisplay(selected).pairs).toHaveLength(6);
     expect(CURRENT_BROWSER_DEX_GRAPH).toBe(selected.graph); expect(CURRENT_BROWSER_DEX_CORE).toBe(selected.core);
     expect(SHARED_RECEIPT_LIMIT_FILL_HISTORY_GRAPH).toBe(selected.graph);
-    expect(() => assertCurrentCheapDexNativeAdmission(selected)).toThrow('submission admission is absent');
+    expect(() => rejectUnprovenNativeAdmission()).toThrow('submission admission is absent');
     expect(isCurrentDexBrowserSigner({}, current.graph, current.core)).toBe(false);
     expect(currentNativeDexDailyPriceConfig(current)).toEqual({ status: 'inactive' });
     expect(() => currentCheapDexCandidateKey(oldHistory)).toThrow('reviewed candidate');
@@ -93,7 +93,6 @@ describe('fixed current App candidate selection', () => {
       expect(() => assertCurrentLimitNativeAdmission('cheap-history', 'limit-owner', action)).not.toThrow();
     }
     expect(() => assertCurrentLimitNativeAdmission('cheap-history', 'limit-owner')).toThrow();
-    expect(() => assertCurrentLimitNativeAdmission('cheap-prepared', 'limit-create')).toThrow();
   });
   it('rejects trial sends without a live browser lease before storage or wallet access', async () => {
     const storage = { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() }, transport = { send: vi.fn(), assertCurrent: vi.fn() };

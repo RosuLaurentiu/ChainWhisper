@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CurrentDexPrivateReceiptError } from '../../../lib/currentDexSubmission';
-import { checkCurrentFunding } from './CurrentTokenFundingControls';
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { resolveCurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
 import { CURRENT_SHARED_DEX_TOKENS } from '../../../lib/currentSharedDexTokenDistribution';
@@ -36,7 +35,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('selected swap funding adapter', () => {
   const owner = `0x${'11'.repeat(20)}`;
-  const make = (candidateKey: 'cheap-prepared' | 'cheap-exit') => {
+  const make = (candidateKey: 'cheap-history') => {
     const candidate = resolveCurrentCheapDexCandidate(candidateKey);
     const funds = { owner, core: candidate.core, graph: candidate.graph, packageSha256: candidate.packageSha256,
       privateFundsVerified: true, readyToSign: false, head: { number: 99n, hash: `0x${'22'.repeat(32)}` },
@@ -47,31 +46,22 @@ describe('selected swap funding adapter', () => {
     const sender = { readSharedSwapInputFunding, readSharedTokenFunding, readCurrentTokenFunding } as unknown as Parameters<typeof readCurrentSwapInputFunding>[0];
     return { funds, sender, readSharedSwapInputFunding, readSharedTokenFunding, readCurrentTokenFunding };
   };
-  it.each(['cheap-prepared', 'cheap-exit'] as const)('reads all four selected tokens through shared funding for %s', async candidateKey => {
+  it.each(['cheap-history'] as const)('reads all four selected tokens through shared funding for %s', async candidateKey => {
     const f = make(candidateKey);
     for (const [i, token] of CURRENT_SHARED_DEX_TOKENS.entries()) {
       const output = CURRENT_SHARED_DEX_TOKENS[(i + 1) % 4].address;
-      expect(await readCurrentSwapInputFunding(f.sender, candidateKey, owner, token.address, 0, output)).toEqual({ balance: BigInt(100 + i), allowance: BigInt(17 + i), block: f.funds.head });
+      expect(await readCurrentSwapInputFunding(f.sender, candidateKey, owner, token.address, output)).toEqual({ balance: BigInt(100 + i), allowance: BigInt(17 + i), block: f.funds.head });
       expect(f.readSharedSwapInputFunding).toHaveBeenLastCalledWith(token.address, output);
     }
     expect(f.readCurrentTokenFunding).not.toHaveBeenCalled(); expect(f.readSharedTokenFunding).not.toHaveBeenCalled();
     expect(f.readSharedSwapInputFunding).toHaveBeenCalledTimes(4);
   });
-  it('keeps the historical adapter on the historical candidate', async () => {
-    const f = make('cheap-exit'), historical = { balance: 7n, allowance: 5n, claimed: true,
-      block: { ...f.funds.head, timestamp: 1n, gasLimit: 200_000_000n }, tokenIndex: 1 as const,
-      token: resolveCurrentCheapDexCandidate('cheap-current').tokens[1][0], owner,
-      faucetAmount: 10_000n * 10n ** 18n, decimals: 18n, publicAmounts: false, encryptionAddress: owner };
-    const readCurrentTokenFunding = vi.fn(async () => historical);
-    expect(await readCurrentSwapInputFunding({ ...f.sender, readCurrentTokenFunding } as Parameters<typeof readCurrentSwapInputFunding>[0], 'cheap-current', owner, CURRENT_SHARED_DEX_TOKENS[0].address, 1, CURRENT_SHARED_DEX_TOKENS[1].address)).toBe(historical);
-    expect(readCurrentTokenFunding).toHaveBeenCalledWith(1); expect(f.readSharedTokenFunding).not.toHaveBeenCalled();
-  });
   it.each(['owner', 'core', 'graph', 'packageSha256', 'privateFundsVerified', 'readyToSign', 'decimals', 'balance', 'allowance'] as const)('rejects changed %s before Quote consumes shared funds', async field => {
-    const f = make('cheap-exit');
+    const f = make('cheap-history');
     if (field === 'decimals') f.funds.tokens[0].decimals = 18 as 6;
     else if (field === 'balance' || field === 'allowance') f.funds.tokens[0][field] = -1n;
     else Object.assign(f.funds, { [field]: field === 'privateFundsVerified' ? false : field === 'readyToSign' ? true : 'changed' });
-    await expect(readCurrentSwapInputFunding(f.sender, 'cheap-exit', owner, CURRENT_SHARED_DEX_TOKENS[0].address, 0, CURRENT_SHARED_DEX_TOKENS[1].address)).rejects.toThrow('identity or private state');
+    await expect(readCurrentSwapInputFunding(f.sender, 'cheap-history', owner, CURRENT_SHARED_DEX_TOKENS[0].address, CURRENT_SHARED_DEX_TOKENS[1].address)).rejects.toThrow('identity or private state');
     expect(f.readCurrentTokenFunding).not.toHaveBeenCalled();
   });
 });
@@ -100,7 +90,7 @@ describe('DexV2Page', () => {
       expect(html).not.toContain('dex-v2-content-grid dex-v2-management-grid');
     } finally { vi.unstubAllGlobals(); }
   });
-  it.each(['cheap-prepared', 'cheap-exit'] as const)('passes each selected market to the Limit view for %s', candidateKey => {
+  it.each(['cheap-history'] as const)('passes each selected market to the Limit view for %s', candidateKey => {
     for (const pair of readCurrentDexDisplay(resolveCurrentCheapDexCandidate(candidateKey)).pairs) {
       const selectedPair = pair.tokens.map(token => token.label) as [string, string];
       const markup = renderToStaticMarkup(<DexV2Page swapCandidate={candidateKey} selectedPair={selectedPair} />);
@@ -111,7 +101,7 @@ describe('DexV2Page', () => {
       expect(limit).not.toContain('Test token');
     }
   });
-  it.each(['cheap-prepared', 'cheap-exit'] as const)('keeps selected chart and swap tokens for %s without price history', candidateKey => {
+  it.each(['cheap-history'] as const)('keeps selected chart and swap tokens for %s without price history', candidateKey => {
     const markup = renderToStaticMarkup(<DexV2Page swapCandidate={candidateKey} selectedPair={['EMBR', 'ORBT']} />);
     expect(markup).toContain('Buy EMBR');
     expect(markup).toContain('<strong>You send</strong><small>ORBT</small>');
@@ -143,34 +133,6 @@ describe('DexV2Page', () => {
       expect(sender.recoverPendingCurrentCheapAttempt).not.toHaveBeenCalled();
       expect(capability).not.toHaveBeenCalled();
     });
-  it('reconciles canonical funding before reading private readiness', async () => {
-    const order: string[] = [];
-    const sender = { recoverPendingCurrentTokenFunding: vi.fn(async () => { order.push('canonical'); return { status: 'observed-mined' }; }),
-      readCurrentTokenFunding: vi.fn(async () => { order.push('private'); return { balance: 10n, allowance: 10n }; }) };
-    await expect(checkCurrentFunding(sender as never, 1, undefined, 'saved-hash')).resolves.toEqual({ balance: 10n, allowance: 10n });
-    expect(order).toEqual(['canonical', 'private']);
-    expect(sender.recoverPendingCurrentTokenFunding).toHaveBeenCalledWith('saved-hash');
-    expect(sender.readCurrentTokenFunding).toHaveBeenCalledWith(1);
-  });
-  it('does not replace a prepared private failure with public recovery', async () => {
-    const sender = { recoverPendingCurrentTokenFunding: vi.fn(), readCurrentTokenFunding: vi.fn() };
-    const recover = vi.fn().mockRejectedValue(new Error('Known private verification failure'));
-    await expect(checkCurrentFunding(sender as never, 1, recover)).rejects.toThrow('Known private verification failure');
-    expect(sender.recoverPendingCurrentTokenFunding).not.toHaveBeenCalled();
-    expect(sender.readCurrentTokenFunding).not.toHaveBeenCalled();
-  });
-  it('reads fresh funds after exact prepared recovery, without a metadata fallback', async () => {
-    const sender = { recoverPendingCurrentTokenFunding: vi.fn(), readCurrentTokenFunding: vi.fn().mockResolvedValue({ balance: 9n, allowance: 9n }) };
-    const recover = vi.fn().mockResolvedValue({ balance: 10n, allowance: 10n, fundingOutcome: 'verified' });
-    await expect(checkCurrentFunding(sender as never, 1, recover)).resolves.toEqual({ balance: 9n, allowance: 9n, fundingOutcome: 'verified' });
-    expect(sender.recoverPendingCurrentTokenFunding).not.toHaveBeenCalled();
-    expect(sender.readCurrentTokenFunding).toHaveBeenCalledOnce();
-  });
-  it.each(['awaiting-chain-confirmation', 'manual-reconciliation-required'])('does not unlock private readiness for %s', async status => {
-    const sender = { recoverPendingCurrentTokenFunding: vi.fn().mockResolvedValue({ status }), readCurrentTokenFunding: vi.fn() };
-    await expect(checkCurrentFunding(sender as never, 1)).rejects.toThrow('Do not resend');
-    expect(sender.readCurrentTokenFunding).not.toHaveBeenCalled();
-  });
   it('converts minimum fill percentages to exact atoms, rounding up for protection', () => {
     expect(parseCurrentSwapFillPercent('0', 20n)).toBe(0n);
     expect(parseCurrentSwapFillPercent('25', 20n)).toBe(5n);
@@ -237,12 +199,12 @@ describe('DexV2Page', () => {
   });
   it('requires current owner and candidate identity from the read-only sender check', async () => {
     const owner = `0x${'22'.repeat(20)}`;
-    const candidate = (await import('../../../lib/dexV2Deployment')).CURRENT_CHEAP_DEX_CANDIDATE;
+    const candidate = (await import('../../../lib/dexV2Deployment')).STAGED_SHARED_HISTORY_DEX_CANDIDATE;
     const observed = { chainId: 7082400n, owner, graph: candidate.graph, core: candidate.core, readyToSign: false };
     const checkCurrentCheapCandidate = vi.fn().mockResolvedValue(observed);
     const getCapability = vi.fn().mockResolvedValue({ checkCurrentCheapCandidate });
     await expect(verifyCurrentTrialCandidate(getCapability as never, owner)).resolves.toMatchObject({ observed });
-    expect(getCapability).toHaveBeenCalledWith(7082400n);
+    expect(getCapability).toHaveBeenCalledWith(7082400n, { candidate: 'cheap-history' });
     for (const changed of [{ owner: candidate.core }, { core: owner }, { graph: 'old' }, { chainId: 1n }, { readyToSign: true }]) {
       checkCurrentCheapCandidate.mockResolvedValueOnce({ ...observed, ...changed });
       await expect(verifyCurrentTrialCandidate(getCapability as never, owner)).rejects.toThrow('identity changed');
@@ -254,7 +216,7 @@ describe('DexV2Page', () => {
     const getCapability = vi.fn().mockResolvedValue({ recoverPendingCurrentCheapAttempt });
 
     const observed = await reconcileCurrentTrialPending(getCapability as never);
-    expect(getCapability).toHaveBeenCalledExactlyOnceWith(7082400n);
+    expect(getCapability).toHaveBeenCalledExactlyOnceWith(7082400n, { candidate: 'cheap-history' });
     expect(recoverPendingCurrentCheapAttempt).toHaveBeenCalledOnce();
     expect(observed.attempt).toBe(attempt);
     expect(observed.sender).toEqual({ recoverPendingCurrentCheapAttempt });
@@ -331,9 +293,9 @@ describe('DexV2Page', () => {
     expect(markup).toContain('You send');
     expect(markup).toContain('Estimated receive');
     expect(markup).toContain('<output aria-label="Estimated output">—</output>');
-    expect(markup).toContain('<h2>Buy Test token 0</h2>');
-    expect(markup).toContain('<strong>You send</strong><small>Test token 1</small>');
-    expect(markup).toContain('<strong>Estimated receive</strong><small>Test token 0</small>');
+    expect(markup).toContain('<h2>Buy BCN</h2>');
+    expect(markup).toContain('<strong>You send</strong><small>HBR</small>');
+    expect(markup).toContain('<strong>Estimated receive</strong><small>BCN</small>');
     expect(markup).toContain('aria-label="Swap side"');
     expect(markup).toContain('aria-label="Buy" aria-pressed="true"');
     expect(markup).toContain('aria-label="Sell" aria-pressed="false"');
@@ -343,8 +305,8 @@ describe('DexV2Page', () => {
     expect(markup).toMatch(/<div class="dex-v2-swap-settings"><div class="dex-v2-execution-choice">[\s\S]*?aria-label="Swap mode"[\s\S]*?<summary><strong>Slippage<\/strong>/);
     expect(markup.indexOf('<span>Get Quote</span>')).toBeLessThan(markup.indexOf('aria-label="Swap steps"'));
     expect(markup).not.toContain('aria-label="Use the full balance"');
-    expect(markup).toContain('<small>Test token 1</small>');
-    expect(markup).toContain('<small>Test token 0</small>');
+    expect(markup).toContain('<small>HBR</small>');
+    expect(markup).toContain('<small>BCN</small>');
     expect(markup).toContain('<strong>Slippage</strong><span>0.5%</span>');
     expect(markup).toMatch(/aria-label="Price limit"[^>]*placeholder="Optional"/);
     expect(markup).toContain('Maximum buy price');
@@ -355,7 +317,8 @@ describe('DexV2Page', () => {
     expect(markup).toContain('dex-v2-current-actions');
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*><span>Get Quote<\/span>/);
     expect(markup).not.toContain('>Review and Accept<');
-    expect(markup).toContain('<summary>Transaction details</summary>');
+    // The current candidate is ready, so no setup details show before any swap activity.
+    expect(markup).not.toContain('<summary>Transaction details</summary>');
     expect(markup).not.toContain('Reference price');
     expect(markup).not.toContain('2.0000 HBR');
     expect(markup).not.toContain('0.50%');
@@ -388,9 +351,9 @@ describe('DexV2Page', () => {
 
   it('keeps Buy/Sell separate from the explicitly reversible displayed ratio', () => {
     const markup = renderToStaticMarkup(<DexV2Page priceDisplayInverted onPriceDisplayInvertedChange={vi.fn()} />);
-    expect(markup).toContain('<h2>Sell Test token 1</h2>');
-    expect(markup).toContain('<strong>You send</strong><small>Test token 1</small>');
-    expect(markup).toContain('<strong>Estimated receive</strong><small>Test token 0</small>');
+    expect(markup).toContain('<h2>Sell HBR</h2>');
+    expect(markup).toContain('<strong>You send</strong><small>HBR</small>');
+    expect(markup).toContain('<strong>Estimated receive</strong><small>BCN</small>');
     expect(markup).toContain('aria-label="Buy" aria-pressed="false"');
     expect(markup).toContain('aria-label="Sell" aria-pressed="true"');
   });
@@ -413,59 +376,7 @@ describe('DexV2Page', () => {
     expect(markup).not.toContain('Exact price override');
   });
 
-  it('does not ship seeded private strategy terms in the Positions source', () => {
-    const source = readFileSync(fileURLToPath(new URL('./SuccessorPositionsWorkspace.tsx', import.meta.url)), 'utf8');
-    expect(source).toContain('runtime.snapshot.positions.filter');
-    expect(source).not.toContain('runtime.manifest.strategies.filter');
-    for (const leakedTerm of [
-      'Sell EMBR for BCN',
-      '0.1667 BCN/EMBR',
-      '24.0000–26.4000 ORBT/BCN',
-      '1,000 EMBR + 0 ORBT',
-      'Shared compatible private lane'
-    ]) expect(source).not.toContain(leakedTerm);
-    expect(source).toContain('Private position terms');
-    expect(source).toContain('action.revealTerms(selected)');
-    expect(source).toContain('Owner-private Fixed terms');
-    expect(source).toContain('Owner-private Range terms');
-    expect(source).toContain('Owner-private Aggregate terms');
-    expect(source).toContain('Owner-private Recurring');
-    expect(source).toContain('Values stay in this session only.');
-    expect(source).toContain('Edit owner-private terms');
-    expect(source).toContain('Edit owner-private Aggregate terms');
-    expect(source).toContain('Edit owner-private Recurring terms');
-    expect(source).toContain("action.edit(selected, editableTerms, { kind: 'top-up'");
-    expect(source).toContain("kind: 'reprice-fixed'");
-    expect(source).toContain("kind: 'reprice-range'");
-    expect(source).toContain("kind: 'partial-exit-fixed'");
-    expect(source).toContain("kind: 'partial-exit-range'");
-    expect(source).toContain("kind: 'top-up-aggregate'");
-    expect(source).toContain("kind: 'reprice-aggregate'");
-    expect(source).toContain("kind: 'partial-exit-aggregate'");
-    expect(source).toContain("kind: 'withdraw-aggregate-counters'");
-    expect(source).toContain("kind: 'top-up-recurring'");
-    expect(source).toContain("kind: 'reprice-recurring'");
-    expect(source).toContain("kind: 'withdraw-recurring'");
-    expect(source).toContain('current budget');
-    expect(source).toContain('Total spread');
-    expect(source).toContain('Lower marginal price');
-    expect(source).toContain('Upper marginal price');
-    expect(source).toContain('The private revision is not published.');
-    expect(source).not.toContain('lifecycleEditable');
-    expect(source).toContain('Top up position');
-    expect(source).toContain('Update Fixed terms');
-    expect(source).toContain('Update Range terms');
-    expect(source).toContain('Partially exit Fixed position');
-    expect(source).toContain('Partially exit Range position');
-    expect(source).not.toContain('Pool inventory');
-    expect(source).not.toContain('Four private aggregate bins');
-  });
 
-  it('reads successor balances only through the corrected private-token ABI', () => {
-    const source = readFileSync(fileURLToPath(new URL('../hooks/useDexV2TokenBalances.ts', import.meta.url)), 'utf8');
-    expect(source).toContain('readSuccessorPrivateErc20BalanceWei');
-    expect(source).not.toContain('readCurrentPrivateErc20BalanceWei');
-  });
 
   it('keeps keeper work out of the primary Swap action', () => {
     const pageSource = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
@@ -484,19 +395,6 @@ describe('DexV2Page', () => {
     expect(pageSource).not.toContain("strategies.includes('Recurring')");
   });
 
-  it('keeps corrected successor transactions independent of old DEX modules', () => {
-    for (const file of [
-      '../../../lib/successorDexSwap.ts',
-      '../../../lib/successorDexStrategies.ts',
-      '../../../lib/successorDexPositionActions.ts',
-      '../../../lib/successorDexP2.ts'
-    ]) {
-      const source = readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8');
-      expect(source).not.toContain('./dexV2SwapExecution');
-    }
-    const appChainSource = readFileSync(fileURLToPath(new URL('../../../lib/appChain.ts', import.meta.url)), 'utf8');
-    expect(appChainSource).not.toContain('./dexV2PositionDiscovery');
-  });
 });
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
