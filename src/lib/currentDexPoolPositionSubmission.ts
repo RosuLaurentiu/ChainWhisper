@@ -346,10 +346,12 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     return Object.freeze({status:canonical.status===0?'observed-reverted' as const:'observed-mined' as const,
       ...closed,transactionHash:pending.txHash,phase:pending.phase,privateAccountingVerified:false as const,readyToSign:false as const});
   };
-  // CW-140.02: releases one reviewed top-up position. Proves the saved snapshot and funding again, authenticates the
-  // snapshot as the current owner state and asks the owner to confirm the shares. Release sends no transaction.
+  // CW-140.02/CW-140.09: releases one mined top-up from the review list of its position. It proves again that the
+  // saved snapshot and its funding are mined, successful and canonical, from transactions and receipts only: the
+  // Testnet node prunes old state, so a read of the old snapshot state can fail forever. Release sends no transaction;
+  // the position then reads its current state. The interval accounting is not reconstructed.
   const reviewScope={chainId:chainId.toString(),owner,core};
-  const releasePositionReview=async(txHash:string,verifySnapshot:SnapshotVerifier,review:CurrentPoolTopUpHoldReview)=>{
+  const releasePositionReview=async(txHash:string)=>{
     await transport.assertCurrent();
     const entry=readCurrentPositionReviews(storage,reviewScope).find(row=>row.txHash===txHash.toLowerCase());
     if(!entry)return null;
@@ -367,20 +369,11 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     const fundingReceipt=await proveTopUpFunding(boundary,entry.poolTopUpHash,positionId,canonical);
     if(typeof fundingReceipt.blockHash!=='string'||fundingReceipt.blockHash.toLowerCase()!==entry.fundingBlockHash)
       throw new Error('The reviewed top-up receipt changed. Keep the review.');
-    const result=await verifySnapshot(positionId,entry.txHash);
-    if(result.status!=='active-snapshot-verified')throw new Error('A later snapshot replaced this top-up snapshot. Keep the review.');
-    assertVerifiedCurrentPoolSnapshot(result,signer);await transport.assertCurrent();
-    const view=result.snapshot;
-    if(result.positionId!==positionId||!same(result.transactionHash,entry.txHash)||view.chainId!==chainId||!same(view.owner,owner)||
-      !same(view.core,core)||view.graph!==candidate.graph||view.packageSha256!==candidate.packageSha256||result.producer.status!==1n)
-      throw new Error('Verified snapshot differs from the saved review.');
-    if(await review(Object.freeze({positionId,fundingHash:entry.poolTopUpHash,snapshotHash:entry.txHash,
-      shares:result.producer.amounts.shares,totalShares:result.producer.amounts.totalShares}))!==true)return Object.freeze({status:'review-kept' as const});
     await recheck(request,entry.txHash,canonical);
     releaseCurrentPositionReview(storage,reviewScope,entry.txHash,JSON.stringify({original:entry.original,
-      verification:'owner-reviewed-top-up-snapshot-current-state',blockHash:canonical.blockHash,fundingBlockHash:fundingReceipt.blockHash,
+      verification:'mined-top-up-receipts-rechecked',blockHash:canonical.blockHash,fundingBlockHash:fundingReceipt.blockHash,
       intervalAccounting:'not-reconstructed'}));
-    return result;
+    return Object.freeze({status:'released' as const,positionId,transactionHash:entry.txHash});
   };
   return Object.freeze({submitPoolPositionAction,recoverCurrentPreparedPoolPositionResult,recoverCurrentNativePoolPositionResult,
     releasePositionReview,readPositionReviews:()=>readCurrentPositionReviews(storage,reviewScope),

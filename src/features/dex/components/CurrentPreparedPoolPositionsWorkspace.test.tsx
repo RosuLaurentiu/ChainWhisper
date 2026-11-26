@@ -122,14 +122,14 @@ describe('prepared Positions owner snapshot view',()=>{
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:394,txHash:hash,
       callHash:keccak256(currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[49n])),verificationBlocked:true});
     f.store.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);await f.load();hooks.states[6]=true;
-    expect(f.button('Review paid private refresh').props.disabled).toBe(false);
+    expect(f.button('Refresh this position').props.disabled).toBe(false);
     expect(elements(f.render()).find(x=>x.type==='fieldset')!.props.disabled).toBe(true);
     const recover=vi.fn(async()=>({action:'snapshot',positionId,producerHash:hash,status:'active-snapshot-verified',snapshot:f.value}));
     const submit=vi.fn(async()=>({transactionHash:hash,recover}));f.prepareSnapshot.mockImplementation(async request=>{
       expect(await request.confirm({positionId,closed:false,gasCap:30_000_000n})).toBe(true);return {action:'snapshot'};
     });
     f.getSender.mockResolvedValue({submitPoolPositionAction:submit,waitForCurrentCheapReceipt:vi.fn(async()=>true)});
-    f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
+    f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(submit).toHaveBeenCalledWith({action:'snapshot'},undefined,{refreshHeldSnapshot:true});
     expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({message:expect.stringContaining('new paid refresh')}));
     expect(f.store.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);
@@ -141,7 +141,7 @@ describe('prepared Positions owner snapshot view',()=>{
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:394,txHash:hash,
       callHash:keccak256(currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[52n])),verificationBlocked:true});
     f.store.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);f.store.set(CURRENT_POOL_REFRESH_ATTEMPT_KEY,'separate journal handled by the sender mock');await f.load();
-    expect(f.button('Review paid private refresh').props.disabled).toBe(true);
+    expect(f.button('Refresh this position').props.disabled).toBe(true);
     const privateRecovery=vi.fn(async()=>null),publicRecovery=vi.fn(async()=>({status:'observed-mined-verification-held',independentRefresh:true,transactionHash:hash,privateAccountingVerified:false}));
     f.getSender.mockResolvedValue({recoverCurrentPreparedPoolPositionResult:privateRecovery,recoverPendingPoolPositionAttempt:publicRecovery});
     f.button('Check position status').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
@@ -166,10 +166,10 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(f.readPosition).toHaveBeenCalled();expect(text(f.render())).toContain('1.234567');
     expect(text(f.render())).toContain('Viewing does not complete transaction verification. Actions remain locked. Do not resend.');
     expect(hooks.states[6]).toBe(hold!=='saved');
-    expect(f.button('Review paid private refresh').props.disabled).toBe(true);
+    expect(f.button('Refresh this position').props.disabled).toBe(true);
     const actions=elements(f.render()).find(x=>x.type==='fieldset')!;expect(actions.props.disabled).toBe(true);
     const topUp=elements(f.render()).find(x=>x.type===CurrentPreparedPoolTopUpWorkspace)!;expect(topUp.props.disabled).toBe(true);
-    f.button('Review paid private refresh').props.onClick!();f.button('Close and withdraw all').props.onClick!();
+    f.button('Refresh this position').props.onClick!();f.button('Close and withdraw all').props.onClick!();
     expect(f.prepareSnapshot).not.toHaveBeenCalled();expect(f.prepareAction).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
     expect(f.store.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(hold==='active'?undefined:saved);
   });
@@ -203,7 +203,7 @@ describe('prepared Positions owner snapshot view',()=>{
     const list=elements(f.render()).find(item=>item.type===CurrentOwnedPoolPositions)!;
     (list.props as unknown as {onSelect:(id:bigint)=>void}).onSelect(43n);
     await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
-    expect(f.button('Activate claim privacy').props.disabled).toBe(false);expect(f.button('Review paid private refresh').props.disabled).toBe(true);
+    expect(f.button('Activate claim privacy').props.disabled).toBe(false);expect(f.button('Refresh this position').props.disabled).toBe(true);
     expect(f.button('Close and withdraw all').props.disabled).toBe(true);expect(text(f.render())).not.toContain('1.234567');
     let result={action:'activate',positionId:43n,transactionHash:hash,status:'owner-action-verified',privateAccountingVerified:true,
       snapshot:{...f.value,positionId:43n,status:2n}};
@@ -229,7 +229,7 @@ describe('prepared Positions owner snapshot view',()=>{
     expect(elements(f.render()).find(item=>item.type===CurrentPreparedPoolTopUpWorkspace)!.props.disabled).toBe(false);
     expect(f.button('Check position status').props.disabled).toBe(true);
     expect(f.button('Load private position').props.disabled).toBe(true);
-    expect(f.button('Review paid private refresh').props.disabled).toBe(true);
+    expect(f.button('Refresh this position').props.disabled).toBe(true);
     expect(text(f.render())).not.toContain('1.234567');
     f.button('Check position status').props.onClick!();await Promise.resolve();
     expect(f.getSender).not.toHaveBeenCalled();
@@ -240,7 +240,7 @@ describe('prepared Positions owner snapshot view',()=>{
   });
   it('requires live position capability before paid refresh preparation',async()=>{
     const f=fixture();if(key==='cheap-history')f.getPositions.mockRejectedValueOnce(new Error('Connected wallet lease is unavailable.'));
-    f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
+    f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(text(f.render())).toContain(key==='cheap-history'?'Connected wallet lease is unavailable.':'native App submission admission is absent'));
     expect(f.getPositions).toHaveBeenCalledTimes(key==='cheap-history'?1:0);expect(f.prepareSnapshot).not.toHaveBeenCalled();expect(f.getSender).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(hooks.confirm).not.toHaveBeenCalled();
   });
   it.each([0,1,2,3,4,5])('uses authenticated market %i token labels and six decimals',async index=>{
@@ -303,7 +303,7 @@ describe('prepared Positions owner snapshot view',()=>{
       expect(await request.confirm({positionId:52n,closed:false,gasCap:30_000_000n})).toBe(true);return prepared;
     });
     const submit=vi.fn(async()=>({transactionHash:hash,recover}));f.getSender.mockResolvedValue({submitPoolPositionAction:submit,waitForCurrentCheapReceipt:vi.fn(async()=>true)});
-    f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
+    f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(f.getPositions).toHaveBeenCalledWith(BigInt(candidate.chainId),{candidate:key});
     expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId),{candidate:key});expect(submit).toHaveBeenCalledWith(prepared);
     expect(recover).toHaveBeenCalledOnce();expect(text(f.render())).toContain('1.234567');expect(submit).toHaveBeenCalledOnce();
@@ -314,7 +314,7 @@ describe('prepared Positions owner snapshot view',()=>{
     const recover=vi.fn(async()=>{throw new Error('Private proof unavailable');});
     const submit=vi.fn(async()=>({transactionHash:hash,recover}));
     f.getSender.mockResolvedValue({submitPoolPositionAction:submit,waitForCurrentCheapReceipt:vi.fn(async()=>fault!=='pending')});
-    const label=key==='cheap-prepared'?'Review paid private refresh':'Review private amount verification';
+    const label=key==='cheap-prepared'?'Refresh this position':'Review private amount verification';
     f.button(label).props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(text(f.render())).toContain(fault==='pending'?'confirmation is pending':'Private proof unavailable');
     expect(text(f.render())).toContain('The submitted snapshot is pending verification. Do not request another.');
@@ -328,13 +328,13 @@ describe('prepared Positions owner snapshot view',()=>{
     let finish!:(value:boolean)=>void;const wait=vi.fn(()=>new Promise<boolean>(resolve=>{finish=resolve;}));
     const recover=vi.fn(async()=>({action:'snapshot',positionId:52n,producerHash:hash,status:'active-snapshot-verified',snapshot:f.value}));
     f.getSender.mockResolvedValue({submitPoolPositionAction:vi.fn(async()=>({transactionHash:hash,recover})),waitForCurrentCheapReceipt:wait});
-    f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(wait).toHaveBeenCalledOnce());
+    f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(wait).toHaveBeenCalledOnce());
     f.props.sharedWalletSession={...f.props.sharedWalletSession,walletAddress:`0x${'44'.repeat(20)}`};f.render();finish(true);
     await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(recover).not.toHaveBeenCalled();expect(text(f.render())).not.toContain('1.234567');expect(hooks.states[6]).toBe(true);
   });
   it('does not submit a cancelled paid refresh',async()=>{
-    const f=fixture();hooks.allowNative=true;f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
+    const f=fixture();hooks.allowNative=true;f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(f.getSender).not.toHaveBeenCalled();expect(text(f.render())).toContain('Private snapshot cancelled');
   });
   it('requires live position capability before Close preparation',async()=>{
@@ -372,7 +372,7 @@ describe('prepared Positions owner snapshot view',()=>{
     f.prepareSnapshot.mockResolvedValue({action:'snapshot'});f.getSender.mockResolvedValue({waitForCurrentCheapReceipt:vi.fn(async()=>true),submitPoolPositionAction:async()=>({transactionHash:hash,
       recover:async()=>({action:'snapshot',positionId:52n,producerHash:hash,status:'closed-snapshot-verified',privateAccountingVerified:false,
         snapshot:{...f.value,status:4n,amounts:{...f.value.amounts,shares:0n}}})})});
-    f.button('Review paid private refresh').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
+    f.button('Refresh this position').props.onClick!();await vi.waitFor(()=>expect(hooks.states[5]).toBe(false));
     expect(text(f.render())).toContain('no independent verification of the original payout');expect(text(f.render())).not.toContain('Close complete');
   });
   if(key==='cheap-history')it('keeps a closed position visible when private payout verification fails',async()=>{

@@ -141,15 +141,17 @@ describe('held top-up snapshot release after owner review (CW-135)',()=>{
       expect(JSON.parse(reviews[0][1])).toEqual([expect.objectContaining({positionId:'8',original,reviewable,
         fundingBlockHash:reviewable?fundingTx.blockHash:null,verificationFailure:reviewable?'pool-proof':'top-up-accounting'})]);
       if(fault!=='declined'){expect(verify).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();}
-      const approve=vi.fn(async()=>true);
       if(reviewable){
-        // One confirmation releases it from the review list; the archive keeps the original record.
-        expect(await f.adapter.releasePositionReview(txHash,verify as never,approve)).toBe(proof);
-        expect(approve).toHaveBeenCalledWith({positionId:8n,fundingHash,snapshotHash:txHash,shares:150n,totalShares:1000n});
+        // CW-140.09: receipts alone release it (old state can be pruned); no dialog and no old-state read.
+        verify.mockClear();review.mockClear();
+        expect(await f.adapter.releasePositionReview(txHash)).toEqual({status:'released',positionId:8n,transactionHash:txHash});
+        expect(verify).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();
         expect([...f.storage.keys()].some(k=>k.startsWith('chainwhisper:dex:position-review:v1:'))).toBe(false);
         const archived=[...f.storage.entries()].filter(([k])=>k.startsWith('chainwhisper:dex:reviewed-position:v1:'));
-        expect(archived).toHaveLength(1);expect(JSON.parse(archived[0][1])).toMatchObject({original,verification:'owner-reviewed-top-up-snapshot-current-state'});
-      }else await expect(f.adapter.releasePositionReview(txHash,verify as never,approve)).rejects.toThrow('manual reconciliation');
+        expect(archived).toHaveLength(1);expect(JSON.parse(archived[0][1])).toEqual({original,verification:'mined-top-up-receipts-rechecked',
+          blockHash:hash,fundingBlockHash:fundingTx.blockHash,intervalAccounting:'not-reconstructed'});
+        expect(await f.adapter.releasePositionReview(txHash)).toBeNull();
+      }else await expect(f.adapter.releasePositionReview(txHash)).rejects.toThrow('manual reconciliation');
     }else{
       await expect(run()).rejects.toThrow();
       expect(f.storage.has(key)).toBe(true);expect(review).not.toHaveBeenCalled();

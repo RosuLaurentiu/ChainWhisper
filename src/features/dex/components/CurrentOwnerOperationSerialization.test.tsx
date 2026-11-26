@@ -79,7 +79,7 @@ describe('retained native owner workspace operation serialization with local cap
     callback(); callback(); await f.done(); expect(f.getSender).toHaveBeenCalledTimes(1);
     if (label === 'Review and fund Pool') expect(f.sender.submitPoolFunding).toHaveBeenCalledTimes(1);
   });
-  it.each(['Load private position', 'Review paid private refresh', 'Check position status'])('starts only one position operation for repeated %s', async label => {
+  it.each(['Load private position', 'Refresh this position', 'Check position status'])('starts only one position operation for repeated %s', async label => {
     const f = fixture('position'); hooks.states[0] = '9';
     const callback = f.button(label).props.onClick!; callback(); callback(); await f.done();
     expect(label === 'Check position status' ? f.getSender : f.getCapability).toHaveBeenCalledTimes(1);

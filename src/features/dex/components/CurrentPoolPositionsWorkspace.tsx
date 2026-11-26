@@ -331,17 +331,14 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     assertScope(captured);
     return confirmed;
   };
-  const reviewPosition=async(txHash:string)=>{
+  // CW-140.09: a mined top-up leaves the review list after a receipt check; no dialog, no old-state read.
+  const releaseReview=async(txHash:string)=>{
     if(!getSender||inFlight.current||busy||topUpOpen||context.chain!==Number(candidate.chainId))return;
-    const captured=scope.current,verify=snapshotVerifier(captured);
-    if(!verify){setMessage('Unlock privacy to review this position.');return;}
-    inFlight.current=true;setBusy(true);
+    const captured=scope.current;inFlight.current=true;setBusy(true);
     try{
       const sender=await getSender(BigInt(candidate.chainId),{candidate:preparedScope!.key});assertScope(captured);
-      const result=await sender.releasePositionReview(txHash,verify,topUpReview(captured));assertScope(captured);
-      if(result&&'status'in result&&result.status==='review-kept'){setMessage('The review stays. This position remains locked; nothing was sent.');return;}
-      setMessage(result?'Top-up confirmed. This position is unlocked.':'This review is no longer saved.');
-      if(result&&'positionId'in result)void read(result.positionId);
+      await sender.releasePositionReview(txHash);assertScope(captured);
+      setBlocked(hasCurrentDexPendingAction(recordScope));setMessage('');
     }catch(error){fail(error,captured);}finally{inFlight.current=false;setBusy(false);}
   };
   const refresh=async()=>{
@@ -417,11 +414,12 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
   },[autoCheckKey,busy]);
   // A reviewable position opens its share confirmation once, after privacy is unlocked.
   const autoReviewed=useRef('');
-  const autoReviewKey=selectedReview?.reviewable&&connected&&privacyReady&&!topUpOpen&&!heldTopUp&&context.chain===Number(candidate.chainId)?
-    `${context.owner}:${selectedReview.txHash}`:'';
+  const nextReview=positionReviews.find(row=>row.reviewable);
+  const autoReviewKey=nextReview&&connected&&!topUpOpen&&!heldTopUp&&context.chain===Number(candidate.chainId)?
+    `${context.owner}:${nextReview.txHash}`:'';
   useEffect(()=>{
     if(!autoReviewKey||autoReviewed.current===autoReviewKey||busy||inFlight.current)return;
-    autoReviewed.current=autoReviewKey;void reviewPosition(selectedReview!.txHash);
+    autoReviewed.current=autoReviewKey;void releaseReview(nextReview!.txHash);
   },[autoReviewKey,busy]);
   const value=current?snapshot?.value:null;
   const validExitPreview=exitPreview?.scope===scope.current&&value?.positionId===exitPreview.value.positionId&&
@@ -448,19 +446,10 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
     </section><section className="dex-owner-detail" aria-label="Position details">
     <header className="dex-owner-heading"><h2>{current?`Position #${id}`:'Position details'}</h2></header>
-    {selectedReview&&!topUpOpen?<div className="dex-owner-progress dex-needs-attention" role="status">
-      {selectedReview.reviewable?<>
-        <p><strong>Your top-up went through.</strong> {privacyReady?'Confirm your shares to unlock this position.':'Unlock privacy, then confirm your shares to unlock this position.'}</p>
-        <button type="button" disabled={!connected||!privacyReady||busy||context.chain!==Number(candidate.chainId)} onClick={()=>{void reviewPosition(selectedReview.txHash);}}>Confirm shares</button>
-      </>:<p><strong>This position needs manual reconciliation.</strong> {currentPoolVerificationMessage(selectedReview.verificationFailure)} Swaps and other positions are not affected. No tokens move while it waits.</p>}
-    </div>:null}
-    {heldTopUp&&!topUpOpen?<div className="dex-owner-progress dex-needs-attention" role="status">
-      {heldTopUp.reviewable?<>
-        <p><strong>Your top-up went through.</strong> {privacyReady?'The App is checking it now. If it asks, confirm that your shares are correct.':
-          'Unlock privacy and the App checks it for you.'}</p>
-        <button type="button" disabled={!connected||!privacyReady||busy||context.chain!==Number(candidate.chainId)} onClick={()=>{void refresh();}}>Check again</button>
-      </>:<p><strong>Your top-up went through, but one check needs manual reconciliation.</strong> {currentPoolVerificationMessage(heldTopUp.failure)} No tokens move while it waits.</p>}
-    </div>:null}
+    {selectedReview&&!selectedReview.reviewable&&!topUpOpen?<p className="dex-owner-progress dex-needs-attention" role="status">
+      <strong>This position needs manual reconciliation.</strong> {currentPoolVerificationMessage(selectedReview.verificationFailure)}</p>:null}
+    {heldTopUp&&!heldTopUp.reviewable&&!topUpOpen?<p className="dex-owner-progress dex-needs-attention" role="status">
+      <strong>Your top-up went through, but one check needs manual reconciliation.</strong> {currentPoolVerificationMessage(heldTopUp.failure)}</p>:null}
     {reviewablePreview?<div className="dex-owner-progress">
       <p>{privacyReady?'If your wallet shows this request as Failed or Rejected with no transaction hash, you can review and release the saved Pool preview.':'Unlock privacy to review the saved Pool preview.'}</p>
       <button type="button" disabled={!connected||!privacyReady||busy} onClick={()=>{void reviewFailedPreview();}}>Review unsent preview</button>
@@ -470,7 +459,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     {!id?<p className="dex-owner-selection-empty">Select a position to see its details.</p>:null}
     {signedSnapshot&&(!ownedDiscovery||id)?<>{!ownedDiscovery?<p>{preparedCandidate?'Use an owned claim NFT and its confirmed funding or snapshot transaction. Private reads require its current owner proof.':'Use the new NFT ID from Add liquidity. Only that admitted claim can refresh or exit in this trial.'}</p>:null}
       <button type="button" disabled={!connected||busy||(blocked||savedActionPending)&&!independentRefresh||topUpOpen||!id||(current&&(snapshot?.value.status===3n||snapshot?.value.status===4n&&!!snapshot.value.amounts))} onClick={()=>{void produceSnapshot();}}>
-        {current&&snapshot?.value.status===4n?'Review closed-claim verification':exitCandidate&&current&&snapshot?.value.status===1n&&!snapshot.value.amounts?'Review private amount verification':'Review paid private refresh'}</button></>:null}
+        {current&&snapshot?.value.status===4n?'Review closed-claim verification':exitCandidate&&current&&snapshot?.value.status===1n&&!snapshot.value.amounts?'Review private amount verification':'Refresh this position'}</button></>:null}
     {value?<aside className="dex-v2-strategy-preview dex-owner-summary" aria-label="Owner private liquidity claim">
       {topUpOpen&&value.amounts?<p>Amounts from the last verified snapshot</p>:null}
       <dl>{tokens?<div><dt>Token pair</dt><dd>{labels[0]} / {labels[1]}</dd></div>:null}
@@ -524,7 +513,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     {value?.status===2n?<button type="button" disabled={!connected||busy||blocked} onClick={()=>{void action('resume');}}>Resume liquidity claim</button>:null}</>:
       <p>Partial withdrawal, NFT transfer and activation are not available yet.</p>}
     </fieldset> : null}
-    {busy?<p role="status" className="dex-owner-progress">{pending?'Checking the submitted position transaction and private result. No new request is being sent.':'Checking your position… If MetaMask opens, complete its request there. Keep this attempt open.'}</p>:null}
+    {busy?<p role="status" className="dex-owner-progress">{pending?'Checking the submitted position transaction and private result. No new request is being sent.':'Checking your position…'}</p>:null}
     {!busy?<p role="status" className="dex-owner-progress">{message&&messageScope.current===scope.current?(/another owner or adapter/.test(message)?'Another DEX action needs a status check. Open History for its recovery.':message):''}</p>:null}
     {!topUpOpen&&!poolFundingPending?<details className="dex-owner-footer" open={blocked||savedActionPending||!!pending||undefined}><summary>Status and recovery</summary>
     {connected ? <button type="button" disabled={!getSender||busy||topUpOpen||context.chain!==Number(candidate.chainId)} onClick={()=>{void refresh();}}>Check position status</button> : null}

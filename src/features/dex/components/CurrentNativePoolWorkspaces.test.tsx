@@ -79,7 +79,7 @@ describe('retained native Pool UI lifecycle with local capabilities',()=>{
     const prepareSnapshot=vi.fn(async(request:{confirm:(review:object)=>Promise<boolean>})=>{
       await request.confirm({positionId:20n,closed:false,gasCap:30_000_000n});return null;});
     const submitPoolPositionAction=vi.fn(),ui=setup({prepareSnapshot},{submitPoolPositionAction});
-    ui.button('Review paid private refresh').props.onClick!();await settle();
+    ui.button('Refresh this position').props.onClick!();await settle();
     expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({title:'Refresh private liquidity claim',
       summaryRows:expect.arrayContaining([{label:'Maximum network fee',value:'0.0015 Test COTI'}])}));
     expect(submitPoolPositionAction).not.toHaveBeenCalled();
@@ -233,7 +233,7 @@ describe('actual current d06 Pool boundary',()=>{
     const native=vi.fn(),metadata=vi.fn(async()=>({status:'observed-mined'})),submit=vi.fn();
     const ui=setup({},{recoverCurrentNativePoolPositionResult:native,recoverPendingPoolPositionAttempt:metadata,
       submitPoolPositionAction:submit},Positions);
-    expect(text(ui.render())).not.toContain('Review paid private refresh');
+    expect(text(ui.render())).not.toContain('Refresh this position');
     ui.button('Check position status').props.onClick!();await settle();
     expect(ui.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId),undefined);
     expect(metadata).toHaveBeenCalledOnce();expect(native).not.toHaveBeenCalled();expect(submit).not.toHaveBeenCalled();
