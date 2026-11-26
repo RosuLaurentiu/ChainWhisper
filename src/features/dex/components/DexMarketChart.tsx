@@ -41,8 +41,9 @@ export function buildCurrentDexChartCandles(saved:readonly Sample[],live:{timest
 }
 /** Owner request 2026-11-26: the current UTC day is a normal candle. It opens at the last verified price and closes at
  * the live price. It stays marked "Live, not saved". With no earlier candle it is a single mark. */
-export function buildCurrentDexChartLiveCandle(latest:Pick<Sample,'price'|'timestamp'>|undefined,live:{timestamp:number;price:number},endingDay:number):Sample{
-  const base={day:String(endingDay),timestamp:live.timestamp,price:live.price,live:true};
+export function buildCurrentDexChartLiveCandle(latest:Pick<Sample,'price'|'timestamp'>|undefined,live:{timestamp:number;price:number;recorded?:boolean},endingDay:number):Sample{
+  // CW-090/CW-141: a last recorded price keeps today's candle, dimmed and labelled recorded, never live.
+  const base={day:String(endingDay),timestamp:live.timestamp,price:live.price,...(live.recorded?{recorded:true}:{live:true})};
   return latest?{...base,openingPrice:latest.price,openingTimestamp:latest.timestamp,body:[latest.price,live.price]}:{...base,separateLive:true};
 }
 /** Owner decision 2026-11-21: each day with no saved sample after a candle shows a dotted mark, candle-wide, at the last
@@ -85,7 +86,7 @@ export function SampleTooltip({active,payload,preview,ratioLabel}:{active?:boole
   return <div className="dex-market-chart-tooltip"><strong>{formatDay(Number(point.day)*DAY)} UTC</strong>
     <small>{ratioLabel}{preview?' · Illustrative preview':''}{point.carry?' · No saved sample':tailNote(point)}</small>
     {point.openingPrice===undefined?null:<>
-      <div>{point.live?'Opened at last verified price':'Earlier sample'} <b>{formatPrice(point.openingPrice)}</b></div>
+      <div>{point.live||point.recorded?'Opened at last verified price':'Earlier sample'} <b>{formatPrice(point.openingPrice)}</b></div>
       {point.openingTimestamp===undefined?null:<small>{formatTime(point.openingTimestamp)} UTC</small>}
     </>}
     <div>{point.carry?'Last verified price':point.live?'Live price':point.recorded?'Last observed price':point.completed?'Last verified price':preview?'Preview sample':'Saved sample'} <b>{formatPrice(point.price)}</b></div>
@@ -147,7 +148,7 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
   const timeTicks=visibleSlots.filter((_,index)=>index%Math.ceil(visibleSlots.length/6)===0).map(slot=>Number(slot.day)*DAY);
   const latest=visible[visible.length-1];
   const candidateLive=showMarketSeries&&!preview&&snapshot?buildCurrentDexChartLivePoint(marketReference,[baseSymbol,quoteSymbol],priceDisplayInverted,latest?.timestamp??(completedMode?0:undefined)):null;
-  const live=completedMode&&candidateLive&&(candidateLive.recorded||Math.floor(candidateLive.timestamp/DAY)!==endingDay)?null:candidateLive;
+  const live=completedMode&&candidateLive&&Math.floor(candidateLive.timestamp/DAY)!==endingDay?null:candidateLive;
   const candles=completedMode?visible:buildCurrentDexChartCandles(visible,live);
   const carryPoints=showMarketSeries?buildCurrentDexChartCarryPoints(candles,completedMode?endingDay-1:endingDay):[];
   const livePoint=completedMode&&live?buildCurrentDexChartLiveCandle(latest,live,endingDay):null;

@@ -26,6 +26,14 @@ describe('DexMarketChart actual daily sample display',()=>{
     expect(markup).toContain('Last sample 0.175377 cwTPB/cwTPA');
     expect(markup).toContain('Live 2 cwTPB/cwTPA');
     expect(markup).toContain('last verified observation per completed UTC day');
+    // CW-141: when the price is no longer verified, today's candle keeps the last recorded price instead of disappearing.
+    const known=currentDexMarketReference({status:'ready',snapshot},f.manifest.symbols,BigInt(snapshot.atBlock.timestamp)+121n);
+    expect(known.status).toBe('last-known');
+    const kept=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" history={{status:'ready',snapshot}} marketReference={known}/>);
+    expect(kept).toContain('Last recorded 2 cwTPB/cwTPA');expect(kept).not.toContain('Live 2');
+    expect(kept).toContain('current price is not verified');
+    expect(buildCurrentDexChartLiveCandle({price:0.17,timestamp:1000},{timestamp:2000,price:0.21,recorded:true},20)).toMatchObject({recorded:true,body:[0.17,0.21]});
+    expect(buildCurrentDexChartLiveCandle(undefined,{timestamp:2000,price:0.21,recorded:true},20)).not.toHaveProperty('live');
     logs[0]={...logs[0],blockHash:f.header(90n).hash};
     await expect(readCurrentDexDailyPrice({provider,manifest:f.manifest,finalityLagBlocks:0,includeCompletedDays:true})).rejects.toMatchObject({kind:'reorg'});
   });
