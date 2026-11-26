@@ -37,7 +37,9 @@ function gitSource(ref,cwd) {
  return {id,manifest:JSON.parse(read('BUILD_MANIFEST.json')),read};
 }
 // The hosted site as the previous release: BUILD_MANIFEST.json names its files; prepareStaticSite checks each hash.
-async function httpSource(base,{fetch:request=globalThis.fetch,wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)),limit=32*1024*1024,parallel=8}={}) {
+// CW-138: `local` returns bytes that this machine already has for a name (the new build or the retained-file cache).
+// A local copy is used only when its hash equals the hosted manifest; every other file is requested from the site.
+async function httpSource(base,{fetch:request=globalThis.fetch,wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)),limit=32*1024*1024,parallel=8,local=()=>null}={}) {
  let origin=null;try{origin=new URL(base);}catch{origin=null;}
  assert(origin&&origin.protocol==='https:'&&!origin.username&&!origin.password&&!origin.search&&!origin.hash,'PAGES_HTTP_URL');
  const root=origin.href.replace(/\/+$/,'');
@@ -53,15 +55,36 @@ async function httpSource(base,{fetch:request=globalThis.fetch,wait=ms=>new Prom
  let manifest;try{manifest=JSON.parse(await load(root+'/BUILD_MANIFEST.json?v='+Date.now()));}catch(error){if(error instanceof SyntaxError)throw new Error('PAGES_HTTP_MANIFEST');throw error;}
  assert(manifest&&manifest.files&&typeof manifest.files==='object'&&!Array.isArray(manifest.files),'PAGES_HTTP_MANIFEST');
  const names=Object.keys(manifest.files).filter(name=>safe(name)&&name.startsWith('assets/')),bytes=new Map();let next=0;
- await Promise.all(Array.from({length:Math.min(parallel,names.length)},async()=>{while(next<names.length){const name=names[next++];bytes.set(name,await load(root+'/'+name.split('/').map(encodeURIComponent).join('/')));}}));
- return {id:root,manifest,read:name=>{assert(bytes.has(name),'PAGES_HTTP_FILE');return bytes.get(name);}};
+ let reused=0;
+ await Promise.all(Array.from({length:Math.min(parallel,names.length)},async()=>{while(next<names.length){const name=names[next++];
+  let have=null;try{have=local(name);}catch{have=null;}
+  if(Buffer.isBuffer(have)&&have.length<=limit&&sha(have)===manifest.files[name]){bytes.set(name,have);reused++;}
+  else bytes.set(name,await load(root+'/'+name.split('/').map(encodeURIComponent).join('/')));}}));
+ return {id:root,manifest,reused,requested:names.length-reused,read:name=>{assert(bytes.has(name),'PAGES_HTTP_FILE');return bytes.get(name);}};
 }
-module.exports={prepareStaticSite,gitSource,httpSource};
+// Reads one safe asset name from the new build or from the retained-file cache. Never follows a link.
+function localAssets(directories) {
+ return name=>{
+  if(!safe(name)||!name.startsWith('assets/'))return null;
+  for(const directory of directories){const file=path.join(directory,name);let stat=null;try{stat=fs.lstatSync(file);}catch{stat=null;}if(stat&&stat.isFile())return fs.readFileSync(file);}
+  return null;
+ };
+}
+// Saves the assets of the prepared site for the next deploy. The next run checks each hash again.
+function saveRetainedCache(output,cache) {
+ const from=path.join(output,'assets');if(!fs.existsSync(from))return 0;
+ fs.rmSync(cache,{recursive:true,force:true});fs.mkdirSync(path.join(cache,'assets'),{recursive:true});let count=0;
+ for(const entry of fs.readdirSync(from,{withFileTypes:true}))if(entry.isFile()){fs.copyFileSync(path.join(from,entry.name),path.join(cache,'assets',entry.name));count++;}
+ return count;
+}
+module.exports={prepareStaticSite,gitSource,httpSource,localAssets,saveRetainedCache};
 if(require.main===module)(async()=>{
- const {values}=parseArgs({options:{build:{type:'string'},output:{type:'string'},graph:{type:'string'},'previous-ref':{type:'string',multiple:true,default:[]},'previous-url':{type:'string',multiple:true,default:[]}}});
+ const {values}=parseArgs({options:{build:{type:'string'},output:{type:'string'},graph:{type:'string'},'previous-ref':{type:'string',multiple:true,default:[]},'previous-url':{type:'string',multiple:true,default:[]},'retained-cache':{type:'string'}}});
  assert(values.build&&values.output&&values.graph,'PAGES_USAGE');
- const previous=values['previous-ref'].map(ref=>gitSource(ref,process.cwd()));for(const url of values['previous-url'])previous.push(await httpSource(url));
+ const previous=values['previous-ref'].map(ref=>gitSource(ref,process.cwd()));const local=localAssets([values.build,...(values['retained-cache']?[values['retained-cache']]:[])]);let reused=0,requested=0;
+ for(const url of values['previous-url']){const source=await httpSource(url,{local});reused+=source.reused;requested+=source.requested;previous.push(source);}
  const result=prepareStaticSite({build:values.build,output:values.output,graph:values.graph,previous});
  fs.writeFileSync(path.resolve(values.output)+'.manifest.json',JSON.stringify(result.manifest,null,2)+'\n',{flag:'wx'});
- console.log(JSON.stringify({status:'PAGES_STATIC_SITE_PREPARED',files:Object.keys(result.manifest.files).length,retainedAssets:result.retained.length,indexSha256:result.manifest.indexSha256}));
+ const cached=values['retained-cache']?saveRetainedCache(values.output,values['retained-cache']):0;
+ console.log(JSON.stringify({status:'PAGES_STATIC_SITE_PREPARED',files:Object.keys(result.manifest.files).length,retainedAssets:result.retained.length,reusedLocalAssets:reused,requestedHostedAssets:requested,cachedAssets:cached,indexSha256:result.manifest.indexSha256}));
 })().catch(error=>{console.error(error);process.exit(1);});

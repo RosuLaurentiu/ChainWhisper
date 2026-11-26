@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{createHash}=require('node:crypto');
-const {prepareStaticSite,httpSource}=require('./prepare-pages-static-site.cjs'),sha=b=>createHash('sha256').update(b).digest('hex'),graph='a'.repeat(64);
+const {prepareStaticSite,httpSource,localAssets,saveRetainedCache}=require('./prepare-pages-static-site.cjs'),sha=b=>createHash('sha256').update(b).digest('hex'),graph='a'.repeat(64);
 function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'cw-pages-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const build=path.join(root,'build'),output=path.join(root,'site');fs.mkdirSync(path.join(build,'assets'),{recursive:true});fs.writeFileSync(path.join(build,'index.html'),'<script src="/assets/current-12345678.js"></script>');fs.writeFileSync(path.join(build,'assets/current-12345678.js'),'current');fs.writeFileSync(path.join(build,'DEX_BUILD_IDENTITY.json'),JSON.stringify({schema:'CURRENT_DEX_BUILD_V1',graph}));return {root,build,output,graph};}
 const prior=(files,sourceGraph=graph)=>({id:'b'.repeat(40),manifest:{schema:'CHECKED_BETA_APP_STATIC_TREE_V1',graph:sourceGraph,files:Object.fromEntries(Object.entries(files).map(([name,bytes])=>[name,sha(bytes)]))},read:name=>Buffer.from(files[name])});
 test('open tabs retain previous lazy assets without replacing current HTML or configuration',t=>{const f=fixture(t),result=prepareStaticSite({...f,previous:[prior({'assets/old-abcdefgh.js':'old lazy','index.html':'old index','deployments/current.json':'old config'})]});assert.equal(fs.readFileSync(path.join(f.output,'assets/old-abcdefgh.js'),'utf8'),'old lazy');assert.equal(fs.readFileSync(path.join(f.output,'index.html'),'utf8'),'<script src="/assets/current-12345678.js"></script>');assert(!fs.existsSync(path.join(f.output,'deployments/current.json')));assert.equal(result.retained.length,1);});
@@ -42,3 +42,22 @@ test('a hosted source repeats a temporary failure three times at most',async t=>
  assert.equal(down.calls.filter(call=>call.name.startsWith('assets/')).length,3);
  const absent=hosted(files,{served:{}});await assert.rejects(httpSource('https://site.example',absent.options),/PAGES_HTTP_STATUS/);assert.equal(absent.calls.filter(call=>call.name.startsWith('assets/')).length,1);});
 test('a hosted manifest that is not a file list is rejected',async()=>{const site=hosted({});site.manifest.files=null;await assert.rejects(httpSource('https://site.example',site.options),/PAGES_HTTP_MANIFEST/);});
+
+// CW-138: a deploy must not read every old file from the live site.
+test('a hosted source requests only files that the build and the cache do not hold',async t=>{const f=fixture(t),cache=path.join(path.dirname(f.output),'cache');
+ const site=hosted({'assets/old-abcdefgh.js':'old lazy','assets/older-ijklmnop.js':'older lazy','assets/gone-qrstuvwx.js':'not cached'});
+ fs.mkdirSync(path.join(cache,'assets'),{recursive:true});fs.writeFileSync(path.join(cache,'assets/old-abcdefgh.js'),'old lazy');fs.writeFileSync(path.join(cache,'assets/older-ijklmnop.js'),'changed bytes');
+ const source=await httpSource('https://site.example',{...site.options,local:localAssets([f.build,cache])});
+ assert.deepEqual(site.calls.map(call=>call.name).sort(),['BUILD_MANIFEST.json','assets/gone-qrstuvwx.js','assets/older-ijklmnop.js']);
+ assert.equal(source.reused,1);assert.equal(source.requested,2);
+ const result=prepareStaticSite({...f,previous:[source]});assert.equal(result.retained.length,3);
+ assert.equal(fs.readFileSync(path.join(f.output,'assets/older-ijklmnop.js'),'utf8'),'older lazy');
+ assert.equal(saveRetainedCache(f.output,cache),fs.readdirSync(path.join(f.output,'assets')).length);
+ const again=hosted({'assets/old-abcdefgh.js':'old lazy','assets/older-ijklmnop.js':'older lazy','assets/gone-qrstuvwx.js':'not cached'});
+ const second=await httpSource('https://site.example',{...again.options,local:localAssets([cache])});
+ assert.deepEqual(again.calls.map(call=>call.name),['BUILD_MANIFEST.json']);assert.equal(second.requested,0);
+});
+test('the local asset reader refuses unsafe names, other folders and links',t=>{const f=fixture(t),read=localAssets([f.build]);
+ assert.equal(read('../secret'),null);assert.equal(read('index.html'),null);assert.equal(read('assets/missing-00000000.js'),null);
+ assert(Buffer.isBuffer(read('assets/current-12345678.js')));
+});

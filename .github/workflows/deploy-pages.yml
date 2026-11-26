@@ -36,9 +36,18 @@ jobs:
       - name: Build the reviewed Testnet App
         run: npm run build:pages
 
+      # CW-138: old hash-named files come from this cache. Only files that the cache does not hold are read from the site.
+      - name: Restore retained assets of the last deploy
+        uses: actions/cache@v4
+        with:
+          path: .pages-retained
+          key: pages-retained-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pages-retained-
+
       - name: Preserve immutable assets used by open tabs
         run: |
-          node scripts/prepare-pages-static-site.cjs --build dist --output pages-site --graph "$VITE_LOW_RPC_TRIAL" --previous-url https://chainwhisper.app
+          node scripts/prepare-pages-static-site.cjs --build dist --output pages-site --graph "$VITE_LOW_RPC_TRIAL" --previous-url https://chainwhisper.app --retained-cache .pages-retained
 
       - name: Preserve custom domain
         run: |
