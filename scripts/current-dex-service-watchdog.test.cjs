@@ -31,7 +31,6 @@ function stoppedGroup(overrides = {}) {
   };
 }
 const baseline = { nonces: { keeper: '10', prices: '20', matching: '30', c1: '40' }, feesAfter: { keeper: 'k0', prices: 'p0', matching: 'm0', c1: 'c0' }, carry: '1000' };
-const groupPath = CONFIG.runParent + '/server-beta-run-a/group.json';
 const cleanFacts = () => ({ locks: [], c1: { pendingHash: null, hashless: false, activePair: null, queuedPairs: [], halt: null, renewalPending: false, window: 84 },
   price: { pending: null, stopped: true, pendingRecordMarket: null }, accounting: Object.fromEntries(['keeper', 'prices', 'matching', 'c1'].map(n => [n, { service: n, journals: [{ path: 'j/' + n + '.jsonl', sha256: 'sha-' + n }] }])),
   deltas: { keeper: '0', prices: '100', matching: '0', c1: '70' }, feeError: null,
