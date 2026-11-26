@@ -56,7 +56,7 @@ type ScopedFetchGetUrl = (request: Parameters<FetchGetUrlFunc>[0],
   signal?: Parameters<FetchGetUrlFunc>[1], pendingScope?: AbortSignal,
   assertPendingCurrent?: () => void) => ReturnType<FetchGetUrlFunc>;
 type PacedCotiRpc = ScopedFetchGetUrl & Readonly<{ foreground: ScopedFetchGetUrl;
-  beginComparison: () => void; stopComparison: (reason: string) => void }>;
+  beginComparison: () => void; stopComparison: (reason: string) => void; resumeAfterTransientStop: () => boolean }>;
 
 export function describeCotiRpcQueueExpiry(cause: Error): string | null {
   if (!('code' in cause) || cause.code !== 'COTI_RPC_QUEUE_EXPIRED' || !('queueTiming' in cause)) return null;
@@ -380,10 +380,20 @@ export function createPacedCotiRpc(
       void drain();
     });
   };
+  // CW-141: user activity may end a timeout or transport stop once that physical request has settled.
+  // HTTP 403/429 and comparison stops stay; a request still open keeps its slot and its late result stays refused.
+  const resumeAfterTransientStop = (): boolean => {
+    if (!stopped || comparison || physicalStartedAt !== null || (failure?.kind !== 'timeout' && failure?.kind !== 'transport')) return false;
+    stopped = null;
+    failure = undefined;
+    requestTimeout = undefined;
+    publish();
+    return true;
+  };
   // Both entries use the exact same queue, spacing, transport and sticky stop.
   const normal: ScopedFetchGetUrl = (request, signal, pendingScope, assertPendingCurrent) =>
     enqueue(request, signal, false, pendingScope, assertPendingCurrent);
   const foreground: ScopedFetchGetUrl = (request, signal, pendingScope, assertPendingCurrent) =>
     enqueue(request, signal, true, pendingScope, assertPendingCurrent);
-  return Object.assign(normal, { foreground, beginComparison, stopComparison });
+  return Object.assign(normal, { foreground, beginComparison, stopComparison, resumeAfterTransientStop });
 }

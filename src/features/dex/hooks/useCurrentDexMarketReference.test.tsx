@@ -2,21 +2,22 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { AbiCoder,Interface,keccak256 } from '@coti-io/coti-ethers';
 const exit={core:`0x${'99'.repeat(20)}`};
-import { STAGED_GAP_DEX_CANDIDATE as history } from '../../../lib/currentDexGapCandidate';
+import { STAGED_BUILD13_DEX_CANDIDATE as history } from '../../../lib/currentDexBuild13Candidate';
 import { makeCurrentReferenceStorage } from '../../../../tests/fixtures/currentReferenceSource.fixture';
-vi.mock('../../../lib/selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('../../../lib/selectedCurrentDexCandidate')>();const current=await import('../../../lib/currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});
+// The current build 13 candidate is the selected candidate.
 import { CURRENT_DEX_DISPLAY_PAIR,readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { loadCurrentDexDailyPrice } from './useCurrentDexDailyPrice';
 import * as priceReads from '../../../lib/currentDexDailyPrice';
-import useCurrentDexMarketReference,{loadCurrentDexMarketReference} from './useCurrentDexMarketReference';
+import useCurrentDexMarketReference,{loadCurrentDexMarketReference,MARKET_IDLE_AFTER_MS,MARKET_POLL_MS} from './useCurrentDexMarketReference';
+import * as core from '../../../lib/appShared/core';
 
 // Same synthetic runtime identities as currentDexMarketReference.test.ts.
 vi.mock('@coti-io/coti-ethers',async original=>{
   const actual=await original<typeof import('@coti-io/coti-ethers')>();
-  // '0x6001' stands for the Core runtime of the selected gap candidate (its runtimes entry); '0x6002' for a token runtime.
-  return{...actual,keccak256:(value:string)=>value==='0x6001'?'0x1323551e49525d6c732e4560f364f7006dec13d5bc1fc562f9a78d575b9b4b41':
+  // '0x6001' stands for the Core runtime of the current build 13 candidate (its runtimes entry); '0x6002' for a token runtime.
+  return{...actual,keccak256:(value:string)=>value==='0x6001'?'0x3f42c901c1e7f8cd20095801a685c23c4ac61ce0921822b29c08a3d974c94807':
     value==='0x6002'?'0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0':actual.keccak256(value)};
 });
 
@@ -98,8 +99,8 @@ describe('selected candidate market-reference hook',()=>{
     expect(Render()).toMatchObject({status:'available',price:2});
     for(let second=1;second<=121;second++){
       await vi.advanceTimersByTimeAsync(1000);const view=Render();
-      if(second===30)expect(view).toMatchObject({status:'available',price:2});
-      if(second>=30)expect(read).toHaveBeenCalledTimes(2);
+      if(second===60)expect(view).toMatchObject({status:'available',price:2});
+      expect(read).toHaveBeenCalledTimes(second>=60?2:1);
     }
     expect(Render()).toMatchObject({status:'last-known',price:2,pair:['HBR','BCN']});
     release();await vi.advanceTimersByTimeAsync(0);
@@ -161,6 +162,32 @@ describe('selected candidate market-reference hook',()=>{
     expect(hooks.slots.some(slot=>(slot.value as {view?:{message?:string}})?.view?.message==='Fixture reference unavailable.')).toBe(true);
     await vi.advanceTimersByTimeAsync(29000);Render();
     expect(read).toHaveBeenCalledTimes(2);
+  });
+  it('reads only while the user is active and reads again at once when activity returns',async()=>{
+    const snapshot=await verifiedPublicSnapshot();
+    hooks.enabled=true;vi.useFakeTimers();vi.setSystemTime(1_800_000_000_000);
+    const target=Object.assign(new EventTarget(),{setInterval:globalThis.setInterval.bind(globalThis),clearInterval:globalThis.clearInterval.bind(globalThis)});
+    vi.stubGlobal('window',target);
+    vi.spyOn(priceReads,'getCurrentDexPriceReadProvider').mockReturnValue({request:async()=>null});
+    const read=vi.spyOn(priceReads,'readCurrentDexPublicReference').mockResolvedValue(snapshot);
+    const resume=vi.spyOn(core,'resumeCotiReadsAfterTransientStop').mockReturnValue(false);
+    const Render=()=>{hooks.index=0;const view=useCurrentDexMarketReference(true,history,['HBR','BCN']);hooks.effects.splice(0).forEach(effect=>effect());return view;};
+    const advance=async(seconds:number)=>{for(let i=0;i<seconds;i++){await vi.advanceTimersByTimeAsync(1000);Render();}};
+    Render();await vi.advanceTimersByTimeAsync(0);Render();
+    expect(read).toHaveBeenCalledTimes(1);
+    await advance(MARKET_POLL_MS/1000);expect(read).toHaveBeenCalledTimes(2);
+    // No input for ten minutes: reads stop and the last price stays.
+    await advance(MARKET_IDLE_AFTER_MS/1000+120);
+    const idleReads=read.mock.calls.length;expect(idleReads).toBe(MARKET_IDLE_AFTER_MS/MARKET_POLL_MS);
+    await advance(300);expect(read).toHaveBeenCalledTimes(idleReads);
+    expect(Render().status).toBe('last-known');
+    target.dispatchEvent(new Event('pointerdown'));Render();
+    expect(read).toHaveBeenCalledTimes(idleReads+1);
+    // Activity within the minute does not add reads; a stopped reader that resumes reads at once.
+    await advance(10);target.dispatchEvent(new Event('keydown'));Render();
+    expect(read).toHaveBeenCalledTimes(idleReads+1);
+    resume.mockReturnValueOnce(true);target.dispatchEvent(new Event('keydown'));Render();
+    expect(read).toHaveBeenCalledTimes(idleReads+2);
   });
   it('retains route, pair and candidate invalidation while the reference is pending',async()=>{
     hooks.enabled=true;vi.useFakeTimers();vi.stubGlobal('window',globalThis);

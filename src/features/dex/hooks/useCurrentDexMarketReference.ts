@@ -7,8 +7,13 @@ import { CurrentDexDailyPriceError, getCurrentDexPriceReadProvider, isVerifiedCu
 import { currentNativeDexDailyPriceConfig } from '../../../lib/currentDexNativeDailyPriceTestnet';
 import { currentDexMarketReference, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
+import { resumeCotiReadsAfterTransientStop } from '../../../lib/appShared/core';
 import useCurrentDexDailyPrice from './useCurrentDexDailyPrice';
 
+// The price service publishes at most every 5 minutes per market; a new price shows within a minute while the user is active.
+export const MARKET_POLL_MS=60_000;
+export const MARKET_IDLE_AFTER_MS=10*60_000;
+const ACTIVITY_EVENTS=['pointerdown','pointermove','keydown','wheel','touchstart','focus'] as const;
 type ReferenceView = CurrentDexDailyPriceView | CurrentDexPublicReferenceView;
 export async function loadCurrentDexMarketReference({candidate,pair,provider,assertCurrent=()=>{}}:{
   candidate:CurrentCheapDexCandidate;pair:readonly[string,string];provider?:Pick<Eip1193Provider,'request'>;
@@ -55,10 +60,30 @@ export default function useCurrentDexMarketReference(active: boolean,candidate:C
   const [now,setNow] = useState(() => BigInt(Math.floor(Date.now()/1000)));
   useEffect(() => {
     if (!active) return;
-    const expiry = window.setInterval(() => setNow(BigInt(Math.floor(Date.now()/1000))),1000);
-    // A slow initial read must finish before an automatic refresh replaces it.
-    const read = window.setInterval(()=>{if(!readPending.current)refresh();},30000);
-    return () => { window.clearInterval(expiry); window.clearInterval(read); };
+    // Owner request 2026-11-26 (CW-141): read the price only while the user is active. Opening the page counts as activity.
+    let lastInput=Date.now(),lastRead=Date.now();
+    const visible=()=>typeof document==='undefined'||document.visibilityState!=='hidden';
+    const idle=()=>!visible()||Date.now()-lastInput>=MARKET_IDLE_AFTER_MS;
+    const poll=()=>{
+      // A slow read must finish before an automatic refresh replaces it.
+      if(readPending.current||idle()||Date.now()-lastRead<MARKET_POLL_MS)return;
+      lastRead=Date.now();refresh();
+    };
+    const wake=()=>{
+      const wasIdle=idle();lastInput=Date.now();
+      // A timeout or connection stop ends on user activity; HTTP 403/429 stays stopped until reload.
+      if(resumeCotiReadsAfterTransientStop()||wasIdle)lastRead=0;
+      poll();
+    };
+    const expiry = window.setInterval(() => { setNow(BigInt(Math.floor(Date.now()/1000))); poll(); },1000);
+    const target=typeof window.addEventListener==='function'?window:null;
+    for(const event of ACTIVITY_EVENTS)target?.addEventListener(event,wake,{passive:true});
+    if(typeof document!=='undefined')document.addEventListener('visibilitychange',wake);
+    return () => {
+      window.clearInterval(expiry);
+      for(const event of ACTIVITY_EVENTS)target?.removeEventListener(event,wake);
+      if(typeof document!=='undefined')document.removeEventListener('visibilitychange',wake);
+    };
   },[active,refresh]);
   const reference=currentDexMarketReference(view,pair,now);
   const last=useRef<{candidate:CurrentCheapDexCandidate;pair:readonly[string,string];reference:Extract<CurrentDexMarketReference,{status:'available'|'last-known'}>}|null>(null);

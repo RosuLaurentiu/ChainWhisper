@@ -866,6 +866,8 @@ const loadCotiHttpProviderForPriority = async (priority: 'normal' | 'startup'): 
 };
 
 export const loadCotiHttpProvider = (): Promise<CotiHttpProvider> => loadCotiHttpProviderForPriority('normal');
+/** User activity only: ends a timeout or transport stop after that request settled. HTTP 403/429 stays stopped. */
+export const resumeCotiReadsAfterTransientStop = (): boolean => cotiHttpGetUrl?.resumeAfterTransientStop() ?? false;
 /** Exact same endpoint, chain admission and aggregate limiter; initial foreground admission only. */
 export const loadCotiStartupReadProvider = (): Promise<CotiHttpProvider> => loadCotiHttpProviderForPriority('startup');
 

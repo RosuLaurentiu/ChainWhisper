@@ -953,6 +953,42 @@ describe('shared browser HTTP RPC pacing', () => {
     expect(transport).toHaveBeenCalledOnce();
   });
 
+  it('resumes after a timeout only once the stalled request settled, and never after HTTP 403', async () => {
+    let finish!: (response: Awaited<ReturnType<FetchGetUrlFunc>>) => void;
+    const ok = () => ({ statusCode: 200, statusMessage: 'OK', headers: {}, body: new TextEncoder().encode('{"result":"0x1"}') });
+    const transport = vi.fn<FetchGetUrlFunc>()
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockImplementation(async () => ok());
+    const snapshots: Array<{ stopped: boolean }> = [];
+    const paced = createPacedCotiRpc(transport, snapshot => snapshots.push(snapshot));
+    const request = new FetchRequest(CONFIGURED_COTI_NETWORK.rpcUrl);
+    request.timeout = 1_000;
+    const first = paced(request).catch((error: { code?: string }) => error.code);
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(await first).toBe('TIMEOUT');
+    // The stalled request still holds its physical slot.
+    expect(paced.resumeAfterTransientStop()).toBe(false);
+    finish(ok());
+    await vi.runAllTimersAsync();
+    expect(paced.resumeAfterTransientStop()).toBe(true);
+    expect(snapshots[snapshots.length - 1]).toMatchObject({ stopped: false });
+    expect(paced.resumeAfterTransientStop()).toBe(false);
+    const next = paced(request.clone());
+    await vi.runAllTimersAsync();
+    expect(await next).toMatchObject({ statusCode: 200 });
+    expect(transport).toHaveBeenCalledTimes(2);
+
+    transport.mockImplementation(async () => ({ ...ok(), statusCode: 403, statusMessage: 'Forbidden' }));
+    const denied = paced(request.clone()).catch((error: Error) => error.message);
+    await vi.runAllTimersAsync();
+    expect(await denied).toContain('HTTP 403');
+    expect(paced.resumeAfterTransientStop()).toBe(false);
+    const later = paced(request.clone()).catch((error: Error) => error.message);
+    await vi.runAllTimersAsync();
+    expect(await later).toContain('HTTP 403');
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
   it('keeps the failure stop when the SDK transport reports TIMEOUT before the queue deadline', async () => {
     const snapshots: unknown[] = [];
     const transport = vi.fn(async () => {
