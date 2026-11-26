@@ -414,7 +414,6 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     if(!autoCheckKey||autoChecked.current===autoCheckKey||busy||inFlight.current)return;
     autoChecked.current=autoCheckKey;void refresh();
   // refresh reads the current render's scope; the key alone decides when the single check runs.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoCheckKey,busy]);
   // A reviewable position opens its share confirmation once, after privacy is unlocked.
   const autoReviewed=useRef('');
@@ -423,7 +422,6 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
   useEffect(()=>{
     if(!autoReviewKey||autoReviewed.current===autoReviewKey||busy||inFlight.current)return;
     autoReviewed.current=autoReviewKey;void reviewPosition(selectedReview!.txHash);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoReviewKey,busy]);
   const value=current?snapshot?.value:null;
   const validExitPreview=exitPreview?.scope===scope.current&&value?.positionId===exitPreview.value.positionId&&
