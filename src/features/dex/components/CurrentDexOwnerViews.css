@@ -209,3 +209,5 @@
 .dex-v2-approval-policy > button[aria-checked='true'] .dex-v2-approval-switch-track { background: #7540c9; border-color: #8f52e8; }
 .dex-v2-approval-policy > button[aria-checked='true'] i { transform: translateX(14px); }
 .dex-v2-approval-policy small { color: var(--text-secondary); font-size: .8125rem; font-weight: normal; }
+/* CW-136: the top-up panel shows the shared step track without the standalone rule and margin. */
+.app-shell-dex-v2 .dex-owner-top-up > .tx-steps { margin: 0; padding: 0; border-top: 0; }

@@ -2,6 +2,8 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as poolInputs from '../../../lib/currentDexPoolFunding';
 import CurrentPreparedPoolTopUpWorkspace from './CurrentPreparedPoolTopUpWorkspace';
+import TransactionSteps, { type TransactionStepsModel } from './TransactionSteps';
+import { TOP_UP_RESULT_WAIT } from './topUpResultWait';
 import { resolveCurrentCheapDexCandidate } from '../../../lib/dexV2Deployment';
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
@@ -47,6 +49,8 @@ const text = (node: ReactNode): string => Array.isArray(node) ? node.map(text).j
 type FundingCap = Awaited<ReturnType<typeof issueCurrentDexPoolFundingCapability>>;
 type PositionsCap = Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
 const owner = `0x${'22'.repeat(20)}`, hash = `0x${'33'.repeat(32)}`, snapshotHash = `0x${'44'.repeat(32)}`;
+// CW-136: the automatic result check keeps its six-try bound; tests remove only the wait between tries.
+TOP_UP_RESULT_WAIT.delayMs = 0;
 
 describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s prepared consumers', key => {
 const candidate = resolveCurrentCheapDexCandidate(key);
@@ -108,7 +112,11 @@ function fixture(pairIndex = 0, wallet = owner) {
     submitSharedPoolApproval: submitApproval, submitPoolPositionAction: submitSnapshot,
     recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null), recoverPendingPoolAttempt: vi.fn(async () => null),
     recoverPendingSharedPoolApproval: vi.fn(async () => null), recoverPendingPoolPositionAttempt: vi.fn(async () => null) };
-  const request = vi.fn(async () => ({ number: '0xb', hash }));
+  const request = vi.fn(async (_args?: { method: string; params?: unknown[] }): Promise<unknown> => ({ number: '0xb', hash }));
+  // The wallet RPC has no receipt yet: the automatic check must stop at its bound and keep the pending state.
+  const receiptPending = (misses = Infinity) => { let reads = 0; request.mockImplementation(async args =>
+    args?.method === 'eth_getTransactionReceipt' && reads++ < misses ? null : { number: '0xb', hash }); };
+  const receiptReads = () => request.mock.calls.filter(([args]) => args?.method === 'eth_getTransactionReceipt').length;
   const getFunding = vi.fn(async () => ({ preparePoolTopUp })), getSender = vi.fn(async () => sender), getPositions = vi.fn(async () => ({ prepareSnapshot }));
   const session = { walletAddress: wallet, chainId: Number(candidate.chainId), browserProvider: { request },
     actions: { getCurrentDexPoolFundingCapability: getFunding, getCurrentDexSubmissionCapability: getSender, getCurrentDexPoolPositionCapability: getPositions } } as unknown as SharedWalletSession;
@@ -117,14 +125,16 @@ function fixture(pairIndex = 0, wallet = owner) {
   const button = (label: string) => elements(render()).find(node => node.element.type === 'button' && text(node.element.props.children) === label);
   const input = (label: string) => elements(render()).find(node => node.element.type === 'input' && node.element.props['aria-label'] === label)!;
   const change = (label: string, value: string) => { input(label).element.props.onChange!({ target: { value } }); render(); };
-  const settle = () => vi.waitFor(() => expect(button('Check top-up status')!.disabled).toBe(false));
+  const settle = () => vi.waitFor(() => expect((render() as ReactElement<{ 'aria-busy': boolean }>).props['aria-busy']).toBe(false));
+  const steps = () => (elements(render()).find(node => node.element.type === TransactionSteps)!.element.props as unknown as { model: TransactionStepsModel }).model;
   const click = async (label: string) => { const node = button(label); expect(node, `Missing button: ${label}`).toBeDefined();
     expect(node!.disabled, `Disabled button: ${label}; ${text(render())}`).toBe(false); node!.element.props.onClick!(); await settle(); };
   const enter = () => { change(`${pair.tokens[0].label} top-up maximum`, '1.234567'); change(`${pair.tokens[1].label} top-up maximum`, '2.345678'); };
-  const previewFlow = async () => { enter(); await click('Review top-up preview'); await click('Check top-up status'); };
-  const fundingFlow = async () => { await previewFlow(); await click('Review exact top-up'); };
-  const approveBoth = async () => { for (const token of pair.tokens) { await click(`Approve ${token.label} top-up amount`); await click('Check top-up status'); } };
-  return { props, pair, render, button, input, change, click, enter, previewFlow, fundingFlow, approveBoth, settle, journal,
+  // CW-136: each submission checks its own result. The flows need no status click.
+  const previewFlow = async () => { enter(); await click('Preview top-up'); };
+  const fundingFlow = async () => { await previewFlow(); await click('Review and deposit'); };
+  const approveBoth = async () => { for (const token of pair.tokens) await click(`Approve ${token.label} top-up amount`); };
+  return { props, pair, render, button, input, change, click, enter, previewFlow, fundingFlow, approveBoth, settle, journal, steps, receiptPending, receiptReads,
     amounts, funding, managed, preview, funds, allowances, preparePoolTopUp, prepareFunding, abandon, previewRecover, fundRecover, verifySnapshot,
     submitPreview, submitFunding, prepareApproval, submitApproval, approvalRecover, prepareSnapshot, snapshotRecover, submitSnapshot,
     getFunding, getSender, getPositions, request, sender, readAllowances };
@@ -140,25 +150,27 @@ describe('prepared Pool top-up money flow', () => {
     expect(f.readAllowances).toHaveBeenCalledOnce();
     expect(f.submitFunding).toHaveBeenCalledOnce();
     expect(f.submitApproval).not.toHaveBeenCalled();
-    expect(f.button('Submit liquidity top-up')!.disabled).toBe(true);
-    f.button('Submit liquidity top-up')!.element.props.onClick!(); await f.settle();
+    expect(f.fundRecover).toHaveBeenCalledOnce(); expect(f.props.onManaged).toHaveBeenCalledOnce();
+    expect(f.button('Deposit top-up')).toBeUndefined(); expect(f.button('Verify position')).toBeDefined();
     expect(f.submitFunding).toHaveBeenCalledOnce();
   });
   it('does not continue already-approved funding when its exact review is rejected', async () => {
     const f = fixture(); hooks.allowNative = true;
     f.allowances[0] = f.amounts.used0; f.allowances[1] = f.amounts.used1;
     await f.previewFlow(); hooks.confirm.mockResolvedValueOnce(false);
-    await f.click('Review exact top-up');
+    await f.click('Review and deposit');
     expect(f.submitFunding).not.toHaveBeenCalled();
     expect(f.readAllowances).not.toHaveBeenCalled();
   });
-  it('keeps prepared funding guidance when no transaction is pending', async () => {
+  it('shows prepared funding guidance and no status button when no transaction is pending', async () => {
     const f = fixture(); hooks.allowNative = true; await f.fundingFlow();
-    await f.click('Check top-up status');
-    expect(text(f.render())).toContain('Funding prepared. Approve the remaining token amounts');
+    expect(text(f.render())).toContain('Funding prepared. Approve the remaining token amounts, then select Deposit top-up.');
     expect(text(f.render())).not.toContain('no retained private accounting proof');
-    await f.approveBoth(); await f.click('Check top-up status');
-    expect(text(f.render())).toContain('Funding prepared. Select Submit liquidity top-up');
+    expect(f.button('Check status')).toBeUndefined(); expect(text(f.render())).not.toContain('Check top-up status');
+    await f.approveBoth();
+    expect(f.approvalRecover).toHaveBeenCalledTimes(2); expect(f.button('Check status')).toBeUndefined();
+    expect(f.steps().detail).toBe('Confirm 1 transaction in your wallet.');
+    expect(f.button('Deposit top-up')!.disabled).toBe(false);
     expect(f.submitFunding).not.toHaveBeenCalled();
   });
   it.each([false, true])('shows separate preview and funding signature counts (packed=%s)', async packed => {
@@ -186,17 +198,17 @@ describe('prepared Pool top-up money flow', () => {
     const f = fixture(); hooks.allowNative = true; await f.previewFlow();
     let finish!: (value: readonly [boolean, boolean]) => void;
     f.readAllowances.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    f.button('Review exact top-up')!.element.props.onClick!();
+    f.button('Review and deposit')!.element.props.onClick!();
     await vi.waitFor(() => expect(f.readAllowances).toHaveBeenCalledOnce());
     f.props.session = { ...f.props.session, walletAddress: `0x${'55'.repeat(20)}` }; f.render();
     finish([true, true]);
     await vi.waitFor(() => expect(text(f.render())).toContain('Top-up session changed'));
-    expect(f.button('Submit liquidity top-up')).toBeUndefined();
+    expect(f.button('Deposit top-up')).toBeUndefined();
     expect(f.submitApproval).not.toHaveBeenCalled(); expect(f.submitFunding).not.toHaveBeenCalled();
   });
   it('routes current browser top-up through its capability and keeps other candidate holds', async () => {
     const f = fixture(); f.enter(); f.change(`${f.pair.tokens[0].label} top-up maximum`, '0.5');
-    f.change(`${f.pair.tokens[1].label} top-up maximum`, '0.5'); await f.click('Review top-up preview');
+    f.change(`${f.pair.tokens[1].label} top-up maximum`, '0.5'); await f.click('Preview top-up');
     if (key === 'cheap-history') {
       expect(f.getSender).toHaveBeenCalledOnce();expect(f.preparePoolTopUp).toHaveBeenCalledOnce();expect(f.submitPreview).toHaveBeenCalledOnce();
     } else {
@@ -206,7 +218,7 @@ describe('prepared Pool top-up money flow', () => {
   });
   it('stops a rejected browser capability before reads, private preparation, confirmation or send',async()=>{
     hooks.allowNative=true;const f=fixture();f.enter();f.getSender.mockRejectedValue(new Error('Wallet session revoked'));
-    await f.click('Review top-up preview');expect(text(f.render())).toContain('Wallet session revoked');
+    await f.click('Preview top-up');expect(text(f.render())).toContain('Wallet session revoked');
     expect(f.getSender).toHaveBeenCalledOnce();for(const mock of [f.getFunding,f.getPositions,f.request,hooks.confirm,f.preparePoolTopUp,f.submitPreview])expect(mock).not.toHaveBeenCalled();
   });
   it.each([0, 1, 2, 3, 4, 5])('binds pair %i six-decimal budgets, owner proof and default 0.5 percent tolerance', async index => {
@@ -223,7 +235,7 @@ describe('prepared Pool top-up money flow', () => {
   if (key === 'cheap-history') it('admits an engineering owner with exact position and top-up terms before capability access', async () => {
     const authorizedOwner = CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.owner, f = fixture(0, authorizedOwner);
     f.enter(); f.change(`${f.pair.tokens[0].label} top-up maximum`, '0.5'); f.change(`${f.pair.tokens[1].label} top-up maximum`, '0.5');
-    await f.click('Review top-up preview'); await f.click('Check top-up status');
+    await f.click('Preview top-up');
     expect(f.getSender).toHaveBeenCalledWith(BigInt(candidate.chainId), { candidate: key });
     expect(f.request).toHaveBeenCalledWith({ method: 'eth_getBlockByNumber', params: ['latest', false] });
     expect(f.getFunding).toHaveBeenCalledWith(BigInt(candidate.chainId), { candidate: key });
@@ -236,81 +248,86 @@ describe('prepared Pool top-up money flow', () => {
       { label: `${f.pair.tokens[0].label} debit`, value: '1.000001' }, { label: `${f.pair.tokens[1].label} debit`, value: '2.000002' },
       { label: `${f.pair.tokens[0].label} unused from entered budget`, value: '0.234566' }, { label: `${f.pair.tokens[1].label} unused from entered budget`, value: '0.345676' }
     ]) }));
-    await f.click('Submit liquidity top-up'); expect(f.submitFunding).not.toHaveBeenCalled();
+    await f.click('Deposit top-up'); expect(f.submitFunding).not.toHaveBeenCalled();
     await f.approveBoth();
     expect(f.prepareApproval.mock.calls.map(([request]) => [request.canonicalIndex, request.cleanup])).toEqual([[0, false], [1, false]]);
     expect(f.submitApproval.mock.calls.map(([request]) => request.amount)).toEqual([1_000_001n, 2_000_002n]);
-    await f.click('Submit liquidity top-up'); await f.click('Check top-up status');
+    await f.click('Deposit top-up');
+    expect(f.fundRecover).toHaveBeenCalledOnce();
     expect(f.props.onManaged).toHaveBeenCalledOnce(); expect(f.props.onVerified).not.toHaveBeenCalled();
     expect(f.verifySnapshot).not.toHaveBeenCalled(); expect(text(f.render())).toContain('paid snapshot');
-    await f.click('Review top-up verification snapshot'); expect(f.props.onVerified).not.toHaveBeenCalled();
-    await f.click('Check top-up status');
+    await f.click('Verify position');
+    expect(f.snapshotRecover).toHaveBeenCalledOnce();
     expect(f.verifySnapshot).toHaveBeenCalledWith(snapshotHash); expect(f.props.onVerified).toHaveBeenCalledWith(snapshotHash);
+    expect(f.button('Check status')).toBeUndefined(); expect(f.button('Verify position')).toBeUndefined();
     expect(f.getPositions).toHaveBeenCalledWith(BigInt(candidate.chainId), { candidate: key });
     expect(f.submitFunding).toHaveBeenCalledOnce(); expect(f.submitSnapshot).toHaveBeenCalledOnce();
   });
   it('stops before funding and clears the two remaining exact allowances', async () => {
     const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth();
     await f.click('Stop unfunded top-up'); expect(f.props.onReleased).not.toHaveBeenCalled();
-    expect(f.button('Submit liquidity top-up')).toBeUndefined();
-    for (const token of f.pair.tokens) { await f.click(`Clear ${token.label} top-up amount`); await f.click('Check top-up status'); }
+    expect(f.button('Deposit top-up')).toBeUndefined();
+    for (const token of f.pair.tokens) await f.click(`Clear ${token.label} top-up amount`);
     expect(f.allowances).toEqual([0n, 0n]); expect(f.props.onReleased).toHaveBeenCalledOnce(); expect(f.submitFunding).not.toHaveBeenCalled();
     expect(f.submitApproval.mock.calls.slice(2).map(([request]) => [request.cleanup, request.amount])).toEqual([[true, 0n], [true, 0n]]);
   });
   it('asks no App window before the preview input signatures (owner decision 2026-11-17)', async () => {
     const f = fixture(); hooks.allowNative = true; f.enter();
-    await f.click('Review top-up preview');
+    await f.click('Preview top-up');
     expect(hooks.confirm).not.toHaveBeenCalled(); expect(f.submitPreview).toHaveBeenCalledOnce();
   });
   it('does not send after a cancelled exact-review confirmation', async () => {
     const f = fixture(); hooks.allowNative = true; await f.previewFlow();
     hooks.confirm.mockResolvedValueOnce(false);
-    await f.click('Review exact top-up');
+    await f.click('Review and deposit');
     expect(f.submitFunding).not.toHaveBeenCalled(); expect(f.prepareApproval).not.toHaveBeenCalled();
   });
   it.each(['wrong-position', 'wrong-context', 'missing-private-proof'] as const)('rejects recovered preview %s', async reason => {
-    const f = fixture(); hooks.allowNative = true; f.enter(); await f.click('Review top-up preview');
+    const f = fixture(); hooks.allowNative = true; f.enter();
     if (reason === 'wrong-position') f.previewRecover.mockResolvedValue({ ...f.preview, positionId: 53n });
     if (reason === 'wrong-context') f.previewRecover.mockResolvedValue({ ...f.preview, ownerContext: snapshotHash });
     if (reason === 'missing-private-proof') f.previewRecover.mockResolvedValue({ status: 'observed-mined', privateAccountingVerified: false } as never);
-    await f.click('Check top-up status'); expect(text(f.render())).toContain('proof is unavailable');
-    expect(f.button('Review exact top-up')).toBeUndefined(); expect(f.submitFunding).not.toHaveBeenCalled();
+    await f.click('Preview top-up'); expect(text(f.render())).toContain('proof is unavailable');
+    // The failed automatic check keeps the pending state; Check status is the fallback.
+    expect(f.button('Check status')).toBeDefined(); expect(f.steps().steps.map(step => step.state)).toEqual(['done', 'active', 'next', 'next']);
+    expect(f.button('Review and deposit')).toBeUndefined(); expect(f.submitFunding).not.toHaveBeenCalled();
   });
   it('does not accept a management result without the retained snapshot verifier', async () => {
-    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth(); await f.click('Submit liquidity top-up');
+    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth();
     f.fundRecover.mockResolvedValue({ positionId: 52n, privateAccountingVerified: false } as never);
-    await f.click('Check top-up status'); expect(text(f.render())).toContain('management proof is unavailable');
+    await f.click('Deposit top-up'); expect(text(f.render())).toContain('management proof is unavailable');
+    expect(f.button('Check status')).toBeDefined();
     expect(f.props.onManaged).not.toHaveBeenCalled(); expect(f.props.onVerified).not.toHaveBeenCalled(); expect(f.submitSnapshot).not.toHaveBeenCalled();
   });
   it.each(['funded','snapshot-failure'] as const)('retains the durable top-up hold after a reload: %s',async stage=>{
-    const f=fixture();hooks.allowNative=true;await f.fundingFlow();await f.approveBoth();await f.click('Submit liquidity top-up');await f.click('Check top-up status');
+    const f=fixture();hooks.allowNative=true;await f.fundingFlow();await f.approveBoth();await f.click('Deposit top-up');
     if(stage==='snapshot-failure'){
-      await f.click('Review top-up verification snapshot');f.verifySnapshot.mockRejectedValueOnce(new Error('Snapshot shares differ from management'));await f.click('Check top-up status');
+      f.verifySnapshot.mockRejectedValueOnce(new Error('Snapshot shares differ from management'));await f.click('Verify position');
     }
     const saved=f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!;expect(saved).toBeTruthy();
     hooks.states=[];hooks.refs=[];
     const metadata={status:'observed-mined-verification-held',poolTopUpHash:hash,privateAccountingVerified:false,readyToSign:false};
     f.sender.recoverPendingPoolAttempt.mockResolvedValue(metadata as never);f.sender.recoverPendingPoolPositionAttempt.mockResolvedValue(metadata as never);
-    await f.click('Check top-up status');
+    expect(f.steps().steps.map(step=>step.state)).toEqual(stage==='funded'?['done','done','stopped','next']:['done','done','done','stopped']);
+    await f.click('Check status');
     expect(text(f.render())).toContain('Final top-up accounting has not completed.');expect(text(f.render())).toContain('Do not resend');
     expect(text(f.render())).toContain(stage==='funded'?'Top-up deposit mined':'Top-up verification snapshot mined');
     expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(f.props.onVerified).not.toHaveBeenCalled();expect(f.props.onReleased).not.toHaveBeenCalled();
-    expect(f.button('Review top-up preview')!.disabled).toBe(true);expect(f.submitFunding).toHaveBeenCalledOnce();expect(f.submitSnapshot).toHaveBeenCalledTimes(stage==='funded'?0:1);
+    expect(f.button('Preview top-up')!.disabled).toBe(true);expect(f.submitFunding).toHaveBeenCalledOnce();expect(f.submitSnapshot).toHaveBeenCalledTimes(stage==='funded'?0:1);
   });
   it('keeps final accounting open when separate snapshot verification rejects', async () => {
-    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth(); await f.click('Submit liquidity top-up');
-    await f.click('Check top-up status'); await f.click('Review top-up verification snapshot');
+    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth(); await f.click('Deposit top-up');
     f.verifySnapshot.mockRejectedValue(new Error('Snapshot shares differ from management'));
-    await f.click('Check top-up status'); expect(text(f.render())).toContain('Snapshot shares differ');
+    await f.click('Verify position'); expect(text(f.render())).toContain('Snapshot shares differ');
+    await f.click('Check status'); expect(text(f.render())).toContain('Snapshot shares differ');
     expect(f.props.onVerified).not.toHaveBeenCalled(); expect(f.submitFunding).toHaveBeenCalledOnce();
   });
   it('rechecks final snapshot accounting on an explicit status request without sending again', async () => {
-    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth(); await f.click('Submit liquidity top-up');
-    await f.click('Check top-up status'); await f.click('Review top-up verification snapshot');
+    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth(); await f.click('Deposit top-up');
     f.verifySnapshot.mockRejectedValueOnce(new Error('Temporary private snapshot read failure'));
-    await f.click('Check top-up status'); expect(f.props.onVerified).not.toHaveBeenCalled();
+    await f.click('Verify position'); expect(f.props.onVerified).not.toHaveBeenCalled();
     expect(f.snapshotRecover).toHaveBeenCalledOnce(); expect(f.verifySnapshot).toHaveBeenCalledOnce();
-    await f.click('Check top-up status');
+    await f.click('Check status');
     expect(f.snapshotRecover).toHaveBeenCalledTimes(2); expect(f.verifySnapshot).toHaveBeenCalledTimes(2);
     expect(f.submitSnapshot).toHaveBeenCalledOnce(); expect(f.submitFunding).toHaveBeenCalledOnce();
     expect(f.props.onVerified).toHaveBeenCalledWith(snapshotHash);
@@ -318,18 +335,19 @@ describe('prepared Pool top-up money flow', () => {
   it('starts another preview only after an unfunded stop has no remaining allowances', async () => {
     const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.click('Stop unfunded top-up');
     expect(f.props.onReleased).toHaveBeenCalledOnce(); await f.click('Start another top-up');
-    expect(f.button('Submit liquidity top-up')).toBeUndefined(); expect(f.input('Top-up funding tolerance').disabled).toBe(false);
+    expect(f.button('Deposit top-up')).toBeUndefined(); expect(f.input('Top-up funding tolerance').disabled).toBe(false);
     expect(f.prepareApproval).not.toHaveBeenCalled(); expect(f.submitFunding).not.toHaveBeenCalled();
-    await f.click('Review top-up preview'); expect(f.submitPreview).toHaveBeenCalledTimes(2);
+    await f.click('Preview top-up'); expect(f.submitPreview).toHaveBeenCalledTimes(2);
   });
   it.each(['wallet', 'position', 'inputs', 'candidate'] as const)('revokes a pending private result after %s changes', async reason => {
-    const f = fixture(); hooks.allowNative = true; f.enter(); await f.click('Review top-up preview');
+    const f = fixture(); hooks.allowNative = true; f.enter(); f.receiptPending(); await f.click('Preview top-up');
+    expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.button('Check status')).toBeDefined();
     if (reason === 'wallet') f.props.session = { ...f.props.session, walletAddress: snapshotHash.slice(0, 42) };
     if (reason === 'position') f.props.position = { ...f.props.position, positionId: 53n };
     if (reason === 'candidate') f.props.candidateKey = key === 'cheap-exit' ? 'cheap-prepared' : 'cheap-exit';
     if (reason === 'inputs') f.change('Top-up funding tolerance', '1');
-    f.render(); await f.click('Check top-up status');
-    expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.button('Review exact top-up')).toBeUndefined(); expect(f.submitFunding).not.toHaveBeenCalled();
+    f.render(); await f.click('Check status');
+    expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.button('Review and deposit')).toBeUndefined(); expect(f.submitFunding).not.toHaveBeenCalled();
   });
   it('keeps an uncertain preview send pending and prevents a second send', async () => {
     const f = fixture(); hooks.allowNative = true; f.enter();
@@ -339,25 +357,28 @@ describe('prepared Pool top-up money flow', () => {
       f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, saved);
       throw new Error('Unknown wallet result with raw RPC payload');
     });
-    await f.click('Review top-up preview');
+    await f.click('Preview top-up');
     expect(text(f.render())).toContain('The wallet did not confirm submission.');
     expect(text(f.render())).not.toContain('raw RPC payload');
-    expect(f.button('Review top-up preview')!.disabled).toBe(true); expect(f.props.onReleased).not.toHaveBeenCalled();
+    expect(f.button('Preview top-up')!.disabled).toBe(true); expect(f.props.onReleased).not.toHaveBeenCalled();
     f.sender.recoverPendingPoolAttempt.mockResolvedValue({ status: 'manual-reconciliation-required' } as never);
-    await f.click('Check top-up status');
+    await f.click('Check status');
     expect(text(f.render())).toContain('Keep this record and do not resend.');
     expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);
     expect(f.submitPreview).toHaveBeenCalledOnce();
   });
   it.each(['token', 'unknown-allowance', 'duplicate-wallet', 'unverified'] as const)('does not unlock funding after approval %s proof failure', async reason => {
-    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.click(`Approve ${f.pair.tokens[0].label} top-up amount`);
-    const funds = f.funds();
-    if (reason === 'unknown-allowance') funds.tokens.find(token => token.address === f.props.position.poolTokens[0])!.allowance = 999n;
-    if (reason === 'duplicate-wallet') funds.tokens[3] = funds.tokens[0];
-    f.approvalRecover.mockResolvedValue({ privateAccountingVerified: reason !== 'unverified', fundingOutcome: 'verified',
-      token: reason === 'token' ? f.props.position.poolTokens[1] : f.props.position.poolTokens[0], funds });
-    await f.click('Check top-up status');
-    expect(f.button('Submit liquidity top-up')!.disabled).toBe(true); expect(f.submitFunding).not.toHaveBeenCalled();
+    const f = fixture(); hooks.allowNative = true; await f.fundingFlow();
+    f.approvalRecover.mockImplementation(async () => {
+      const funds = f.funds();
+      if (reason === 'unknown-allowance') funds.tokens.find(token => token.address === f.props.position.poolTokens[0])!.allowance = 999n;
+      if (reason === 'duplicate-wallet') funds.tokens[3] = funds.tokens[0];
+      return { privateAccountingVerified: reason !== 'unverified', fundingOutcome: 'verified',
+        token: reason === 'token' ? f.props.position.poolTokens[1] : f.props.position.poolTokens[0], funds };
+    });
+    await f.click(`Approve ${f.pair.tokens[0].label} top-up amount`);
+    expect(f.approvalRecover).toHaveBeenCalledOnce(); expect(f.button('Check status')).toBeDefined();
+    expect(f.button('Deposit top-up')!.disabled).toBe(true); expect(f.submitFunding).not.toHaveBeenCalled();
     expect(f.props.onVerified).not.toHaveBeenCalled();
   });
   it('does not keep stopped state or old allowances in another position scope', async () => {
@@ -365,23 +386,23 @@ describe('prepared Pool top-up money flow', () => {
     expect(f.button(`Clear ${f.pair.tokens[0].label} top-up amount`)).toBeDefined();
     f.props.position = { ...f.props.position, positionId: 53n }; f.render();
     expect(f.button(`Clear ${f.pair.tokens[0].label} top-up amount`)).toBeUndefined();
-    expect(f.button('Submit liquidity top-up')).toBeUndefined(); expect(f.input('Top-up funding tolerance').disabled).toBe(false);
+    expect(f.button('Deposit top-up')).toBeUndefined(); expect(f.input('Top-up funding tolerance').disabled).toBe(false);
   });
   it('does not resend an uncertain management action', async () => {
     const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth();
     f.submitFunding.mockImplementation(async () => { f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY, '{}'); throw new Error('Unknown management wallet result'); });
-    await f.click('Submit liquidity top-up');
-    expect(f.submitFunding).toHaveBeenCalledOnce(); expect(f.button('Submit liquidity top-up')!.disabled).toBe(true);
+    await f.click('Deposit top-up');
+    expect(f.submitFunding).toHaveBeenCalledOnce(); expect(f.button('Deposit top-up')!.disabled).toBe(true);
     expect(f.submitSnapshot).not.toHaveBeenCalled(); expect(f.props.onReleased).not.toHaveBeenCalled(); expect(f.props.onVerified).not.toHaveBeenCalled();
   });
   it('keeps a mined snapshot verification hold after top-up reload',async()=>{
     const f=fixture(),saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core,graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:3,txHash:hash,callHash:hash,verificationBlocked:true,verificationFailure:'snapshot-financial-state'});
     f.journal.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);
     f.sender.recoverPendingPoolPositionAttempt.mockResolvedValue({status:'observed-mined-verification-held',verificationFailure:'snapshot-financial-state',privateAccountingVerified:false,readyToSign:false} as never);
-    await f.click('Check top-up status');
+    await f.click('Check status');
     expect(text(f.render())).toContain('mined');expect(text(f.render())).toContain('Prepared snapshot changed financial state.');
     expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved);expect(f.props.onVerified).not.toHaveBeenCalled();
-    expect(f.submitSnapshot).not.toHaveBeenCalled();expect(f.submitFunding).not.toHaveBeenCalled();expect(f.button('Review exact top-up')).toBeUndefined();
+    expect(f.submitSnapshot).not.toHaveBeenCalled();expect(f.submitFunding).not.toHaveBeenCalled();expect(f.button('Review and deposit')).toBeUndefined();
   });
   // CW-086, decision-033: a release in recovery sent nothing. The view keeps its verified state and does not stop.
   it('keeps the verified preview and the open top-up when a saved wallet rejection is released', async () => {
@@ -390,9 +411,9 @@ describe('prepared Pool top-up money flow', () => {
       graph: `0x${candidate.graph}`, phase: 'token-approve', nonce: 3, txHash: null, callHash: hash, walletRejected: true }));
     f.sender.recoverPendingSharedPoolApproval.mockImplementationOnce(async () => {
       f.journal.delete(CURRENT_DEX_PENDING_ATTEMPT_KEY); return { status: 'released-unsent', privateAccountingVerified: false } as never; });
-    await f.click('Check top-up status');
+    await f.click('Check status');
     expect(text(f.render())).toContain('The wallet rejected this request.');
-    expect(f.button('Review exact top-up')).toBeDefined(); expect(f.button('Review exact top-up')!.disabled).toBe(false);
+    expect(f.button('Review and deposit')).toBeDefined(); expect(f.button('Review and deposit')!.disabled).toBe(false);
     expect(f.props.onReleased).not.toHaveBeenCalled();
     for (const mock of [f.submitFunding, f.submitApproval, f.submitSnapshot]) expect(mock).not.toHaveBeenCalled();
     expect(f.submitPreview).toHaveBeenCalledOnce();
@@ -403,11 +424,76 @@ describe('prepared Pool top-up money flow', () => {
       graph: `0x${candidate.graph}`, phase: 'pool-preview', nonce: 3, txHash: null, callHash: hash, walletRejected: true }));
     f.sender.recoverPendingPoolAttempt.mockImplementationOnce(async () => {
       f.journal.delete(CURRENT_DEX_PENDING_ATTEMPT_KEY); return { status: 'released-unsent', privateAccountingVerified: false } as never; });
-    await f.click('Check top-up status');
+    await f.click('Check status');
     expect(text(f.render())).toContain('The wallet rejected this request.');
     expect(f.props.onReleased).toHaveBeenCalledOnce();
-    f.enter(); await f.click('Review top-up preview');
+    f.enter(); await f.click('Preview top-up');
     expect(f.submitPreview).toHaveBeenCalledOnce();
+  });
+  // CW-136: step track and automatic result checks.
+  it('shows the step track state in each phase', async () => {
+    const f = fixture(4); hooks.allowNative = true;
+    const states = () => f.steps().steps.map(step => step.state), signatures = poolInputs.usesPackedPoolInputs(candidate) ? 3 : 4;
+    expect(f.steps().steps.map(step => step.label)).toEqual(['Amounts', 'Preview', 'Deposit', 'Verify']);
+    expect(f.steps()).toMatchObject({ title: 'Step 1 of 4', detail: 'Enter the maximum amount of each token.', outcome: 'idle' });
+    expect(states()).toEqual(['active', 'next', 'next', 'next']);
+    f.enter(); f.button('Preview top-up')!.element.props.onClick!();
+    expect(f.steps()).toMatchObject({ title: 'Step 2 of 4', detail: `${signatures} private-input signatures, then 1 transaction.`, outcome: 'running' });
+    expect(states()).toEqual(['done', 'wallet', 'next', 'next']);
+    await f.settle();
+    expect(f.steps()).toMatchObject({ title: 'Step 3 of 4', detail: `Review the exact amounts. Then ${signatures} private-input signatures and 1 transaction.` });
+    expect(states()).toEqual(['done', 'done', 'active', 'next']);
+    await f.click('Review and deposit');
+    expect(f.steps().detail).toBe('Approve the remaining token amounts. Then confirm 1 transaction.');
+    await f.approveBoth(); expect(states()).toEqual(['done', 'done', 'active', 'next']);
+    await f.click('Deposit top-up');
+    expect(f.steps()).toMatchObject({ title: 'Step 4 of 4', detail: '1 transaction verifies your position.', outcome: 'running' });
+    expect(states()).toEqual(['done', 'done', 'done', 'active']);
+    f.button('Verify position')!.element.props.onClick!(); expect(states()).toEqual(['done', 'done', 'done', 'wallet']); await f.settle();
+    expect(f.steps()).toMatchObject({ title: 'Top-up complete', outcome: 'complete' });
+    expect(states()).toEqual(['done', 'done', 'done', 'done']);
+  });
+  it('checks each submitted result once without a status click', async () => {
+    const f = fixture(); hooks.allowNative = true; f.enter();
+    await f.click('Preview top-up');
+    expect(f.previewRecover).toHaveBeenCalledOnce(); expect(f.receiptReads()).toBe(1);
+    expect(f.request).toHaveBeenCalledWith({ method: 'eth_getTransactionReceipt', params: [hash] });
+    expect(text(f.render())).toContain('Private top-up preview verified.'); expect(f.button('Check status')).toBeUndefined();
+    await f.click('Review and deposit'); await f.approveBoth(); expect(f.approvalRecover).toHaveBeenCalledTimes(2);
+    await f.click('Deposit top-up'); expect(f.fundRecover).toHaveBeenCalledOnce(); expect(f.props.onManaged).toHaveBeenCalledOnce();
+    await f.click('Verify position'); expect(f.snapshotRecover).toHaveBeenCalledOnce(); expect(f.props.onVerified).toHaveBeenCalledWith(snapshotHash);
+    expect(f.request).toHaveBeenCalledWith({ method: 'eth_getTransactionReceipt', params: [snapshotHash] });
+    for (const mock of [f.submitPreview, f.submitFunding, f.submitSnapshot]) expect(mock).toHaveBeenCalledOnce();
+  });
+  it('waits for a late receipt within its bound, then checks the result once', async () => {
+    const f = fixture(); hooks.allowNative = true; f.enter(); f.receiptPending(2);
+    await f.click('Preview top-up');
+    expect(f.receiptReads()).toBe(3); expect(f.previewRecover).toHaveBeenCalledOnce();
+    expect(text(f.render())).toContain('Private top-up preview verified.'); expect(f.button('Check status')).toBeUndefined();
+  });
+  it('stops at six receipt reads, keeps the pending state and falls back to Check status', async () => {
+    const f = fixture(); hooks.allowNative = true; f.enter(); f.receiptPending();
+    await f.click('Preview top-up');
+    expect(f.receiptReads()).toBe(6); expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.submitPreview).toHaveBeenCalledOnce();
+    expect(text(f.render())).toContain('The transaction is not confirmed yet. Select Check status in a moment. Do not resend.');
+    expect(f.steps()).toMatchObject({ title: 'Step 2 of 4', detail: 'A transaction is submitted. Select Check status.' });
+    expect(f.button('Preview top-up')!.disabled).toBe(true); expect(f.button('Review and deposit')).toBeUndefined();
+    await f.click('Check status');
+    expect(f.previewRecover).toHaveBeenCalledOnce(); expect(f.submitPreview).toHaveBeenCalledOnce();
+    expect(f.button('Review and deposit')!.disabled).toBe(false); expect(f.button('Check status')).toBeUndefined();
+  });
+  it('keeps the pending state and the saved record when an automatic check fails', async () => {
+    const f = fixture(); hooks.allowNative = true; await f.fundingFlow(); await f.approveBoth();
+    f.fundRecover.mockRejectedValueOnce(new Error('Temporary private read failure'));
+    await f.click('Deposit top-up');
+    const saved = f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)!; expect(saved).toBeTruthy();
+    expect(text(f.render())).toContain('Temporary private read failure');
+    expect(f.props.onManaged).not.toHaveBeenCalled(); expect(f.props.onReleased).not.toHaveBeenCalled();
+    expect(f.button('Deposit top-up')!.disabled).toBe(true); expect(f.button('Verify position')).toBeUndefined();
+    expect(f.button('Check status')!.disabled).toBe(false);
+    await f.click('Check status');
+    expect(f.fundRecover).toHaveBeenCalledTimes(2); expect(f.submitFunding).toHaveBeenCalledOnce();
+    expect(f.journal.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(saved); expect(f.props.onManaged).toHaveBeenCalledOnce();
   });
   it.each(['pool-preview', 'pool-fund', 'token-approve', 'pool-snapshot'] as const)('reloads %s as public metadata without private funding authority', async phase => {
     const f = fixture();
@@ -417,11 +503,11 @@ describe('prepared Pool top-up money flow', () => {
     f.sender.recoverPendingPoolAttempt.mockResolvedValue(metadata as never);
     f.sender.recoverPendingSharedPoolApproval.mockResolvedValue(metadata as never);
     f.sender.recoverPendingPoolPositionAttempt.mockResolvedValue(metadata as never);
-    await f.click('Check top-up status');
+    await f.click('Check status');
     const expected = phase === 'token-approve' ? f.sender.recoverPendingSharedPoolApproval : phase === 'pool-snapshot' ?
       f.sender.recoverPendingPoolPositionAttempt : f.sender.recoverPendingPoolAttempt;
     expect(expected).toHaveBeenCalledOnce(); expect(text(f.render())).toContain('does not confirm private top-up accounting');
-    expect(f.button('Review exact top-up')).toBeUndefined();
+    expect(f.button('Review and deposit')).toBeUndefined();
     for (const mock of [f.getFunding, f.prepareFunding, f.prepareApproval, f.submitFunding, f.props.onVerified]) expect(mock).not.toHaveBeenCalled();
   });
 });
