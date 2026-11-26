@@ -10,6 +10,7 @@ import { CURRENT_DEX_OPEN_ABI, decodeCurrentDexQuoteIssue } from './currentDexOp
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI, CURRENT_FAST_DEX_RECEIPT_ABI,
   type CurrentCheapDexProfile } from './currentDexOperation';
 import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI, encodeCurrentDexQuoteRequest, packCurrentDexMinimumRate } from './currentDexOperation';
+import { STAGED_BUILD13_DEX_CANDIDATE } from './currentDexBuild13Candidate';
 
 describe('packed current Quote price input', () => {
   it('packs the full uint128 price domain', () => {
@@ -37,7 +38,11 @@ describe('packed current Quote price input', () => {
   });
 });
 
-const frozen = createRequire(import.meta.url)('../../../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/current-async-adverse/native-accept-boundary.cjs').frozen();
+// Build 13 (graph 5045070b) is the only selected DEX since decision-034. The 2026-09-30 04ea frozen
+// candidate no longer loads (CANDIDATE_DRIFT), which stopped this whole file.
+const build13 = createRequire(import.meta.url)('../../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/sizing-candidate.cjs').frozen();
+const frozen = { identity: { graph: build13.manifest.binding.graphSha256 as string, core: STAGED_BUILD13_DEX_CANDIDATE.core as string },
+  core: new Interface(build13.artifacts.ChainWhisperDexCore.abi), c: { info: build13.info }, artifacts: build13.artifacts };
 
 const iface = new Interface(CURRENT_DEX_OPERATION_ABI);
 const receipts = new Interface(CURRENT_DEX_RECEIPT_ABI);
@@ -48,22 +53,21 @@ const data = (status: number, quote = false, funded = false, reason = 0) =>
   iface.encodeFunctionResult('operationPublic', [[quote, funded, context, status, reason, 1n, 100n, 2n, 3n]]);
 
 describe('current DEX public operation codec', () => {
-  it('binds both cheap profiles to the frozen 04ea ABI and actual storage paths', () => {
-    expect(frozen.identity).toMatchObject({ graph: '04ea108dd247d39d1158a0c441ddd9119efe05de5c9217b38c2a3d048944c1fc',
-      package: 'c7a2afd6c6dcd9b72129dfc62fb5285965e83cf547ac1ca972ed8b6d56a3a7ad',
-      core: '0xa2b718d9F3F086e9eecEe9015Dcb037F7a10B0E7', runtime: '0xd6e128469ccd62aae45ada2cbf86f9e4aeb9916011b489623f756689b6bfed73' });
-    for (const [abi, names] of [[CURRENT_CHEAP_DEX_QUOTE_ABI, ['quoteFastPoolV1', 'quoteCheapAsyncV1']],
+  it('binds both cheap profiles to the frozen build 13 ABI and actual storage paths', () => {
+    expect(frozen.identity.graph).toBe(STAGED_BUILD13_DEX_CANDIDATE.graph);
+    // Build 13 takes the slippage quote calls; the V1 quote names exist only on removed candidates.
+    for (const [abi, names] of [[CURRENT_SLIPPAGE_DEX_QUOTE_ABI, ['quoteFastPool', 'quoteCheapAsync']],
       [CURRENT_CHEAP_DEX_OPERATION_ABI, ['fastPoolQuotePublic', 'cheapAsyncPublic']],
       [CURRENT_FAST_DEX_RECEIPT_ABI, ['fastPoolPrincipalReceipt']]] as const) {
       const codec = new Interface(abi);
       for (const name of names) {
-        const actual = codec.getFunction(name)!, native = frozen.core.getFunction(name);
+        const actual = codec.getFunction(name)!, native = frozen.core.getFunction(name)!;
         expect(actual.format('sighash')).toBe(native.format('sighash'));
-        expect(actual.outputs.map(x => x.format('sighash'))).toEqual(native.outputs.map((x: { format: (format: string) => string }) => x.format('sighash')));
+        expect(actual.outputs.map(x => x.format('sighash'))).toEqual(native.outputs.map(x => x.format('sighash')));
       }
     }
     const opening = new Interface(CURRENT_CHEAP_DEX_QUOTE_ABI);
-    for (const name of ['FastPoolQuoteIssued', 'CheapAsyncAdvanced']) expect(opening.getEvent(name)?.format('full')).toBe(frozen.core.getEvent(name).format('full'));
+    for (const name of ['FastPoolQuoteIssued', 'CheapAsyncAdvanced']) expect(opening.getEvent(name)?.format('full')).toBe(frozen.core.getEvent(name)!.format('full'));
     const lifecycle = frozen.c.info.input.sources['contracts/dex/ChainWhisperDexOperationLifecycle.sol'].content;
     expect(lifecycle).toContain('emit FastPoolQuoteIssued(quoteId,context,request.deadline)');
     expect(lifecycle).toContain('emit CheapAsyncAdvanced(operationId,uint8(plan.stage),bytes32(0))');

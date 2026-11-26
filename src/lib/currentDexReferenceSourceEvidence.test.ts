@@ -8,7 +8,8 @@ import { CURRENT_DEX_REFERENCE_SOURCE_LAYOUT as layout, PACKED_DEX_REFERENCE_SOU
 describe('unchanged current-source price verification: compiled candidate evidence',()=>{
  it.each([
   ['packed-rate-input-2026-11-03/reference-fix-build-1',layout],
-  ['c1-gap-aware-sizing-2026-11-15/build-1',packedIdentity]
+  // Build 13 (graph 5045070b, CW-120) replaced the gap candidate build (decision-034).
+  ['c1-band-sizing-2026-11-21/convergence-build-13',packedIdentity]
  ] as const)('uses the exact pinned %s layout and artifact identities',(build,identity)=>{
   const root=`../ChainWhisper Contracts V2/validation/candidates/${build}/snapshot/`,bytes=readFileSync(root+'build-info/graph.json'),info=JSON.parse(bytes.toString()),l=info.output.contracts['contracts/dex/ChainWhisperDexCore.sol'].ChainWhisperDexCore.storageLayout;
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(identity.buildInfoSha256);

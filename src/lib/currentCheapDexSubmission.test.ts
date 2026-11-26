@@ -90,7 +90,8 @@ async function fixture(profile: CurrentCheapDexProfile, useNative: 'history' = '
   const candidate = 'cheap-history' as const;
   const minedBlock = coupled ? Number(BigInt(coupled.head().number)) : actualGraph ? Number(history.attestationBlock.number) + 10 : 50;
   const preparationBlock = coupled ? minedBlock : actualGraph ? minedBlock - 8 : 42;
-  const captureBytes = actualGraph ? readFileSync(new URL(import.meta.env.VITE_LOW_RPC_TRIAL ? '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json' : '../../reports/limit-directory-adoption-2026-11-04/public-binding/public-capture-1.json', import.meta.url)) : null;
+  // Public capture of the selected build 13 candidate (decision-034); its SHA-256 is the candidate's attestationSha256.
+  const captureBytes = actualGraph ? readFileSync(new URL('../../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/native-bob-dense-1/APP_PUBLIC_CAPTURE.json', import.meta.url)) : null;
   if (captureBytes) expect(createHash('sha256').update(captureBytes).digest('hex')).toBe(history.attestationSha256);
   const captured = captureBytes ? JSON.parse(captureBytes.toString()).reads as { method: string; params: unknown[]; result: unknown }[] : [];
   const graphReads: { binding: number; block: string; calls: number }[] = [], graphBindings = new Map<object, number>();
@@ -764,8 +765,10 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     expect((await sent.recover()).delivery).toMatchObject({ principal: wallet, core: history.core, amounts: f.amounts });
     expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
     expect(f.readReceipt).toHaveBeenCalledTimes(3);
-    expect([setup.providerSend, quote.providerSend, accept.providerSend, counts().providerSend]).toEqual([226, 298, 407, 460]);
-    expect(counts().providerSend - setup.providerSend).toBe(234);
+    // Build 13 capture. CW-140.03: the second read capability on this provider reuses the first qualification
+    // (15 requests instead of a second 107-request cold read), so setup and quote read less.
+    expect([setup.providerSend, quote.providerSend, accept.providerSend, counts().providerSend]).toEqual([134, 193, 302, 355]);
+    expect(counts().providerSend - setup.providerSend).toBe(221);
     expect(m.issue).toHaveBeenCalledOnce(); expect(m.operation).toHaveBeenCalledTimes(4);
     expect(m.rate).toHaveBeenCalledTimes(3);
     console.log(JSON.stringify({ kind: 'CURRENT_FAST_ACTUAL_PUBLIC_PRIVATE_READER_LOGICAL_READS', setup, quote, accept, completed: counts(),
@@ -789,10 +792,12 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     expect((await sent.recover()).delivery).toMatchObject({ principal: wallet, core: history.core, amounts: f.amounts });
     expect(f.values.has(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(false);
     expect(new Set(f.graphReads.map(row => row.binding)).size).toBe(2);
-    expect(f.graphReads.filter(row => row.calls === 107)).toHaveLength(2);
+    // CW-140.03: one cold qualification per read provider; the second capability only repeats fresh runtime/admission reads.
+    expect(f.graphReads.filter(row => row.calls === 107)).toHaveLength(1);
+    expect(f.graphReads.find(row => row.binding === 2)?.calls).toBe(15);
     expect(f.graphReads.every(row => row.calls === 107 || row.calls === 2 || row.calls === 15)).toBe(true);
-    expect([setup.providerSend, quote.providerSend, counts().providerSend]).toEqual([226, 286, 372]);
-    expect([setup.graphSubrequests, quote.graphSubrequests, counts().graphSubrequests]).toEqual([216, 239, 267]);
+    expect([setup.providerSend, quote.providerSend, counts().providerSend]).toEqual([134, 181, 267]);
+    expect([setup.graphSubrequests, quote.graphSubrequests, counts().graphSubrequests]).toEqual([124, 134, 162]);
     expect(counts().providerSend - setup.providerSend).toBeLessThanOrEqual(200);
     console.log(JSON.stringify({ kind: 'CURRENT_FAST_ACTUAL_GRAPH_LOGICAL_READS', setup, quote, completed: counts(), graphReads: f.graphReads,
       operationAndPrivateSubrequests: 'mocked; not counted', walletDispatchesAndPhysicalHTTP: 'not measured', keeperRequests: 0 }));

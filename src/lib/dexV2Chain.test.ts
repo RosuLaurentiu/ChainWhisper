@@ -23,7 +23,9 @@ describe('current directory graph qualification', () => {
   const selected = STAGED_SHARED_HISTORY_DEX_CANDIDATE;
   const registry = new Interface(['function marketForTokens(address,address) view returns(bytes32,uint256,uint256,uint256,bool,address,address)']);
   const publicOperation = new Interface(CURRENT_CHEAP_DEX_OPERATION_ABI);
-  const capture = JSON.parse(readFileSync(new URL('../../reports/c1-gap-adoption-2026-11-15/GAP_PUBLIC_CAPTURE.json', import.meta.url), 'utf8')) as { reads: { method: string; params: unknown[]; result: unknown }[] };
+  // Public capture of the selected build 13 candidate (graph 5045070b); the gap candidate capture was removed with decision-034.
+  const capture = JSON.parse(readFileSync(new URL('../../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/native-bob-dense-1/APP_PUBLIC_CAPTURE.json', import.meta.url), 'utf8')) as { graph: string; reads: { method: string; params: unknown[]; result: unknown }[] };
+  it('uses the public capture of the selected candidate', () => expect(capture.graph).toBe(selected.graph));
   function currentFixture() {
     const number = BigInt(selected.attestationBlock.number) + 10n;
     const primary = selected.pairs.find(p => p.marketId === selected.marketId)!;
@@ -73,7 +75,11 @@ describe('current directory graph qualification', () => {
     f.request.mockClear(); await f.read(f.number + 1n); expect(f.request).toHaveBeenCalledTimes(15);
     expect(f.request.mock.calls.filter(([r]) => r.method === 'eth_getCode')).toHaveLength(5);
     expect(f.request.mock.calls.filter(([r]) => r.method === 'eth_call')).toHaveLength(1);
-    f.request.mockClear(); await f.read(f.number); expect(f.request).toHaveBeenCalledTimes(107);
+    // CW-140.03: a read at the qualification block reuses that qualification after its block-hash check,
+    // and repeats only the fresh runtime/admission reads (no second cold read).
+    f.request.mockClear(); await f.read(f.number); expect(f.request).toHaveBeenCalledTimes(14);
+    expect(f.request.mock.calls.filter(([r]) => r.method === 'eth_getCode')).toHaveLength(5);
+    expect(f.request.mock.calls.filter(([r]) => r.method === 'eth_call')).toHaveLength(1);
   });
   it('reuses only the six-market immutable proof while checking current companion code and registry', async () => {
     const f = currentFixture();
@@ -139,7 +145,7 @@ describe('current directory graph qualification', () => {
       expect(partial.request).toHaveBeenCalledTimes(207);
     }
     expect(counts).toEqual({ cold: 207, sameBlock: 42, nextBlock: 55 });
-  });
+  }, 30_000); // About 3 s alone; many replayed reads exceed the 5 s default under full DEX-suite load.
   it.each(['core', 'token', 'selector', 'id', 'registry-revision', 'market-revision', 'enabled', 'engine', 'terms', 'anchor', 'chain', 'session'] as const)('rejects changed %s after qualification', async fault => {
     const f = currentFixture(); await f.read();
     if (fault === 'core') f.drift(selected.core);

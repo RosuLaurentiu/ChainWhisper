@@ -77,7 +77,8 @@ import { usesPackedPoolInputs } from './currentDexPoolFunding';
 describe('packed plain Limit terms',()=>{
   const mask=(1n<<128n)-1n;
   it('binds the two new selectors to the exact frozen derivative and no other graph',()=>{
-    const f=native('./candidates/limit-input-signatures-2026-11-12/candidate.cjs').frozen(),compiled=new Interface(f.artifacts.ChainWhisperDexCore.abi);
+    // Build 13 (graph 5045070b) is the frozen derivative the App binds since CW-120.
+    const f=native('./candidates/c1-band-sizing-2026-11-21/sizing-candidate.cjs').frozen(),compiled=new Interface(f.artifacts.ChainWhisperDexCore.abi);
     expect(f.manifest.binding.graphSha256).toBe(PACKED_LIMIT_INPUT_GRAPH);
     expect(usesPackedLimitInputs({graph:PACKED_LIMIT_INPUT_GRAPH})).toBe(true);
     expect(usesPackedPoolInputs({graph:PACKED_LIMIT_INPUT_GRAPH})).toBe(true);

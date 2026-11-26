@@ -128,6 +128,8 @@ describe('selected candidate market-reference hook',()=>{
     hooks.enabled=true;vi.useFakeTimers();vi.stubGlobal('window',globalThis);
     const {default:useDailyPrice}=await vi.importActual<typeof import('./useCurrentDexDailyPrice')>('./useCurrentDexDailyPrice');
     const fixture=makeHistoryFixture();
+    // The history fixture freezes Date.now; let it follow the fake clock so the 60 s poll can fall due (CW-141).
+    const start=Date.now();vi.mocked(Date.now).mockRestore();vi.setSystemTime(start);
     let release!:()=>void;
     const held=new Promise<void>(resolve=>{release=resolve;});
     const chartRequests=vi.fn(async(input:Parameters<typeof fixture.provider.request>[0])=>{
@@ -160,7 +162,8 @@ describe('selected candidate market-reference hook',()=>{
     expect(priceReads.isVerifiedCurrentDexDailyPrice(settled.chart.snapshot)).toBe(true);
     expect(chartRead).toHaveBeenCalledTimes(1);
     expect(hooks.slots.some(slot=>(slot.value as {view?:{message?:string}})?.view?.message==='Fixture reference unavailable.')).toBe(true);
-    await vi.advanceTimersByTimeAsync(29000);Render();
+    // The 60 s poll fell due while the first read was held, so the next read starts on the next tick.
+    await vi.advanceTimersByTimeAsync(1000);Render();
     expect(read).toHaveBeenCalledTimes(2);
   });
   it('reads only while the user is active and reads again at once when activity returns',async()=>{

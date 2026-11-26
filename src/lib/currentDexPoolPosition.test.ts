@@ -20,10 +20,11 @@ describe('frozen current liquidity claim interface',()=>{
   });
   it('matches candidate-bound Core/NFT function selectors and all output types',()=>{
     // Offline bound compiler/artifact reads. No runner or RPC action is invoked.
-    const candidate=require(resolve(process.cwd(),'../ChainWhisper Contracts V2/validation/candidates/direct-limit-match-2026-09-30/current-integration/candidate-binding.cjs')).loadCandidate();
-    expect(candidate.graphSha256).toBe('04ea108dd247d39d1158a0c441ddd9119efe05de5c9217b38c2a3d048944c1fc');
+    // Build 13 (graph 5045070b) is the selected DEX since decision-034; the 2026-09-30 04ea binding no longer loads (CANDIDATE_DRIFT).
+    const candidate=require(resolve(process.cwd(),'../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/sizing-candidate.cjs')).frozen();
+    expect(candidate.manifest.binding.graphSha256).toBe('5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239');
     for(const [host,name]of[[currentPoolPositionAbi,'ChainWhisperDexCore'],[currentPoolNftAbi,'ChainWhisperDexPositionNFT']]as const){
-      const frozen=new Interface(candidate.compiled(name).abi);
+      const frozen=new Interface(candidate.artifacts[name].abi);
       host.forEachFunction(fragment=>{const target=frozen.getFunction(fragment.format('sighash'))!;expect(fragment.selector).toBe(target.selector);
         expect(fragment.outputs.map(value=>value.format('sighash'))).toEqual(target.outputs.map(value=>value.format('sighash')));});
     }

@@ -7,6 +7,8 @@ import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT } from '../../src/lib/packedInput
 import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE, type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceManifest } from '../../src/lib/currentDexDailyPrice';
 import { makeCurrentReferenceStorage } from './currentReferenceSource.fixture';
 const coder=AbiCoder.defaultAbiCoder(),id=(s:string)=>keccak256(toUtf8Bytes(s));
+// The source emits this event for each sample; the completed-day chart reads it (CW-040.05).
+const updates=new Interface(['event PoolReferenceUpdated(bytes32 indexed market, bytes32 indexed pair, bytes32 schema, bytes data)']),updateEvent=updates.getEvent('PoolReferenceUpdated')!;
 export type FixtureMode='ready'|'empty'|'stale'|'suppressed'|'unobserved'|'rpc'|'reorg'|'mismatch'|'loading';
 export const HISTORY_FIXTURE_DAY=20729n;
 const day=HISTORY_FIXTURE_DAY,hex=(n:bigint|number)=>`0x${BigInt(n).toString(16)}`;
@@ -21,6 +23,10 @@ export function makeHistoryFixture(initial:FixtureMode='ready',currentPrice=2n*1
   let mode=initial,afterSource=false,resolveLoading:(()=>void)|null=null;
   const header=(n:bigint)=>({number:hex(n),hash:id(mode==='reorg'&&afterSource&&n===100n?'reorganized-head':`block-${n}`),timestamp:hex(n===0n?0n:n===70n?(day-4n)*86400n:n===80n?(day-3n)*86400n+3600n:n===81n?(day-3n)*86400n+3605n:n===90n?(day-1n)*86400n+7200n:n===91n?(day-1n)*86400n+7205n:n===99n?day*86400n+90n:day*86400n+100n)});
   const observation=(price:bigint,time:bigint,block:bigint,revision:bigint,available=true)=>[priceSource.schema,priceSource.policy,31337n,source,manifest.sourceRuntimeHash,manifest.releaseId,manifest.market,manifest.pair,1n,2n,1n,token0,token1,BigInt(decimals),BigInt(decimals),price,time,block,revision,id(`state-${revision}`),available];
+  const recordedLogs=()=>([[80n,(day-3n)*86400n+3600n,1900000000000000000n,1n],[90n,(day-1n)*86400n+7200n,2n*10n**18n,2n]] as const).map(([block,at,price,revision])=>{
+    const o=observation(price,at,block,revision);
+    return{address:source,blockNumber:hex(block),blockHash:header(block).hash,removed:false,...updates.encodeEventLog(updateEvent,[manifest.market,manifest.pair,o[0],coder.encode(observationTypes,o)])};
+  });
   const zeroObservation=[`0x${'00'.repeat(32)}`,`0x${'00'.repeat(32)}`,0,`0x${'00'.repeat(20)}`,`0x${'00'.repeat(32)}`,`0x${'00'.repeat(32)}`,`0x${'00'.repeat(32)}`,`0x${'00'.repeat(32)}`,0,0,0,`0x${'00'.repeat(20)}`,`0x${'00'.repeat(20)}`,0,0,0,0,0,0,`0x${'00'.repeat(32)}`,false];
   const currentSource=()=>{
     let o=observation(currentPrice,day*86400n+90n,99n,3n);if(mode==='stale')o=observation(currentPrice,BigInt(header(90n).timestamp),90n,3n,false);if(mode==='suppressed')o=observation(0n,day*86400n+90n,99n,3n,false);if(mode==='unobserved')o=observation(0n,0n,0n,0n,false);
@@ -35,6 +41,12 @@ export function makeHistoryFixture(initial:FixtureMode='ready',currentPrice=2n*1
     if(method==='eth_chainId')return '0x7a69';
     if(method==='eth_getBlockByNumber')return header(args[0]==='latest'?100n:BigInt(String(args[0])));
     if(method==='eth_getTransactionReceipt')return {status:'0x1',transactionHash:manifest.deploymentTransactionHash,blockNumber:'0x46',blockHash:manifest.deploymentBlockHash,contractAddress:address,from:manifest.deployer,to:null};
+    if(method==='eth_getLogs'){
+      const filter=args[0] as {address:string;fromBlock:string;toBlock:string;topics:string[]};
+      const topics=[updateEvent.topicHash,manifest.market,manifest.pair];
+      if(filter.address.toLowerCase()!==source||filter.topics.length!==3||filter.topics.some((topic,i)=>topic.toLowerCase()!==topics[i].toLowerCase()))throw Error('Unexpected fixture log filter');
+      return mode==='empty'?[]:recordedLogs().filter(log=>BigInt(log.blockNumber)>=BigInt(filter.fromBlock)&&BigInt(log.blockNumber)<=BigInt(filter.toBlock));
+    }
     if(method==='eth_getProof'){const pin=args[2] as {blockHash?:string;requireCanonical?:boolean};if(!pin?.blockHash||pin.requireCanonical!==true)throw Error('Fixture requires EIP-1898');return currentSource().storage.rpc(method,args);}
     const pin=args[1] as {blockHash?:string;requireCanonical?:boolean};if(!pin?.blockHash||pin.requireCanonical!==true)throw Error('Fixture requires EIP-1898');
     if(method==='eth_getCode'){const a=String(args[0]).toLowerCase();return mode==='mismatch'&&a===address?'0x6003':a===address?recorderCode:a===source?sourceCode:tokenCode;}

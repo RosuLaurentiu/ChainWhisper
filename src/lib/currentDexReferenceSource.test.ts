@@ -2,7 +2,7 @@ import { AbiCoder, Interface, keccak256 } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CURRENT_DEX_REFERENCE_SOURCE_LAYOUT as layout } from './currentDexReferenceSourceLayout';
 import { readCurrentReferenceSource } from './currentDexReferenceSource';
-import { STAGED_GAP_DEX_CANDIDATE as candidate } from './currentDexGapCandidate';
+import { STAGED_BUILD13_DEX_CANDIDATE as candidate } from './currentDexBuild13Candidate';
 import { readCurrentDexPublicReference } from './currentDexDailyPrice';
 import { CURRENT_DEX_DAILY_PRICE_SOURCE, REFERENCE_DEX_DAILY_PRICE_SOURCE } from '../../tests/fixtures/historicalDailyPriceSources';
 import { currentDexMarketReference, currentDexEstimatedReceive } from './currentDexMarketReference';
@@ -12,7 +12,7 @@ import { makeCurrentReferenceStorage } from '../../tests/fixtures/currentReferen
 import { buildCurrentDexChartLivePoint } from '../features/dex/components/DexMarketChart';
 const hashes=vi.hoisted(()=>new Map<string,string>());
 vi.mock('@coti-io/coti-ethers',async original=>{const actual=await original<typeof import('@coti-io/coti-ethers')>();return{...actual,keccak256:(value:string)=>hashes.get(value)??actual.keccak256(value)};});
-vi.mock('./selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('./selectedCurrentDexCandidate')>();const current=await import('./currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});
+// The current build 13 candidate is the selected candidate.
 afterEach(()=>vi.restoreAllMocks());
 const coder=AbiCoder.defaultAbiCoder(),types=['bytes32','bytes32','uint256','address','bytes32','bytes32','bytes32','bytes32','uint256','uint256','uint256','address','address','uint8','uint8','uint256','uint256','uint256','uint256','bytes32','bool'];
 function fixture(){

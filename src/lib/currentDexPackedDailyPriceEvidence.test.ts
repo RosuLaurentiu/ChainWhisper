@@ -8,7 +8,8 @@ import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE as source } from './currentDexDaily
 // The App repository alone does not contain it, so `npm run test:ci` excludes this file. `npm test` runs it.
 describe('packed-input current chart: compiled recorder evidence',()=>{
   it('binds the generated artifact to the exact compiled recorder',()=>{
-    const raw=readFileSync('../ChainWhisper Contracts V2/validation/candidates/c1-gap-aware-sizing-2026-11-15/adoption/recorder-build-1/ChainWhisperDailyPoolPrice.json');
+    // Build 13 recorder (CW-120); the gap candidate recorder was removed with decision-034.
+    const raw=readFileSync('../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/native-bob-dense-1/recorder-build/ChainWhisperDailyPoolPrice.json');
     const compiled=JSON.parse(raw.toString());
     expect(createHash('sha256').update(raw).digest('hex')).toBe(source.recorderArtifact);
     expect(artifact.abi).toEqual(compiled.abi);expect(artifact.deployedBytecode).toBe(compiled.deployedBytecode);

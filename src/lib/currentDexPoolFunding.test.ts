@@ -22,7 +22,10 @@ describe('packed Pool candidate funding codec', () => {
     }
     expect(() => packPoolInputPair(max + 1n, 0n)).toThrow();
     expect(() => packPoolInputPair(0n, -1n)).toThrow();
-    expect(usesPackedPoolInputs({ graph: 'd4564ccf9f449b00f25c980e26250163c3c27d4114cc8cedca7234d447603d59' })).toBe(true);
+    // Build 13 (CW-120) is the only packed graph; the earlier packed Pool-input graph is no longer selected.
+    expect(usesPackedPoolInputs({ graph: '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239' })).toBe(true);
+    expect(usesPackedPoolInputs(CURRENT_CHEAP_DEX_CANDIDATE)).toBe(true);
+    expect(usesPackedPoolInputs({ graph: 'd4564ccf9f449b00f25c980e26250163c3c27d4114cc8cedca7234d447603d59' })).toBe(false);
     expect(usesPackedPoolInputs({ graph: 'cc7eb662c644c10bef875d2a72524095848a236155005a32377b10a7c0c13e44' })).toBe(false);
   });
   const market = toBeHex(77n, 32);

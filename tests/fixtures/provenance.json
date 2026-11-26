@@ -2,7 +2,7 @@
   "history.fixture.ts": {
     "source": "APP/reports/dex-daily-history-2026-10-03/history.fixture.ts",
     "sourceSha256": "ac85c587b3ff128b88c1939c50c9e04a618f1d7b6d3f26c197194e5df55c0d82",
-    "fixtureSha256": "ac85c587b3ff128b88c1939c50c9e04a618f1d7b6d3f26c197194e5df55c0d82"
+    "fixtureSha256": "3ae7f907e002cc76065fd1a5bec0921d5d126feaade219b7697178cb6fe2cadf"
   },
   "full-candidate-ChainWhisperCounterOTCEscrowV2.json": {
     "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/custody-adversarial/full-candidate/artifacts/contracts/p2p/ChainWhisperCounterOTCEscrowV2.sol/ChainWhisperCounterOTCEscrowV2.json",

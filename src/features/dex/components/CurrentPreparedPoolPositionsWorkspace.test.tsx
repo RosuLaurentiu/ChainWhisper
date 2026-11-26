@@ -158,7 +158,8 @@ describe('prepared Positions owner snapshot view',()=>{
     }
     expect(f.button('Load private position').props.disabled).toBe(false);await f.load();
     expect(f.readPosition).toHaveBeenCalled();expect(text(f.render())).toContain('1.234567');
-    expect(text(f.render())).toContain('Viewing does not complete transaction verification. Actions remain locked. Do not resend.');
+    // CW-127 shortened this hold note; viewing still releases nothing.
+    expect(text(f.render())).toContain('A transaction is pending or needs verification. Actions remain locked. Do not resend.');
     expect(hooks.states[6]).toBe(hold!=='saved');
     expect(f.button('Refresh this position').props.disabled).toBe(true);
     const actions=elements(f.render()).find(x=>x.type==='fieldset')!;expect(actions.props.disabled).toBe(true);
@@ -221,11 +222,14 @@ describe('prepared Positions owner snapshot view',()=>{
     (child.props as unknown as {onBegin:()=>void}).onBegin();
     window.sessionStorage.getItem=()=>JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core,graph:`0x${candidate.graph}`,phase:'pool-fund',nonce:394,callHash:hash,txHash:hash,poolTopUpHash:null});
     expect(elements(f.render()).find(item=>item.type===CurrentPreparedPoolTopUpWorkspace)!.props.disabled).toBe(false);
-    expect(f.button('Check position status').props.disabled).toBe(true);
+    // CW-127: while the top-up owns the journal, its own form holds the recovery; Status and recovery is hidden here.
+    const hasButton=(label:string)=>elements(f.render()).some(x=>x.type==='button'&&text(x.props.children)===label);
+    expect(hasButton('Check position status')).toBe(false);
     expect(f.button('Load private position').props.disabled).toBe(true);
     expect(f.button('Refresh this position').props.disabled).toBe(true);
-    expect(text(f.render())).not.toContain('1.234567');
-    f.button('Check position status').props.onClick!();await Promise.resolve();
+    // CW-127: the last verified amounts stay visible during a top-up, labeled as such.
+    expect(text(f.render())).toContain('Amounts from the last verified snapshot');
+    await Promise.resolve();
     expect(f.getSender).not.toHaveBeenCalled();
     (child.props as unknown as {onReleased:()=>void}).onReleased();
     expect(elements(f.render()).find(item=>item.type===CurrentPreparedPoolTopUpWorkspace)!.props.disabled).toBe(true);

@@ -51,9 +51,8 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-history') {
 afterEach(() => vi.restoreAllMocks());
 describe('selected swap input funds', () => {
   const captures = [
-    '../../reports/limit-directory-adoption-2026-11-04/public-binding/public-capture-1.json',
-    '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json',
-    // Build 13, the single App candidate (decision-034).
+    // Build 13, the single App candidate (decision-034). The captures of the removed limit-directory and
+    // low-RPC trial candidates are not read any more.
     '../../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21/native-bob-dense-1/APP_PUBLIC_CAPTURE.json'
   ].map(file => JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8')));
   function swapFixture(fault = '') {
