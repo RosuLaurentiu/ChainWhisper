@@ -22,7 +22,7 @@ import { currentOwnerBetaLegacyReservationHash } from './currentDexNativeSwapPol
 import { CURRENT_OWNER_BETA } from './currentDexOwnerBetaPolicy';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './selectedCurrentDexCandidate';
 import { currentLimitAbiForCandidate } from './currentDexLimit';
-import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
+import { currentPoolSnapshotAbi } from './currentDexPoolPosition';
 import { resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
 import { readCurrentSharedDexTokenFunds } from './currentSharedDexTokenFunds';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
@@ -1300,9 +1300,9 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     ownerBeta.active=true;
     const f=await fixture('fast-pool','history',CURRENT_APP_SWAP_OWNER,9n,ownerBeta.activation.activatedAt+900n);
     await f.capability.checkCurrentCheapCandidate();
-    const oldHash=`0x${'ba'.repeat(32)}`,newHash=`0x${'bb'.repeat(32)}`,oldData=currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[49n]),data=currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[positionId]);
+    const oldHash=`0x${'ba'.repeat(32)}`,newHash=`0x${'bb'.repeat(32)}`,oldData=currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[49n]),data=currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[positionId]);
     const log=(hash:string)=>({address:history.core,index:0,transactionHash:hash,blockNumber:50,blockHash,removed:false,
-      ...currentNativePoolSnapshotAbi.encodeEventLog(currentNativePoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[hash===oldHash?49n:positionId,context,Array.from({length:10},()=>({ciphertextHigh:1n,ciphertextLow:2n}))])});
+      ...currentPoolSnapshotAbi.encodeEventLog(currentPoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[hash===oldHash?49n:positionId,context,Array.from({length:10},()=>({ciphertextHigh:1n,ciphertextLow:2n}))])});
     f.transactions.set(oldHash,{hash:oldHash,chainId:7082400n,from:CURRENT_APP_SWAP_OWNER,to:history.core,value:0n,data:oldData,nonce:219,gasLimit:30_000_000n,gasPrice:50_000_000n,blockNumber:50,blockHash});
     f.receipts.set(oldHash,{hash:oldHash,status:1,from:CURRENT_APP_SWAP_OWNER,to:history.core,blockNumber:50,blockHash,logs:[log(oldHash)]});
     const held={version:1,chainId:'7082400',owner:CURRENT_APP_SWAP_OWNER,core:history.core,graph:`0x${history.graph}`,phase:'pool-snapshot',callHash:keccak256(oldData),nonce:219,txHash:oldHash,verificationBlocked:true};
@@ -1327,7 +1327,7 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     const f=await fixture('fast-pool','history',CURRENT_APP_SWAP_OWNER,9n,ownerBeta.activation.activatedAt+900n);
     await f.capability.checkCurrentCheapCandidate();
     const fundingHash=`0x${'ba'.repeat(32)}`,snapshotHash=`0x${'bb'.repeat(32)}`,positionId=53n,
-      data=currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[positionId]);
+      data=currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[positionId]);
     const held={version:1,chainId:'7082400',owner:CURRENT_APP_SWAP_OWNER,core:history.core,graph:`0x${history.graph}`,
       phase:'pool-fund',callHash:keccak256('0x1234'),nonce:219,txHash:fundingHash,poolTopUpHash:null};
     f.values.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,JSON.stringify(held));
@@ -1337,7 +1337,7 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
       f.transactions.set(snapshotHash,{...request,hash:snapshotHash,blockNumber:50,blockHash});
       f.receipts.set(snapshotHash,{hash:snapshotHash,status:1,from:CURRENT_APP_SWAP_OWNER,to:history.core,blockNumber:50,blockHash,
         logs:[{address:history.core,index:0,transactionHash:snapshotHash,blockNumber:50,blockHash,removed:false,
-          ...currentNativePoolSnapshotAbi.encodeEventLog(currentNativePoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[positionId,context,Array.from({length:10},()=>({ciphertextHigh:1n,ciphertextLow:2n}))])}]});
+          ...currentPoolSnapshotAbi.encodeEventLog(currentPoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[positionId,context,Array.from({length:10},()=>({ciphertextHigh:1n,ciphertextLow:2n}))])}]});
       return snapshotHash;
     });
     const pair=history.pairs[0],pool={chainId:7082400n,from:CURRENT_APP_SWAP_OWNER,to:history.core,value:0n,graph:history.graph,packageSha256:history.packageSha256,
@@ -1445,7 +1445,7 @@ describe('Decision-030 actual adapter and shared send boundary', () => {
     const pair=history.pairs[0],base={chainId:7082400n,from:CURRENT_APP_SWAP_OWNER,to:history.core,value:0n,graph:history.graph,
       packageSha256:history.packageSha256,readyToSign:false,positionId:20n,marketId:pair.marketId,poolTokens:pair.tokens,
       assertCurrent:async()=>{},assertAuthority:async()=>{},assertBeforeSend:async()=>{},readResult:async()=>null};
-    const pool={...base,action:'snapshot',closed:false,data:currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[20n])};
+    const pool={...base,action:'snapshot',closed:false,data:currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[20n])};
     const limit={...base,phase:'limit-snapshot',data:currentLimitAbiForCandidate('cheap-history').encodeFunctionData('privateOrderSnapshot',[20n])};
     ownerActionBrands.set(pool,f.signer);ownerActionBrands.set(limit,f.signer);
     const execute=action==='pool'?()=>f.capability.submitPoolPositionAction(pool as never):

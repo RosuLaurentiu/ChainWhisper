@@ -15,9 +15,7 @@ export const CURRENT_NATIVE_SWAP_LIMITS = Object.freeze({ commitmentWei: 40_000_
   starts: 8, normalSeconds: 900n, recoverySeconds: 1800n, recoveryGasCap: 50_000_000n,
   asyncAcceptReserveSeconds: 180n,
   fixedGasPrice: CURRENT_NATIVE_FIXED_GAS_PRICE, maximumInput: 100n * 10n ** 18n, maximumToleranceBps: 50 });
-// decision-034: the fa71 native candidate was removed, so no candidate takes the fa71 native trial path.
-// The callers' fa71 branches stay unreachable until they are deleted.
-export const isCurrentNativeSwapCandidate = (_c: CurrentCheapDexIdentity): boolean => false;
+// decision-034: the fa71 native candidate and its native Pool trial were removed (CW-140.12).
 // Swap checks only. Do not transfer fa71 Pool, faucet, refill or owner admission.
 export const usesCurrentNativeSwapChecks = (c: CurrentCheapDexIdentity) => usesCurrentSwapAccounting(c);
 // Registry identity can support unsigned preparation. It grants no phase authority.
@@ -56,8 +54,7 @@ export const assertCurrentNativeSwapIntent = (prepared: CurrentCheapDexPreparedQ
   }
 };
 
-type Phase = 'quote' | 'accept' | 'cancel' | 'recover' | 'token-funding' | 'token-faucet' | 'pool-preview' | 'pool-fund' |
-  'pool-active-snapshot' | 'pool-close' | 'pool-closed-snapshot' | 'pool-cleanup';
+type Phase = 'quote' | 'accept' | 'cancel' | 'recover' | 'token-funding' | 'token-faucet';
 type SwapCharge = { phase: 'quote' | 'accept' | 'cancel' | 'recover' | 'token-funding' | 'token-faucet'; key: string; scope: string; gasCap: string; gasPrice?: string; nonce: number; hash: string | null };
 // Old authenticated v1 records did not store a fee. They bind the original 50M
 // request and reservation. Never reprice an old charge at the current fee.
@@ -96,10 +93,7 @@ export const recoverCurrentPartialLedger = (owner:string,candidate:CurrentCheapD
   return budget;
 };
 type Budget = { version: 1 | 2; owner: string; candidateGraph: string; start: bigint; windowStart?: bigint; committed: bigint; keys: Set<string>; activeSwap: string | null;
-  poolScope: string | null; poolStarted: boolean; poolFundSigningStarted:boolean; poolCommitted: bigint; poolApprovals: Set<string>;
-  poolTailCommitted: bigint; poolFunded: boolean; poolFailed: boolean; poolClosed: boolean; poolTail: Set<Phase>;
-  poolActiveSnapshots: number; poolCleanups: Set<string>; charges: SwapCharge[];
-  released: SwapCharge[]; lastCommit: { key: string; activeSwap: string | null } | null };
+  charges: SwapCharge[]; released: SwapCharge[]; lastCommit: { key: string; activeSwap: string | null } | null };
 const budgets = new WeakMap<object, Budget>();
 export const hasCurrentNativeSigningBudget = (signer: object) => budgets.has(signer);
 // Shared cost accounting only. This interface grants no phase, calldata or signer authority.
@@ -111,9 +105,7 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
   assertCurrentSwapIdentity(candidate);
   let budget = budgets.get(signer);
   if (!budget) { budget = { version: isCurrentDexBrowserSigner(signer,candidate.graph,owner)?2:1, owner: owner.toLowerCase(), candidateGraph: candidate.graph, start: now(), committed: 0n, keys: new Set(), activeSwap: null,
-    poolScope: null, poolStarted: false, poolFundSigningStarted:false, poolCommitted: 0n, poolApprovals: new Set(), poolTailCommitted: 0n,
-    poolFunded: false, poolFailed: false, poolClosed: false, poolTail: new Set(), poolActiveSnapshots: 0, poolCleanups: new Set(), charges: [],
-    released: [], lastCommit: null }; budgets.set(signer, budget); }
+    charges: [], released: [], lastCommit: null }; budgets.set(signer, budget); }
   const state = budget, l = CURRENT_NATIVE_SWAP_LIMITS, fixedGasPrice = CURRENT_NATIVE_FIXED_GAS_PRICE;
   const check = (phase: Phase, key: string, gasCap: bigint, swapScope?: string) => {
     if (state.candidateGraph !== candidate.graph) throw new Error('Native signing budget candidate changed.');
@@ -161,26 +153,8 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
       throw new Error('Current native swap signing phase or gas cap changed.');
     }
     assertCurrentAppSigningCount(candidate.graph,owner,phase,state.charges);
-    const tail = ['pool-active-snapshot', 'pool-close', 'pool-closed-snapshot', 'pool-cleanup'].includes(phase);
-    const recovery = phase === 'cancel' || phase === 'recover' || tail, cost = gasCap * fixedGasPrice;
-    const pool = phase === 'pool-preview' || phase === 'pool-fund', reserve = state.poolStarted || pool ?
-      8_000_000_000_000_000n - state.poolTailCommitted : l.recoveryGasCap * fixedGasPrice;
-    if (tail && (state.poolScope === null || swapScope !== state.poolScope ||
-        (phase === 'pool-cleanup' ? !state.poolFailed || state.poolFunded || gasCap !== 5_000_000n || state.poolCleanups.size >= 2 :
-          !state.poolFunded || state.poolFailed || gasCap !== (phase === 'pool-close' ? 70_000_000n : 30_000_000n) ||
-          (phase==='pool-active-snapshot'?state.poolActiveSnapshots>=2:state.poolTail.has(phase)) || (phase === 'pool-close' && !state.poolTail.has('pool-active-snapshot')) ||
-          (phase === 'pool-closed-snapshot' && !state.poolClosed)) ||
-        state.poolTailCommitted + cost > 8_000_000_000_000_000n)) throw new Error('Native Pool reserved exit or unfunded cleanup is not admitted.');
-    if ((pool && gasCap !== 100_000_000n) ||
-        (phase === 'pool-preview' && (state.poolStarted || state.activeSwap !== null || state.keys.size > l.starts - 8 ||
-          state.committed + 10_500_000_000_000_000n + reserve > l.commitmentWei)) ||
-        (phase === 'pool-fund' && (state.poolScope === null || swapScope !== state.poolScope || state.poolFailed || state.poolFunded || state.poolApprovals.size !== 2)) ||
-        (state.poolScope !== null && !pool && !tail && (phase !== 'token-funding' || !key.startsWith('token-funding:approve:') ||
-          gasCap !== 5_000_000n || state.poolApprovals.size >= 2)) ||
-        (phase === 'quote' && state.poolScope !== null) ||
-        ((pool || state.poolScope !== null) && !tail && state.poolCommitted + cost > 10_500_000_000_000_000n)) {
-      throw new Error('Native Pool finite scope, phase, commitment or approval count blocks this action.');
-    }
+    const recovery = phase === 'cancel' || phase === 'recover', cost = gasCap * fixedGasPrice;
+    const reserve = l.recoveryGasCap * fixedGasPrice;
     const windowStart = state.windowStart ?? state.start;
     // Fast Accept settles atomically; this approved final start needs no later recovery transaction.
     const finalFastAccept=phase==='accept'&&gasCap===110_000_000n&&state.charges.length===10&&
@@ -191,18 +165,12 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
           (state.charges.every(c=>c.phase==='token-funding'||c.phase==='token-faucet') || hasCurrentHistoryReplacementProof(candidate.graph,owner,state.charges)&&
             state.charges.slice(4).every(c=>c.phase==='token-funding') || hasCurrentHistoryFastProof(candidate.graph,owner,state.charges)&&
             state.charges.slice(7).every(c=>c.phase==='token-funding') || partialActive && extra.every(c=>c.phase==='token-funding')) && state.activeSwap === (swapScope ?? key))) ||
-        (phase !== 'quote' && phase !== 'token-funding' && phase !== 'token-faucet' && !pool && !tail && (state.activeSwap === null || swapScope !== state.activeSwap)) ||
+        (phase !== 'quote' && phase !== 'token-funding' && phase !== 'token-faucet' && (state.activeSwap === null || swapScope !== state.activeSwap)) ||
         state.keys.size >= currentAppSigningStartLimit(candidate.graph,owner,state.charges,l.starts) - (recovery||finalFastAccept ? 0 : 1) || state.committed + cost + (recovery ? 0n : reserve) > partialTrialCommitment(candidate.graph,owner,state.charges)) {
       throw new Error('Native signing session budget, reserve, expiry or prior commitment blocks this action.');
     }
   };
-  const assertUnfundedAbandon=(scope:string)=>{
-    if(state.owner!==owner.toLowerCase()||state.candidateGraph!==candidate.graph||state.poolScope!==scope||!state.poolStarted||state.poolFundSigningStarted||state.poolFunded||state.poolFailed||
-      state.poolClosed||state.poolTailCommitted!==0n||now()<state.start||now()>=state.start+l.recoverySeconds||
-      state.keys.size>l.starts-2||state.committed+500_000_000_000_000n>l.commitmentWei)
-      throw new Error('Native Pool unsigned abandonment has no remaining unfunded cleanup authority.');
-  };
-  return Object.freeze({ check, assertUnfundedAbandon, commit: (phase: Phase, key: string, gasCap: bigint, swapScope?: string, nonce?: number) => {
+  return Object.freeze({ check, commit: (phase: Phase, key: string, gasCap: bigint, swapScope?: string, nonce?: number) => {
     check(phase, key, gasCap, swapScope);
     if (isCurrentDexBrowserSigner(signer,candidate.graph,owner)) {
       assertCurrentDexBrowserWindow(signer,candidate.graph,owner,candidate.core,7082400n,now(),nonce!,gasCap,fixedGasPrice);
@@ -210,15 +178,6 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
     }
     const priorActiveSwap = state.activeSwap;
     state.keys.add(key); if (phase === 'quote' || usesCurrentSwapAccounting(candidate) && phase === 'token-funding') state.activeSwap = swapScope ?? key;
-    if (phase === 'pool-preview') { state.poolStarted = true; state.poolScope = swapScope ?? key; }
-    if(phase==='pool-fund')state.poolFundSigningStarted=true;
-    if (state.poolScope !== null) {
-      if (['pool-active-snapshot', 'pool-close', 'pool-closed-snapshot', 'pool-cleanup'].includes(phase)) {
-        state.poolTailCommitted += gasCap * fixedGasPrice; if(phase==='pool-active-snapshot')state.poolActiveSnapshots++;
-        if (phase === 'pool-cleanup') state.poolCleanups.add(key); else state.poolTail.add(phase);
-      } else state.poolCommitted += gasCap * fixedGasPrice;
-      if (phase === 'token-funding') state.poolApprovals.add(key);
-    }
     state.committed += gasCap * fixedGasPrice;
     if (usesCurrentSwapAccounting(candidate) && ['quote','accept','cancel','recover','token-funding','token-faucet'].includes(phase) && Number.isSafeInteger(nonce) && nonce! >= 0) {
       state.charges.push({ phase: phase as SwapCharge['phase'], key, scope: swapScope ?? key, gasCap: String(gasCap), gasPrice: String(fixedGasPrice), nonce: nonce!, hash: null });
@@ -226,18 +185,15 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
       state.lastCommit = { key, activeSwap: priorActiveSwap };
     }
   }, snapshot: () => Object.freeze({ committedWei: state.committed, signingStarts: state.keys.size,
-    poolFundSigningStarted:state.poolFundSigningStarted,
     normalExpiresAt: isCurrentDexBrowserSigner(signer,candidate.graph,owner) ? null : hasCurrentPartialRefundProof(candidate.graph,owner,state.charges) && (state.windowStart??state.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt ? CURRENT_APP_PARTIAL_REFUND_TRIAL.expiresAt : (state.windowStart ?? state.start) + l.normalSeconds,
-    recoveryExpiresAt: isCurrentDexBrowserSigner(signer,candidate.graph,owner) ? null : hasCurrentPartialRefundProof(candidate.graph,owner,state.charges) && (state.windowStart??state.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt ? CURRENT_APP_PARTIAL_REFUND_TRIAL.expiresAt : (state.windowStart ?? state.start) + l.recoverySeconds,
-    poolRemainingNormalWei: 10_500_000_000_000_000n - state.poolCommitted,
-    poolRemainingTailWei: (state.poolFailed ? 500_000_000_000_000n : 8_000_000_000_000_000n) - state.poolTailCommitted }) });
+    recoveryExpiresAt: isCurrentDexBrowserSigner(signer,candidate.graph,owner) ? null : hasCurrentPartialRefundProof(candidate.graph,owner,state.charges) && (state.windowStart??state.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt ? CURRENT_APP_PARTIAL_REFUND_TRIAL.expiresAt : (state.windowStart ?? state.start) + l.recoverySeconds }) });
 };
 
 // Public financial reservations only. The wallet authenticates this exact record;
 // the submission consumer separately reconciles every charge against canonical chain data.
 export const currentNativeSwapCheckpoint = (signer: object): CurrentNativeSwapCheckpoint => {
   const b = budgets.get(signer);
-  if (!b || b.charges.length !== b.keys.size || b.poolStarted || b.poolScope !== null) throw new Error('Original native budget has no complete reload reservation.');
+  if (!b || b.charges.length !== b.keys.size) throw new Error('Original native budget has no complete reload reservation.');
   return Object.freeze({ version: b.version, owner: b.owner, candidateGraph: b.candidateGraph, start: String(b.start), committedWei: String(b.committed),
     ...(b.windowStart === undefined ? {} : {windowStart: String(b.windowStart)}),
     activeSwap: b.activeSwap, charges: Object.freeze(b.charges.map(c=>Object.freeze({...c}))),
@@ -451,20 +407,6 @@ export const restoreCurrentNativeSwapCheckpoint = (signer: object, owner: string
   currentNativeSigningBudget(signer,owner,()=>BigInt(value.start),candidate);
   const b=budgets.get(signer)!;b.version=value.version;b.windowStart=value.windowStart===undefined?undefined:BigInt(value.windowStart);b.committed=BigInt(value.committedWei);b.keys=new Set(value.charges.map(c=>c.key));b.activeSwap=value.activeSwap;b.charges=value.charges.map(c=>({...c}));
   b.released=(value.released??[]).map(c=>({...c}));b.lastCommit=null;
-};
-
-export const recordCurrentNativePoolOutcome = (signer: object, scope: string, outcome: 'funded' | 'unfunded-failed' | 'closed') => {
-  const budget = budgets.get(signer);
-  if (!budget || budget.poolScope !== scope) throw new Error('Native Pool outcome has no existing financial scope.');
-  if (outcome === 'funded') { if (budget.poolFailed) throw new Error('Failed native Pool cannot fund.'); budget.poolFunded = true; }
-  else if (outcome === 'unfunded-failed') { if (budget.poolFunded) throw new Error('Funded native Pool cannot use unfunded cleanup.'); budget.poolFailed = true; }
-  else { if (!budget.poolFunded) throw new Error('Native Pool close has no funded claim.'); budget.poolClosed = true; }
-};
-
-// Only authenticated terminal closed proof or unfunded zero-cleanup releases scope.
-export const completeCurrentNativePoolScope = (signer: object, scope: string) => {
-  const budget = budgets.get(signer);
-  if (budget?.poolScope === scope) budget.poolScope = null;
 };
 
 // Called only after authenticated terminal/refund proof or an unfunded reverted Quote.

@@ -4511,14 +4511,12 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     [assertBrowserWalletSignerLeaseSnapshotCurrent, captureBrowserWalletSignerLease, setSessionOnboardInfo]
   );
   const getCurrentDexSubmissionCapability = useCallback(
-    async (expectedChainId = BigInt(COTI_NETWORK.chainIdDecimal), options?: Pick<WalletSessionDexOptions, 'candidate' | 'nativePoolProfile'>) => {
-      if (options?.nativePoolProfile) throw new Error('Native Pool App integration awaits final local acceptance.');
+    async (expectedChainId = BigInt(COTI_NETWORK.chainIdDecimal), options?: Pick<WalletSessionDexOptions, 'candidate'>) => {
       const lease = captureBrowserWalletSignerLease();
       const { issueCurrentDexSubmissionCapability } = await import('./features/wallet/currentDexSubmissionCapability');
       return issueCurrentDexSubmissionCapability({
         admission: null,
         candidate: options?.candidate,
-        nativePoolProfile: options?.nativePoolProfile,
         // Match chat/OTC: provider events revoke this lease synchronously.
         // Repeated contract reads must not poll the wallet extension.
         assertLeaseCurrent: async (currentLease) => assertBrowserWalletSignerLeaseSnapshotCurrent(currentLease),

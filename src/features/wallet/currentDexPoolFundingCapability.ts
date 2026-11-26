@@ -1,5 +1,5 @@
 import { remainingTokenAllowance } from '../../lib/tokenAllowance';
-import { CurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
+import { CurrentPoolProofMismatch, requireCurrentPoolProof } from '../../lib/currentDexPoolProofError';
 import { AbiCoder, Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { createDexV2ReadCapability, readCurrentSharedPoolDexGraph, readPreparedDexMarketRegistry } from '../../lib/dexV2Chain';
@@ -8,9 +8,6 @@ import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, checkCurrentPoolFu
 import { decryptPrivateUint256Output, encryptPrivateUint128Input, encryptPrivateUint256Input, resignPrivateInput } from '../../lib/privateUint256';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
-import { createCurrentOwnerPoolSnapshotReader } from '../../lib/currentDexNativePoolSnapshotReader';
-import { currentNativePoolSession } from '../../lib/currentDexNativePoolPolicy';
-import { requireCurrentPoolProof, checkCurrentPoolFinancialTransition, checkCurrentPoolUnfundedCleanupState } from '../../lib/currentDexNativePoolSnapshot';
 import { createPreparedOwnerPoolSnapshotReader, checkPreparedPoolFinancialTransition, checkPreparedPoolFundingCurrent } from '../../lib/currentDexPreparedPoolSnapshot';
 import { checkPreparedPoolManagementTransition, checkPreparedPoolManagementSnapshot } from '../../lib/currentDexPreparedPoolManagement';
 import { currentPoolPositionAbi } from '../../lib/currentDexPoolPosition';
@@ -58,7 +55,6 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
       }
       return graph;
     };
-    const nativeReader = null as ReturnType<typeof createCurrentOwnerPoolSnapshotReader> | null;
     const preparePoolTopUp = async (request: {
       graph: Readonly<{ expectedGraph: string; expectedPackageSha256: string; blockNumber: bigint; blockHash: string }>;
       positionId: bigint; ownerContext: string; producerHash: string; pair: readonly [string, string];
@@ -381,14 +377,11 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
             }
             const fundingData = preparedCandidate ? encodePreparedPoolCreation(selectedMarket, data, event.context, resigned, packed) :
               encodeCurrentPoolCreation(data, event.context, resigned);
-            const baselineBlock = nativeReader || preparedReader ? await (async () => {
+            const baselineBlock = preparedReader ? await (async () => {
               const raw = await readProvider.send('eth_getBlockByNumber', ['latest', false]); await guard();
               if (!raw || !/^0x[0-9a-fA-F]+$/.test(raw.number) || !/^0x[0-9a-fA-F]{64}$/.test(raw.hash)) throw new CurrentPoolProofMismatch('Pool funding baseline block is unavailable.');
               return Object.freeze({ number: BigInt(raw.number), hash: raw.hash as string });
             })() : null;
-            const baselineWallets = baselineBlock && nativeReader && await nativeReader.wallets(baselineBlock);
-            const baselineCounter=baselineBlock&&nativeReader&&BigInt(await readProvider.send('eth_getStorageAt',[candidate.core,'0xb',{blockHash:baselineBlock.hash,requireCanonical:true}]));
-            const baselineState = baselineBlock && nativeReader && await nativeReader.state(baselineCounter!+1n, baselineBlock);
             const preparedBaseline = baselineBlock && preparedReader && await preparedReader.selectedState(null, baselineBlock);
             const preparedWallets = baselineBlock && preparedReader && await preparedReader.wallets(baselineBlock);
             if (preparedReader) requireCurrentPoolProof(!!preparedWallets && preparedWallets.length === candidate.tokens.length &&
@@ -431,25 +424,6 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
                 await guard();
               }
               let producer, ownerAmountsTransactionHash: string | undefined;
-              if (nativeReader) {
-                const session = currentNativePoolSession(signer);
-                requireCurrentPoolProof(!!session && session.funded?.data === fundingData && !session.unfundedFailed,
-                  'Funding has no admitted native Pool session.');
-                const receiptBlock = Object.freeze({ number: BigInt(receipt.blockNumber), hash: receipt.blockHash });
-                const after = await nativeReader.state(positionId, receiptBlock), wallets = await nativeReader.wallets(receiptBlock);
-                checkCurrentPoolFinancialTransition(baselineState!,after,'fund');
-                requireCurrentPoolProof(positionId === baselineState!.counter + 1n && after.counter === positionId &&
-                  after.operation === baselineState!.operation && after.market[40] === baselineState!.market[40] &&
-                  after.protectedClaim.every((value, index) => value === baselineState!.protectedClaim[index]),
-                  'Native Pool funding changed its counter or protected existing claim.');
-                requireCurrentPoolProof(wallets.every((value, index) => value.allowance === 0n &&
-                  value.balance === baselineWallets![index].balance - (index === 0 ? amounts.used0 : amounts.used1)),
-                  'Native Pool funding wallet debit/refund or consumed allowance differs.');
-                producer = await nativeReader.issue(positionId, 'fund', fundingHash);
-                requireCurrentPoolProof(producer.amounts.shares === amounts.mintedShares && producer.amounts.classId === amounts.classId,
-                  'Native Pool funded owner shares differ from preview.');
-                session!.positionId = positionId; session!.producer = producer;
-              }
               if (preparedReader && preparedBaseline && preparedWallets) {
                 requireCurrentPoolProof(!!admittedWallets, 'Prepared Pool funding has no admitted allowance baseline.');
                 const receiptBlock = { number: BigInt(receipt.blockNumber), hash: receipt.blockHash };
@@ -496,14 +470,6 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
                 }), 'Prepared Pool funding needs unchanged private balances and exact selected-token allowances.');
                 admittedWallets = wallets;
               }
-              if(nativeReader&&baselineState){const raw=await readProvider.send('eth_getBlockByNumber',['latest',false]);await guard();
-                const live=await nativeReader.state(baselineState.counter+1n,{number:BigInt(raw.number),hash:raw.hash as string});
-                requireCurrentPoolProof(JSON.stringify(live,(_,v)=>typeof v==='bigint'?v.toString():v)===
-                  JSON.stringify(baselineState,(_,v)=>typeof v==='bigint'?v.toString():v),'Native Pool financial preview dependencies changed before funding.');}
-              if(nativeReader&&baselineWallets){const raw=await readProvider.send('eth_getBlockByNumber',['latest',false]);await guard();
-                const wallets=await nativeReader.wallets({number:BigInt(raw.number),hash:raw.hash as string});
-                requireCurrentPoolProof(wallets.every((v,i)=>v.balance===baselineWallets[i].balance&&v.allowance===(i===0?amounts.used0:amounts.used1)),
-                  'Native Pool funding needs unchanged private balances and exact canonical used allowances.');}
             };
             const checkPreparedCleanupWallets = (wallets: Awaited<ReturnType<typeof latestPrepared>>) => {
                 requireCurrentPoolProof(!!preparedWallets && wallets.every((wallet, i) => {
@@ -517,14 +483,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
                 checkPreparedCleanupWallets(await latestPrepared());
                 return;
               }
-              if (!nativeReader || !baselineState || !baselineWallets) throw new Error('Native Pool cleanup baseline is unavailable.');
-              await guard(); const raw=await readProvider.send('eth_getBlockByNumber',['latest',false]);await guard();
-              const currentBlock={number:BigInt(raw.number),hash:raw.hash as string};
-              const current=await nativeReader.state(baselineState.counter+1n,currentBlock),wallets=await nativeReader.wallets(currentBlock);
-              checkCurrentPoolUnfundedCleanupState(baselineState,current);
-              requireCurrentPoolProof(wallets.every((v,i)=>
-                  v.balance===baselineWallets[i].balance&&(v.allowance===0n||v.allowance===(i===0?amounts.used0:amounts.used1))),
-                'Native unfunded cleanup has changed financial state or unknown allowances.');
+              throw new Error('Pool cleanup baseline is unavailable.');
             };
             const assertApprovalCurrent = async () => {
               await assertFundingCurrent();

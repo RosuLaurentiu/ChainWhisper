@@ -9,9 +9,6 @@ import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { blockCurrentPoolVerification, clearCurrentDexPendingAttempt, currentDexPendingStorage } from './currentDexPendingAttempt';
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, encodePreparedPoolTopUp, usesPackedPoolInputs } from './currentDexPoolFunding';
 import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, currentCheapDexCandidateKey, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
-import { assertCurrentNativePoolProfile, issueCurrentNativePoolSourceFit, CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_LIMITS,
-  admitCurrentNativePoolPreview, admitCurrentNativePoolFunding, currentNativePoolSession } from './currentDexNativePoolPolicy';
-import { isCurrentNativeSwapCandidate, currentNativeSigningBudget, recordCurrentNativePoolOutcome } from './currentDexNativeSwapPolicy';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { CurrentPoolProofMismatch, isKnownCurrentPoolProofMismatch } from './currentDexPoolProofError';
 
@@ -100,11 +97,11 @@ const checkCall = (phase: Phase, data: string, candidate: CurrentCheapDexCandida
 // Reuse the swap nonce/canonical boundary and its single public pending record.
 // This adapter does not enable a UI action or prove the bounded gas profile fits natively.
 export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest, requireFunding, candidate: candidateKey = 'cheap-history',
-  nativePoolProfile, now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
+  now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
   signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport;
   attest: (head: Pick<Head, 'number' | 'hash'>) => Promise<void>;
   requireFunding: (prepared: Funding, head: Head) => Promise<void>;
-  now?: () => bigint; candidate?: CurrentCheapDexCandidateKey; nativePoolProfile?: typeof CURRENT_NATIVE_POOL_PROFILE;
+  now?: () => bigint; candidate?: CurrentCheapDexCandidateKey;
 }) => {
   const candidate = resolveCurrentCheapDexCandidate(candidateKey);
   const preparedScope = resolvePreparedDexScope(candidateKey);
@@ -115,9 +112,8 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
   const boundary = createCurrentAttemptBoundary({ storage, c: candidate, core, owner, chainId, transport, attest, now, historical: false,
     canonicalIndexProof: preparedScope !== null,
     // decision-033: a Pool preview or creation funding reserves only its pending slot and an in-memory key.
-    // A native engineering budget keeps its Pool scope, so that profile is never released here.
     releaseReservation: async attempt => {
-      if (attempt.phase !== 'pool-preview' && attempt.phase !== 'pool-fund' || isCurrentNativeSwapCandidate(candidate))
+      if (attempt.phase !== 'pool-preview' && attempt.phase !== 'pool-fund')
         throw new Error('This adapter releases current Pool preview and funding actions only.');
       reservations.get(signer)?.delete(`${attempt.phase}:${attempt.callHash}`);
     } });
@@ -147,32 +143,11 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
           ownerContext: 'ownerContext' in prepared ? prepared.ownerContext : undefined,
           previewData: 'previewData' in prepared ? prepared.previewData : undefined });
     };
-    const admission = () => {
-      if (!isCurrentNativeSwapCandidate(candidate)) return assertCurrentPoolFundingNativeAdmission(candidate, mode);
-      if (phase === 'pool-preview') admitCurrentNativePoolPreview(candidate, prepared as CurrentPoolPreparedPreview, signer, nativePoolProfile ?? '');
-      else admitCurrentNativePoolFunding(candidate, prepared as CurrentPoolPreparedFunding, signer, nativePoolProfile ?? '');
-    };
+    const admission = () => assertCurrentPoolFundingNativeAdmission(candidate, mode);
     await validate(); admission();
     const call = Object.freeze({ chainId, from: owner, to: core, value: 0n, data: prepared.data });
     const key = `${phase}:${keccak256(call.data).toLowerCase()}`;
-    const budget = isCurrentNativeSwapCandidate(candidate) ? currentNativeSigningBudget(signer, owner, now) : null;
-    const financialProof = !!budget || preparedScope !== null;
-    const scope = !budget || phase === 'pool-preview' ? key : `pool-preview:${keccak256((prepared as CurrentPoolPreparedFunding).previewData).toLowerCase()}`;
-    const validateProfile = async () => {
-      if (!budget) return;
-      assertCurrentNativePoolProfile(candidate, prepared as CurrentPoolPreparedPreview | CurrentPoolPreparedFunding, signer, nativePoolProfile ?? '');
-      budget.check(phase, key, gasCap, scope);
-      await validate();
-      if (!transport.readNativeResources) throw new Error('Native Pool resources are unavailable.');
-      const head = await boundary.currentHead(undefined, gasCap), resources = await transport.readNativeResources(head);
-      await prepared.assertCurrent();
-      if (resources.balance < budget.snapshot().poolRemainingNormalWei + budget.snapshot().poolRemainingTailWei +
-          CURRENT_NATIVE_POOL_LIMITS.payerReserveWei) throw new Error('Native Pool remaining commitments and recovery reserve exceed payer resources.');
-      budget.check(phase, key, gasCap, scope);
-    };
-    await validateProfile();
-    const sourceFit = budget && phase === 'pool-fund' ? issueCurrentNativePoolSourceFit(candidate,
-      prepared as CurrentPoolPreparedFunding, signer, nativePoolProfile ?? '', now, budget.snapshot().normalExpiresAt!) : undefined;
+    const financialProof = preparedScope !== null;
     boundary.requireEmptyPending();
     if (keys!.has(key)) throw new Error('Pool action was already submitted. Recover it instead.');
     keys!.add(key);
@@ -180,7 +155,6 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
     try {
       const sent = await boundary.sendCurrent(phase, call, undefined, async () => {
         await validate(); admission();
-        await validateProfile();
         if (prepared.data !== call.data) throw new Error('Pool preparation changed before signing.');
         if (phase === 'pool-fund') {if(financialProof)await (prepared as Funding).assertBeforeFunding();
           await requireFunding(prepared as Funding, await boundary.currentHead(undefined, gasCap));}
@@ -190,7 +164,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         hashReturned: hash => progress.transactionHashReturned?.(hash),
         submissionReturned: () => {}
       },
-      async request => { await validateProfile();
+      async request => {
         if (mode === 'top-up') {
           admission(); await validate();
           const estimate = await transport.estimateGas(request); await transport.assertCurrent();
@@ -202,7 +176,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         if(financialProof&&phase==='pool-fund'){
         await (prepared as Funding).assertBeforeFunding();
         await requireFunding(prepared as Funding,await boundary.currentHead(undefined,gasCap));}
-        budget?.commit(phase, key, gasCap, scope); }, sourceFit, undefined, undefined, undefined, undefined,
+        }, undefined, undefined, undefined, undefined, undefined,
         candidateKey === 'cheap-history' ? { kind: 'funding', prepared, signer } : undefined, mode === 'top-up' && phase === 'pool-fund' ? null : undefined);
       // The journal is public metadata only; private read authority stays in this closure.
       const result = Object.freeze({ ...sent, status: phase === 'pool-preview' ? 'preview-pending' as const : 'funding-pending' as const,
@@ -233,8 +207,6 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
           if (mode === 'top-up' && phase === 'pool-fund') {
             if (checkedPending.poolTopUpHash !== null) throw new Error('Top-up funding journal changed.');
           } else clearCurrentDexPendingAttempt(storage, checkedPending);
-          if(budget&&phase==='pool-preview')currentNativePoolSession(signer)!.previewResult=result as unknown as import('./currentDexNativePoolPolicy').CurrentNativePoolPreviewResult;
-          if (budget && phase === 'pool-fund') recordCurrentNativePoolOutcome(signer, scope, 'funded');
           return result;
         } });
       if(financialProof){let recoveries=fundingRecoveries.get(signer);if(!recoveries){recoveries=new Map();fundingRecoveries.set(signer,recoveries);}recoveries.set(key,result.recover);}
@@ -255,12 +227,6 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
           !same(pending.owner, owner) || !same(pending.core, core) || pending.graph !== `0x${candidate.graph}` ||
           !['pool-preview', 'pool-fund'].includes(pending.phase)) return null;
       const recover = fundingRecoveries.get(signer)?.get(`${pending.phase}:${pending.callHash}`); return recover ? recover() : null;
-    },
-    recoverCurrentNativePoolFundingResult:async()=>{
-      await transport.assertCurrent();const pending=boundary.pending();if(!pending||!isCurrentNativeSwapCandidate(candidate)||
-        pending.chainId!==String(chainId)||!same(pending.owner,owner)||!same(pending.core,core)||pending.graph!==`0x${candidate.graph}`||
-        !['pool-preview','pool-fund'].includes(pending.phase))return null;
-      const recover=fundingRecoveries.get(signer)?.get(`${pending.phase}:${pending.callHash}`);return recover?recover():null;
     },
     releaseReviewedPoolPreview: (confirm: () => Promise<boolean>) => boundary.releaseUnsent(signer, confirm),
     recoverPendingPoolAttempt: async () => {
@@ -289,7 +255,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         callIdentity = checkCall(pending.phase, transaction.data, candidate);
         if (pending.poolTopUpHash === null && callIdentity.mode !== 'top-up') throw new CurrentPoolProofMismatch('Top-up funding journal binding changed.');
         canonical = snapshotReceipt(await boundary.verifyMinedCall(request, pending.txHash, true));
-        if ((isCurrentNativeSwapCandidate(candidate) || preparedScope !== null) && JSON.stringify(baseline) !== JSON.stringify(canonical)) throw new CurrentPoolProofMismatch('Pool receipt changed during canonical verification.');
+        if (preparedScope !== null && JSON.stringify(baseline) !== JSON.stringify(canonical)) throw new CurrentPoolProofMismatch('Pool receipt changed during canonical verification.');
         await attest({ number: BigInt(canonical.blockNumber!), hash: canonical.blockHash! });
         await transport.assertCurrent();
         if (canonical.status === 1) {
@@ -299,7 +265,7 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
         }
         await boundary.recheckMinedCall(request, pending.txHash, canonical, true);
       } catch (error) {
-        if ((isCurrentNativeSwapCandidate(candidate) || preparedScope !== null) && isKnownCurrentPoolProofMismatch(error)) blockCurrentPoolVerification(storage, boundary.requireOwnPending(pending, pending.txHash));
+        if (preparedScope !== null && isKnownCurrentPoolProofMismatch(error)) blockCurrentPoolVerification(storage, boundary.requireOwnPending(pending, pending.txHash));
         throw error;
       }
       if (pending.phase === 'pool-fund' && callIdentity.mode === 'top-up') {
@@ -309,11 +275,6 @@ export const createCurrentPoolSubmissionAdapter = ({ signer, ownerAddress, chain
           verificationFailure:pending.verificationFailure,privateAccountingVerified:false as const,readyToSign:false as const});
       }
       clearCurrentDexPendingAttempt(storage, boundary.requireOwnPending(pending, pending.txHash));
-      if (isCurrentNativeSwapCandidate(candidate) && canonical.status === 0) {
-        const session = currentNativePoolSession(signer);
-        if (session && session.positionId === undefined) { session.unfundedFailed = true;
-          recordCurrentNativePoolOutcome(signer, session.scope, 'unfunded-failed'); }
-      }
       if (canonical.status === 0) keys!.delete(`${pending.phase}:${pending.callHash}`);
       else keys!.add(`${pending.phase}:${pending.callHash}`);
       return Object.freeze({ status: canonical.status === 0 ? 'observed-reverted' as const : 'observed-mined' as const,

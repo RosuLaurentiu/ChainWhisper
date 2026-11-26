@@ -2,6 +2,9 @@
 export class CurrentPoolProofMismatch extends Error {
   override name = 'CurrentPoolProofMismatch';
 }
+export const requireCurrentPoolProof = (ok: boolean, message: string): void => {
+  if (!ok) throw new CurrentPoolProofMismatch(message);
+};
 // Persist fixed check identifiers only, never arbitrary RPC/SDK text or private values.
 export const currentPoolVerificationFailures = Object.freeze({
   'snapshot-financial-state': 'Prepared snapshot changed financial state.',

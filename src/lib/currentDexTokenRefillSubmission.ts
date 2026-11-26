@@ -6,8 +6,6 @@ import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTo
 import { currentTokenFundingAbi, CURRENT_TOKEN_FAUCET_AMOUNT, type CurrentTokenFundingState } from './currentDexTokenFunding';
 import { readCurrentTokenRefill, currentTokenRefillAbi, CURRENT_TOKEN_REFILL_AMOUNT, CURRENT_TOKEN_REFILL_COOLDOWN, type CurrentTokenRefillBinding, type CurrentTokenRefillState } from './currentDexTokenRefill';
 import type { PrivateUint256Output } from './privateUint256';
-import { assertCurrentSwapCandidate, isCurrentNativeSwapCandidate, currentNativeSigningBudget } from './currentDexNativeSwapPolicy';
-import { assertCurrentNativeTokenRefillBinding } from './currentDexNativeTokenRefillDeployment';
 
 export const CURRENT_TOKEN_REFILL_GAS_CAP = 5_000_000n;
 type Head = Awaited<ReturnType<CurrentTransport['readHead']>>;
@@ -26,12 +24,12 @@ const zero = '0x0000000000000000000000000000000000000000';
 const receiptSnapshot = (r: NonNullable<Awaited<ReturnType<CurrentTransport['waitForReceipt']>>>) => Object.freeze({ ...r,
   logs: r.logs && Object.freeze(r.logs.map(l => Object.freeze({ ...l, topics: Object.freeze([...l.topics]) }))) });
 
-// The caller supplies a receipt-bound vault and the release gate. This module does not admit deployments.
+// The caller supplies a receipt-bound vault. This module does not admit deployments.
 export const createCurrentTokenRefillSubmissionAdapter = ({ signer, ownerAddress, chainId, transport, attest, binding: suppliedBinding,
-  assertRefillAdmission, readState, rpc, readReceiptBlock, decrypt, assertResources, candidate = 'cheap-history',
+  readState, rpc, readReceiptBlock, decrypt, assertResources, candidate = 'cheap-history',
   now = () => BigInt(Math.floor(Date.now() / 1000)) }: {
   signer: object; ownerAddress: string; chainId: bigint; transport: CurrentTransport; attest: (head: Head) => Promise<void>;
-  binding: CurrentTokenRefillBinding; assertRefillAdmission: (binding: CurrentTokenRefillBinding) => void | Promise<void>;
+  binding: CurrentTokenRefillBinding;
   readState: (index: 0 | 1, head: Head) => Promise<CurrentTokenFundingState>;
   rpc: (method: string, params: unknown[]) => Promise<unknown>; readReceiptBlock: (number: number) => Promise<Head>;
   decrypt: (value: PrivateUint256Output) => bigint; assertResources: () => Promise<void>;
@@ -42,12 +40,9 @@ export const createCurrentTokenRefillSubmissionAdapter = ({ signer, ownerAddress
   if (chainId !== 7082400n || chainId !== BigInt(c.chainId) || same(owner, zero)) throw new RefillVerificationError('Wrong refill owner or Testnet chain.');
   const b = createCurrentAttemptBoundary({ storage, c, core, owner, chainId, transport, attest, now, historical: false });
   const used = new WeakSet<object>();
-  const metadata = <T extends object>(result: T) => Object.freeze({ ...result, ...(isCurrentNativeSwapCandidate(c) ? { readyToSign: false as const } : {}) });
-  const admission = async () => {
-    if (isCurrentNativeSwapCandidate(c)) { assertCurrentSwapCandidate(c); assertCurrentNativeTokenRefillBinding(candidate, binding); }
-    else rejectUnprovenNativeAdmission();
-    await assertRefillAdmission(binding);
-  };
+  const metadata = <T extends object>(result: T) => Object.freeze({ ...result });
+  // decision-034 (CW-140.12): only the removed fa71 candidate admitted a refill send.
+  const admission = async () => rejectUnprovenNativeAdmission();
   const guard = async (resources = false) => { await transport.assertCurrent(); if (resources) await assertResources(); await transport.assertCurrent(); };
   const inspect = async (block?: Head): Promise<Snapshot> => {
     await guard(); const head = block ?? await b.currentHead(undefined, CURRENT_TOKEN_REFILL_GAS_CAP);
@@ -134,15 +129,12 @@ export const createCurrentTokenRefillSubmissionAdapter = ({ signer, ownerAddress
     },
     submitCurrentTokenRefill: async (p: CurrentTokenRefillPrepared) => {
       await admission(); b.requireEmptyPending();
-      const budget = isCurrentNativeSwapCandidate(c) ? currentNativeSigningBudget(signer, owner, now) : null;
-      const budgetKey = `token-refill:${c.tokens[p.tokenIndex]?.[0].toLowerCase()}:${binding.address.toLowerCase()}:${keccak256(p.data).toLowerCase()}`;
-      budget?.check('token-funding', budgetKey, CURRENT_TOKEN_REFILL_GAS_CAP);
       await validate(p, true); b.requireEmptyPending();
       if (used.has(p)) throw new RefillVerificationError('Refill already attempted. Reconcile it.'); used.add(p); let signing = false;
       try {
         const sent = await b.sendCurrent('token-refill', { chainId, from: owner, to: binding.address, value: 0n, data: p.data }, binding.expiresAt,
-          async () => { await validate(p, true); budget?.check('token-funding', budgetKey, CURRENT_TOKEN_REFILL_GAS_CAP); }, () => { signing = true; }, undefined, CURRENT_TOKEN_REFILL_GAS_CAP, undefined,
-          async () => { await admission(); budget?.commit('token-funding', budgetKey, CURRENT_TOKEN_REFILL_GAS_CAP); });
+          async () => { await validate(p, true); }, () => { signing = true; }, undefined, CURRENT_TOKEN_REFILL_GAS_CAP, undefined,
+          async () => { await admission(); });
         return Object.freeze({ ...sent, recover: async () => {
           await validate(p); const pending = b.pending();
           if (!pending || pending.phase !== 'token-refill' || pending.callHash !== keccak256(p.data).toLowerCase() || pending.nonce !== sent.request.nonce) throw new RefillVerificationError('Refill pending action changed.');

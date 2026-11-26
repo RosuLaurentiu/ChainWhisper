@@ -21,8 +21,7 @@ function fixture(Workspace = CurrentPoolWorkspace) {
   const writes = vi.fn();
   vi.stubGlobal('window', { sessionStorage: { getItem: (key: string) => records.get(key) ?? null,
     setItem: writes, removeItem: writes } });
-  const makeSender = () => ({ recoverCurrentNativePoolFundingResult: vi.fn(async () => null as unknown), recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null as unknown),
-    recoverCurrentNativePoolTokenResult: vi.fn(async () => null), readCurrentNativePoolResume: vi.fn(async () => null as unknown),
+  const makeSender = () => ({ recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null as unknown),
     recoverPendingPoolAttempt: vi.fn(async () => null as unknown), recoverPendingCurrentTokenFunding: vi.fn(async () => null as unknown) });
   const first = makeSender(), next = makeSender(); let selected = first;
   const getSender = vi.fn(async () => selected);
@@ -84,7 +83,6 @@ describe('current Pool recovery session cache', () => {
     f.getSender.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
     f.button('Check Pool status').props.onClick!(); await vi.waitFor(() => expect(f.getSender).toHaveBeenCalledOnce());
     f.change('health'); release(f.first); await f.idle();
-    expect(f.first.recoverCurrentNativePoolFundingResult).not.toHaveBeenCalled(); expect(f.first.readCurrentNativePoolResume).not.toHaveBeenCalled();
     expect(f.first.recoverCurrentPreparedPoolFundingResult).not.toHaveBeenCalled();
     expect(f.writes).not.toHaveBeenCalled(); await f.check(); expect(f.next.recoverPendingPoolAttempt).toHaveBeenCalledOnce();
   });

@@ -7,7 +7,6 @@ import { getProviderErrorMessage, isProviderActionRejected } from '../../../lib/
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
-import { CURRENT_NATIVE_POOL_PROFILE } from '../../../lib/currentDexNativePoolPolicy';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
 import type { issueCurrentDexPoolPositionCapability } from '../../wallet/currentDexPoolPositionCapability';
 import type { CurrentPoolOwnerAction } from '../../../lib/currentDexPoolPosition';
@@ -40,9 +39,9 @@ export const currentPoolWithdrawalFraction=(percentage:string):readonly [bigint,
 };
 export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candidateKey='cheap-history',visible=true,managementNavigation,selectedPair,priceDisplayInverted=false}:{selectedPair?:readonly[string,string];priceDisplayInverted?:boolean;sharedWalletSession?:SharedWalletSession;candidateKey?:CurrentCheapDexCandidateKey;visible?:boolean;managementNavigation?:ReactNode}){
   const preparedScope=resolvePreparedDexScope(candidateKey);
-  const candidate=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey),nativeTrial=false as boolean;
+  const candidate=preparedScope?.candidate??resolveCurrentCheapDexCandidate(candidateKey);
   const recordScope=currentDexRecordScope(candidate,sharedWalletSession?.walletAddress);
-  const preparedCandidate=preparedScope!==null,signedSnapshot=nativeTrial||preparedCandidate;
+  const preparedCandidate=preparedScope!==null,signedSnapshot=preparedCandidate;
   const exitCandidate=true;
   const ownedDiscovery=exitCandidate;
   const [id,setId]=useState(''),[percentage,setPercentage]=useState('50'),[minimum0,setMinimum0]=useState('0'),[minimum1,setMinimum1]=useState('0'),[recipient,setRecipient]=useState('');
@@ -147,7 +146,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       }});
       assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position inputs changed.');
       if(!prepared){setMessage('Private snapshot cancelled.');return;}
-      const sender=await getSender!(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE});assertScope(captured);setBlocked(true);
+      const sender=await getSender!(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:undefined);assertScope(captured);setBlocked(true);
       const sent=independentRefresh?await sender.submitPoolPositionAction(prepared,undefined,{refreshHeldSnapshot:true}):await sender.submitPoolPositionAction(prepared);assertScope(captured);
       setPending({recover:sent.recover,scope:captured,snapshot:true});setTransactionHash(sent.transactionHash);
       assertScope(captured);setMessage('Private snapshot submitted. Checking its authenticated result.');
@@ -208,9 +207,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
         if(candidateKey!=='cheap-history')assertCurrentAppPoolAuthority(candidate.graph,{owner:context.owner!,action,positionId:before.positionId,...(action==='transfer'?{recipient}:{})});
         if(action!=='close'&&!(exitCandidate&&['withdraw','transfer','activate','resume'].includes(action)))throw new Error('This prepared Pool action is awaiting integration.');}
       if(exitCandidate&&action==='withdraw'&&!validExitPreview)throw new Error('Check a private preview for this position and withdrawal percentage first.');
-      if(nativeTrial&&action!=='close')throw new Error('Only full exit of the admitted new Testnet claim is available.');
-      const minimums=nativeTrial&&action==='close'&&before.amounts?[before.amounts.amount0,before.amounts.amount1]as const:
-        action==='close'||action==='withdraw'?(preparedCandidate&&before.poolTokens?
+      const minimums=action==='close'||action==='withdraw'?(preparedCandidate&&before.poolTokens?
           [parseDexCandidateTokenAmount(candidate,before.poolTokens[0],minimum0,'Minimum payout'),parseDexCandidateTokenAmount(candidate,before.poolTokens[1],minimum1,'Minimum payout')]as const:
           [parseCurrentDexTokenAmount(minimum0,'Minimum payout'),parseCurrentDexTokenAmount(minimum1,'Minimum payout')]as const):undefined;
       const fraction=action==='withdraw'?currentPoolWithdrawalFraction(percentage):undefined;
@@ -235,7 +232,7 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
         }});
       assertScope(captured);if(actionTerms.current!==terms)throw new Error('Position action inputs changed.');
       if(!prepared){setMessage('Position action cancelled.');return;}
-      const sender:Sender=await getSender!(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:nativeTrial?{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE}:undefined);assertScope(captured);setBlocked(true);
+      const sender:Sender=await getSender!(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:undefined);assertScope(captured);setBlocked(true);
       const sent=await sender.submitPoolPositionAction(prepared);
       assertScope(captured);
       setPending({recover:sent.recover,scope:captured});setTransactionHash(sent.transactionHash);setMessage('Position action submitted. Check its authenticated result before another action.');
@@ -356,9 +353,8 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
         if(!result)throw new Error('Private position result is not available yet.');
         acceptPrivateResult(result,pending.scope);return;
       }
-      const sender=await getSender(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:nativeTrial?{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE}:undefined);assertScope(captured);
+      const sender=await getSender(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:undefined);assertScope(captured);
       if(!snapshotHeld&&!ownerHeld&&preparedCandidate){const result=await sender.recoverCurrentPreparedPoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
-      if(!snapshotHeld&&nativeTrial){const result=await sender.recoverCurrentNativePoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
       const verifySnapshot=snapshotVerifier(captured),reviewTopUpHold=topUpReview(captured);
       const observed=await sender.recoverPendingPoolPositionAttempt(verifySnapshot,reviewTopUpHold);assertScope(captured);
       if(observed?.status==='released-unsent'){setPending(null);setBlocked(hasCurrentDexPendingAction(recordScope));setMessage(CURRENT_UNSENT_RELEASED_MESSAGE);return;}
@@ -486,7 +482,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     {topUpOpen&&!savedActionPending?<p>{topUpManagement?.managed?'Top-up debits are checked. Use its verification snapshot before another position action.':
       'Top-up is in progress. Complete it, or stop and clear its approvals before another position action.'}</p>:null}
     {value ? <fieldset className="dex-v2-panel-fields dex-owner-actions" disabled={busy||blocked||savedActionPending||topUpOpen||!!selectedReview}><details className="dex-owner-action" name="pool-owner-actions"><summary>Withdraw liquidity</summary><div className="dex-v2-panel-fields">
-    {!nativeTrial?<>{!preparedCandidate||exitCandidate?<label>Withdrawal (%)<input aria-label="Liquidity withdrawal percentage" inputMode="decimal" value={percentage} disabled={busy||blocked} onChange={event=>setPercentage(event.target.value)}/></label>:null}
+    <>{!preparedCandidate||exitCandidate?<label>Withdrawal (%)<input aria-label="Liquidity withdrawal percentage" inputMode="decimal" value={percentage} disabled={busy||blocked} onChange={event=>setPercentage(event.target.value)}/></label>:null}
     <details className="dex-v2-setup"><summary>Minimum payouts</summary><div>
       <label>{labels[0]}<input aria-label={preparedCandidate?`${labels[0]} minimum payout`:'Test token 1 minimum payout'} inputMode="decimal" value={minimum0} disabled={busy||blocked} onChange={event=>setMinimum0(event.target.value)}/></label>
       <label>{labels[1]}<input aria-label={preparedCandidate?`${labels[1]} minimum payout`:'Test token 0 minimum payout'} inputMode="decimal" value={minimum1} disabled={busy||blocked} onChange={event=>setMinimum1(event.target.value)}/></label>
@@ -501,10 +497,9 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
         <div><dt>Remaining private shares</dt><dd>{exitPreview.value.preview.remainingShares.toString()}</dd></div>
       </dl></aside>:null}
       <button type="button" disabled={!connected||busy||blocked||!validExitPreview||value.status!==1n||!value.amounts} onClick={()=>{void action('withdraw');}}>Withdraw previewed shares</button></>:null}
-    {!preparedCandidate?<button type="button" disabled={!connected||busy||blocked||value?.status!==1n||!value.amounts||value.amounts.shares===0n} onClick={()=>{void action('withdraw');}}>Withdraw selected shares</button>:null}</>:
-      <p>Refresh the private claim before exit. Its exact token entitlements are the minimum payouts. A changed Pool needs a new refresh.</p>}
-    </div></details><details className="dex-owner-action dex-owner-danger" name="pool-owner-actions"><summary>Close position</summary><div className="dex-v2-panel-fields"><p>Withdraw all remaining liquidity and close this position.</p><button type="button" disabled={!connected||busy||blocked||!value||!value.amounts||value.status===4n||(nativeTrial&&value.producerKind!=='snapshot')} onClick={()=>{void action('close');}}>Close and withdraw all</button></div></details>
-    {!nativeTrial&&(!preparedCandidate||exitCandidate)?<><details className="dex-v2-setup dex-owner-action" name="pool-owner-actions"><summary>Transfer position</summary><div>
+    {!preparedCandidate?<button type="button" disabled={!connected||busy||blocked||value?.status!==1n||!value.amounts||value.amounts.shares===0n} onClick={()=>{void action('withdraw');}}>Withdraw selected shares</button>:null}</>
+    </div></details><details className="dex-owner-action dex-owner-danger" name="pool-owner-actions"><summary>Close position</summary><div className="dex-v2-panel-fields"><p>Withdraw all remaining liquidity and close this position.</p><button type="button" disabled={!connected||busy||blocked||!value||!value.amounts||value.status===4n} onClick={()=>{void action('close');}}>Close and withdraw all</button></div></details>
+    {(!preparedCandidate||exitCandidate)?<><details className="dex-v2-setup dex-owner-action" name="pool-owner-actions"><summary>Transfer position</summary><div>
     <p>The recipient must be an EOA wallet and must activate claim privacy, then resume liquidity.</p>
     <label>NFT recipient<input aria-label="Liquidity NFT recipient" value={recipient} disabled={busy||blocked} onChange={event=>setRecipient(event.target.value)}/></label>
     <button type="button" disabled={!connected||busy||blocked||!value||value.status===4n||(!value.amounts&&value.status!==3n)} onClick={()=>{void action('transfer');}}>Transfer liquidity NFT</button>

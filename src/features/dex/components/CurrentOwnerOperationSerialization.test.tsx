@@ -33,10 +33,8 @@ function fixture(kind: 'pool' | 'position' | 'limit', components = {
     prepareLimit: vi.fn(async () => null), prepareOwnerAction: vi.fn(async () => ({ data: 'local' })) };
   const sender = { checkCurrentCheapCandidate: vi.fn(async () => ({ ...candidate, chainId: BigInt(candidate.chainId), owner })),
     submitPoolPreview: vi.fn(), submitPoolFunding: vi.fn(async () => ({ transactionHash: 'local', recover: vi.fn() })),
-    preparePoolApproval: vi.fn(async () => null), preparePoolUnfundedCleanup: vi.fn(async () => null),
-    abandonCurrentNativePoolFunding: vi.fn(async () => null), recoverCurrentNativePoolFundingResult: vi.fn(async () => null), readCurrentNativePoolResume: vi.fn(async () => null),
     recoverPendingPoolAttempt: vi.fn(async () => null), submitCurrentTokenFunding: vi.fn(),
-    recoverCurrentNativePoolPositionResult: vi.fn(async () => null), recoverPendingPoolPositionAttempt: vi.fn(async () => null),
+    recoverPendingPoolPositionAttempt: vi.fn(async () => null),
     recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null), recoverCurrentPreparedPoolPositionResult: vi.fn(async () => null),
     submitPoolPositionAction: vi.fn(), submitLimit: vi.fn(),
     submitLimitOwner: vi.fn(async () => ({ transactionHash: 'local', recover: vi.fn() })), recoverPendingLimitAttempt: vi.fn(async () => null) };
@@ -131,9 +129,6 @@ it.each(['pool','position','limit'] as const)('serializes actual current %s publ
   const metadata=kind==='pool'?f.sender.recoverPendingPoolAttempt:kind==='position'?
     f.sender.recoverPendingPoolPositionAttempt:f.sender.recoverPendingLimitAttempt;
   expect(metadata).toHaveBeenCalledOnce();expect(text(f.render())).toContain('No pending');
-  expect(f.sender.recoverCurrentNativePoolFundingResult).not.toHaveBeenCalled();
-  expect(f.sender.readCurrentNativePoolResume).not.toHaveBeenCalled();
-  expect(f.sender.recoverCurrentNativePoolPositionResult).not.toHaveBeenCalled();
   for(const send of [f.sender.submitPoolPreview,f.sender.submitPoolFunding,f.sender.submitCurrentTokenFunding,
     f.sender.submitPoolPositionAction,f.sender.submitLimit,f.sender.submitLimitOwner])expect(send).not.toHaveBeenCalled();
 });

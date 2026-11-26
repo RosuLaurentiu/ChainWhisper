@@ -9,11 +9,8 @@ import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentPo
 import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { assertCurrentAppPoolAuthority } from './currentDexC1SwapPolicy';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
-import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi, currentPoolOwnerGasCap,
+import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi, currentPoolOwnerGasCap, currentPoolSnapshotAbi,
   decodeCurrentPoolNftTransfer, type CurrentPoolOwnerAction } from './currentDexPoolPosition';
-import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
-import { requireCurrentNativePoolSession, CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_LIMITS } from './currentDexNativePoolPolicy';
-import { currentNativeSigningBudget, isCurrentNativeSwapCandidate, recordCurrentNativePoolOutcome, completeCurrentNativePoolScope } from './currentDexNativeSwapPolicy';
 import { isKnownCurrentPoolProofMismatch, CurrentPoolProofMismatch, isReviewableTopUpFailure } from './currentDexPoolProofError';
 import { addCurrentPositionReview, readCurrentPositionReviews, releaseCurrentPositionReview } from './currentDexPositionReview';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolTopUpResult } from '../features/wallet/currentDexPoolFundingCapability';
@@ -50,8 +47,8 @@ const same=(a:string|null,b:string)=>typeof a==='string'&&a.toLowerCase()===b.to
 export type CurrentPoolTopUpHoldReview = (facts: Readonly<{ positionId: bigint; fundingHash: string; snapshotHash: string;
   shares: bigint; totalShares: bigint }>) => Promise<boolean>;
 const shape=(phase:string,data:string,owner:string,preparedCandidate=false,exitCandidate=false)=>{
-  if(phase==='pool-snapshot') { const values=currentNativePoolSnapshotAbi.decodeFunctionData('poolSnapshot',data);
-    if(values[0]<(preparedCandidate?8n:20n)||currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',values).toLowerCase()!==data.toLowerCase())throw new Error('Non-canonical native Pool snapshot.');return values; }
+  if(phase==='pool-snapshot') { const values=currentPoolSnapshotAbi.decodeFunctionData('poolSnapshot',data);
+    if(values[0]<(preparedCandidate?8n:20n)||currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',values).toLowerCase()!==data.toLowerCase())throw new Error('Non-canonical native Pool snapshot.');return values; }
   const host=phase==='pool-transfer'?nftAbi:abi,method=phase==='pool-transfer'?'safeTransferFrom':'managePoolPosition';
   const values=host.decodeFunctionData(method,data);
   if (!same(host.encodeFunctionData(method,values),data)) throw new Error('Non-canonical position calldata.');
@@ -62,8 +59,7 @@ const shape=(phase:string,data:string,owner:string,preparedCandidate=false,exitC
   return values;
 };
 export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,chainId,transport,attest,candidate: candidateKey='cheap-history',
-  nativePoolProfile,now=()=>BigInt(Math.floor(Date.now()/1000))}:{signer:object;ownerAddress:string;chainId:bigint;transport:CurrentTransport;
-  nativePoolProfile?:typeof CURRENT_NATIVE_POOL_PROFILE;
+  now=()=>BigInt(Math.floor(Date.now()/1000))}:{signer:object;ownerAddress:string;chainId:bigint;transport:CurrentTransport;
   attest:(head:{number:bigint;hash:string})=>Promise<void>;now?:()=>bigint;candidate?:CurrentCheapDexCandidateKey})=>{
   const candidate=resolveCurrentCheapDexCandidate(candidateKey),nft=candidate.companions.find(([role])=>role==='ChainWhisperDexPositionNFT')![1];
   const owner=getAddress(ownerAddress),core=getAddress(candidate.core),storage=currentDexPendingStorage({chainId,graph:candidate.graph,owner});
@@ -71,11 +67,10 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
   const preparedCandidate=!!resolvePreparedDexScope(candidate);
   const exitCandidate=preparedCandidate;
   // decision-033: a position action reserves only its pending slot and an in-memory key. The release step frees that exact key.
-  // A native engineering budget keeps its Pool scope, so that profile is never released. A top-up snapshot and a
-  // held refresh are refused by the boundary itself.
+  // A top-up snapshot and a held refresh are refused by the boundary itself.
   const boundary=createCurrentAttemptBoundary({storage,c:candidate,core,owner,chainId,transport,attest,now,historical:false,canonicalIndexProof:preparedCandidate,
     releaseReservation:async attempt=>{
-      if(attempt.phase!=='pool-owner'&&attempt.phase!=='pool-transfer'&&attempt.phase!=='pool-snapshot'||isCurrentNativeSwapCandidate(candidate))
+      if(attempt.phase!=='pool-owner'&&attempt.phase!=='pool-transfer'&&attempt.phase!=='pool-snapshot')
         throw new Error('This adapter releases current Pool position actions only.');
       const id=`${attempt.phase}:${attempt.callHash}`,exact=attemptKeys.get(signer)?.get(id);
       if(exact!==undefined){submitted.get(signer)?.delete(exact);attemptKeys.get(signer)!.delete(id);}
@@ -96,7 +91,7 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     return fundingReceipt;
   };
   const recheck=async(request:Parameters<typeof boundary.recheckMinedCall>[0],hash:string,before:ReturnType<typeof snapshotReceipt>,failed=false)=>{
-    if(isCurrentNativeSwapCandidate(candidate)||preparedCandidate)return boundary.recheckMinedCall(request,hash,before,failed);
+    if(preparedCandidate)return boundary.recheckMinedCall(request,hash,before,failed);
     const after=snapshotReceipt(await boundary.verifyMinedCall(request,hash,failed));
     if(JSON.stringify(after)!==JSON.stringify(before))throw new Error('Pool canonical receipt changed after private proof.');
     if(transport.verifyCanonicalInclusion){const tx=await transport.readTransaction(hash);if(!tx)throw new Error('Pool canonical transaction is unavailable.');
@@ -117,25 +112,21 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       const refreshTransport={...transport,readNonce:async()=>{const nonce=await transport.readNonce();if(nonce<=held!.nonce)throw new Error('Independent snapshot needs a newer nonce.');return nonce;}};
       sendBoundary=createCurrentAttemptBoundary({storage:sendStorage,c:candidate,core,owner,chainId,transport:refreshTransport,attest,now,historical:false,canonicalIndexProof:true,heldSnapshot:held!});
     }
-    const native=isCurrentNativeSwapCandidate(candidate), snapshot=prepared.action==='snapshot';
+    const snapshot=prepared.action==='snapshot';
     const finalSnapshotBaseline=candidateKey==='cheap-history'&&snapshot&&'captureBaselineAtSigning'in prepared&&prepared.captureBaselineAtSigning===true;
     const exitPhase='exitPhase' in prepared?prepared.exitPhase:undefined;
     const phase=snapshot?'pool-snapshot':prepared.action==='transfer'?'pool-transfer':'pool-owner';
-    const cap=snapshot?CURRENT_NATIVE_POOL_LIMITS.snapshotCap:native?CURRENT_NATIVE_POOL_LIMITS.closeCap:currentPoolOwnerGasCap(prepared.action as CurrentPoolPreparedPositionAction['action']);
+    const cap=snapshot?30_000_000n:currentPoolOwnerGasCap(prepared.action as CurrentPoolPreparedPositionAction['action']);
     // Reject forged/cross-candidate objects before accessing live financial authority.
     assertCurrentPoolPositionPrepared(prepared,signer);await prepared.assertCurrent();
     if(prepared.graph!==candidate.graph||prepared.packageSha256!==candidate.packageSha256)throw new Error('Position preparation differs from this owner candidate.');
     if(preparedCandidate&&!snapshot&&prepared.action!=='close'&&!(exitCandidate&&
       (['transfer','activate','resume'].includes(prepared.action)||prepared.action==='withdraw'&&
         (exitPhase==='preview'||exitPhase==='withdrawal'))))throw new Error('Prepared Pool action integration is incomplete.');
-    const session=native?requireCurrentNativePoolSession(signer,owner,candidate):null;
-    const budget=native?currentNativeSigningBudget(signer,owner,now):null;
-    const budgetPhase=snapshot?(prepared.closed?'pool-closed-snapshot':'pool-active-snapshot'):'pool-close';
-    const admission=()=>{if(!native){assertCurrentPoolPositionNativeAdmission(candidate,prepared.action,snapshot&&prepared.closed,exitPhase);return assertCurrentAppPoolAuthority(candidate.graph,
-      {owner,action:prepared.action,positionId:prepared.positionId,recipient:prepared.recipient},signer);}
-      if(nativePoolProfile!==CURRENT_NATIVE_POOL_PROFILE||session!.positionId!==prepared.positionId||session!.unfundedFailed||
-        (!snapshot&&prepared.action!=='close')||(snapshot&&prepared.closed!==!!session!.closedPayouts))throw new Error('Native Pool owner phase is not admitted.');
-    };
+    // The in-memory snapshot key keeps its active/closed suffix.
+    const snapshotKind=snapshot&&prepared.closed?'pool-closed-snapshot':'pool-active-snapshot';
+    const admission=()=>{assertCurrentPoolPositionNativeAdmission(candidate,prepared.action,snapshot&&prepared.closed,exitPhase);return assertCurrentAppPoolAuthority(candidate.graph,
+      {owner,action:prepared.action,positionId:prepared.positionId,recipient:prepared.recipient},signer);};
     const validate=async()=>{
       assertCurrentPoolPositionPrepared(prepared,signer);await prepared.assertCurrent();
       if(topUp){
@@ -164,22 +155,17 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     if(topUp)sendBoundary.requirePoolTopUpHandoff(topUp.transactionHash.toLowerCase());else sendBoundary.requireEmptyPending();
     // A funded top-up needs its own snapshot even when the position reader retains an earlier source.
     const snapshotSource=snapshot&&topUp?`:top-up:${topUp.transactionHash.toLowerCase()}`:snapshot&&prepared.replacementFrom?`:${prepared.replacementFrom}`:'';
-    const call=Object.freeze({chainId,from:owner,to:prepared.to,value:0n,data:prepared.data}),key=`${held?'refresh:':''}${phase}:${keccak256(call.data).toLowerCase()}${snapshot?':'+budgetPhase:''}${snapshotSource}`;
-    const checkBudget=async()=>{if(!budget)return;admission();budget.check(budgetPhase,key,cap,session!.scope);
-      const head=await sendBoundary.currentHead(undefined,cap);if(!transport.readNativeResources)throw new Error('Native Pool exit resources are unavailable.');
-      const resources=await transport.readNativeResources(head);if(resources.balance<budget.snapshot().poolRemainingTailWei+CURRENT_NATIVE_POOL_LIMITS.payerReserveWei)throw new Error('Native Pool reserved exit resources are insufficient.');};
-    await checkBudget();
+    const call=Object.freeze({chainId,from:owner,to:prepared.to,value:0n,data:prepared.data}),key=`${held?'refresh:':''}${phase}:${keccak256(call.data).toLowerCase()}${snapshot?':'+snapshotKind:''}${snapshotSource}`;
     if(keys!.has(key))throw new Error('Position action was already submitted. Recover it instead.');keys!.add(key);
     if(!held){let attempts=attemptKeys.get(signer);if(!attempts){attempts=new Map();attemptKeys.set(signer,attempts);}
       attempts.set(`${phase}:${keccak256(call.data).toLowerCase()}`,key);}
     let signing=false;
     try{
-      const sent=await sendBoundary.sendCurrent(phase,call,undefined,async()=>{await validate();admission();if(!finalSnapshotBaseline)await prepared.assertBeforeSend();await checkHeld();await validate();admission();await checkBudget();},()=>{
+      const sent=await sendBoundary.sendCurrent(phase,call,undefined,async()=>{await validate();admission();if(!finalSnapshotBaseline)await prepared.assertBeforeSend();await checkHeld();await validate();admission();},()=>{
         if(snapshot&&'sealBeforeSend' in prepared)prepared.sealBeforeSend();signing=true;
       },undefined,cap,undefined,
         async()=>{
           if(finalSnapshotBaseline){await prepared.assertBeforeSend();await checkHeld();await validate();admission();}
-          await checkBudget();budget?.commit(budgetPhase,key,cap,session!.scope);
         }, undefined, undefined, undefined, undefined, undefined,
         candidateKey === 'cheap-history' ? { kind: 'position', prepared, signer } : undefined, topUp?.transactionHash.toLowerCase());
       const result=Object.freeze({...sent,status:'position-action-pending' as const,recover:async()=>{
@@ -199,14 +185,12 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
           }
           await recheck(sent.request,sent.transactionHash,canonical);
           if(topUp)await topUp.assertCurrent();
-        }catch(error){if((native||preparedCandidate)&&isKnownCurrentPoolProofMismatch(error))blockCurrentPoolVerification(sendStorage,sendBoundary.requireOwnPending(pending,sent.transactionHash),error);throw error;}
+        }catch(error){if(preparedCandidate&&isKnownCurrentPoolProofMismatch(error))blockCurrentPoolVerification(sendStorage,sendBoundary.requireOwnPending(pending,sent.transactionHash),error);throw error;}
         if(!result)throw new Error('Private position result is unavailable.');
-        if(native){if(!snapshot)recordCurrentNativePoolOutcome(signer,session!.scope,'closed');
-          else if(prepared.closed){completeCurrentNativePoolScope(signer,session!.scope);session!.completed=true;}}
         clearCurrentDexPendingAttempt(sendStorage,sendBoundary.requireOwnPending(pending,sent.transactionHash));
         return topUp&&result.action==='snapshot'?Object.freeze({...result,privateAccountingVerified:true as const,poolTopUpHash:topUp.transactionHash.toLowerCase()}):result;
       }});
-      if(native||preparedCandidate){let recoveries=ownerRecoveries.get(signer);if(!recoveries){recoveries=new Map();ownerRecoveries.set(signer,recoveries);}recoveries.set(`${held?'refresh:':''}${phase}:${keccak256(call.data).toLowerCase()}`,result.recover);}
+      if(preparedCandidate){let recoveries=ownerRecoveries.get(signer);if(!recoveries){recoveries=new Map();ownerRecoveries.set(signer,recoveries);}recoveries.set(`${held?'refresh:':''}${phase}:${keccak256(call.data).toLowerCase()}`,result.recover);}
       return result;
     }catch(error){if(!signing||wasCurrentDexUnsentReleased(error))keys!.delete(key);throw error;}
   };
@@ -215,13 +199,6 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     const pending=refresh?readCurrentDexPendingAttempt(currentPoolRefreshStorage(storage,held!)):held;if(!pending||!preparedCandidate)return null;
     if(pending.chainId!==String(chainId)||!same(pending.owner,owner)||pending.graph!==`0x${candidate.graph}`||!same(pending.core,core)||!['pool-snapshot','pool-owner','pool-transfer'].includes(pending.phase))return null;
     const recover=ownerRecoveries.get(signer)?.get(`${refresh?'refresh:':''}${pending.phase}:${pending.callHash}`);
-    if(!recover)return null;return recover();
-  };
-  const recoverCurrentNativePoolPositionResult=async()=>{
-    await transport.assertCurrent();const pending=boundary.pending();if(!pending||!isCurrentNativeSwapCandidate(candidate))return null;
-    if(pending.chainId!==String(chainId)||!same(pending.owner,owner)||pending.graph!==`0x${candidate.graph}`||!same(pending.core,core)||
-      !['pool-owner','pool-snapshot'].includes(pending.phase))return null;
-    const recover=ownerRecoveries.get(signer)?.get(`${pending.phase}:${pending.callHash}`);
     if(!recover)return null;return recover();
   };
   const inspectPending=async(boundary:ReturnType<typeof createCurrentAttemptBoundary>,storage:ReturnType<typeof currentDexPendingStorage>,retain=false,verifySnapshot?:SnapshotVerifier,reviewTopUpHold?:CurrentPoolTopUpHoldReview)=>{
@@ -237,7 +214,7 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     if(keccak256(tx.data).toLowerCase()!==pending.callHash)throw new Error('Pending position calldata changed.');
     const decoded=shape(pending.phase,tx.data,owner,preparedCandidate,exitCandidate);
     const action=pending.phase==='pool-snapshot'?'snapshot':pending.phase==='pool-transfer'?'transfer':({1:'withdraw',5:'resume',6:'activate',7:'close',11:'withdraw',12:'withdraw'} as const)[Number(decoded[2]) as 1|5|6|7|11|12];
-    const cap=action==='snapshot'?30_000_000n:isCurrentNativeSwapCandidate(candidate)&&action==='close'?70_000_000n:currentPoolOwnerGasCap(action);
+    const cap=action==='snapshot'?30_000_000n:currentPoolOwnerGasCap(action);
     const request=Object.freeze({chainId,from:owner,to:pending.phase==='pool-transfer'?nft:core,value:0n,
       data:tx.data,nonce:pending.nonce,gasLimit:cap});
     const canonical=snapshotReceipt(await boundary.verifyMinedCall(request,pending.txHash,true));
@@ -247,9 +224,9 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     if(canonical.status===1&&pending.phase==='pool-owner'&&decoded[2]===7n)decodeCurrentPoolNftTransfer(canonical.logs??[],nft,owner,'0x0000000000000000000000000000000000000000',decoded[0]);
     if(canonical.status===1&&pending.phase==='pool-owner'&&decoded[2]===11n)decodePoolExitPreviewEvent(canonical.logs??[],core,decoded[0]);
     if(canonical.status===1&&pending.phase==='pool-snapshot'){
-      const logs=canonical.logs??[],log=logs[0],event=log&&currentNativePoolSnapshotAbi.parseLog({...log,topics:[...log.topics]});
+      const logs=canonical.logs??[],log=logs[0],event=log&&currentPoolSnapshotAbi.parseLog({...log,topics:[...log.topics]});
       if(logs.length!==1||!same(log.address,core)||event?.name!=='PoolSnapshotRefreshed'||event.args.positionId!==decoded[0])throw new Error('Snapshot metadata event changed.');
-      const encoded=currentNativePoolSnapshotAbi.encodeEventLog(event.fragment,event.args);
+      const encoded=currentPoolSnapshotAbi.encodeEventLog(event.fragment,event.args);
       if(!same(encoded.data,log.data)||encoded.topics.length!==log.topics.length||encoded.topics.some((v,i)=>!same(v,log.topics[i])))throw new Error('Snapshot metadata event is non-canonical.');
     }
     await recheck(request,pending.txHash,canonical,true);
@@ -377,7 +354,7 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       intervalAccounting:'not-reconstructed'}));
     return Object.freeze({status:'released' as const,positionId,transactionHash:entry.txHash});
   };
-  return Object.freeze({submitPoolPositionAction,recoverCurrentPreparedPoolPositionResult,recoverCurrentNativePoolPositionResult,
+  return Object.freeze({submitPoolPositionAction,recoverCurrentPreparedPoolPositionResult,
     releasePositionReview,readPositionReviews:()=>readCurrentPositionReviews(storage,reviewScope),
     recoverPendingPoolPositionAttempt:async(verifySnapshot?:SnapshotVerifier,reviewTopUpHold?:CurrentPoolTopUpHoldReview)=>{
       const held=boundary.pending();

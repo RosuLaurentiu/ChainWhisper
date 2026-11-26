@@ -14,7 +14,6 @@ import type { issueCurrentDexPoolFundingCapability } from '../features/wallet/cu
 import type { issueCurrentDexPoolPositionCapability } from '../features/wallet/currentDexPoolPositionCapability';
 import type { issueCurrentDexLimitCapability } from '../features/wallet/currentDexLimitCapability';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
-import type { CURRENT_NATIVE_POOL_PROFILE } from './currentDexNativePoolPolicy';
 
 export type WalletBrowserConnectOptions = {
   forceAccountPicker?: boolean;
@@ -29,7 +28,6 @@ export type WalletSessionSignerOptions = {
 export type WalletSessionDexOptions = WalletSessionSignerOptions & {
   candidate?: CurrentCheapDexCandidateKey;
   selectedPair?: readonly [string, string];
-  nativePoolProfile?: typeof CURRENT_NATIVE_POOL_PROFILE;
 };
 
 export type WalletSessionActions = {
@@ -50,7 +48,7 @@ export type WalletSessionActions = {
   ) => ReturnType<typeof issueCurrentDexReceiptCapability>;
   getCurrentDexSubmissionCapability?: (
     expectedChainId?: bigint,
-    options?: Pick<WalletSessionDexOptions, 'candidate' | 'nativePoolProfile'>
+    options?: Pick<WalletSessionDexOptions, 'candidate'>
   ) => ReturnType<typeof issueCurrentDexSubmissionCapability>;
   connectBrowserWallet: (walletId?: string, options?: WalletBrowserConnectOptions) => Promise<unknown>;
   disconnect: () => Promise<void> | void;

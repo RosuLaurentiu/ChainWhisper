@@ -9,10 +9,9 @@ import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } fro
 import { assertCurrentPoolFundingNativeAdmission } from '../../../lib/currentDexPoolSubmission';
 import { usesPackedPoolInputs } from '../../../lib/currentDexPoolFunding';
 import { assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority } from '../../../lib/currentDexC1SwapPolicy';
-import { CURRENT_NATIVE_POOL_PROFILE } from '../../../lib/currentDexNativePoolPolicy';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
-import { CURRENT_DEX_POOL_LABELS, currentDexTokenLabel, formatCurrentDexTokenAmount, parseCurrentDexTokenAmount, hasCurrentDexPendingAction,
+import { CURRENT_DEX_POOL_LABELS, formatCurrentDexTokenAmount, parseCurrentDexTokenAmount, hasCurrentDexPendingAction,
   readCurrentDexDisplay, currentDexDisplayPair, formatDexCandidateTokenAmount, parseDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { resolveBrowserWalletPrivacyState } from '../../../lib/walletSession';
@@ -136,10 +135,9 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     parseDexCandidateTokenAmount(candidate, poolTokens[index], value, tokenLabels[index], true) : parseCurrentDexTokenAmount(value, tokenLabels[index], true);
   const rows = (a: Amounts) => amountRows(a, tokenLabels, format);
   const cardRows = (a: Amounts) => previewCardRows(a, tokenLabels, format);
-  const nativeTrial = false as boolean;
-  const [budget0, setBudget0] = useState(nativeTrial ? '100' : ''); const [budget1, setBudget1] = useState(nativeTrial ? '100' : '');
-  const [price, setPrice] = useState(nativeTrial ? (priceDisplayInverted ? '0.5' : '2') : '');
-  const [classId, setClassId] = useState(nativeTrial ? 0 : 1); const [tolerance, setTolerance] = useState(nativeTrial ? '0.5' : '1');
+  const [budget0, setBudget0] = useState(''); const [budget1, setBudget1] = useState('');
+  const [price, setPrice] = useState('');
+  const [classId, setClassId] = useState(1); const [tolerance, setTolerance] = useState('1');
   const [busy, setBusy] = useState(false); const [blocked, setBlocked] = useState(false); const [message, setStoredMessage] = useState('');
   const [sender, setSender] = useState<{ value: Sender; scope: object } | null>(null);
   const [preview, setPreview] = useState<{ value: Preview; scope: object } | null>(null);
@@ -155,7 +153,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   // Owner decision 2026-11-18: while the price is untouched it shows the live Pool price (verified public reference for
   // this pair, rounded). It is fixed into the field at the first price or amount entry, so a later reference update
   // cannot change entered terms or a preview.
-  const [priceTouched, setPriceTouched] = useState(nativeTrial);
+  const [priceTouched, setPriceTouched] = useState(false);
   const livePoolPrice = !priceTouched && marketReference?.status === 'available' && isVerifiedCurrentDexMarketReference(marketReference) &&
     selectedPair && marketReference.pair[0] === selectedPair[0] && marketReference.pair[1] === selectedPair[1]
     ? priceText(priceDisplayInverted ? 1 / marketReference.price : marketReference.price) : null;
@@ -249,7 +247,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     preparedScope?.key === 'cheap-history' ? undefined : assertCurrentAppPoolAuthority(candidate.graph, { owner: context.owner!, action, budgets: intent.budgets, classId: intent.classId,
       tolerance: [intent.terms[8], intent.terms[9]] });
   const currentSender = async (captured: typeof context) => {
-    const next = await getSender!(chain, preparedCandidate ? { candidate: preparedScope!.key } : nativeTrial ? { nativePoolProfile: CURRENT_NATIVE_POOL_PROFILE } : undefined);
+    const next = await getSender!(chain, preparedCandidate ? { candidate: preparedScope!.key } : undefined);
     const checked = await next.checkCurrentCheapCandidate();
     assertScope(captured);
     if (checked.chainId !== chain || checked.owner.toLowerCase() !== captured.owner || checked.graph !== candidate.graph ||
@@ -257,7 +255,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     setSender({ value: next, scope: captured }); return next;
   };
   const prepare = async () => {
-    if (!connected || inFlight.current || busy || blocked || savedActionPending || funding || nftId !== null || validPreview || (nativeTrial && preview)) return;
+    if (!connected || inFlight.current || busy || blocked || savedActionPending || funding || nftId !== null || validPreview) return;
     const captured = scope.current;
     inFlight.current = true; setBusy(true); setPreview(null); setFunding(null); setApprovals([false, false]); setClears([false, false]); setNftId(null);
     setMessage('Checking your Pool preview before requesting signatures.');
@@ -326,7 +324,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       });
       assertScope(captured);
       if (!prepared) { setMessage('Pool funding cancelled.'); return; }
-      if ((nativeTrial || preparedCandidate) && (!validFunding || !approvals.every(Boolean))) {
+      if (preparedCandidate && (!validFunding || !approvals.every(Boolean))) {
         if (preparedCandidate && !validFunding) {
           setMessage('Checking which tokens need approval.');
           const existing = await next.readSharedPoolAllowances(prepared, [approvalMode0, approvalMode1]); assertScope(captured);
@@ -384,16 +382,12 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       };
       setMessage(cleanup ? 'Preparing approval cleanup. Complete wallet requests when they appear.' : 'Preparing the exact token approval. Complete wallet requests when they appear.');
       const sent = await (async () => {
-        if (preparedCandidate) {
-          const prepared = await next.prepareSharedPoolApproval({ funding: funding.value, canonicalIndex: index, cleanup, approvalMode: index === 0 ? getApprovalMode0 : getApprovalMode1, confirm: review });
-          assertScope(captured);
-          if (!prepared) return null;
-          setBlocked(true); return next.submitSharedPoolApproval(prepared);
-        }
-        const prepared = cleanup ? await next.preparePoolUnfundedCleanup(index, review) : await next.preparePoolApproval(funding.value, index, review);
+        // decision-034 (CW-140.12): the fa71 native Pool approval path was removed.
+        if (!preparedCandidate) throw new Error('Pool approval needs the prepared Pool candidate.');
+        const prepared = await next.prepareSharedPoolApproval({ funding: funding.value, canonicalIndex: index, cleanup, approvalMode: index === 0 ? getApprovalMode0 : getApprovalMode1, confirm: review });
         assertScope(captured);
         if (!prepared) return null;
-        setBlocked(true); return next.submitCurrentTokenFunding(prepared);
+        setBlocked(true); return next.submitSharedPoolApproval(prepared);
       })();
       assertScope(captured);
       if (!sent) { setMessage('Pool approval cancelled.'); return; }
@@ -431,7 +425,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     finally { inFlight.current = false; setBusy(false); }
   };
   const abandon = async () => {
-    if ((!nativeTrial && !preparedCandidate) || !connected || inFlight.current || busy || savedActionPending || !validFunding || !funding ||
+    if (!preparedCandidate || !connected || inFlight.current || busy || savedActionPending || !validFunding || !funding ||
         nftId !== null || unfundedFailed || attemptComplete || !unfundedAbandonEligible) return;
     const captured = scope.current; inFlight.current = true; setBusy(true);
     try {
@@ -443,7 +437,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         ]);
         assertScope(captured); return accepted;
       };
-      const result = preparedCandidate ? await funding.value.abandonUnfunded(review) : await (await currentSender(captured)).abandonCurrentNativePoolFunding(review);
+      const result = await funding.value.abandonUnfunded(review);
       assertScope(captured);
       if (!result) { setMessage('Deposit stop cancelled. No approval was changed.'); return; }
       setUnfundedFailed(true); setUnfundedAbandonEligible(false); setBlocked(false); setPreview(null);
@@ -453,27 +447,6 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         'Unfunded deposit stopped. Both approvals are zero; no cleanup transaction is required.' :
         candidateKey === 'cheap-history' ? 'Deposit stopped. Keep approvals for later use or revoke them below. Funding cannot restart.' : 'Unfunded deposit stopped. Clear its remaining approvals below. Funding cannot restart.');
     } catch (cause) { fail(cause, captured); } finally { inFlight.current = false; setBusy(false); }
-  };
-  const acceptNativeTokenResult = async (observed: unknown, next: Sender, captured: object) => {
-    if (!observed || typeof observed !== 'object' || !('fundingOutcome' in observed) ||
-        !['verified', 'reverted'].includes(String(observed.fundingOutcome)) || !('token' in observed) || typeof observed.token !== 'string') {
-      throw new Error('Native Pool approval result has no authenticated outcome.');
-    }
-    const resumed = await next.readCurrentNativePoolResume(); assertScope(captured);
-    if (!resumed || !resumed.funding || resumed.positionId !== undefined) throw new Error('Original unfunded Pool recovery is unavailable.');
-    const observedToken = observed.token.toLowerCase();
-    const label = preparedCandidate ? display!.tokens.find(token => token.address === observedToken)?.label : currentDexTokenLabel(observedToken);
-    if (!label) throw new Error('Pool approval token is outside this candidate.');
-    setSender({ value: next, scope: captured }); setPending(null); setBlocked(false); setApprovals(resumed.approvals);
-    setFunding({ value: resumed.funding, scope: captured }); setUnfundedFailed(resumed.unfundedFailed);
-    setUnfundedAbandonEligible(resumed.unfundedAbandonEligible); setAttemptComplete(resumed.completed);
-    setClears([!resumed.approvals[0], !resumed.approvals[1]]);
-    if (resumed.unfundedFailed) setPreview(null);
-    setMessage(observed.fundingOutcome === 'reverted' ?
-      `${label} approval transaction reverted. Its allowance was not changed. Check the remaining approvals and recovery capacity; do not assume cleanup is complete.` :
-      resumed.completed ? 'Both unused approvals are zero. The unfunded Pool attempt is complete.' :
-      resumed.unfundedFailed ? `${label} unused approval cleared. Check any remaining approval before completion.` :
-      `${label} exact approval verified. Fund only after both actual approvals pass.`);
   };
   const acceptPreparedTokenResult = (observed: unknown, phase: string, captured: object) => {
     assertScope(captured);
@@ -511,10 +484,6 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
     const observed = await currentPending.recover();
     assertScope(currentPending.scope);
     if (!observed) throw new Error('Private Pool result is not available yet.');
-    if (nativeTrial && (currentPending.phase.startsWith('approval-') || currentPending.phase.startsWith('clear-'))) {
-      const next = await currentSender(captured);
-      await acceptNativeTokenResult(observed, next, captured); return;
-    }
     if (preparedCandidate && (currentPending.phase.startsWith('approval-') || currentPending.phase.startsWith('clear-'))) {
       acceptPreparedTokenResult(observed, currentPending.phase, captured); return;
     }
@@ -562,7 +531,7 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
           // Only the canonical journal can release an uncertain attempt. Its public result grants no private authority.
         }
       }
-      const next = sender?.scope === captured ? sender.value : await getSender(chain, preparedCandidate ? { candidate: preparedScope!.key } : nativeTrial ? { nativePoolProfile: CURRENT_NATIVE_POOL_PROFILE } : undefined);
+      const next = sender?.scope === captured ? sender.value : await getSender(chain, preparedCandidate ? { candidate: preparedScope!.key } : undefined);
       assertScope(captured);
       const savedPhase = readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))?.phase;
       const tokenPending = currentPending?.phase.startsWith('approval-') || currentPending?.phase.startsWith('clear-') || savedPhase === 'token-approve';
@@ -575,44 +544,6 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
             setNftId(result.positionId); setPreview(null); setFunding(null);
             setMessage(`Position NFT ${result.positionId} and private funding recovered. Open Your liquidity for refresh and exit.`);
           } else throw new Error('Prepared private Pool recovery returned an unexpected result.');
-          return;
-        }
-      }
-      if (nativeTrial && tokenPending) {
-        const result = await next.recoverCurrentNativePoolTokenResult(); assertScope(captured);
-        if (result) { await acceptNativeTokenResult(result, next, captured); return; }
-      }
-      if (nativeTrial && !tokenPending) {
-        const result = await next.recoverCurrentNativePoolFundingResult();
-        assertScope(captured);
-        if (result && typeof result === 'object') {
-          setPending(null); setBlocked(false);
-          if ('prepareFunding' in result) { setPreview({ value: result as Preview, scope: captured }); setMessage('Original private preview recovered. Review its exact funding amounts.'); }
-          else if ('positionId' in result && typeof result.positionId === 'bigint') { setNftId(result.positionId); setPreview(null); setFunding(null); setMessage(`Position NFT ${result.positionId} and private funding recovered. Open Your liquidity for refresh and exit.`); }
-          else throw new Error('Original private Pool recovery returned an unexpected result.');
-          return;
-        }
-      }
-      if (nativeTrial && !readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope))) {
-        const resumed = await next.readCurrentNativePoolResume(); assertScope(captured);
-        if (resumed) {
-          setSender({ value: next, scope: captured }); setPending(null); setBlocked(false); setUnfundedFailed(resumed.unfundedFailed); setAttemptComplete(resumed.completed);
-          setUnfundedAbandonEligible(resumed.unfundedAbandonEligible);
-          setApprovals(resumed.approvals);
-          if (resumed.unfundedFailed) setClears([!resumed.approvals[0], !resumed.approvals[1]]);
-          if (resumed.positionId !== undefined) {
-            setNftId(resumed.positionId); setFunding(null); setPreview(null);
-            if (resumed.producerHash) setTransactionHash(resumed.producerHash);
-            setMessage(resumed.completed ? 'Pool attempt complete. Its exact exit proof is verified.' :
-              `Original funded claim NFT ${resumed.positionId} recovered. Open Your liquidity for refresh and exit.`);
-          } else {
-            setFunding(resumed.funding ? { value: resumed.funding, scope: captured } : null);
-            setPreview(resumed.previewResult ? { value: resumed.previewResult, scope: captured } : null);
-            if (resumed.previewHash) setTransactionHash(resumed.previewHash);
-            setOriginalPreview(resumed.originalPreviewRetryEligible ? { value: resumed.preview, scope: captured } : null);
-            setMessage(resumed.unfundedFailed ? 'Original unfunded attempt recovered. Clear only its unused approvals; do not fund or restart it.' :
-              'Original Pool preparation recovered. Exact current approvals are checked; its signing budget is retained.');
-          }
           return;
         }
       }
@@ -654,12 +585,12 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
   const step = stopped ? -1 : ready ? 3 : validFunding && approvalCount === 2 ? 2 : validPreview || validFunding ? 1 : 0;
   const steps = ['Preview', step === 1 ? `Approve (${approvalCount}/2)` : 'Approve', 'Deposit', 'Done'];
   const recovery = <>
-      {(nativeTrial || preparedCandidate) && funding && validFunding && nftId === null && !unfundedFailed && !attemptComplete ? <>
+      {preparedCandidate && funding && validFunding && nftId === null && !unfundedFailed && !attemptComplete ? <>
         <button type="button" disabled={!connected || busy || savedActionPending || !unfundedAbandonEligible}
           onClick={() => { void abandon(); }}>Review stop and clear approvals</button>
         <p className="dex-v2-activation-note">Check Pool status to verify whether this unsigned deposit can stop. A pending or signed deposit needs a status check first.</p>
       </> : null}
-      {(nativeTrial || preparedCandidate) && funding && validFunding && nftId === null && unfundedFailed && !attemptComplete ? <details className="dex-v2-setup"><summary>Unused approval recovery</summary>
+      {preparedCandidate && funding && validFunding && nftId === null && unfundedFailed && !attemptComplete ? <details className="dex-v2-setup"><summary>Unused approval recovery</summary>
         <p>Only a verified unfunded attempt can clear these approvals. This does not restart the attempt.</p>
         {candidateKey === 'cheap-history' ? <button type="button" disabled={busy || blocked || savedActionPending} onClick={() => {
           setAttemptComplete(true); setMessage('Unfunded deposit ended. Approvals remain available for later use. Revoke them from Token approvals when needed.');
@@ -683,29 +614,28 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
           <span className="tx-steps-label">{label}</span>{done ? <span className="sr-only"> · Complete</span> : null}</li>;
       })}</ol></section>
       {stopped ? <p role="status">Deposit stopped. Unused approvals cleared.</p> : null}
-      {nativeTrial ? <p className="dex-v2-activation-note">This Testnet join uses 100 of each token, 0.1% spread and 0.5% funding tolerance.</p> : null}
       {/* Owner decision 2026-11-18: the price comes first; it and one amount fill the other amount. */}
       <section className="dex-v2-pool-section dex-v2-pool-price-section">
           <label><span><strong>{livePoolPrice !== null ? 'Price' : 'Starting price'} <span aria-hidden="true">*</span></strong><small>{priceUnits}</small></span><input aria-label="Pool starting price" inputMode="decimal" placeholder="0.00" required
-            value={effectivePrice} disabled={fieldsDisabled || nativeTrial} onChange={event => editPrice(event.target.value)} /></label>
+            value={effectivePrice} disabled={fieldsDisabled} onChange={event => editPrice(event.target.value)} /></label>
           <p>{livePoolPrice !== null ? 'Live Pool price, rounded. It fills the other amount. It sets the starting price only if this spread has no liquidity yet.'
             : 'Fills the other amount. It sets the starting price only if this Pool has no liquidity yet.'}</p>
       </section>
       <section className="dex-v2-pool-section dex-v2-pool-amounts-section">
         <header><h3>Deposit amounts</h3></header>
         <div className="dex-v2-current-fields">
-          <label><span>{tokenLabels[0]}</span><input aria-label={`${tokenLabels[0]} Pool budget`} inputMode="decimal" placeholder="0" value={budget0} disabled={fieldsDisabled || nativeTrial} onChange={event => editAmount(0, event.target.value)} /></label>
-          <label><span>{tokenLabels[1]}</span><input aria-label={`${tokenLabels[1]} Pool budget`} inputMode="decimal" placeholder="0" value={budget1} disabled={fieldsDisabled || nativeTrial} onChange={event => editAmount(1, event.target.value)} /></label>
+          <label><span>{tokenLabels[0]}</span><input aria-label={`${tokenLabels[0]} Pool budget`} inputMode="decimal" placeholder="0" value={budget0} disabled={fieldsDisabled} onChange={event => editAmount(0, event.target.value)} /></label>
+          <label><span>{tokenLabels[1]}</span><input aria-label={`${tokenLabels[1]} Pool budget`} inputMode="decimal" placeholder="0" value={budget1} disabled={fieldsDisabled} onChange={event => editAmount(1, event.target.value)} /></label>
         </div>
         <p className="dex-v2-activation-note">Enter one amount and the price, or both amounts. Unused amounts stay in your wallet.</p>
       </section>
       <section className="dex-v2-pool-section dex-v2-pool-fee-section">
         <header><h3>Pool spread</h3><details className="dex-v2-pool-spread-info"><summary aria-label="About Pool spread"><Info size={17} aria-hidden="true" /></summary><p>Fixed for this Pool. The protocol fee is separate. To change spread, withdraw and deposit again.</p></details></header>
-        <label className="dex-v2-pool-custom-fee"><span className="sr-only">Pool spread</span><select aria-label="Pool spread" value={classId} disabled={fieldsDisabled || nativeTrial}
+        <label className="dex-v2-pool-custom-fee"><span className="sr-only">Pool spread</span><select aria-label="Pool spread" value={classId} disabled={fieldsDisabled}
           onChange={event => setClassId(Number(event.target.value))}>{CURRENT_POOL_SPREADS.map((spread, i) => <option key={spread} value={i}>{spread}%</option>)}</select></label>
       </section>
       <details className="dex-v2-setup dex-v2-pool-settings"><summary><Settings2 size={18} aria-hidden="true" /><strong>Settings</strong><span>Tolerance {tolerance}%</span><ChevronDown size={16} aria-hidden="true" /></summary><div>
-          <label><span>Funding tolerance (%)</span><input aria-label="Pool funding tolerance" inputMode="decimal" value={tolerance} disabled={fieldsDisabled || nativeTrial} onChange={event => setTolerance(event.target.value)} /></label>
+          <label><span>Funding tolerance (%)</span><input aria-label="Pool funding tolerance" inputMode="decimal" value={tolerance} disabled={fieldsDisabled} onChange={event => setTolerance(event.target.value)} /></label>
       </div></details>
       {preview && previewWalletCurrent ? <aside className="dex-v2-strategy-preview" aria-label="Authenticated Pool preview">
         <header><span>PRIVATE PREVIEW</span><h2>{preview.value.amounts.operation === 'initialize' ? 'Initialize this Pool' : 'Add to this Pool'}</h2></header>
@@ -727,12 +657,12 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
           <button className="dex-v2-review-button" type="button" disabled={!connected || busy || blocked || savedActionPending}
             onClick={() => { void approve(approvals[0] ? 1 : 0); }}>Approve exact {tokenLabels[approvals[0] ? 1 : 0]}</button> : null}
       </> : <>
-      <button className="dex-v2-review-button" type="button" disabled={!connected || !privacyReady || !previewInputsValid || busy || blocked || savedActionPending || Boolean(funding) || nftId !== null || validPreview || (nativeTrial && Boolean(preview))} onClick={() => { void prepare(); }}>Preview deposit<ArrowRight size={21} aria-hidden="true" /></button>
+      <button className="dex-v2-review-button" type="button" disabled={!connected || !privacyReady || !previewInputsValid || busy || blocked || savedActionPending || Boolean(funding) || nftId !== null || validPreview} onClick={() => { void prepare(); }}>Preview deposit<ArrowRight size={21} aria-hidden="true" /></button>
       {funding && validFunding ? <div className="dex-v2-current-fields">{([0, 1] as const).map(index => <button key={index} type="button"
         disabled={!connected || busy || blocked || savedActionPending || unfundedFailed || attemptComplete || approvals[index]} onClick={() => { void approve(index); }}>
         {approvals[index] ? `${tokenLabels[index]} approval verified` : `Approve exact ${tokenLabels[index]}`}</button>)}</div> : null}
       {preview || funding ? <button className="dex-v2-review-button" type="button" disabled={!connected || busy || blocked || savedActionPending || unfundedFailed || (!validPreview && !validFunding) || (Boolean(funding && validFunding) && !approvals.every(Boolean))}
-        onClick={() => { void fund(); }}>{(nativeTrial || preparedCandidate) && !validFunding ? 'Review funding and approvals' : 'Review and fund Pool'}<ArrowRight size={21} aria-hidden="true" /></button> : null}
+        onClick={() => { void fund(); }}>{preparedCandidate && !validFunding ? 'Review funding and approvals' : 'Review and fund Pool'}<ArrowRight size={21} aria-hidden="true" /></button> : null}
       </>}
       {!validPreview && !validFunding && !scopedNft ? <p className="dex-v2-pool-preview-note">Network gas applies · No tokens move</p> : null}
       {!(messageScope.current === scope.current && message) && connected && !privacyReady

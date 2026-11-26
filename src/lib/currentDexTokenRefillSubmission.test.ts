@@ -1,7 +1,7 @@
 import { Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { CURRENT_NATIVE_TOKEN_REFILL_BINDING, assertCurrentNativeTokenRefillBinding } from './currentDexNativeTokenRefillDeployment';
+import { CURRENT_NATIVE_TOKEN_REFILL_BINDING } from './currentDexNativeTokenRefillDeployment';
 import { createCurrentTokenRefillSubmissionAdapter } from './currentDexTokenRefillSubmission';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { CURRENT_TOKEN_REFILL_AMOUNT as amount, CURRENT_TOKEN_REFILL_QUOTA as quota, currentTokenRefillAbi as abi } from './currentDexTokenRefill';
@@ -57,12 +57,12 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-history', nativ
       remainingQuota: limits[index].quota, nextClaimAt: limits[index].next };
     return abi.encodeFunctionResult(decoded.name, [values[decoded.name]]);
   });
-  const resources = vi.fn(async () => {}), admission = vi.fn(async () => { if(nativeBinding)assertCurrentNativeTokenRefillBinding(candidate,binding); }), attest = vi.fn(async () => {}), signer={};
+  const resources = vi.fn(async () => {}), attest = vi.fn(async () => {}), signer={};
   let clock: bigint | undefined;
-  const make = () => createCurrentTokenRefillSubmissionAdapter({ candidate, signer, ownerAddress: owner, chainId: 7082400n, transport, binding, assertRefillAdmission: admission, readState: async (i, block) => ({ ...states[i], block }), rpc,
+  const make = () => createCurrentTokenRefillSubmissionAdapter({ candidate, signer, ownerAddress: owner, chainId: 7082400n, transport, binding, readState: async (i, block) => ({ ...states[i], block }), rpc,
     readReceiptBlock: async () => head, attest, assertResources: resources, decrypt: x => { if (BigInt(x.ciphertextHigh) !== 77n) throw new Error('Wrong receiver cipher'); return BigInt(x.ciphertextLow); }, now: () => clock ?? head.timestamp });
   const cap = make(), prepare = (index: 0 | 1 = 0) => cap.prepareCurrentTokenRefill({ tokenIndex: index, confirm: async () => true });
-  return { cap, prepare, make, signer, states, limits, receipt, head, binding, store, storage, transport, rpc, resources, admission, clock: (value: bigint) => {clock=value;}, revoke: () => { active = false; }, unknown: () => { unknown = true; } };
+  return { cap, prepare, make, signer, states, limits, receipt, head, binding, store, storage, transport, rpc, resources, clock: (value: bigint) => {clock=value;}, revoke: () => { active = false; }, unknown: () => { unknown = true; } };
 }
 afterEach(() => vi.unstubAllGlobals());
 describe('finite current token refill submission', () => {

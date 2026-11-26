@@ -3,12 +3,6 @@ import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { describe, expect, it, vi } from 'vitest';
 import { issueCurrentDexPoolFundingCapability, assertCurrentPoolFundingPrepared } from './currentDexPoolFundingCapability';
 import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
-// These source-fit tests isolate authentic input/preview brands. Actual storage,
-// event and provenance checks use the unmocked reader in its companion tests.
-vi.mock('../../lib/currentDexNativePoolSnapshotReader',()=>({createCurrentOwnerPoolSnapshotReader:()=>({
-  wallets:async()=>[{balance:1000n*10n**18n,allowance:0n},{balance:1000n*10n**18n,allowance:0n}],
-  state:async()=>structuredClone(m.nativeState)
-})}));
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI } from '../../lib/currentDexPoolFunding';
 import * as poolInputs from '../../lib/currentDexPoolFunding';
 import { CurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
@@ -20,7 +14,7 @@ vi.mock('../../lib/currentDexPreparedPoolSnapshot', async original => ({
   createPreparedOwnerPoolSnapshotReader: (...args: unknown[]) => m.preparedFactory(...args)
 }));
 
-const m = vi.hoisted(() => ({ issue: vi.fn(), graph: vi.fn(), registry: vi.fn(), small: vi.fn(), wide: vi.fn(), decrypt: vi.fn(), resign: vi.fn(), nativeState:{} as Record<string,unknown>,
+const m = vi.hoisted(() => ({ issue: vi.fn(), graph: vi.fn(), registry: vi.fn(), small: vi.fn(), wide: vi.fn(), decrypt: vi.fn(), resign: vi.fn(),
   preparedFactory: vi.fn(), preparedReadState: vi.fn(), preparedReadWallets: vi.fn(), preparedIssue: vi.fn(), preparedState: {} as Record<string, unknown>,
   preparedWallets: [] as { token: string; balance: bigint; allowance: bigint }[] }));
 vi.mock('./ownerCotiMetaMaskCapability', () => ({ hasCurrentDexBrowserSigner:()=>false, issueOwnerCotiMetaMaskCapability: m.issue }));
@@ -283,8 +277,6 @@ async function fixture(candidateKey:CurrentCheapDexCandidateKey='cheap-history')
   const candidate=resolveCurrentCheapDexCandidate(candidateKey);
   vi.clearAllMocks();
   const words=(n:number)=>Array.from({length:n},()=>toBeHex(0n,32));
-  m.nativeState={counter:19n,operation:9n,market:words(71),core:words(50),engine:words(46),anchors:Array.from({length:7},()=>words(64)),
-    ledgers:[words(12),words(12)],escrows:[words(2),words(2)],claim:words(64),protectedClaim:words(64),protectedOwner:owner,protectedStatus:1n,existingClaims:{19:words(64)},limitDirectory:words(8)};
   let active = true;
   const guard = () => { if (!active) throw new Error('Session revoked'); };
   const signer = { sendTransaction: vi.fn() };

@@ -27,8 +27,7 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
   let reject: (error: Error) => void = () => {};
   const deferred = new Promise<never>((_, fail) => { reject = fail; });
   const pendingRead = vi.fn(async () => deferred);
-  const sender = { recoverCurrentNativePoolFundingResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
-    recoverCurrentNativePoolPositionResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
+  const sender = {
     recoverCurrentPreparedPoolFundingResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
     recoverCurrentPreparedPoolPositionResult: publicRecovery ? vi.fn(async () => null) : pendingRead,
     recoverPendingLimitAttempt: pendingRead, recoverPendingPoolAttempt: publicRecovery ? pendingRead : vi.fn(async () => null),
@@ -84,6 +83,5 @@ it.each(['pool', 'position'] as const)('keeps actual current %s public recovery 
   const f = fixture(panel, { pool: pool.default, position: position.default }, true);
   await f.start(); await f.finish(); expect(f.status()).toBe(errorText);
   expect(f.session.actions!.getCurrentDexSubmissionCapability).toHaveBeenCalledWith(BigInt(candidate.chainId), { candidate: 'cheap-history' });
-  expect(f.sender.recoverCurrentNativePoolFundingResult).not.toHaveBeenCalled(); expect(f.sender.recoverCurrentNativePoolPositionResult).not.toHaveBeenCalled();
   expect(f.pendingRead).toHaveBeenCalledOnce(); f.change('health'); expect(f.status()).not.toContain(errorText);
 });

@@ -23,7 +23,7 @@ function fixture(operation:Operation, Positions=CurrentPoolPositionsWorkspace, p
   const isPosition=operation.startsWith('position');
   const metadata=vi.fn(async()=>null), privateRead=vi.fn(async()=>null), writes=vi.fn(async()=>{throw new Error('Unexpected send');});
   const sender={checkCurrentCheapCandidate:vi.fn(async()=>({...c,owner:session.walletAddress})),recoverPendingLimitAttempt:metadata,
-    recoverCurrentNativePoolPositionResult:privateRead,recoverCurrentPreparedPoolPositionResult:privateRead,recoverPendingPoolPositionAttempt:metadata,submitLimit:writes,submitLimitOwner:writes,submitPoolPositionAction:writes};
+    recoverCurrentPreparedPoolPositionResult:privateRead,recoverPendingPoolPositionAttempt:metadata,submitLimit:writes,submitLimitOwner:writes,submitPoolPositionAction:writes};
   const capability={prepareLimit:vi.fn(async()=>null)};
   const getSender=vi.fn(async()=>sender),prepareSnapshot=vi.fn(async()=>null);
   const session={walletAddress:owner,chainId:Number(c.chainId),browserProvider:{request:vi.fn(async()=>({number:'0x1',hash:`0x${'11'.repeat(32)}`}))},

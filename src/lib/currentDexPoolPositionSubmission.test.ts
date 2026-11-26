@@ -7,7 +7,7 @@ import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi } from './cu
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY as key, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from './currentDexPendingAttempt';
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
-import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
+import { currentPoolSnapshotAbi } from './currentDexPoolPosition';
 import { wasCurrentDexUnsentReleased } from './currentDexSendBoundary';
 import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 // CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.
@@ -81,9 +81,9 @@ function allowLocalTechnicalSubmission(){localSubmissionAuthority.allowed=true;}
 function preparedFixture(candidateKey:CurrentCheapDexCandidateKey='cheap-history',selectedOwner=owner){
   const f=fixture(selectedOwner),candidate=resolveCurrentCheapDexCandidate(candidateKey);
   Object.assign(f.prepared,{graph:candidate.graph,packageSha256:candidate.packageSha256,to:candidate.core,
-    action:'snapshot',positionId:8n,closed:false,replacementFrom:undefined,data:currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[8n])});
+    action:'snapshot',positionId:8n,closed:false,replacementFrom:undefined,data:currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[8n])});
   f.receipt.to=candidate.core;f.receipt.logs=[{address:candidate.core,
-    ...currentNativePoolSnapshotAbi.encodeEventLog(currentNativePoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[8n,context,
+    ...currentPoolSnapshotAbi.encodeEventLog(currentPoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[8n,context,
       Array.from({length:10},()=>({ciphertextHigh:1n,ciphertextLow:2n}))])}];
   f.transport.estimateGas.mockResolvedValue(1n);
   return{...f,candidate,adapter:f.make(undefined,candidateKey)};
@@ -184,8 +184,8 @@ describe('current snapshot final signing baseline',()=>{
 describe('independent private refresh under a retained snapshot hold',()=>{
   async function heldFixture(positionId=8n,originalId=8n){
     const f=preparedFixture('cheap-history');allowLocalTechnicalSubmission();
-    const selectPosition=(id:bigint)=>{Object.assign(f.prepared,{positionId:id,data:currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[id])});
-      f.receipt.logs=[{address:f.candidate.core,...currentNativePoolSnapshotAbi.encodeEventLog(currentNativePoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[id,context,Array.from({length:10},()=>({ciphertextHigh:1n,ciphertextLow:2n}))])}];};
+    const selectPosition=(id:bigint)=>{Object.assign(f.prepared,{positionId:id,data:currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[id])});
+      f.receipt.logs=[{address:f.candidate.core,...currentPoolSnapshotAbi.encodeEventLog(currentPoolSnapshotAbi.getEvent('PoolSnapshotRefreshed')!,[id,context,Array.from({length:10},()=>({ciphertextHigh:1n,ciphertextLow:2n}))])}];};
     selectPosition(originalId);
     await f.adapter.submitPoolPositionAction(f.prepared as never);
     const oldTx={...f.tx()},oldReceipt=structuredClone(f.receipt);
@@ -247,7 +247,7 @@ describe('independent private refresh under a retained snapshot hold',()=>{
   it.each(['closed','changed-position-data','ordinary-send','owner-action'] as const)('does not extend the exception to %s',async fault=>{
     const f=await heldFixture(54n,49n);
     if(fault==='closed')Object.assign(f.prepared,{closed:true});
-    if(fault==='changed-position-data')Object.assign(f.prepared,{data:currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[9n])});
+    if(fault==='changed-position-data')Object.assign(f.prepared,{data:currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[9n])});
     if(fault==='owner-action')Object.assign(f.prepared,{action:'close',data:abi.encodeFunctionData('managePoolPosition',[8n,context,7n,'0x'])});
     await expect(f.make(undefined,'cheap-history').submitPoolPositionAction(f.prepared as never,undefined,fault==='ordinary-send'?undefined:{refreshHeldSnapshot:true})).rejects.toThrow();
     expect(f.transport.send).not.toHaveBeenCalled();expect(f.storage.get(key)).toBe(f.saved);

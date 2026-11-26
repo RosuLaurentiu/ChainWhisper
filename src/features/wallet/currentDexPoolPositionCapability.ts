@@ -5,9 +5,6 @@ import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi, currentPool
   checkCurrentPoolPositionValues, decodeCurrentPoolNftTransfer, type CurrentPoolOwnerAction } from '../../lib/currentDexPoolPosition';
 import { decryptPrivateUint256Output, encryptPrivateUint128Input, encryptPrivateUint256Input } from '../../lib/privateUint256';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
-import { createCurrentOwnerPoolSnapshotReader } from '../../lib/currentDexNativePoolSnapshotReader';
-import { currentNativePoolSession, requireCurrentNativePoolSession } from '../../lib/currentDexNativePoolPolicy';
-import { currentNativePoolSnapshotAbi, checkCurrentPoolSnapshotOnlyChange, checkCurrentPoolFinancialTransition, requireCurrentPoolProof } from '../../lib/currentDexNativePoolSnapshot';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { createPreparedOwnerPoolSnapshotReader, checkPreparedPoolSnapshotOnlyChange,
   type PreparedPoolSnapshotProducer, type PreparedPoolSelectedState } from '../../lib/currentDexPreparedPoolSnapshot';
@@ -18,7 +15,7 @@ import { POOL_EXIT_PREVIEW_ABI, encodePoolExitPreview, encodePreviewedPoolWithdr
   decodePoolExitPreviewEvent, checkPoolExitPreviewValues, type PoolExitPreviewAmounts } from '../../lib/currentDexPoolExitPreview';
 import { readCurrentDexOwnedPositionIds } from '../../lib/currentDexOwnedPositions';
 import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonicalInclusion';
-import { CurrentPoolProofMismatch } from '../../lib/currentDexPoolProofError';
+import { CurrentPoolProofMismatch, requireCurrentPoolProof } from '../../lib/currentDexPoolProofError';
 import { usesTransactionScopedPoolSnapshots } from '../../lib/currentDexSnapshotAdmission';
 
 type IssueArgs = Omit<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>, 'bindCapability' | 'capabilityLabel' | 'requirePrivacy'> & Readonly<{ candidate?: CurrentCheapDexCandidateKey }>;
@@ -106,7 +103,6 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       return Object.freeze({status:state.status as bigint,context:state.context as string,positionRevision:state.positionRevision as bigint,
         ownershipRevision:state.ownershipRevision as bigint,lifecycleRevision:state.lifecycleRevision as bigint});
     };
-    const nativeReader = null as ReturnType<typeof createCurrentOwnerPoolSnapshotReader> | null;
     const preparedScope = resolvePreparedDexScope(candidate);
     const isPrepared = !!preparedScope;
     const exitCandidate = true;
@@ -151,13 +147,6 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       await checkGraph(block);
       const state = await publicState(id,block,closed);
       const amounts = state.status === 3n ? null : await (async () => {
-        if (nativeReader) {
-          const session = requireCurrentNativePoolSession(signer, ownerAddress, candidate);
-          requireCurrentPoolProof(session.positionId === id && !!session.producer && session.producer.status === state.status,
-            'Current native Pool claim needs an issued fresh producer.');
-          const producer = await nativeReader.current(session.producer!, block);
-          return producer.amounts;
-        }
         const snapshot = await call(abi,candidate.core,'poolSnapshot',[id],block);
         if (snapshot[0] !== state.context) throw new Error('Private position context differs from its public state.');
         // Only the owner envelope is readable; never decrypt the global ciphertext.
@@ -168,7 +157,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       return Object.freeze({positionId:id,owner:ownerAddress,core:candidate.core,nft,chainId,graph:candidate.graph,
         packageSha256:candidate.packageSha256,block,...state,amounts,
         marketId:undefined,poolTokens:undefined,
-        producerKind:nativeReader?currentNativePoolSession(signer)?.producer?.kind:undefined,readyToSign:false as const});
+        producerKind:undefined,readyToSign:false as const});
     };
     const readPositionWithState = async (id:bigint, options?: {producerHash?:string;metadataOnly?:true},
       onVerifiedState?: (state: PreparedPoolSelectedState) => void) => {
@@ -225,17 +214,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         }
         return readPreparedAt(id, block, undefined, onVerifiedState);
       }
-      if (nativeReader && options?.producerHash && currentNativePoolSession(signer)?.producer?.transactionHash.toLowerCase()!==options.producerHash.toLowerCase()) {
-        const session = requireCurrentNativePoolSession(signer, ownerAddress, candidate);
-        requireCurrentPoolProof(session.positionId === id && !!session.funded, 'Only the admitted new native Pool claim may be loaded.');
-        const proof = await nativeReader.canonical(options.producerHash);
-        if (!proof) throw new Error('Native Pool producer is unavailable.');
-        const fund = proof.data === session.funded!.data;
-        requireCurrentPoolProof(fund || proof.data.toLowerCase() === currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[id]).toLowerCase(), 'Producer does not belong to the native Pool action.');
-        requireCurrentPoolProof(!session.closedPayouts || !fund, 'A closed claim needs a fresh signed CLOSED producer.');
-        session.producer = await nativeReader.issue(id, fund ? 'fund' : 'snapshot', options.producerHash);
-      }
-      return readAt(id,await head(), !!nativeReader && !!currentNativePoolSession(signer)?.closedPayouts);
+      return readAt(id,await head());
     };
     const readPosition = (id: bigint, options?: {producerHash?:string;metadataOnly?:true}) => readPositionWithState(id, options);
     const transactionScopedSnapshots = candidateKey === 'cheap-history' && usesTransactionScopedPoolSnapshots(candidate);
@@ -365,40 +344,8 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
           assertBeforeSend, captureBaselineAtSigning: freshBaseline, sealBeforeSend, readResult, readyToSign: false as const });
         preparedSessions.set(prepared, signer); return prepared;
       }
-      if (!nativeReader || typeof confirm !== 'function') throw new Error('Signed snapshot requires the current native Pool profile.');
-      const session = requireCurrentNativePoolSession(signer,ownerAddress,candidate);
-      requireCurrentPoolProof(session.positionId === id && !session.unfundedFailed,'Only the admitted new native Pool claim may Refresh.');
-      const block = await head(), closed = !!session.closedPayouts;
-      const replacementFrom=!closed&&session.producer?.kind==='snapshot'?
-        await nativeReader.proveSharedStale(session.producer,block):undefined;
-      const pub = await publicState(id,block,closed);
-      requireCurrentPoolProof(pub.status === (closed ? 4n : 1n),'Native Pool Refresh status changed.');
-      const before = await nativeReader.state(id,block), wallets = await nativeReader.wallets(block);
-      if (!await confirm({positionId:id,closed,gasCap:30_000_000n})) {await guard();return null;}
-      const data = currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[id]);
-      const assertBeforeSend = async () => { await guard(); const current = await head();
-        if(replacementFrom)requireCurrentPoolProof(await nativeReader.proveSharedStale(session.producer!,current)===replacementFrom,
-          'Native Pool replacement producer changed before signing.');
-        requireCurrentPoolProof(JSON.stringify(await nativeReader.state(id,current),(_,v)=>typeof v==='bigint'?v.toString():v) ===
-          JSON.stringify(before,(_,v)=>typeof v==='bigint'?v.toString():v),'Native Pool Refresh state changed during review.');
-      };
-      const readResult = async (hash:string) => {
-        const producer = await nativeReader.issue(id,'snapshot',hash);
-        const after = await nativeReader.state(id,producer.block); checkCurrentPoolSnapshotOnlyChange(before,after,closed);
-        const observedWallets = await nativeReader.wallets(producer.block);
-        requireCurrentPoolProof(observedWallets.every((v,i)=>v.balance===wallets[i].balance&&v.allowance===wallets[i].allowance), 'Native Pool Refresh changed token balances/allowances.');
-        if (closed) requireCurrentPoolProof(producer.amounts.shares===0n&&producer.amounts.amount0===session.closedPayouts![0]&&
-          producer.amounts.amount1===session.closedPayouts![1], 'Fresh CLOSED producer differs from exact approved payouts/zero shares.');
-        else requireCurrentPoolProof(producer.amounts.shares===session.funded!.amounts.mintedShares,'Native Pool Refresh changed owned shares.');
-        session.producer = producer;
-        const snapshot = await readAt(id,producer.block,closed);
-        return Object.freeze({action:'snapshot' as const,positionId:id,transactionHash:hash,producerHash:hash,producer,snapshot,
-          status:closed?'closed-proof-verified' as const:'active-snapshot-verified' as const,readyToSign:false as const});
-      };
-      const prepared=Object.freeze({chainId,from:ownerAddress,to:candidate.core,value:0n,data,graph:candidate.graph,packageSha256:candidate.packageSha256,
-        marketId:undefined,poolTokens:undefined,
-        positionId:id,action:'snapshot' as const,closed,replacementFrom,recipient:null,assertCurrent:guard,assertBeforeSend,readResult,readyToSign:false as const});
-      preparedSessions.set(prepared,signer); return prepared;
+      // decision-034 (CW-140.12): the fa71 native signed snapshot was removed.
+      throw new Error('Signed snapshot requires the prepared Pool candidate.');
     };
     const requireEoaRecipient = async (recipient:string, block:{hash:string}) => {
       await guard();
@@ -749,11 +696,6 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
           recipient: null, assertCurrent: guard, assertBeforeSend, readResult, readyToSign: false as const });
         preparedSessions.set(prepared, signer); return prepared;
       }
-      if (nativeReader) {
-        const session = requireCurrentNativePoolSession(signer,ownerAddress,candidate);
-        requireCurrentPoolProof(action==='close'&&session.positionId===id&&session.producer?.kind==='snapshot'&&
-          session.producer.status===1n&&!session.closedPayouts,'Only direct full close of the admitted fresh new claim is available.');
-      }
       if (!['withdraw','close','activate','resume','transfer'].includes(action) || typeof request.confirm !== 'function') throw new Error('Invalid position action or confirmation.');
       const fraction = action === 'withdraw' ? Object.freeze([...(request.fraction ?? [])]) : null;
       const minimums = action === 'withdraw' || action === 'close' ? Object.freeze([...(request.minimums ?? [])]) : null;
@@ -763,10 +705,6 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
       const recipient = action === 'transfer' ? getAddress(request.recipient ?? '') : null;
       if (recipient && (recipient === zeroAddress || same(recipient,ownerAddress))) throw new Error('Enter another nonzero NFT recipient.');
       const before = await readPosition(id);
-      if(nativeReader)requireCurrentPoolProof(!!before.amounts&&minimums?.[0]===before.amounts.amount0&&minimums?.[1]===before.amounts.amount1,
-        'Native full close minimums must equal both fresh owner snapshot entitlements.');
-      const beforeWallets = nativeReader && await nativeReader.wallets(before.block);
-      const beforeState = nativeReader && await nativeReader.state(id,before.block);
       if(recipient)await requireEoaRecipient(recipient,before.block);
       if (before.context !== expected || before.status === 4n || (action === 'withdraw' && before.status !== 1n) ||
           (action === 'activate' && before.status !== 3n) || (action === 'resume' && before.status !== 2n)) throw new Error('Position context or action status changed. Refresh this position.');
@@ -807,8 +745,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
               state.positionRevision !== before.positionRevision+1n || state.lifecycleRevision !== before.lifecycleRevision+1n) throw new Error('NFT transfer did not advance the private claim authority.');
           return Object.freeze({action,positionId:id,recipient,transactionHash:hash,block,readyToSign:false as const});
         }
-        const nativeClose = !!nativeReader && action==='close';
-        const after = nativeClose ? Object.freeze({...before,...await publicState(id,block,true),block,amounts:null}) : await readAt(id,block,action === 'close');
+        const after = await readAt(id,block,action === 'close');
         if (after.positionRevision !== before.positionRevision+1n || after.ownershipRevision !== before.ownershipRevision ||
             after.lifecycleRevision !== before.lifecycleRevision + (action === 'withdraw' ? 0n : 1n) ||
             after.status !== (action === 'close' ? 4n : action === 'activate' ? 2n : 1n)) throw new Error('Position result has incorrect status or revision.');
@@ -826,19 +763,11 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
           if (payouts.some((v,i)=>v<minimums[i])) throw new Error('Position payout is below its confirmed minimum.');
           if (action === 'close') {
             decodeCurrentPoolNftTransfer(receipt.logs,nft,ownerAddress,zeroAddress,id);
-            if (nativeClose) {
-              const session=requireCurrentNativePoolSession(signer,ownerAddress,candidate), current=await nativeReader!.state(id,block), wallets=await nativeReader!.wallets(block);
-              checkCurrentPoolFinancialTransition(beforeState!,current,'close');
-              requireCurrentPoolProof(!!before.amounts&&payouts[0]===before.amounts.amount0&&payouts[1]===before.amounts.amount1&&
-                wallets.every((v,i)=>v.allowance===0n&&v.balance===beforeWallets![i].balance+payouts[i])&&
-                current.counter===beforeState!.counter&&current.operation===beforeState!.operation&&current.market[40]===beforeState!.market[40]&&
-                current.protectedClaim.every((v,i)=>v===beforeState!.protectedClaim[i]),'Native Pool close payout/accounting/protected claim differs.');
-              session.closedPayouts=Object.freeze([payouts[0],payouts[1]]);
-            } else if (!after.amounts || after.amounts.shares!==0n || after.amounts.amount0!==payouts[0] || after.amounts.amount1!==payouts[1]) throw new Error('Closed claim differs from private payouts.');
+            if (!after.amounts || after.amounts.shares!==0n || after.amounts.amount0!==payouts[0] || after.amounts.amount1!==payouts[1]) throw new Error('Closed claim differs from private payouts.');
           } else if (!before.amounts || !after.amounts || after.amounts.shares!==before.amounts.shares-before.amounts.shares*fraction![0]/fraction![1]) throw new Error('Withdrawal shares differ from the confirmed fraction.');
         }
         await guard();return Object.freeze({action,positionId:id,transactionHash:hash,block,payouts:Object.freeze(payouts),snapshot:after,
-          status:nativeClose?'closed-proof-required' as const:'owner-action-verified' as const,readyToSign:false as const});
+          status:'owner-action-verified' as const,readyToSign:false as const});
       };
       const prepared=Object.freeze({chainId,from:ownerAddress,to:recipient?nft:candidate.core,value:0n,data,
         graph:candidate.graph,packageSha256:candidate.packageSha256,positionId:id,action,recipient,

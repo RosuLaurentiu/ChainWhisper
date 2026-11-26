@@ -11,6 +11,11 @@ export const CURRENT_POOL_NFT_ABI = ['function ownerOf(uint256) view returns(add
   'function safeTransferFrom(address,address,uint256)', 'event Transfer(address indexed from,address indexed to,uint256 indexed tokenId)'] as const;
 export const currentPoolPositionAbi = new Interface(CURRENT_POOL_POSITION_ABI);
 export const currentPoolNftAbi = new Interface(CURRENT_POOL_NFT_ABI);
+// The signed snapshot call and its Core event (calldata and log shape only).
+export const currentPoolSnapshotAbi = new Interface([
+  'function poolSnapshot(uint256)',
+  'event PoolSnapshotRefreshed(uint256 indexed positionId,bytes32 context,(uint256 ciphertextHigh,uint256 ciphertextLow)[10] userValues)'
+]);
 export const CURRENT_POOL_OWNER_GAS_CAP = 30_000_000n;
 const small = 'tuple(uint256 ciphertext,bytes signature)', wide = 'tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
 export const encodeCurrentPoolExit = (fraction: unknown[] | null, minimums: unknown[]) => AbiCoder.defaultAbiCoder().encode(

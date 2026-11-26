@@ -14,7 +14,6 @@ import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 import { CURRENT_EXIT_SWAP_GAS_CAPS, CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
 import { CURRENT_SHARED_TOKEN_DISTRIBUTION } from './currentSharedDexTokenDistribution';
-import { assertCurrentNativePoolSourceFit, assertCurrentNativePoolSourceFitBinding, type CurrentNativePoolSourceFit } from './currentDexNativePoolPolicy';
 import { Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
 
 
@@ -241,7 +240,9 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     validate: () => void | Promise<void>, onSigningRequest: (request: TransactionRequest) => void,
     operationId?: bigint, gasCap = SHARED_POOL_GAS_CAP,
     observation?: { sendStarted(): void; hashReturned?(transactionHash: string): void; submissionReturned(transactionHash: string): void },
-    authorizeSigning?: (request: TransactionRequest) => void | Promise<void>, sourceFit?: CurrentNativePoolSourceFit, appSwap?: { prepared: CurrentCheapDexPreparedQuote; signer: object; cleanup?: true }, appInitialClaimSigner?: object,
+    // decision-034 (CW-140.12): the fa71 native Pool source fit was removed. Its argument slot stays so that
+    // positional callers keep their order; it accepts only undefined.
+    authorizeSigning?: (request: TransactionRequest) => void | Promise<void>, _removedSourceFit?: undefined, appSwap?: { prepared: CurrentCheapDexPreparedQuote; signer: object; cleanup?: true }, appInitialClaimSigner?: object,
     appSharedFunding?: Readonly<{ action: 'initial' | 'refill'; token: string; signer?: object }>,
     appLimit?: Readonly<{ prepared: CurrentLimitPrepared | CurrentLimitPreparedSnapshot | CurrentLimitPreparedOwner | CurrentLimitFundingReview; signer: object }>,
     appPool?: CurrentAppPoolSigning, poolTopUpHash?: string | null) => {
@@ -276,10 +277,10 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       }
       assertCurrentDexBrowserWindow(browserSigner!,c.graph,owner,core,chainId,now(),nonce,gasCap,fixedGasPrice);
     };
-    if(poolScope&&(appSwap||appInitialClaimSigner||fundingScope||limitScope||sourceFit)) throw new Error('Pool App scope changed.');
-    if(limitScope&&(appSwap||appInitialClaimSigner||fundingScope||sourceFit)) throw new Error('Limit App scope changed.');
+    if(poolScope&&(appSwap||appInitialClaimSigner||fundingScope||limitScope)) throw new Error('Pool App scope changed.');
+    if(limitScope&&(appSwap||appInitialClaimSigner||fundingScope)) throw new Error('Limit App scope changed.');
     const assertLimitCall = (request: UnsignedTransaction) => {
-      if (!limitScope || appSwap || appInitialClaimSigner || fundingScope || sourceFit) throw new Error('Limit App scope changed.');
+      if (!limitScope || appSwap || appInitialClaimSigner || fundingScope) throw new Error('Limit App scope changed.');
       const p=limitScope.prepared;
       assertCurrentLimitPrepared(p,limitScope.signer);
       const action=p.phase==='limit-funding-review'?`approve-${p.kind}` as const:p.phase==='limit-create'?'create':p.phase==='limit-snapshot'?'snapshot':p.action;
@@ -302,7 +303,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       }
     };
     const assertSharedFunding = (request: UnsignedTransaction) => {
-      if (!fundingScope || appInitialClaimSigner || appSwap || sourceFit) throw new Error('Shared funding App scope changed.');
+      if (!fundingScope || appInitialClaimSigner || appSwap) throw new Error('Shared funding App scope changed.');
       assertCurrentAppSharedFundingAuthority(c.graph, owner, fundingScope.token, fundingScope.action, fundingScope.signer);
       const abi = new Interface(['function claimFaucet()', 'function claim(address)']);
       const initial = fundingScope.action === 'initial';
@@ -387,13 +388,6 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     }
     // Accepted 110M phase caps retain a 10M absolute block reserve.
     const exitHighCap = exitFit && gasCap === 110_000_000n && (phase === 'quote' || phase === 'accept');
-    const checkFit = async () => {
-      if (!sourceFit) return;
-      if (!nativeFit || historical) throw new Error('Source fit is restricted to the current native Pool funding call.');
-      await assertCurrentNativePoolSourceFit(sourceFit, phase, call.data, gasCap, c, owner, core, chainId);
-    };
-    // Select the source policy before estimation. A failed estimate never selects it.
-    await checkFit();
     if(normalBrowser()){
       if(!transport.admitOwnerRecord)throw new Error('Owner normal-use record admission is unavailable.');
       const scope = appSwap ? `quote:${keccak256(appSwap.prepared.data)}` : undefined;
@@ -408,7 +402,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     checkNormalBrowser(nonce);
     await requireNativeResources(initialHead, nonce, gasCap);
     const numberedCall = Object.freeze({ ...call, nonce, ...(nativeFit ? { gasPrice: fixedGasPrice } : {}) });
-    if ((historical || nativeFit) && !sourceFit) {
+    if (historical || nativeFit) {
       const estimate = await transport.estimateGas(numberedCall);
       await transport.assertCurrent();
       if (typeof estimate !== 'bigint' || estimate <= 0n || estimate > gasCap ||
@@ -429,7 +423,6 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     const attempt = Object.freeze({ ...attemptFor(phase, numberedCall, nonce, operationId), ...(poolTopUpHash === undefined ? {} : { poolTopUpHash }) });
     if (authorizeSigning) {
       await authorizeSigning(request);
-      await checkFit();
       // An asynchronous phase gate can yield after the earlier nonce/resources proof.
       // Recheck those inputs before reserving this action. A consumed budget stays consumed on failure.
       await transport.assertCurrent();
@@ -439,7 +432,6 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       await transport.assertCurrent();
     }
     requireSendSlot();
-    if (sourceFit) assertCurrentNativePoolSourceFitBinding(sourceFit, phase, call.data, gasCap, c, owner, core, chainId);
     if (appSwap) {
       assertCurrentCheapDexPreparedQuote(appSwap.prepared, appSwap.signer);
       if (!sameAddress(appSwap.prepared.from, owner) || !['quote','accept','cancel','recover','token-approve'].includes(phase)) throw new Error('App trial phase or owner changed.');

@@ -37,7 +37,7 @@ function fixture(panel: Panel, components = { pool: CurrentPoolWorkspace, positi
   const read = vi.fn(async () => deferred ?? (panel === 'pool' ? preview : panel === 'position' ? position : limit));
   const prepareOwnerAction = vi.fn(async () => ({ prepared: true }));
   const submitLimitOwner = vi.fn(async () => ({ transactionHash: `0x${'11'.repeat(32)}`, recover: read }));
-  const sender = { recoverCurrentNativePoolFundingResult: read, recoverCurrentNativePoolPositionResult: vi.fn(async () => null),
+  const sender = {
     recoverCurrentPreparedPoolFundingResult: read, recoverCurrentPreparedPoolPositionResult: vi.fn(async () => null),
     recoverPendingPoolAttempt: vi.fn(async () => ({ status: 'observed-mined', privateAccountingVerified: false, readyToSign: false })),
     recoverPendingPoolPositionAttempt: vi.fn(async () => ({ status: 'observed-mined', privateAccountingVerified: false, readyToSign: false })),
@@ -98,7 +98,7 @@ it.each(['position'] as Panel[])('actual current %s public metadata grants no pr
   const f = fixture(panel, { pool: pool.default, position: position.default });
   f.button(panel === 'pool' ? 'Check Pool status' : 'Check position status').props.onClick!(); await f.idle();
   expect(f.sender.recoverPendingPoolAttempt).toHaveBeenCalledTimes(panel === 'pool' ? 1 : 0); expect(f.sender.recoverPendingPoolPositionAttempt).toHaveBeenCalledTimes(panel === 'position' ? 1 : 0);
-  expect(f.sender.recoverCurrentNativePoolFundingResult).not.toHaveBeenCalled(); expect(f.sender.recoverCurrentNativePoolPositionResult).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled();
+  expect(f.read).not.toHaveBeenCalled();
   expect(text(f.render())).not.toContain(labels[panel]); expect(f.submitLimitOwner).not.toHaveBeenCalled();
   expect(text(f.render())).toMatch(/no authenticated private result|No private payout is confirmed/);
 });

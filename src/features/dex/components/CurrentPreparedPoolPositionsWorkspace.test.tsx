@@ -8,7 +8,7 @@ import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } fro
 import { readCurrentDexDisplay } from '../../../lib/currentDexDisplay';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 import { keccak256 } from '@coti-io/coti-ethers';
-import { currentNativePoolSnapshotAbi } from '../../../lib/currentDexNativePoolSnapshot';
+import { currentPoolSnapshotAbi } from '../../../lib/currentDexPoolPosition';
 import { usesTransactionScopedPoolSnapshots } from '../../../lib/currentDexSnapshotAdmission';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import type { issueCurrentDexPoolPositionCapability } from '../../wallet/currentDexPoolPositionCapability';
@@ -63,7 +63,7 @@ describe('prepared Positions owner snapshot view',()=>{
     const f=fixture();hooks.allowNative=true;
     Object.assign(f.props.sharedWalletSession!,{sessionOnboardInfo:{[owner]:{aesKey:'fixture-only'}},walletAesHealthByAddress:{}});
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,
-      phase:'pool-snapshot',nonce:439,txHash:hash,callHash:keccak256(currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[52n])),verificationBlocked:true,verificationFailure:'snapshot-financial-state'});
+      phase:'pool-snapshot',nonce:439,txHash:hash,callHash:keccak256(currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[52n])),verificationBlocked:true,verificationFailure:'snapshot-financial-state'});
     f.store.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);
     const result={action:'snapshot',positionId:52n,transactionHash:hash,producerHash:hash,status:'active-snapshot-verified',snapshot:f.value};
     const verify=vi.fn(async()=>{
@@ -114,7 +114,7 @@ describe('prepared Positions owner snapshot view',()=>{
     const f=fixture();hooks.allowNative=true;
     f.value.positionId=positionId;hooks.states[0]=String(positionId);
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:394,txHash:hash,
-      callHash:keccak256(currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[49n])),verificationBlocked:true});
+      callHash:keccak256(currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[49n])),verificationBlocked:true});
     f.store.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);await f.load();hooks.states[6]=true;
     expect(f.button('Refresh this position').props.disabled).toBe(false);
     expect(elements(f.render()).find(x=>x.type==='fieldset')!.props.disabled).toBe(true);
@@ -133,7 +133,7 @@ describe('prepared Positions owner snapshot view',()=>{
   it('shows the separate refresh hold after reload without preparing or resending a snapshot',async()=>{
     const f=fixture();hooks.allowNative=true;
     const saved=JSON.stringify({version:1,chainId:candidate.chainId,owner,core:candidate.core.toLowerCase(),graph:`0x${candidate.graph}`,phase:'pool-snapshot',nonce:394,txHash:hash,
-      callHash:keccak256(currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',[52n])),verificationBlocked:true});
+      callHash:keccak256(currentPoolSnapshotAbi.encodeFunctionData('poolSnapshot',[52n])),verificationBlocked:true});
     f.store.set(CURRENT_DEX_PENDING_ATTEMPT_KEY,saved);f.store.set(CURRENT_POOL_REFRESH_ATTEMPT_KEY,'separate journal handled by the sender mock');await f.load();
     expect(f.button('Refresh this position').props.disabled).toBe(true);
     const privateRecovery=vi.fn(async()=>null),publicRecovery=vi.fn(async()=>({status:'observed-mined-verification-held',independentRefresh:true,transactionHash:hash,privateAccountingVerified:false}));

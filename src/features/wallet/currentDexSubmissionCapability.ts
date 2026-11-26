@@ -13,10 +13,9 @@ import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from '../../lib/appShared/contracts';
 import { decryptPrivateBoolOutput, decryptPrivateUint256Output, encryptPrivateUint256Input } from '../../lib/privateUint256';
 import { createCurrentTokenFundingAdapter, currentTokenFundingAbi, CURRENT_TOKEN_FUNDING_CAP } from '../../lib/currentDexTokenFunding';
 import { createCurrentTokenRefillSubmissionAdapter } from '../../lib/currentDexTokenRefillSubmission';
-import { CURRENT_NATIVE_TOKEN_REFILL_BINDING, assertCurrentNativeTokenRefillBinding } from '../../lib/currentDexNativeTokenRefillDeployment';
+import { CURRENT_NATIVE_TOKEN_REFILL_BINDING } from '../../lib/currentDexNativeTokenRefillDeployment';
 import { prepareCurrentDexAcceptance } from '../../lib/currentDexQuoteReview';
 import { createCurrentPoolSubmissionAdapter } from '../../lib/currentDexPoolSubmission';
-import { CURRENT_NATIVE_POOL_PROFILE } from '../../lib/currentDexNativePoolPolicy';
 import { createCurrentPoolPositionSubmissionAdapter } from '../../lib/currentDexPoolPositionSubmission';
 import { createCurrentLimitSubmissionAdapter } from '../../lib/currentDexLimitSubmission';
 import { resolveCurrentLimitScope } from '../../lib/currentDexLimit';
@@ -38,10 +37,9 @@ import { assertCurrentNativeSwapIntent } from '../../lib/currentDexNativeSwapPol
 import { isCurrentDexBrowserSigner } from '../../lib/currentDexBrowserPolicy';
 
 type IssueArgs = Omit<IssueOwnerCotiMetaMaskCapabilityArgs<unknown>, 'bindCapability' | 'capabilityLabel' | 'requirePrivacy'> &
-  Readonly<{ admission: CurrentDexSubmissionAdmission<'quote'> | null; candidate?: CurrentCheapDexCandidateKey;
-    nativePoolProfile?: typeof CURRENT_NATIVE_POOL_PROFILE }>;
+  Readonly<{ admission: CurrentDexSubmissionAdmission<'quote'> | null; candidate?: CurrentCheapDexCandidateKey }>;
 
-export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'cheap-history', nativePoolProfile, ...args }: IssueArgs) => issueOwnerCotiMetaMaskCapability({
+export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'cheap-history', ...args }: IssueArgs) => issueOwnerCotiMetaMaskCapability({
   ...args,
   capabilityLabel: 'current DEX submission',
   requirePrivacy: false,
@@ -429,16 +427,16 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       } });
     const admitOwnerRecord=cheap.admitCurrentOwnerNormalRecord;
     const poolTokens = [...cheapCandidate.tokens].sort((a, b) => BigInt(a[0]) < BigInt(b[0]) ? -1 : 1);
-    const pool = createCurrentPoolSubmissionAdapter({ candidate, nativePoolProfile, signer, ownerAddress, chainId, transport, attest: attestCheap,
+    const pool = createCurrentPoolSubmissionAdapter({ candidate, signer, ownerAddress, chainId, transport, attest: attestCheap,
       requireFunding: async (prepared, head) => {
         const selected = sharedCandidate ? resolvePreparedDexScope(sharedCandidate).candidate.pairs.find(pair => pair.marketId === prepared.intent.marketId &&
           prepared.intent.poolTokens.length === 2 && pair.tokens.every((token, index) => token === prepared.intent.poolTokens[index])) : null;
         if (sharedCandidate && !selected) throw new Error('Pool funding pair differs from its prepared market.');
         const tokens = selected?.tokens ?? [poolTokens[0][0], poolTokens[1][0]];
-        await requirePrivateFunding(tokens[0], prepared.amounts.used0, head, candidate, nativePoolProfile !== undefined || !!selected);
-        await requirePrivateFunding(tokens[1], prepared.amounts.used1, head, candidate, nativePoolProfile !== undefined || !!selected);
+        await requirePrivateFunding(tokens[0], prepared.amounts.used0, head, candidate, !!selected);
+        await requirePrivateFunding(tokens[1], prepared.amounts.used1, head, candidate, !!selected);
       } });
-    const positions = createCurrentPoolPositionSubmissionAdapter({ candidate, nativePoolProfile, signer, ownerAddress, chainId, transport, attest: attestCheap });
+    const positions = createCurrentPoolPositionSubmissionAdapter({ candidate, signer, ownerAddress, chainId, transport, attest: attestCheap });
     const limit = createCurrentLimitSubmissionAdapter({ candidate, signer, ownerAddress, chainId, transport, attest: attestCheap,
       requireFunding: (prepared,head) => {
         const scope=resolveCurrentLimitScope(candidate,prepared.poolTokens);
@@ -455,9 +453,9 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         if (latest !== pending || !Number.isSafeInteger(latest) || latest < 0) throw new Error('Current-token wallet nonce is pending or changed.');
         if (gasPrice <= 0n || gasPrice > 50_000_000n || balance < CURRENT_TOKEN_FUNDING_CAP * gasPrice + 10n ** 16n) throw new Error('Current-token gas price or recovery reserve is insufficient.');
       };
-    const createHistoricalFunding = () => createCurrentTokenFundingAdapter({ signer, ownerAddress, chainId, transport, candidate, attest: attestCheap,
+    const createHistoricalFunding = () => createCurrentTokenFundingAdapter({ ownerAddress, chainId, transport, candidate, attest: attestCheap,
       encrypt: (amount, tokenAddress, selector) => encryptPrivateUint256Input(signer, amount, tokenAddress, selector),
-      decrypt: cipher => decryptPrivateUint256Output(signer, cipher), assertResources: assertFundingResources,
+      assertResources: assertFundingResources,
       readState: async (index, head) => {
         await assertCurrent(); assertSnapshotCurrent();
         if (!signer.getUserOnboardInfo()?.aesKey?.trim()) throw new Error('Unlock privacy before checking private current-token funds.');
@@ -485,18 +483,13 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
     let historicalFunding:HistoricalFunding|undefined;
     const getHistoricalFunding=()=>historicalFunding??=createHistoricalFunding();
     const funding:HistoricalFunding=Object.freeze({
-      readCurrentNativePoolResume:async(...args:Parameters<HistoricalFunding['readCurrentNativePoolResume']>)=>getHistoricalFunding().readCurrentNativePoolResume(...args),
-      abandonCurrentNativePoolFunding:async(...args:Parameters<HistoricalFunding['abandonCurrentNativePoolFunding']>)=>getHistoricalFunding().abandonCurrentNativePoolFunding(...args),
-      preparePoolApproval:async(...args:Parameters<HistoricalFunding['preparePoolApproval']>)=>getHistoricalFunding().preparePoolApproval(...args),
-      preparePoolUnfundedCleanup:async(...args:Parameters<HistoricalFunding['preparePoolUnfundedCleanup']>)=>getHistoricalFunding().preparePoolUnfundedCleanup(...args),
       readCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['readCurrentTokenFunding']>)=>getHistoricalFunding().readCurrentTokenFunding(...args),
       prepareCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['prepareCurrentTokenFunding']>)=>getHistoricalFunding().prepareCurrentTokenFunding(...args),
       submitCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['submitCurrentTokenFunding']>)=>getHistoricalFunding().submitCurrentTokenFunding(...args),
-      recoverCurrentNativePoolTokenResult:async(...args:Parameters<HistoricalFunding['recoverCurrentNativePoolTokenResult']>)=>getHistoricalFunding().recoverCurrentNativePoolTokenResult(...args),
       recoverPendingCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['recoverPendingCurrentTokenFunding']>)=>getHistoricalFunding().recoverPendingCurrentTokenFunding(...args),
     });
     const refill = createCurrentTokenRefillSubmissionAdapter({ signer, ownerAddress, chainId, transport, candidate,
-      binding: CURRENT_NATIVE_TOKEN_REFILL_BINDING, assertRefillAdmission: binding => assertCurrentNativeTokenRefillBinding(candidate, binding),
+      binding: CURRENT_NATIVE_TOKEN_REFILL_BINDING,
       attest: attestCheap, assertResources: assertFundingResources,
       readState: (index, head) => funding.readCurrentTokenFunding(index, head),
       decrypt: cipher => decryptPrivateUint256Output(signer, cipher),
