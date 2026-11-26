@@ -283,7 +283,7 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
           '. Public recovery does not confirm private top-up accounting or approvals. Reconcile the position and allowances before another top-up.');
       } else if (observed.status === 'observed-mined-verification-held' || observed.status === 'observed-reverted-verification-held') {
         const action = saved.phase === 'pool-fund' ? 'Top-up deposit' : saved.phase === 'pool-snapshot' ? 'Top-up verification snapshot' : 'Transaction';
-        show(`${action} ${observed.status === 'observed-mined-verification-held' ? 'mined' : 'reverted'}, but verification remains on hold. ${observed.poolTopUpHash && !observed.verificationFailure ? 'Final top-up accounting has not completed.' : currentPoolVerificationMessage(observed.verificationFailure)} Keep the saved record. Do not resend.`);
+        show(`${action} ${observed.status === 'observed-mined-verification-held' ? 'mined' : 'reverted'}, but verification remains on hold. ${observed.poolTopUpHash && !observed.verificationFailure ? 'Final top-up accounting has not completed.' : currentPoolVerificationMessage(observed.verificationFailure)} ${saved.phase === 'pool-snapshot' && observed.status === 'observed-mined-verification-held' ? 'Close this panel and select Review held top-up in the position details.' : 'Keep the saved record.'} Do not resend.`);
       } else if (observed.status === 'manual-reconciliation-required' && !saved.txHash && !saved.walletRejected) {
         show(unknownSendMessage);
       } else show('Transaction is pending or needs a status check. Do not resend it.');
