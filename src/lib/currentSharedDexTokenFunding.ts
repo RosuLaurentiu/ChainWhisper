@@ -2,7 +2,7 @@ import { Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { resolveCurrentSharedTokenDistribution, CURRENT_SHARED_DEX_TOKENS } from './currentSharedDexTokenDistribution';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
-import { assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, isCurrentAppCanonicalClaimRepair } from './currentDexC1SwapPolicy';
+import { assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority } from './currentDexC1SwapPolicy';
 import type { readCurrentSharedDexTokenFunds } from './currentSharedDexTokenFunds';
 import { type CurrentCheapDexPreparedQuote } from './currentDexSubmission';
 import { type CurrentTransport } from './currentDexSendBoundary';
@@ -13,7 +13,7 @@ import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTo
 import type { PrivateUint256Input, PrivateUint256Output } from './privateUint256';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedFunding, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
-import { currentSwapFixedGasPrice } from './currentDexExitSwapPolicy';
+import { CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
 import { assertCurrentLimitPrepared, type CurrentLimitFundingReview } from '../features/wallet/currentDexLimitCapability';
 import { planTokenAllowance, type TokenApprovalMode } from './tokenAllowance';
 
@@ -106,7 +106,7 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-h
   releaseUnsentLedgerReservation?: (attempt: CurrentDexPendingAttempt) => Promise<void>;
   assertAdmission: (action: CurrentSharedTokenFundingAction, token: string, preparedQuote?: CurrentCheapDexPreparedQuote) => void | Promise<void>; now?: () => bigint;
 }) => {
-  const policy = resolveCurrentSharedTokenDistribution(candidate), fixedGasPrice = currentSwapFixedGasPrice(policy);
+  const policy = resolveCurrentSharedTokenDistribution(candidate), fixedGasPrice = CURRENT_NATIVE_FIXED_GAS_PRICE;
   const identity = Object.freeze({ core: policy.core, graph: policy.graph, packageSha256: policy.packageSha256 });
   const owner = getAddress(ownerAddress), storage = currentDexPendingStorage({ chainId, graph: policy.graph, owner });
   if (!signer || chainId !== policy.chainId || same(owner, zero)) throw new Error('Wrong beta funding owner or Testnet chain.');
@@ -726,10 +726,8 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-h
         if (!same(p.target, call.to) || !same(tx.to, call.to) || !same(tx.data, call.data) || keccak256(tx.data).toLowerCase() !== p.callHash) throw new FundingProofError('Pending beta funding target or calldata changed.');
         const request = { chainId, from: owner, to: call.to, data: call.data, value: 0n as const, nonce: p.nonce,
           gasLimit: CURRENT_SHARED_TOKEN_FUNDING_GAS_CAP, gasPrice: fixedGasPrice };
-        const legacySdkFlag = p.verificationBlocked && p.phase === 'token-faucet' && isCurrentAppCanonicalClaimRepair({
-          graph: policy.graph, owner, token, hash, nonce: tx.nonce, blockNumber: tx.blockNumber, blockHash: tx.blockHash });
         let before: Funds | undefined, historyPruned = false;
-        if (p.verificationBlocked && !legacySdkFlag) {
+        if (p.verificationBlocked) {
           const receipt = await canonical(request, hash);
           if (!receipt.blockNumber || receipt.blockNumber < 1) throw new FundingProofError('Beta funding parent block is unavailable.');
           try {
@@ -739,7 +737,6 @@ export const createCurrentSharedDexTokenFundingAdapter = ({ candidate = 'cheap-h
           } catch (error) { if (!prunedState(error)) throw error; historyPruned = true; }
         }
         const result = await prove(request, hash, action, token, before);
-        if (legacySdkFlag && result.receipt.status !== 1) throw new FundingProofError('Diagnosed canonical claim outcome changed.');
         if (!historyPruned) {
           if (!p.txHash) recordCurrentDexPendingHash(storage, p, hash);
           clearCurrentDexPendingAttempt(storage, b.requireOwnPending(p, hash));

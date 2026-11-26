@@ -2,8 +2,7 @@ import { Interface, keccak256 } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT as artifact } from './packedInputDexDailyPriceArtifact';
 import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE as source, readCurrentDexDailyPrice } from './currentDexDailyPrice';
-import { STAGED_D06_DEX_CANDIDATE as CURRENT_CHEAP_DEX_CANDIDATE } from './currentDexC1Candidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as selected } from './selectedCurrentDexCandidate';
 import { readCurrentDexPublicReference } from './currentDexDailyPrice';
 import { CURRENT_DEX_DAILY_PRICE_SOURCE, CURRENT_NATIVE_DEX_DAILY_PRICE_SOURCE, CURRENT_D06_DEX_DAILY_PRICE_SOURCE, CURRENT_EXIT_DEX_DAILY_PRICE_SOURCE, CURRENT_HISTORY_DEX_DAILY_PRICE_SOURCE, LOW_RPC_DEX_DAILY_PRICE_SOURCE, REFERENCE_DEX_DAILY_PRICE_SOURCE } from '../../tests/fixtures/historicalDailyPriceSources';
 import { makeHistoryFixture } from '../../tests/fixtures/history.fixture';
@@ -48,7 +47,8 @@ describe('current price admission excludes previous contracts',()=>{
     const f=fixture();let calls=0;const provider={request:async()=>{calls++;throw Error('MUST_NOT_READ');}};
     await expect(readCurrentDexDailyPrice({provider,manifest:{...f.manifest,sourceGraph:old.graph,recorderArtifact:old.recorderArtifact}})).rejects.toThrow('candidate');expect(calls).toBe(0);
   });
-  it.each([CURRENT_CHEAP_DEX_CANDIDATE,STAGED_EXIT_PREVIEW_DEX_CANDIDATE])('rejects old Core $graph before RPC',async candidate=>{
+  // decision-034: the d06 and b2aa descriptors were removed; changed identities stand for any other Core.
+  it.each([{...selected,graph:'11'.repeat(32)},{...selected,core:`0x${'33'.repeat(20)}`}])('rejects old Core $graph before RPC',async candidate=>{
     let calls=0;const provider={request:async()=>{calls++;throw Error('MUST_NOT_READ');}};
     await expect(readCurrentDexPublicReference({provider,candidate:candidate as never,pair:['HBR','BCN']})).rejects.toThrow('candidate');expect(calls).toBe(0);
   });

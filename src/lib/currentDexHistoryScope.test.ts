@@ -1,20 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as retired } from './currentDexHistoryCandidate';
 import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as previous } from './currentDexExitCandidate';import { resolveCurrentCheapDexCandidate,  currentCheapDexCandidateKey, currentCheapDexStages, currentCheapDexQuoteProtocol,  rejectUnprovenNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
+import { resolveCurrentCheapDexCandidate,  currentCheapDexCandidateKey, currentCheapDexStages, currentCheapDexQuoteProtocol,  rejectUnprovenNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import { currentDexDisplayPair, parseDexCandidateTokenAmount, readCurrentDexDisplay } from './currentDexDisplay';
 import { currentLimitAbiForCandidate, packedLimitAbi, usesPackedLimitInputs, currentLimitOwnerNativeAdmission,
   resolveCurrentLimitScope } from './currentDexLimit';
-import { assertCurrentD06AppAuthority, assertCurrentAppSigningCount, CURRENT_APP_SWAP_OWNER } from './currentDexC1SwapPolicy';
+import { assertCurrentD06AppAuthority, CURRENT_APP_SWAP_OWNER } from './currentDexC1SwapPolicy';
 import { resolveCurrentDexAppCandidate } from './currentDexAppScope';
 
 const key: CurrentCheapDexCandidateKey = 'cheap-history';
-// The key 'cheap-history' names the selected current candidate. The earlier shared-history descriptor is a record only.
+// The key 'cheap-history' names the selected current candidate. decision-034 removed the earlier shared-history
+// and b2aa descriptors; changed identities stand for them.
 const history = selectCurrentDexCandidate(undefined);
+const retired = { ...history, graph: '11'.repeat(32), packageSha256: '22'.repeat(32), core: `0x${'33'.repeat(20)}` };
+const previous = { graph: '44'.repeat(32), packageSha256: '55'.repeat(32), core: `0x${'66'.repeat(20)}` };
 
 describe('shared history public candidate and separate signing admission', () => {
-  it('selects only current App history while preserving the historical engineering descriptor', () => {
+  it('selects only current App history', () => {
     expect(resolveCurrentCheapDexCandidate(key)).toBe(history);
     expect(currentCheapDexCandidateKey(history)).toBe(key);
     expect(retired.graph).not.toBe(history.graph);
@@ -60,10 +62,5 @@ describe('shared history public candidate and separate signing admission', () =>
     expect(() => assertCurrentD06AppAuthority(history.graph, { principal: CURRENT_APP_SWAP_OWNER,
       destination: history.core, profile: 'cheap-async', inputToken: history.tokens[1][0],
       outputToken: history.tokens[0][0], maximumInput: 1_000_000n })).toThrow('hold');
-  });
-
-  it('keeps the exhausted b2aa Quote count charged', () => {
-    expect(() => assertCurrentAppSigningCount(previous.graph, CURRENT_APP_SWAP_OWNER, 'quote',
-      Array.from({ length: 4 }, () => ({ phase: 'quote' })))).toThrow('reserved');
   });
 });

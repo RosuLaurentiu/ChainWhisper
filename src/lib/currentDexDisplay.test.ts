@@ -6,8 +6,10 @@ import {
   parseDexCandidateTokenAmount, formatDexCandidateTokenAmount
 } from './currentDexDisplay';
 import { resolveCurrentCheapDexCandidate } from './dexV2Deployment';
-// An earlier deployment whose display metadata the current App must refuse.
-import { STAGED_PREPARED_DEX_CANDIDATE as old } from './currentDexPreparedCandidate';
+// Another deployment whose display metadata the current App must refuse. decision-034 removed the earlier
+// descriptors, so a changed identity stands for them.
+const old = { ...resolveCurrentCheapDexCandidate('cheap-history'), graph: '11'.repeat(32), packageSha256: '22'.repeat(32),
+  core: `0x${'33'.repeat(20)}` };
 
 describe('current DEX displayed token amounts',()=>{
   it('uses the current Core market IDs and exact six-decimal amounts', () => {

@@ -1,30 +1,13 @@
 import { isCurrentDexBrowserSigner } from './currentDexBrowserPolicy';
-import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
-
-// Candidate-specific ceilings, not permission or a claim of general native fit.
-// Fast: source-bound 73ab service fixture (75M/75M). Async: d06 coexistence.
-// Recovery's 50M is a trial ceiling; native proof covers the bounded Pool13 profile.
-// Every permitted send must also pass its fresh exact-call estimate and resources.
-export const CURRENT_D06_SWAP_GAS_CAPS = Object.freeze({
-  'fast-pool': Object.freeze({ quote: 75_000_000n, accept: 75_000_000n }),
-  'cheap-async': Object.freeze({ quote: 65_000_000n, accept: 35_000_000n,
-    cancel: 20_000_000n, recover: 50_000_000n })
-});
 
 // This hold is not caller-controlled and cannot be cleared by a receipt, a gas
 // estimate, a prepared intent or local storage. Technical checks do not lift it.
-// Both the adapter and shared sender enforce the d06 and current b2aa holds.
+// decision-034: the d06 and b2aa candidates were removed; only the current candidate has App admission.
 // Keep this guard independent of technical phase admission and gas evidence.
 export type CurrentAppSwapScope = Readonly<{ principal: string; destination: string; profile: string;
   inputToken: string; outputToken: string; maximumInput: bigint }>;
 export const CURRENT_APP_SWAP_OWNER = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d';
-// Current live permission. Reusable funding and accounting do not select owners or tokens.
-export const CURRENT_APP_SWAP_AUTHORITY = Object.freeze({ graph:STAGED_EXIT_PREVIEW_DEX_CANDIDATE.graph,
-  owner:CURRENT_APP_SWAP_OWNER, inputToken:STAGED_EXIT_PREVIEW_DEX_CANDIDATE.tokenMetadata[1].address,
-  outputToken:STAGED_EXIT_PREVIEW_DEX_CANDIDATE.tokenMetadata[0].address, maximumInput:1_000_000n,
-  profile:'cheap-async', maximumClaims:1, maximumApprovals:1, maximumQuotes:4 });
 // Standing Testnet engineering scope; current Fast native proof: current-fast-app-integration-2026-10-15/native-fast-1/RESULT.json.
 export const CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY = Object.freeze({ graph: STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph,
   owner: '0x8b749251cf1f712d4e39fd048c53394af03e10be',
@@ -105,20 +88,12 @@ export const CURRENT_APP_FOURTH_TRIAL = Object.freeze({ approvedAt:1791841485n,
 export const currentAppSigningStartLimit = (graph:string,owner:string,charges:readonly {phase:string;hash?:string|null;nonce?:number;scope?:string}[],original:number) => {
   if(hasCurrentPartialRefundProof(graph,owner,charges))return CURRENT_APP_PARTIAL_REFUND_TRIAL.maximumSigningStarts;
   if(hasCurrentHistoryFastProof(graph,owner,charges))return 11;
-  const a=CURRENT_APP_SWAP_AUTHORITY,r=CURRENT_APP_FURTHER_TRIAL,first=CURRENT_APP_REPLACEMENT_TRIAL;
-  const priorClosed=graph===a.graph&&owner.toLowerCase()===a.owner&&
-    charges.some(c=>c.phase==='quote'&&c.hash===first.quoteHash)&&charges.some(c=>c.phase==='cancel'&&c.hash===first.cancelHash)&&
-    charges.some(c=>c.phase==='quote'&&c.hash===r.quoteHash)&&charges.some(c=>c.phase==='cancel'&&c.hash===r.cancelHash);
-  if(!priorClosed)return original;
-  const fourth=CURRENT_APP_FOURTH_TRIAL;
-  return charges.some(c=>c.phase==='quote'&&c.hash===fourth.quoteHash)&&
-    charges.some(c=>c.phase==='accept'&&c.hash===fourth.failedAcceptHash)&&charges.some(c=>c.phase==='cancel'&&c.hash===fourth.cancelHash)
-    ?fourth.maximumSigningStarts:r.maximumSigningStarts;
+  // The replacement, further and fourth trial limits applied to the removed b2aa candidate only.
+  return original;
 };
-export const assertCurrentAppInitialClaimAuthority = (graph:string,owner:string,token:string,action:string) => {
-  const a=CURRENT_APP_SWAP_AUTHORITY;
-  if(graph!==a.graph||owner.toLowerCase()!==a.owner||token.toLowerCase()!==a.inputToken||action!=='initial')
-    throw new Error('Beta token signing is held: this initial claim has no current App admission.');
+// decision-034: initial claims had App admission on the removed b2aa candidate only, so this hold always applies.
+export const assertCurrentAppInitialClaimAuthority = (_graph:string,_owner:string,_token:string,_action:string) => {
+  throw new Error('Beta token signing is held: this initial claim has no current App admission.');
 };
 // Owner authorized four-token funding on 2026-10-17; token policy still bounds each credit.
 // This grants no approval or DEX phase and does not renew consumed swap ledgers.
@@ -173,16 +148,6 @@ export const assertCurrentAppLimitAuthority = (graph: string, scope: CurrentAppL
     throw new Error('Shared-history DEX App signing hold remains active: Limit owner, action or amount is outside engineering scope.');
   }
 };
-// This claim stopped on the old SDK's missing removed field, before private checks.
-// Only full canonical and owner-private receipt proof may retire that legacy flag.
-export const isCurrentAppCanonicalClaimRepair = (claim: Readonly<{ graph: string; owner: string; token: string;
-  hash: string; nonce?: number; blockNumber?: number | null; blockHash?: string | null }>) => {
-  const a = CURRENT_APP_SWAP_AUTHORITY;
-  return claim.graph === a.graph && claim.owner.toLowerCase() === a.owner && claim.token.toLowerCase() === a.inputToken &&
-    claim.hash.toLowerCase() === '0xf3593926823ab7f1f49d4a0a565352fc8d3044d1739c945091f42f39a38c2350' &&
-    claim.nonce === 137 && claim.blockNumber === 10044433 &&
-    claim.blockHash?.toLowerCase() === '0x7a530c54117b72345d9746c533dd2e09530dda8855106b68b062733b35bef41d';
-};
 // Owner-approved repair for this diagnosed receipt checker failure only.
 export const isCurrentAppLimitTopUpRepair=(proof:Readonly<{graph:string;owner:string;core:string;hash:string;nonce:number;blockNumber:number;blockHash:string;positionId:bigint;amount:bigint}>)=>
   proof.graph==='7b67bcbb7c5941a24471e62ba5a0d939c0800671b0bf121e81bad14cca737456'&&proof.owner.toLowerCase()===CURRENT_APP_SWAP_OWNER&&
@@ -198,38 +163,26 @@ export const assertCurrentAppSigningCount = (graph:string,owner:string,phase:str
       throw new Error('Current App signing scope is already reserved. Reconcile the original action.');
     return;
   }
-  const a=graph===STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph?CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY:CURRENT_APP_SWAP_AUTHORITY;
-  const allowed=graph===STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph?CURRENT_HISTORY_SWAP_OWNERS.includes(owner.toLowerCase()):owner.toLowerCase()===a.owner;
-  if(graph!==a.graph||!allowed)return;
-  const replacement=graph===CURRENT_APP_SWAP_AUTHORITY.graph&&charges.some(c=>c.phase==='quote'&&c.hash===CURRENT_APP_REPLACEMENT_TRIAL.quoteHash)&&
-    charges.some(c=>c.phase==='cancel'&&c.hash===CURRENT_APP_REPLACEMENT_TRIAL.cancelHash);
-  const limit=currentAppSigningStartLimit(graph,owner,charges,8);
+  const a=CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY;
+  if(graph!==a.graph||!CURRENT_HISTORY_SWAP_OWNERS.includes(owner.toLowerCase()))return;
   const historyReplacement=hasCurrentHistoryReplacementProof(graph,owner,charges);
-  const maximum=phase==='token-faucet'?a.maximumClaims:phase==='quote'&&hasCurrentHistoryFastReplacementProof(graph,owner,charges)?4:hasCurrentHistoryFastProof(graph,owner,charges)&&(phase==='token-funding'||phase==='quote')?3:historyReplacement&&(phase==='token-funding'||phase==='quote')?2:phase==='token-funding'?a.maximumApprovals:phase==='quote'?
-    (replacement?(limit===CURRENT_APP_FOURTH_TRIAL.maximumSigningStarts?a.maximumQuotes:limit===CURRENT_APP_FURTHER_TRIAL.maximumSigningStarts?3:2):1):undefined;
+  const maximum=phase==='token-faucet'?a.maximumClaims:phase==='quote'&&hasCurrentHistoryFastReplacementProof(graph,owner,charges)?4:hasCurrentHistoryFastProof(graph,owner,charges)&&(phase==='token-funding'||phase==='quote')?3:historyReplacement&&(phase==='token-funding'||phase==='quote')?2:phase==='token-funding'?a.maximumApprovals:phase==='quote'?1:undefined;
   if(maximum!==undefined&&charges.filter(c=>c.phase===phase).length>=maximum)throw new Error('Current App signing scope is already reserved. Reconcile the original action.');
 };
 export const assertCurrentD06AppAuthority = (graph: string, scope?: CurrentAppSwapScope, signer?: object): void => {
-  if (graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph) {
-    if (scope && isCurrentDexBrowserSigner(signer,graph,scope.principal) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
-        ['fast-pool','cheap-async'].includes(scope.profile) && scope.maximumInput > 0n && scope.maximumInput < 1n << 256n &&
-        STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.some(pair => pair.tokens.some(token => token === scope.inputToken.toLowerCase()) &&
-          pair.tokens.some(token => token === scope.outputToken.toLowerCase()) && scope.inputToken.toLowerCase() !== scope.outputToken.toLowerCase())) return;
-    const a = CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY;
-    if (scope && typeof scope.principal === 'string' && typeof scope.destination === 'string' &&
-        typeof scope.inputToken === 'string' && typeof scope.outputToken === 'string' &&
-        CURRENT_HISTORY_SWAP_OWNERS.includes(scope.principal.toLowerCase()) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
-        (scope.profile === a.profile || scope.profile === 'fast-pool') && scope.inputToken.toLowerCase() === a.inputToken &&
-        scope.outputToken.toLowerCase() === a.outputToken && scope.maximumInput > 0n && scope.maximumInput <= a.maximumInput) return;
-    throw new Error('Shared-history DEX App signing hold remains active pending integration.');
-  }
-  if (graph === STAGED_EXIT_PREVIEW_DEX_CANDIDATE.graph && scope &&
-      typeof scope.principal === 'string' && typeof scope.destination === 'string' && typeof scope.inputToken === 'string' && typeof scope.outputToken === 'string' &&
-      scope.principal.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.owner && scope.destination.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.owner &&
-      scope.profile === CURRENT_APP_SWAP_AUTHORITY.profile && scope.inputToken.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.inputToken &&
-      scope.outputToken.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.outputToken &&
-      scope.maximumInput > 0n && scope.maximumInput <= CURRENT_APP_SWAP_AUTHORITY.maximumInput) return;
-  if (graph === STAGED_D06_DEX_CANDIDATE.graph || graph === STAGED_EXIT_PREVIEW_DEX_CANDIDATE.graph) {
+  // decision-034: the d06 and b2aa candidates were removed. Every other graph stays held.
+  if (graph !== STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph) {
     throw new Error('Successor DEX native App submission admission is absent: connected App-wallet hold remains active. Native evidence does not grant App submission.');
   }
+  if (scope && isCurrentDexBrowserSigner(signer,graph,scope.principal) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
+      ['fast-pool','cheap-async'].includes(scope.profile) && scope.maximumInput > 0n && scope.maximumInput < 1n << 256n &&
+      STAGED_SHARED_HISTORY_DEX_CANDIDATE.pairs.some(pair => pair.tokens.some(token => token === scope.inputToken.toLowerCase()) &&
+        pair.tokens.some(token => token === scope.outputToken.toLowerCase()) && scope.inputToken.toLowerCase() !== scope.outputToken.toLowerCase())) return;
+  const a = CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY;
+  if (scope && typeof scope.principal === 'string' && typeof scope.destination === 'string' &&
+      typeof scope.inputToken === 'string' && typeof scope.outputToken === 'string' &&
+      CURRENT_HISTORY_SWAP_OWNERS.includes(scope.principal.toLowerCase()) && scope.destination.toLowerCase() === scope.principal.toLowerCase() &&
+      (scope.profile === a.profile || scope.profile === 'fast-pool') && scope.inputToken.toLowerCase() === a.inputToken &&
+      scope.outputToken.toLowerCase() === a.outputToken && scope.maximumInput > 0n && scope.maximumInput <= a.maximumInput) return;
+  throw new Error('Shared-history DEX App signing hold remains active pending integration.');
 };

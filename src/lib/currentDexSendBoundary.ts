@@ -2,7 +2,7 @@
 // receipt checks, unsent release). Pool, Limit, token funding and swap sending all use it. Moved unchanged
 // from currentDexSubmission.ts.
 import { isCurrentDexBrowserSigner, assertCurrentDexBrowserWindow } from './currentDexBrowserPolicy';
-import { assertCurrentNativeSwapIntent, currentNativeSigningBudget, currentNativeSwapCheckpoint, validateCurrentNativeSwapCheckpoint, hasCurrentNativeSigningBudget } from './currentDexNativeSwapPolicy';
+import { assertCurrentNativeSwapIntent, currentNativeSwapCheckpoint, validateCurrentNativeSwapCheckpoint, hasCurrentNativeSigningBudget } from './currentDexNativeSwapPolicy';
 import { assertCurrentD06AppAuthority, assertCurrentAppInitialClaimAuthority, assertCurrentAppSharedFundingAuthority, assertCurrentAppLimitAuthority, assertCurrentAppPoolAuthority, assertCurrentAppPoolAllowanceCleanupAuthority, hasCurrentHistoryReplacementProof, hasCurrentHistoryFastProof } from './currentDexC1SwapPolicy';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type CurrentPoolPreparedFunding, type CurrentPoolPreparedTopUpPreview, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
 import { assertCurrentPoolPositionPrepared, type CurrentPoolPreparedPositionAction, type CurrentPoolPreparedSnapshot, type CurrentPoolPreparedExitPreview } from '../features/wallet/currentDexPoolPositionCapability';
@@ -11,10 +11,8 @@ import { currentPoolOwnerGasCap } from './currentDexPoolPosition';
 import { assertCurrentLimitPrepared, type CurrentLimitPrepared, type CurrentLimitPreparedSnapshot, type CurrentLimitPreparedOwner, type CurrentLimitFundingReview } from '../features/wallet/currentDexLimitCapability';
 import { CURRENT_LIMIT_CREATE_GAS_CAP, CURRENT_LIMIT_SNAPSHOT_GAS_CAP, CURRENT_LIMIT_OWNER_GAS_CAPS } from './currentDexLimit';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
-import { STAGED_LOW_RPC_DEX_CANDIDATE } from './lowRpcDexTrialCandidate';
-import { CURRENT_EXIT_SWAP_GAS_CAPS, currentSwapFixedGasPrice } from './currentDexExitSwapPolicy';
+import { CURRENT_EXIT_SWAP_GAS_CAPS, CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
 import { CURRENT_SHARED_TOKEN_DISTRIBUTION } from './currentSharedDexTokenDistribution';
 import { assertCurrentNativePoolSourceFit, assertCurrentNativePoolSourceFitBinding, type CurrentNativePoolSourceFit } from './currentDexNativePoolPolicy';
 import { Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
@@ -146,11 +144,10 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
   // The adapter releases its own reservation for the rejected record, or throws. No hook means no release.
   releaseReservation?: (attempt: CurrentDexPendingAttempt) => Promise<void>;
 }) => {
-  const nativeFit = [STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE]
-    .some(candidate => c.graph === candidate.graph && core.toLowerCase() === candidate.core);
-  const exitFit = [STAGED_EXIT_PREVIEW_DEX_CANDIDATE, STAGED_SHARED_HISTORY_DEX_CANDIDATE].some(candidate =>
-    c.graph === candidate.graph && core.toLowerCase() === candidate.core && chainId === BigInt(candidate.chainId));
-  const fixedGasPrice = currentSwapFixedGasPrice(c);
+  // decision-034: only the current candidate; the b2aa exit candidate was removed.
+  const nativeFit = c.graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph && core.toLowerCase() === STAGED_SHARED_HISTORY_DEX_CANDIDATE.core;
+  const exitFit = nativeFit && chainId === BigInt(STAGED_SHARED_HISTORY_DEX_CANDIDATE.chainId);
+  const fixedGasPrice = CURRENT_NATIVE_FIXED_GAS_PRICE;
   const pending = () => readCurrentDexPendingAttempt(storage);
   const requireEmptyPending = () => {
     if (pending()) throw new Error('Current DEX has a pending attempt; reconcile it before another send.');
@@ -262,7 +259,6 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
     const poolScope = appPool && Object.freeze({ ...appPool });
     const browserSigner = appSwap?.signer ?? limitScope?.signer ?? poolScope?.signer ?? fundingScope?.signer;
     const normalBrowser = () => isCurrentDexBrowserSigner(browserSigner,c.graph,owner);
-    if (c.graph === STAGED_LOW_RPC_DEX_CANDIDATE.graph && !normalBrowser()) throw new Error('Low-RPC trial requires the current browser wallet lease.');
     const reloadScope = Object.freeze({ owner, graph: c.graph, chainId });
     const checkNormalBrowser = (nonce: number) => {
       if (!normalBrowser()) return;
@@ -377,11 +373,9 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       if(appSwap.prepared.graph!==c.graph||!sameAddress(appSwap.prepared.to,core)||!sameAddress(call.to,phase==='token-approve'?appSwap.prepared.intent.inputToken:core)||phase==='quote'&&call.data!==appSwap.prepared.data)throw new Error('App trial candidate, target or Quote calldata changed.');
       if(exitFit)assertCurrentNativeSwapIntent(appSwap.prepared,now(),phase==='cancel'||phase==='recover'||!!appSwap.cleanup,phase==='accept',appSwap.signer);
     }
-    if (appInitialClaimSigner) {
-      assertCurrentAppInitialClaimAuthority(c.graph,owner,call.to,'initial');
-      if(phase!=='token-faucet'||gasCap!==5_000_000n||call.data!==new Interface(['function claimFaucet()']).encodeFunctionData('claimFaucet'))throw new Error('Initial claim App call changed.');
-      const scope=`quote:${keccak256(call.data)}`;currentNativeSigningBudget(appInitialClaimSigner,owner,now,STAGED_EXIT_PREVIEW_DEX_CANDIDATE).check('token-faucet',`token-faucet:${scope}:${keccak256(call.data)}`,gasCap,scope);
-    } else if (fundingScope) assertSharedFunding(call);
+    // The initial-claim hold always applies: only the removed b2aa candidate admitted it (decision-034).
+    if (appInitialClaimSigner) assertCurrentAppInitialClaimAuthority(c.graph,owner,call.to,'initial');
+    else if (fundingScope) assertSharedFunding(call);
     else if (limitScope) assertLimitCall(call);
     else if (poolScope) await assertPoolCall(call);
     else assertCurrentD06AppAuthority(c.graph, appSwap?.prepared.intent,appSwap?.signer);
@@ -451,12 +445,8 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
       if (!sameAddress(appSwap.prepared.from, owner) || !['quote','accept','cancel','recover','token-approve'].includes(phase)) throw new Error('App trial phase or owner changed.');
       if(exitFit)assertCurrentNativeSwapIntent(appSwap.prepared,now(),phase==='cancel'||phase==='recover'||!!appSwap.cleanup,phase==='accept',appSwap.signer);
     }
-    if (appInitialClaimSigner) {
-      const scope=`quote:${keccak256(call.data)}`,budget=currentNativeSwapCheckpoint(appInitialClaimSigner);
-      assertCurrentAppInitialClaimAuthority(c.graph,owner,call.to,'initial');
-      const charge=budget.charges[budget.charges.length-1];
-      if(charge?.phase!=='token-faucet'||charge.key!==`token-faucet:${scope}:${keccak256(call.data)}`||charge.nonce!==nonce)throw new Error('Initial claim has no durable shared reservation.');
-    } else if (fundingScope) assertSharedFunding(numberedCall);
+    if (appInitialClaimSigner) assertCurrentAppInitialClaimAuthority(c.graph,owner,call.to,'initial');
+    else if (fundingScope) assertSharedFunding(numberedCall);
     else if (limitScope) assertLimitCall(numberedCall);
     else if (poolScope) await assertPoolCall(numberedCall);
     else assertCurrentD06AppAuthority(c.graph, appSwap?.prepared.intent,appSwap?.signer);

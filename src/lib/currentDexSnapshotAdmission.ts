@@ -1,4 +1,3 @@
-import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from './currentDexLimitInputCandidate';
 import { STAGED_BUILD13_DEX_CANDIDATE } from './currentDexBuild13Candidate';
 
 // A plain snapshot of an active Pool claim is verified from its own transaction: the exact call, the unique event,
@@ -10,7 +9,6 @@ import { STAGED_BUILD13_DEX_CANDIDATE } from './currentDexBuild13Candidate';
 // PoolOwner and SharedPoolMath have the same source and the same runtime bytecode as on 7bed; the Core differs in two
 // constructor values only (factory runtime hash and library commitments). A new graph needs its own evidence.
 // Build 13 retains the checked snapshot runtime, ABI and storage layout of the 9e6c donor.
-const ADMITTED = [STAGED_LIMIT_INPUT_DEX_CANDIDATE, STAGED_BUILD13_DEX_CANDIDATE] as const;
-
+// decision-034: only build 13 is admitted; the 7bed descriptor was removed with the old candidate modules.
 export const usesTransactionScopedPoolSnapshots = (candidate: Readonly<{ graph: string; packageSha256: string }>): boolean =>
-  ADMITTED.some(admitted => candidate.graph === admitted.graph && candidate.packageSha256 === admitted.packageSha256);
+  candidate.graph === STAGED_BUILD13_DEX_CANDIDATE.graph && candidate.packageSha256 === STAGED_BUILD13_DEX_CANDIDATE.packageSha256;

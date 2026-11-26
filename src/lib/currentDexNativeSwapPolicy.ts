@@ -1,12 +1,10 @@
 import { isCurrentDexBrowserSigner, assertCurrentDexBrowserWindow } from './currentDexBrowserPolicy';
-import { STAGED_NATIVE_DEX_CANDIDATE as native } from './currentDexNativeCandidate';
 import { rejectUnprovenNativeAdmission,
   currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate, type CurrentCheapDexIdentity } from './dexV2Deployment';
 import type { CurrentCheapDexPreparedQuote } from './currentDexSubmission';
-import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
-import { assertCurrentD06AppAuthority, assertCurrentAppSigningCount, currentAppSigningStartLimit, CURRENT_APP_SWAP_AUTHORITY, CURRENT_APP_REPLACEMENT_TRIAL, CURRENT_APP_FURTHER_TRIAL, CURRENT_APP_FOURTH_TRIAL, CURRENT_APP_HISTORY_REPLACEMENT_TRIAL, CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY, hasCurrentHistoryReplacementProof, CURRENT_APP_HISTORY_FAST_TRIAL, hasCurrentHistoryFastProof, type CurrentAppSwapScope } from './currentDexC1SwapPolicy';
+import { assertCurrentD06AppAuthority, assertCurrentAppSigningCount, currentAppSigningStartLimit, CURRENT_APP_SWAP_OWNER, CURRENT_APP_HISTORY_REPLACEMENT_TRIAL, CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY, hasCurrentHistoryReplacementProof, CURRENT_APP_HISTORY_FAST_TRIAL, hasCurrentHistoryFastProof, type CurrentAppSwapScope } from './currentDexC1SwapPolicy';
 import { CURRENT_EXIT_SWAP_LIMITS, CURRENT_EXIT_SWAP_GAS_CAPS, usesCurrentSwapAccounting,
-  currentSwapFixedGasPrice, CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
+  CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
 import {CURRENT_APP_HISTORY_FAST_REPLACEMENT_TRIAL,hasCurrentHistoryFastReplacementProof} from './currentDexC1SwapPolicy';
 import { CURRENT_APP_PARTIAL_REFUND_TRIAL, hasCurrentPartialRefundProof } from './currentDexC1SwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY, currentPartialLedgerRecoveryAllowed } from './currentDexC1SwapPolicy';
@@ -17,10 +15,11 @@ export const CURRENT_NATIVE_SWAP_LIMITS = Object.freeze({ commitmentWei: 40_000_
   starts: 8, normalSeconds: 900n, recoverySeconds: 1800n, recoveryGasCap: 50_000_000n,
   asyncAcceptReserveSeconds: 180n,
   fixedGasPrice: CURRENT_NATIVE_FIXED_GAS_PRICE, maximumInput: 100n * 10n ** 18n, maximumToleranceBps: 50 });
-export const isCurrentNativeSwapCandidate = (c: CurrentCheapDexIdentity) => c.graph === native.graph;
+// decision-034: the fa71 native candidate was removed, so no candidate takes the fa71 native trial path.
+// The callers' fa71 branches stay unreachable until they are deleted.
+export const isCurrentNativeSwapCandidate = (_c: CurrentCheapDexIdentity): boolean => false;
 // Swap checks only. Do not transfer fa71 Pool, faucet, refill or owner admission.
-export const usesCurrentNativeSwapChecks = (c: CurrentCheapDexIdentity) =>
-  isCurrentNativeSwapCandidate(c) || c.graph === STAGED_D06_DEX_CANDIDATE.graph || usesCurrentSwapAccounting(c);
+export const usesCurrentNativeSwapChecks = (c: CurrentCheapDexIdentity) => usesCurrentSwapAccounting(c);
 // Registry identity can support unsigned preparation. It grants no phase authority.
 export const assertCurrentSwapIdentity = (c: CurrentCheapDexIdentity) => {
   let registered;
@@ -31,10 +30,7 @@ export const assertCurrentSwapIdentity = (c: CurrentCheapDexIdentity) => {
 export const assertCurrentSwapCandidate = (c: CurrentCheapDexIdentity, scope?: CurrentAppSwapScope, signer?: object) => {
   assertCurrentSwapIdentity(c);
   assertCurrentD06AppAuthority(c.graph, scope, signer);
-  if (c.graph === STAGED_D06_DEX_CANDIDATE.graph || usesCurrentSwapAccounting(c)) return;
-  if (!isCurrentNativeSwapCandidate(c)) return rejectUnprovenNativeAdmission();
-  // Full registry identity includes runtime, release, attestation, economic and token bindings.
-  if (JSON.stringify(c) !== JSON.stringify(native)) throw new Error('Native swap candidate identity changed.');
+  if (!usesCurrentSwapAccounting(c)) return rejectUnprovenNativeAdmission();
 };
 export const assertCurrentNativeSwapIntent = (prepared: CurrentCheapDexPreparedQuote, now: bigint, expired = false, funding = false, signer?: object) => {
   if (!prepared.intent.candidate || !usesCurrentNativeSwapChecks(prepared.intent.candidate)) throw new Error('Native swap intent candidate is absent.');
@@ -42,7 +38,7 @@ export const assertCurrentNativeSwapIntent = (prepared: CurrentCheapDexPreparedQ
   const i = prepared.intent, limits = usesCurrentSwapAccounting(prepared.intent.candidate)
     ? CURRENT_EXIT_SWAP_LIMITS : CURRENT_NATIVE_SWAP_LIMITS;
   const partial = CURRENT_APP_PARTIAL_REFUND_TRIAL;
-  if (!isCurrentDexBrowserSigner(signer,i.candidate!.graph,i.principal) && i.candidate?.graph === CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.graph && i.principal?.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.owner && now >= partial.approvedAt &&
+  if (!isCurrentDexBrowserSigner(signer,i.candidate!.graph,i.principal) && i.candidate?.graph === CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.graph && i.principal?.toLowerCase() === CURRENT_APP_SWAP_OWNER && now >= partial.approvedAt &&
       (now >= partial.expiresAt || i.profile !== 'cheap-async' || i.maximumInput !== partial.maximumInput ||
         i.minimumInput !== 0n || i.minimumOutput !== 1n || i.rateNumerator !== 0n || i.rateDenominator !== 1n || i.toleranceBps !== 50)) {
     throw new Error('Approved partial-refund trial terms or window changed.');
@@ -108,14 +104,17 @@ const budgets = new WeakMap<object, Budget>();
 export const hasCurrentNativeSigningBudget = (signer: object) => budgets.has(signer);
 // Shared cost accounting only. This interface grants no phase, calldata or signer authority.
 // Token funding remains held until its own adapter joins this same budget.
-export const currentNativeSigningBudget = (signer: object, owner: string, now: () => bigint, candidate: CurrentCheapDexIdentity = native) => {
+export const currentNativeSigningBudget = (signer: object, owner: string, now: () => bigint, supplied?: CurrentCheapDexIdentity) => {
+  // decision-034: the fa71 default candidate was removed; a caller must name the current candidate.
+  if (!supplied) throw new Error('Native swap candidate identity changed.');
+  const candidate = supplied;
   assertCurrentSwapIdentity(candidate);
   let budget = budgets.get(signer);
   if (!budget) { budget = { version: isCurrentDexBrowserSigner(signer,candidate.graph,owner)?2:1, owner: owner.toLowerCase(), candidateGraph: candidate.graph, start: now(), committed: 0n, keys: new Set(), activeSwap: null,
     poolScope: null, poolStarted: false, poolFundSigningStarted:false, poolCommitted: 0n, poolApprovals: new Set(), poolTailCommitted: 0n,
     poolFunded: false, poolFailed: false, poolClosed: false, poolTail: new Set(), poolActiveSnapshots: 0, poolCleanups: new Set(), charges: [],
     released: [], lastCommit: null }; budgets.set(signer, budget); }
-  const state = budget, l = CURRENT_NATIVE_SWAP_LIMITS, fixedGasPrice = currentSwapFixedGasPrice(candidate);
+  const state = budget, l = CURRENT_NATIVE_SWAP_LIMITS, fixedGasPrice = CURRENT_NATIVE_FIXED_GAS_PRICE;
   const check = (phase: Phase, key: string, gasCap: bigint, swapScope?: string) => {
     if (state.candidateGraph !== candidate.graph) throw new Error('Native signing budget candidate changed.');
     if (isCurrentDexBrowserSigner(signer,candidate.graph,owner)) {
@@ -137,7 +136,7 @@ export const currentNativeSigningBudget = (signer: object, owner: string, now: (
     }
     const exitSwap = usesCurrentSwapAccounting(candidate);
     const partial = CURRENT_APP_PARTIAL_REFUND_TRIAL, partialProof = hasCurrentPartialRefundProof(candidate.graph, owner, state.charges);
-    if (candidate.graph === CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.graph && owner.toLowerCase() === CURRENT_APP_SWAP_AUTHORITY.owner &&
+    if (candidate.graph === CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.graph && owner.toLowerCase() === CURRENT_APP_SWAP_OWNER &&
         now() >= partial.approvedAt && !partialProof) {
       throw new Error('Restore all eleven prior reservations before the approved partial-refund trial.');
     }
@@ -298,8 +297,8 @@ const validateLegacyCurrentNativeSwapCheckpoint = (value: CurrentNativeSwapCheck
       prior.length===4&&hasCurrentHistoryReplacementProof(candidate.graph,owner,prior)&&c.scope!==prior[1].scope ||
       prior.length===7&&hasCurrentHistoryFastProof(candidate.graph,owner,prior)&&c.scope!==prior[1].scope&&c.scope!==prior[5].scope ||
       hasCurrentPartialRefundProof(candidate.graph,owner,prior)&&prior.slice(0,11).every(row=>row.scope!==c.scope)&&prior.slice(11).every(row=>row.scope===c.scope));
-    if(!c||!(exact(c,'gasCap,hash,key,nonce,phase,scope')||exact(c,'gasCap,gasPrice,hash,key,nonce,phase,scope')&&c.gasPrice===String(currentSwapFixedGasPrice(candidate)))||!['quote','accept','cancel','recover','token-funding','token-faucet'].includes(c.phase)||!/^quote:0x[0-9a-f]{64}$/.test(c.scope)||
-       (approval ? prior.some(row=>row.phase==='quote')&&!replacementApproval || c.gasPrice!==String(currentSwapFixedGasPrice(candidate)) || !c.key.startsWith(`${c.phase}:${c.scope}:`) || !/^0x[0-9a-f]{64}$/.test(c.key.slice(`${c.phase}:${c.scope}:`.length)) : c.key!==(c.phase==='quote'?c.scope:`${c.phase}:${c.scope}`))||keys.has(c.key)||!Number.isSafeInteger(c.nonce)||c.nonce<0||
+    if(!c||!(exact(c,'gasCap,hash,key,nonce,phase,scope')||exact(c,'gasCap,gasPrice,hash,key,nonce,phase,scope')&&c.gasPrice===String(CURRENT_NATIVE_FIXED_GAS_PRICE))||!['quote','accept','cancel','recover','token-funding','token-faucet'].includes(c.phase)||!/^quote:0x[0-9a-f]{64}$/.test(c.scope)||
+       (approval ? prior.some(row=>row.phase==='quote')&&!replacementApproval || c.gasPrice!==String(CURRENT_NATIVE_FIXED_GAS_PRICE) || !c.key.startsWith(`${c.phase}:${c.scope}:`) || !/^0x[0-9a-f]{64}$/.test(c.key.slice(`${c.phase}:${c.scope}:`.length)) : c.key!==(c.phase==='quote'?c.scope:`${c.phase}:${c.scope}`))||keys.has(c.key)||!Number.isSafeInteger(c.nonce)||c.nonce<0||
        !/^[1-9][0-9]*$/.test(c.gasCap)||(c.hash!==null&&(!/^0x[0-9a-f]{64}$/.test(c.hash)||BigInt(c.hash)===0n))) throw new Error('Native reload charge record is invalid.');
     const caps=approval?[5_000_000n]:c.phase==='quote'?[110_000_000n]:c.phase==='accept'?[35_000_000n,110_000_000n]:c.phase==='cancel'?[30_000_000n]:[50_000_000n];
     if(!caps.includes(BigInt(c.gasCap))||!approval&&c.phase!=='quote'&&!keys.has(c.scope))throw new Error('Native reload charge scope changed.');
@@ -414,7 +413,7 @@ export const renewCurrentNativeSwapFundingWindow = (signer:object,owner:string,c
 };
 // Fresh cancellation proof can renew an expired unused trial; a replacement signing start blocks renewal.
 export const renewCurrentNativeSwapClosedWindow = (signer:object,owner:string,candidate:CurrentCheapDexIdentity,scope:string,now:bigint):boolean => {
-  const b=budgets.get(signer),a=CURRENT_APP_SWAP_AUTHORITY,first=CURRENT_APP_REPLACEMENT_TRIAL;
+  const b=budgets.get(signer);
   if(candidate.graph===CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY.graph){
     const partial=CURRENT_APP_PARTIAL_REFUND_TRIAL;
     if(b&&b.owner===owner.toLowerCase()&&b.candidateGraph===candidate.graph&&b.activeSwap===null&&b.charges.length===partial.retainedLedgerStarts&&
@@ -443,20 +442,8 @@ export const renewCurrentNativeSwapClosedWindow = (signer:object,owner:string,ca
     validateCurrentNativeSwapCheckpoint(currentNativeSwapCheckpoint(signer),owner,candidate);
     b.windowStart=now;return true;
   }
-  const further=b?.charges.length===6,fourth=b?.charges.length===9,r=fourth?CURRENT_APP_FOURTH_TRIAL:further?CURRENT_APP_FURTHER_TRIAL:first;
-  if(!b||owner.toLowerCase()!==a.owner||b.owner!==a.owner||candidate.graph!==a.graph||b.candidateGraph!==a.graph||
-      b.activeSwap!==null||now<r.approvedAt||((b.windowStart??b.start)>=r.approvedAt&&now<(b.windowStart??b.start)+CURRENT_NATIVE_SWAP_LIMITS.normalSeconds)||b.charges.length!==(fourth?9:further?6:4)||
-      b.charges.some(c=>!c.hash)||b.charges[0].phase!=='token-faucet'||b.charges[1].phase!=='token-funding'||
-      b.charges[2].phase!=='quote'||b.charges[2].hash!==first.quoteHash||b.charges[2].nonce!==139||
-      b.charges[3].phase!=='cancel'||b.charges[3].hash!==first.cancelHash||b.charges[3].nonce!==140||b.charges[3].scope!==b.charges[2].scope||
-      (further||fourth?(b.charges[4].phase!=='quote'||b.charges[4].hash!==CURRENT_APP_FURTHER_TRIAL.quoteHash||b.charges[4].nonce!==141||
-        b.charges[5].phase!=='cancel'||b.charges[5].hash!==CURRENT_APP_FURTHER_TRIAL.cancelHash||b.charges[5].nonce!==142||b.charges[5].scope!==b.charges[4].scope||
-        (further&&b.charges[4].scope!==scope)):b.charges[2].scope!==scope)||
-      (fourth&&(b.charges[6].phase!=='quote'||b.charges[6].hash!==CURRENT_APP_FOURTH_TRIAL.quoteHash||b.charges[6].nonce!==143||b.charges[6].scope!==scope||
-        b.charges[7].phase!=='accept'||b.charges[7].hash!==CURRENT_APP_FOURTH_TRIAL.failedAcceptHash||b.charges[7].nonce!==144||b.charges[7].scope!==scope||
-        b.charges[8].phase!=='cancel'||b.charges[8].hash!==CURRENT_APP_FOURTH_TRIAL.cancelHash||b.charges[8].nonce!==145||b.charges[8].scope!==scope)))return false;
-  validateCurrentNativeSwapCheckpoint(currentNativeSwapCheckpoint(signer),owner,candidate);
-  b.windowStart=now;return true;
+  // decision-034: the b2aa replacement, further and fourth trials were removed with their candidate.
+  return false;
 };
 export const restoreCurrentNativeSwapCheckpoint = (signer: object, owner: string, candidate: CurrentCheapDexIdentity, value: CurrentNativeSwapCheckpoint) => {
   validateCurrentNativeSwapCheckpoint(value,owner,candidate,signer);

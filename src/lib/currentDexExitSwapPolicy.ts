@@ -1,4 +1,3 @@
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from './currentDexExitCandidate';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 import type { CurrentCheapDexIdentity } from './dexV2Deployment';
 
@@ -15,15 +14,10 @@ export const CURRENT_EXIT_SWAP_GAS_CAPS = Object.freeze({
   'cheap-async': Object.freeze({ quote: 110_000_000n, accept: 35_000_000n,
     cancel: 30_000_000n, recover: 50_000_000n })
 });
-export const isCurrentExitSwapCandidate = (candidate: Pick<CurrentCheapDexIdentity, 'graph'>) =>
-  candidate.graph === STAGED_EXIT_PREVIEW_DEX_CANDIDATE.graph;
 // Accounting joins and shared user ceilings do not grant signing authority or new native proof.
 export const usesCurrentSwapAccounting = (candidate: Pick<CurrentCheapDexIdentity, 'graph'>) =>
-  isCurrentExitSwapCandidate(candidate) || candidate.graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph;
+  candidate.graph === STAGED_SHARED_HISTORY_DEX_CANDIDATE.graph;
 
-// Fixed signing fees. Candidate identity and phase authority are checked by the
-// caller. The b2aa fee does not change historical fa71/d06 or Pool policy.
+// Fixed signing fee. Candidate identity and phase authority are checked by the caller.
+// decision-034: the b2aa candidate and its separate 52M fee were removed with the old candidate modules.
 export const CURRENT_NATIVE_FIXED_GAS_PRICE = 50_000_000n;
-export const CURRENT_EXIT_SWAP_FIXED_GAS_PRICE = 52_000_000n;
-export const currentSwapFixedGasPrice = (candidate: Pick<CurrentCheapDexIdentity, 'graph'>) =>
-  isCurrentExitSwapCandidate(candidate) ? CURRENT_EXIT_SWAP_FIXED_GAS_PRICE : CURRENT_NATIVE_FIXED_GAS_PRICE;

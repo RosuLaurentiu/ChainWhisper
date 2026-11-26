@@ -3,12 +3,9 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import CurrentPoolPositionsWorkspace from './CurrentPoolPositionsWorkspace';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from '../../../lib/dexV2Deployment';
-import { STAGED_LIMIT_INPUT_DEX_CANDIDATE } from '../../../lib/currentDexLimitInputCandidate';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
-// The App selects the gap graph; this file keeps the same checks for the earlier admitted graph 7bed.
-// Evidence: APP/reports/pool-snapshot-verification-2026-11-14.
-vi.mock('../../../lib/selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('../../../lib/selectedCurrentDexCandidate')>();
-  const current=await import('../../../lib/currentDexLimitInputCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_LIMIT_INPUT_DEX_CANDIDATE};});
+// The superseded-snapshot recovery first ran for the 7bed graph (APP/reports/pool-snapshot-verification-2026-11-14).
+// decision-034 removed that descriptor; build 13 uses the same transaction-scoped snapshots, so the checks run on it.
 const hooks=vi.hoisted(()=>({index:0,refIndex:0,states:[]as unknown[],refs:[]as {current:unknown}[]}));
 // Position effects only write wallet diagnostics; these tests do not check them.
 vi.mock('react',async original=>{const actual=await original<typeof import('react')>();return{...actual,useEffect:()=>{},
@@ -18,8 +15,7 @@ vi.mock('../../trading/hooks/useTradeActionConfirmationState',()=>({default:()=>
 afterEach(()=>{hooks.states=[];hooks.refs=[];vi.restoreAllMocks();vi.unstubAllGlobals();});
 const elements=(node:ReactNode):ReactElement<{children?:ReactNode;disabled?:boolean;onClick?:()=>void}>[]=>Array.isArray(node)?node.flatMap(elements):isValidElement<{children?:ReactNode}>(node)?[node,...elements(node.props.children)]:[];
 const text=(node:ReactNode):string=>Array.isArray(node)?node.map(text).join(''):isValidElement<{children?:ReactNode}>(node)?text(node.props.children):typeof node==='string'||typeof node==='number'?String(node):'';
-describe('retained 7bed graph snapshot recovery (saved hold of 14 November)',()=>{
-  it('selects the 7bed graph for this module graph',()=>{expect(STAGED_SHARED_HISTORY_DEX_CANDIDATE).toBe(STAGED_LIMIT_INPUT_DEX_CANDIDATE);});
+describe('superseded plain snapshot recovery on the selected graph',()=>{
   it.each(['success','error','missing-latest','other-hold'] as const)('checks the old saved hash with the current discovered snapshot: %s',async fault=>{
     const c=STAGED_SHARED_HISTORY_DEX_CANDIDATE,owner=`0x${'22'.repeat(20)}`,oldHash=`0x${'66'.repeat(32)}`,latestHash=`0x${'77'.repeat(32)}`;
     const saved=JSON.stringify({version:1,chainId:c.chainId,owner,core:c.core,graph:`0x${c.graph}`,phase:'pool-snapshot',

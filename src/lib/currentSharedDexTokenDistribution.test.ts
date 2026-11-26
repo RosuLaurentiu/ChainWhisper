@@ -5,7 +5,6 @@ import { AbiCoder, Interface, keccak256 } from '@coti-io/coti-ethers';
 import { describe, expect, it, vi } from 'vitest';
 import { CURRENT_SHARED_DEX_TOKENS as definitions, CURRENT_SHARED_TOKEN_DISTRIBUTION as policy,
   readCurrentSharedDexTokenDistribution, resolveCurrentSharedTokenDistribution } from './currentSharedDexTokenDistribution';
-import { STAGED_PREPARED_DEX_CANDIDATE as prepared } from './currentDexPreparedCandidate';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from './selectedCurrentDexCandidate';
 
@@ -43,8 +42,6 @@ function fixture(candidate: CurrentCheapDexCandidateKey = 'cheap-history') {
     ...Object.fromEntries(definitions.map(token => [lower(token.address), runtime.token.code])) };
   if (candidate === 'cheap-history') {
     const source = [
-      { graph: '958eea2faf9aec536df3318d5b770acec1da36efa1665cfc11a0c788d97f8fdf', core: '0x74ace210762c91cea53e59edc232898f612f47a9', file: '../../reports/limit-directory-adoption-2026-11-04/public-binding/public-capture-1.json' },
-      { graph: '7c63020b4eead20603e63c580e3155af8974b4eb5cf0a2b2eb2ea8c796a10eb9', core: '0xa7a3d2564b4ae598bad316a5fddc8016ad889edf', file: '../../reports/low-rpc-trial-2026-11-05/public-binding/public-capture-1.json' },
       // Build 13, the single App candidate (decision-034). Its attested App public capture has no package field.
       { graph: '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239', core: '0xbbe7fc39f326fdebc018476cde9b46bf71af90b1', file: `${base}c1-band-sizing-2026-11-21/native-bob-dense-1/APP_PUBLIC_CAPTURE.json` }
     ].find(row => row.graph === policy.graph && row.core === lower(policy.core));
@@ -120,16 +117,9 @@ describe('current shared DEX public token distribution', () => {
     await expect(readCurrentSharedDexTokenDistribution(f.args)).rejects.toThrow('Core identity changed');
     for (const old of ['cheap-exit', 'cheap-prepared', 'cheap-current']) expect(() => resolveCurrentSharedTokenDistribution(old as never)).toThrow();
   });
-  it('binds the successor package and independent vault native receipts', () => {
-    const pkg = json(`${base}shared-core-prepared-markets-2026-10-07/native-deployment-1/package.json`);
-    const result = json(`${base}shared-core-prepared-markets-2026-10-07/native-deployment-1/RESULT.json`);
-    expect(pkg.expectedCore).toBe(policy.core); expect(result.graph).toBe(policy.graph);
-    expect(createHash('sha256').update(JSON.stringify(pkg)).digest('hex')).toBe(policy.packageSha256);
-    expect(pkg.release).toBe(policy.releaseId); expect(pkg.tokenAdmissionCommitment).toBe(policy.tokenAdmissionCommitment);
-    const rows = readFileSync(new URL(`${base}shared-core-prepared-markets-2026-10-07/native-deployment-1/journal.jsonl`, import.meta.url), 'utf8').trim().split('\n').map(x => JSON.parse(x));
-    expect(rows.filter(row => row.kind === 'verified')).toHaveLength(44);
-    expect(rows.find(x => x.kind === 'verified' && x.index === 43)).toMatchObject({ runtimeHash: policy.coreRuntimeHash, packageSha256: policy.packageSha256 });
-    expect(keccak256(runtime.core.code)).toBe(policy.coreRuntimeHash); expect(keccak256(runtime.vault.code)).toBe(policy.vault.runtimeHash);
+  // decision-034: the 85767 prepared package checks went with its descriptor; the vault and tokens are unchanged.
+  it('binds the independent vault native receipts', () => {
+    expect(keccak256(runtime.vault.code)).toBe(policy.vault.runtimeHash);
     expect(keccak256(runtime.token.code)).toBe(policy.tokenRuntimeHash);
     expect(renewal.status).toBe('FOUR_TOKEN_RENEWAL_PUBLIC_BINDING_VERIFIED');
     expect(renewal.binding).toEqual({ ...policy.vault, expiresAt: String(policy.vault.expiresAt) });
@@ -142,20 +132,19 @@ describe('current shared DEX public token distribution', () => {
     expect(createHash('sha256').update(readFileSync(new URL(`${base}shared-core-markets-2026-10-07/refill/native-manifest-2.result.json`, import.meta.url))).digest('hex')).toBe(renewal.evidence.nativeResult);
     expect(createHash('sha256').update(readFileSync(new URL(`${base}shared-core-markets-2026-10-07/refill/native-manifest-2.public-binding.json`, import.meta.url))).digest('hex')).toBe(createHash('sha256').update(readFileSync(new URL('../../reports/refill-renewal-2026-11-06/app-binding/renewal-public-binding.json', import.meta.url))).digest('hex'));
   });
-  it('derives the prepared policy and preserves the independent vault and four-token rules', () => {
-    expect(policy.core.toLowerCase()).toBe(prepared.core);
-    expect(policy.graph).toBe(prepared.graph); expect(policy.packageSha256).toBe(prepared.packageSha256);
-    expect(policy.coreRuntimeHash).toBe(prepared.runtimes.find(([name]) => name === 'ChainWhisperDexCore')![2]);
-    expect(policy.attestationSha256).toBe(prepared.attestationSha256); expect(policy.attestationBlock).toBe(prepared.attestationBlock);
-    expect(policy.tokenAdmissionCommitment).toBe(prepared.tokenAdmissionCommitment);
-    expect(definitions.map(token => token.address.toLowerCase())).toEqual(prepared.tokens.map(([address]) => address));
-    expect(prepared.tokens.every(([, hash]) => hash === policy.tokenRuntimeHash)).toBe(true);
+  it('derives the current policy and preserves the independent vault and four-token rules', () => {
+    expect(policy.core.toLowerCase()).toBe(history.core);
+    expect(policy.graph).toBe(history.graph); expect(policy.packageSha256).toBe(history.packageSha256);
+    expect(policy.coreRuntimeHash).toBe(history.runtimes.find(([name]) => name === 'ChainWhisperDexCore')![2]);
+    expect(policy.attestationSha256).toBe(history.attestationSha256); expect(policy.attestationBlock).toBe(history.attestationBlock);
+    expect(policy.tokenAdmissionCommitment).toBe(history.tokenAdmissionCommitment);
+    expect(definitions.map(token => token.address.toLowerCase())).toEqual(history.tokens.map(([address]) => address));
+    expect(history.tokens.every(([, hash]) => hash === policy.tokenRuntimeHash)).toBe(true);
     expect(policy).toMatchObject({ initialAmount: 10_000_000000n, refillAmount: 1_000_000000n, initialQuota: 1_000_000_000000n,
       cooldown: 86_400n, vault: { address: '0x93569e6ae15d42F60A642B3F306e50c37Ca78FbF', expiresAt: 1796608723n } });
     const helper = createRequire(import.meta.url)('../../reports/prepared-candidate-2026-10-07/funding-binding/prepare-runtime-fixture.cjs');
     expect(helper.collect()).toEqual(runtimeFixture);
-    expect(runtimeFixture.captureSha256).toBe(prepared.attestationSha256);
-    expect(runtimeFixture.codes.tokens.map((row: { runtimeHash: string }) => row.runtimeHash)).toEqual(prepared.tokens.map(([, hash]) => hash));
+    expect(runtimeFixture.codes.tokens.map((row: { runtimeHash: string }) => row.runtimeHash)).toEqual(history.tokens.map(([, hash]) => hash));
   });
   it('rejects the retired Core runtime at the current Core address', async () => {
     const old = json('../../reports/shared-token-distribution-2026-10-07/reader/runtime-fixture.json');

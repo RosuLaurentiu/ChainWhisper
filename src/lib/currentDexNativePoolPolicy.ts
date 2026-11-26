@@ -1,6 +1,6 @@
 import { keccak256 } from '@coti-io/coti-ethers';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedFunding, type CurrentPoolPreparedPreview } from '../features/wallet/currentDexPoolFundingCapability';
-import { STAGED_NATIVE_DEX_CANDIDATE as native } from './currentDexNativeCandidate';
+import { isCurrentNativeSwapCandidate } from './currentDexNativeSwapPolicy';
 import { type CurrentCheapDexIdentity } from './dexV2Deployment';
 import type { CurrentPoolSnapshotProducer } from './currentDexNativePoolSnapshot';
 
@@ -59,9 +59,8 @@ type Prepared = CurrentPoolPreparedPreview | CurrentPoolPreparedFunding;
 export const assertCurrentNativePoolProfile = (candidate: CurrentCheapDexIdentity, prepared: Prepared, signer: object, profile: string) => {
   assertCurrentPoolFundingPrepared(prepared, signer);
   const i = prepared.intent;
-  if (profile !== CURRENT_NATIVE_POOL_PROFILE || JSON.stringify(candidate) !== JSON.stringify(native) ||
-      prepared.graph !== native.graph || prepared.packageSha256 !== native.packageSha256 || prepared.chainId !== BigInt(native.chainId) ||
-      prepared.to.toLowerCase() !== native.core || i.core.toLowerCase() !== native.core || i.principal.toLowerCase() !== prepared.from.toLowerCase() ||
+  // decision-034: the fa71 candidate was removed, so no candidate passes this profile.
+  if (profile !== CURRENT_NATIVE_POOL_PROFILE || !isCurrentNativeSwapCandidate(candidate) || i.principal.toLowerCase() !== prepared.from.toLowerCase() ||
       i.chainId !== prepared.chainId || prepared.value !== 0n || prepared.readyToSign !== false ||
       i.classId !== 0n || i.budgets.length !== 2 || i.budgets.some(value => value !== budget) ||
       i.terms.length !== terms.length || i.terms.some((value, index) => value !== terms[index])) {

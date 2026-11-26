@@ -1,21 +1,22 @@
 import { Interface, getAddress, keccak256 } from '@coti-io/coti-ethers';
-import { STAGED_PREPARED_DEX_CANDIDATE as prepared } from './currentDexPreparedCandidate';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as current } from './selectedCurrentDexCandidate';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
 
 // Public distribution policy only. This module issues no signing authority.
+// decision-034: identity defaults come from the current build 13 candidate (they were the 85767 prepared descriptor).
 export const CURRENT_SHARED_TOKEN_DISTRIBUTION = Object.freeze({
-  chainId: BigInt(prepared.chainId),
-  genesisHash: prepared.genesisHash,
-  core: getAddress(prepared.core),
-  coreRuntimeHash: prepared.runtimes.find(([name]) => name === 'ChainWhisperDexCore')![2],
-  graph: prepared.graph,
-  packageSha256: prepared.packageSha256,
-  releaseId: prepared.releaseId,
-  tokenAdmissionCommitment: prepared.tokenAdmissionCommitment,
-  tokenRuntimeHash: prepared.tokens[0][1],
-  attestationSha256: prepared.attestationSha256,
-  attestationBlock: prepared.attestationBlock,
+  chainId: BigInt(current.chainId),
+  genesisHash: current.genesisHash,
+  core: getAddress(current.core),
+  coreRuntimeHash: current.runtimes.find(([name]) => name === 'ChainWhisperDexCore')![2],
+  graph: current.graph,
+  packageSha256: current.packageSha256,
+  releaseId: current.releaseId,
+  tokenAdmissionCommitment: current.tokenAdmissionCommitment,
+  tokenRuntimeHash: current.tokens[0][1],
+  attestationSha256: current.attestationSha256,
+  attestationBlock: current.attestationBlock,
   initialAmount: 10_000n * 10n ** 6n,
   refillAmount: 1_000n * 10n ** 6n,
   initialQuota: 1_000_000n * 10n ** 6n,
@@ -30,7 +31,7 @@ export const CURRENT_SHARED_TOKEN_DISTRIBUTION = Object.freeze({
     transactionIndex: 0n, from: '0xC737b5850e15d03ed09bfAdc8A33062f6073a850', nonce: 7641n,
     calldataHash: '0x11d113a270aab79a95b873c560510c4bb307e8a93f05e372669df6837114244b' })
 });
-export const CURRENT_SHARED_DEX_TOKENS = Object.freeze(prepared.tokenMetadata
+export const CURRENT_SHARED_DEX_TOKENS = Object.freeze(current.tokenMetadata
   .map(token => Object.freeze({ symbol: token.symbol, address: getAddress(token.address), decimals: token.decimals })));
 
 // The distributor and tokens are shared. The DEX allowance and Core proof are not.

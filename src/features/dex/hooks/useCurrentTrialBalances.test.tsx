@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SharedWalletSession } from '../../../lib/walletSession';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as history } from '../../../lib/dexV2Deployment';
 // An earlier deployment, used only as a result or selection the current App must refuse.
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from '../../../lib/currentDexExitCandidate';
 import useCurrentTrialBalances, { type CurrentTrialBalanceSelection } from './useCurrentTrialBalances';
 
 // Small hook harness: retain state, compare dependencies and run effect cleanup.
@@ -42,6 +41,8 @@ vi.mock('react', async original => {
 });
 
 const owner = `0x${'22'.repeat(20)}`, other = `0x${'33'.repeat(20)}`;
+// An earlier candidate result. decision-034 removed the old descriptors; a changed identity stands for them.
+const exit = { ...history, graph: '11'.repeat(32), packageSha256: '44'.repeat(32), core: `0x${'55'.repeat(20)}` };
 const snapshot = () => ({ owner, core: history.core, graph: history.graph, packageSha256: history.packageSha256,
   privateFundsVerified: true, readyToSign: false,
   tokens: history.tokenMetadata.map((token, index) => ({ ...token, balance: index === 0 ? 1n : 9007199254740993000001n, allowance: 0n })) });

@@ -12,8 +12,9 @@ import {
   type CurrentDexOwnerTokenPhase,
   type CurrentDexOwnerTokenReceipt
 } from './currentDexOwnerTokenProof';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as candidate } from './currentDexExitCandidate';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as historyCandidate } from './currentDexHistoryCandidate';
+// decision-034: the b2aa and 958e descriptors were removed; both bindings use the selected build 13 candidate.
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from './selectedCurrentDexCandidate';
+const historyCandidate = candidate;
 
 const tokenAddresses = candidate.tokens.map(([token]) => token);
 const core = candidate.core;
@@ -151,9 +152,9 @@ describe('verifyCurrentDexOwnerTokenMovements', () => {
   });
   it.each(['core', 'package', 'graph', 'chain', 'token'] as const)('rejects new-descriptor mixed %s before canonical reads or decryption', async fault => {
     let binding: Partial<CurrentDexOwnerTokenBinding> = { ...newBinding };
-    if (fault === 'core') binding = { ...binding, core: candidate.core };
-    if (fault === 'package') binding = { ...binding, packageSha256: candidate.packageSha256 };
-    if (fault === 'graph') binding = { ...binding, graph: candidate.graph };
+    if (fault === 'core') binding = { ...binding, core: `0x${'55'.repeat(20)}` };
+    if (fault === 'package') binding = { ...binding, packageSha256: '22'.repeat(32) };
+    if (fault === 'graph') binding = { ...binding, graph: '11'.repeat(32) };
     if (fault === 'chain') binding = { ...binding, chainId: 1n };
     if (fault === 'token') binding = { ...binding, inputToken: other };
     const request = requestFor({ binding });
@@ -161,7 +162,8 @@ describe('verifyCurrentDexOwnerTokenMovements', () => {
     expect(request.verifyCanonical).not.toHaveBeenCalled();expect(request.decrypt).not.toHaveBeenCalled();
   });
   it('does not cross equal operation IDs between Core receipts', async () => {
-    const old = requestFor({ phase: 'terminal' });
+    // The other receipt names another Core; decision-034 removed the old descriptor that stood here.
+    const old = requestFor({ phase: 'terminal', binding: { core: `0x${'55'.repeat(20)}` } });
     const next = requestFor({ binding: newBinding, phase: 'terminal', receipt: old.receipt });
     expect(next.binding.operationId).toBe(old.binding.operationId);
     await expectRejected(next, 'TRANSFER_SET');

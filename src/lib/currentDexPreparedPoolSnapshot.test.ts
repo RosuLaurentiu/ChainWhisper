@@ -5,7 +5,6 @@ import type { CotiReadProvider } from './appShared';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
 // decision-034: the selected current candidate is the only prepared descriptor.
 const candidate = resolvePreparedDexScope('cheap-history').candidate;
-import { STAGED_GAP_DEX_CANDIDATE as currentGap } from './currentDexGapCandidate';
 import { readPreparedDexMarketRegistry, type DexV2ReadCapability } from './dexV2Chain';
 import { currentPoolPositionAbi, currentPoolNftAbi } from './currentDexPoolPosition';
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
@@ -133,60 +132,6 @@ const fixture = (closed = false, fund = false, withLimits: 0 | 51 | 64 = 0,
   return { reader, signer, provider, pair, selectedId, claim, tx, receipt, slots, put, get,
     revoke: () => { revoked = true; }, wrongOwner: () => { wrongOwner = true; }, reorg: () => { reorg = true; } };
 };
-
-describe.runIf(resolvePreparedDexScope('cheap-history').candidate.graph === currentGap.graph)('superseded plain snapshot recovery proof', () => {
-  it.each(['success', 'same-hash', 'order', 'missing-latest', 'wrong-call', 'wrong-id', 'duplicate-event', 'event-encoding',
-    'latest-envelope', 'position-revision', 'ownership-revision', 'lifecycle-revision', 'terms-revision', 'owner', 'closed', 'reorg', 'late-revision'] as const)(
-    'keeps old amounts outside normal producers and checks recovery: %s', async fault => {
-      const selected = resolvePreparedDexScope('cheap-history').candidate;
-      expect(selected.graph).toBe(currentGap.graph);
-      const f = fixture(false, false, 0, selected), latestHash = word(78), current = { number: 101n, hash: word(101) };
-      const base = preparedPoolPositionStorageBase(f.pair.marketId, 8n), nft = selected.companions.find(([role]) => role === 'ChainWhisperDexPositionNFT')![1];
-      f.put(selected.core, base + 17n, word(102));
-      const latestTx = { ...f.tx, hash: latestHash, nonce: 1 };
-      const latestReceipt = { ...f.receipt, hash: latestHash, logs: [{ address: selected.core,
-        ...eventAbi.encodeEventLog(eventAbi.getEvent('PoolSnapshotRefreshed')!, [8n, context, preparedPoolStoredEnvelopes(f.claim())]) }] };
-      if (fault === 'wrong-call') f.tx.data = currentPoolPositionAbi.encodeFunctionData('poolSnapshot', [9n]);
-      if (fault === 'wrong-id') f.receipt.logs = [{ address: selected.core,
-        ...eventAbi.encodeEventLog(eventAbi.getEvent('PoolSnapshotRefreshed')!, [9n, context, preparedPoolStoredEnvelopes(f.claim())]) }];
-      if (fault === 'duplicate-event') f.receipt.logs.push({ ...f.receipt.logs[0] });
-      if (fault === 'event-encoding') f.receipt.logs[0].data += '00';
-      if (fault === 'latest-envelope') f.put(selected.core, base + 17n, word(103));
-      const revision = ['position-revision', 'ownership-revision', 'lifecycle-revision', 'terms-revision'].indexOf(fault);
-      if (revision >= 0) f.put(selected.core, base + 4n + BigInt(revision), word(2));
-      if (fault === 'owner') f.put(nft, map(8n, 2n), word(999));
-      if (fault === 'closed') f.put(selected.core, base, word(4));
-      const read = f.provider.send.bind(f.provider); let latestHeads = 0;
-      f.provider.getTransaction = async hash => (hash === transactionHash ? f.tx : latestTx) as never;
-      f.provider.getTransactionReceipt = async hash => (fault === 'missing-latest' && hash === latestHash ? null : hash === transactionHash ? f.receipt : latestReceipt) as never;
-      f.provider.send = async (method, params) => {
-        if (!Array.isArray(params)) throw new Error('Expected RPC parameters.');
-        const latest = params[0] === latestHash, tx = latest ? latestTx : f.tx, receipt = latest ? latestReceipt : f.receipt;
-        if (method === 'eth_getTransactionByHash') return { ...tx, chainId: `0x${tx.chainId.toString(16)}`, value: '0x0', input: tx.data,
-          nonce: latest ? '0x1' : '0x0', gas: '0x5f5e100', blockNumber: '0x64', transactionIndex: fault === 'order' ? latest ? '0x0' : '0x1' : latest ? '0x1' : '0x0' };
-        if (method === 'eth_getTransactionReceipt') return { ...receipt, transactionHash: receipt.hash, status: '0x1', blockNumber: '0x64',
-          transactionIndex: fault === 'order' ? latest ? '0x0' : '0x1' : latest ? '0x1' : '0x0' };
-        if (method === 'eth_getBlockByNumber') {
-          if (params[0] === 'latest') {
-            latestHeads++;
-            if (fault === 'late-revision' && latestHeads === 2) f.put(selected.core, base + 4n, word(2));
-            return { number: '0x65', hash: current.hash, transactions: [] };
-          }
-          if (params[0] === '0x65') return { number: '0x65', hash: fault === 'reorg' ? word(999) : current.hash, transactions: [] };
-          return { number: '0x64', hash: block.hash, transactions: fault === 'order' ? [latestHash, transactionHash] : [transactionHash, latestHash] };
-        }
-        return read(method, params);
-      };
-      const recovery = f.reader.verifySupersededSnapshot(8n, transactionHash, fault === 'same-hash' ? transactionHash : latestHash);
-      if (fault === 'success') {
-        const result = await recovery;
-        expect(result).toMatchObject({ claimStatus: 1n, revisions: [1n, 1n, 1n, 1n], block: current });
-        expect(result).not.toHaveProperty('amounts'); expect(result).not.toHaveProperty('producer');
-        await expect(f.reader.issue(8n, 'snapshot', transactionHash)).rejects.toThrow('differs from stored owner envelopes');
-        await expect(f.reader.readSnapshot(8n, transactionHash)).rejects.toThrow('differs from stored owner envelopes');
-      } else await expect(recovery).rejects.toThrow();
-    });
-});
 
 describe('prepared Pool source-bound storage and authenticated producers', () => {
   it.each([false, true])('exposes verified state after current checks (reuse issued %s)', async reuse => {

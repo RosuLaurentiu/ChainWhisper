@@ -1,15 +1,15 @@
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { AbiCoder,keccak256 } from '@coti-io/coti-ethers';
-import { describe,expect,it, vi } from 'vitest';
-import { STAGED_GAP_DEX_CANDIDATE as candidate } from './currentDexGapCandidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './currentDexExitCandidate';
+import { describe,expect,it } from 'vitest';
+import { STAGED_BUILD13_DEX_CANDIDATE as candidate } from './currentDexBuild13Candidate';
 import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT } from './packedInputDexDailyPriceArtifact';
 import { readCurrentDexDisplay } from './currentDexDisplay';
-import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE,type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
+import { type CurrentDexDailyPriceManifest } from './currentDexDailyPrice';
 import { currentHistoryDexDailyPriceManifestMatches,currentHistoryDexDailyPriceConfig,HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS } from './currentDexHistoryDailyPriceTestnet';
 import { currentNativeDexDailyPriceConfig } from './currentDexNativeDailyPriceTestnet';
 
+// decision-034: the selected build 13 candidate. The 9c2c gap and b2aa descriptors and the gap recorder evidence checks
+// were removed; a changed identity stands for any other candidate.
+const exit={...candidate,graph:'11'.repeat(32),packageSha256:'22'.repeat(32),core:`0x${'33'.repeat(20)}`};
 // Synthetic deployment fields exercise scope matching only; this is not a live manifest.
 const fixture=(index:number):CurrentDexDailyPriceManifest=>{
   const display=readCurrentDexDisplay(candidate).pairs[index],[token0,token1]=display.tokens;
@@ -23,14 +23,11 @@ describe('current history recorder admission boundary',()=>{
   it('matches each current market in both display orientations',()=>{
     for(let i=0;i<6;i++){const m=fixture(i);expect(currentHistoryDexDailyPriceManifestMatches(candidate,m.symbols,m)).toBe(true);expect(currentHistoryDexDailyPriceManifestMatches(candidate,[m.symbols[1],m.symbols[0]],m)).toBe(true);}
   });
-  it('admits the six canonical recorder exports through the existing dispatcher',()=>{
+  it('admits the six canonical build 13 recorder manifests through the existing dispatcher',()=>{
     expect(HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS).toHaveLength(6);
     expect(Object.isFrozen(HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS)).toBe(true);
-    const root='reports/c1-gap-adoption-2026-11-15/';
-    for(let i=0;i<6;i++){
-      const exported=JSON.parse(readFileSync(root+'recorder-deploy-'+(i+1)+'-1-export.json','utf8'));
-      const m=HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS[i];
-      expect(m).toEqual(exported.manifest);expect(exported.status).toBe('CURRENT_RECORDER_CANONICAL_EXPORT');
+    for(const m of HISTORY_TESTNET_DEX_DAILY_PRICE_MANIFESTS){
+      expect(m.sourceGraph).toBe(candidate.graph);
       expect(currentHistoryDexDailyPriceConfig(candidate,m.symbols)).toMatchObject({status:'active',manifest:m});
       expect(currentNativeDexDailyPriceConfig(candidate,[m.symbols[1],m.symbols[0]])).toMatchObject({status:'active',manifest:m});
     }
@@ -43,12 +40,4 @@ describe('current history recorder admission boundary',()=>{
     expect(currentHistoryDexDailyPriceManifestMatches(candidate,['HBR','wrong'],m)).toBe(false);
     for(const patch of [{source:exit.core},{sourceRuntimeHash:`0x${'44'.repeat(32)}`},{sourceGraph:exit.graph},{recorderArtifact:'00'.repeat(32)},{decimals0:18},{pair:`0x${'44'.repeat(32)}`},{symbols:['BCN','HBR'] as const}])expect(currentHistoryDexDailyPriceManifestMatches(candidate,m.symbols,{...m,...patch})).toBe(false);
   });
-  it('binds the exact graph-only compiled recorder artifact',()=>{
-    const dir='../ChainWhisper Contracts V2/validation/candidates/c1-gap-aware-sizing-2026-11-15/adoption/recorder-build-1/';
-    const raw=readFileSync(dir+'ChainWhisperDailyPoolPrice.json'),artifact=JSON.parse(raw.toString()),identity=JSON.parse(readFileSync(dir+'identity.json','utf8'));
-    expect(createHash('sha256').update(raw).digest('hex')).toBe(PACKED_INPUT_DEX_DAILY_PRICE_SOURCE.recorderArtifact);expect(identity.sourceGraphOnlyChange).toBe(true);
-    expect(PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT.abi).toEqual(artifact.abi);expect(PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT.deployedBytecode).toBe(artifact.deployedBytecode);
-  });
 });
-
-vi.mock('./selectedCurrentDexCandidate',async original=>{const actual=await original<typeof import('./selectedCurrentDexCandidate')>();const current=await import('./currentDexGapCandidate');return{...actual,STAGED_SHARED_HISTORY_DEX_CANDIDATE:current.STAGED_GAP_DEX_CANDIDATE};});

@@ -20,14 +20,15 @@ import { assertCurrentSwapIdentity } from './currentDexNativeSwapPolicy';
 import {currentNativeSwapCheckpoint,recordCurrentNativeSwapHash,restoreCurrentNativeSwapCheckpoint,validateCurrentNativeSwapCheckpoint} from './currentDexNativeSwapPolicy';
 import { bindCurrentNativeSwapFundingScope, renewCurrentNativeSwapClosedWindow } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_SWAP_OWNER } from './currentDexC1SwapPolicy';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as retired } from './currentDexHistoryCandidate';
 import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
 import { recoverCurrentPartialLedger } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY as recovery } from './currentDexC1SwapPolicy';
 import { readCurrentDexNativeReload, writeCurrentDexNativeReload } from './currentDexNativeReload';
 import { currentOwnerBetaLegacyReservationHash } from './currentDexNativeSwapPolicy';
-// The swap policy binds to the selected history candidate. The earlier currentDexHistoryCandidate descriptor is a record only.
+// The swap policy binds to the selected history candidate. decision-034 removed the earlier descriptors;
+// a changed identity stands for them.
 const history = selectCurrentDexCandidate(undefined);
+const retired = { ...history, graph: '11'.repeat(32), packageSha256: '22'.repeat(32), core: `0x${'33'.repeat(20)}` };
 
 describe('finite native swap identity and budget', () => {
   it('rejects the earlier history descriptor that the App no longer selects', () => {

@@ -31,7 +31,7 @@ import { getProviderErrorMessage } from '../../../lib/appShared/core';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, currentCheapDexQuoteProtocol, currentCheapDexStages, currentCheapDexOwnerActionEligible,
   resolveCurrentCheapDexCandidate, currentCheapDexCandidateKey, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { assertCurrentSwapCandidate } from '../../../lib/currentDexNativeSwapPolicy';
-import { CURRENT_EXIT_SWAP_GAS_CAPS, currentSwapFixedGasPrice, usesCurrentSwapAccounting } from '../../../lib/currentDexExitSwapPolicy';
+import { CURRENT_EXIT_SWAP_GAS_CAPS, CURRENT_NATIVE_FIXED_GAS_PRICE, usesCurrentSwapAccounting } from '../../../lib/currentDexExitSwapPolicy';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
 import { CurrentDexPrivateReceiptError, type CurrentCheapDexIssuedQuote, type CurrentCheapDexPreparedQuote } from '../../../lib/currentDexSubmission';
 import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSendBoundary';
@@ -381,7 +381,7 @@ export function CurrentSwapWorkspace({
   const feeLimitStats = (identity: typeof candidate, action: CurrentCheapDexProfile) => {
     if (!usesCurrentSwapAccounting(identity)) return [];
     const caps = CURRENT_EXIT_SWAP_GAS_CAPS[action];
-    const gasPrice = currentSwapFixedGasPrice(identity);
+    const gasPrice = CURRENT_NATIVE_FIXED_GAS_PRICE;
     return [
       { label: 'Quote fee limit', value: `${formatEther(caps.quote * gasPrice)} COTI` },
       { label: 'Accept fee limit', value: `${formatEther(caps.accept * gasPrice)} COTI` }

@@ -1,5 +1,5 @@
 import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
-import { STAGED_NATIVE_DEX_CANDIDATE as native } from './currentDexNativeCandidate';
+import { isCurrentNativeSwapCandidate } from './currentDexNativeSwapPolicy';
 import { type CurrentCheapDexCandidate } from './dexV2Deployment';
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { checkCurrentPoolPositionValues } from './currentDexPoolPosition';
@@ -41,7 +41,7 @@ export const currentPoolStoredEnvelopes = (claim: readonly string[]) => {
     ciphertextHigh: BigInt(claim[14 + i * 4 + 2]), ciphertextLow: BigInt(claim[14 + i * 4 + 3]) }));
 };
 export const currentPoolCanonicalTokenMap = (candidate: CurrentCheapDexCandidate, market: readonly string[]) => {
-  requireCurrentPoolProof(JSON.stringify(candidate) === JSON.stringify(native), 'Native Pool candidate changed.');
+  requireCurrentPoolProof(isCurrentNativeSwapCandidate(candidate), 'Native Pool candidate changed.');
   const addresses = [market[2], market[3]].map(v => `0x${v.slice(-40)}`);
   const map = addresses.map(v => candidate.tokens.findIndex(([at]) => at.toLowerCase() === v));
   requireCurrentPoolProof(map[0] === 1 && map[1] === 0 && BigInt(addresses[0]) < BigInt(addresses[1]),
@@ -91,7 +91,7 @@ export const createCurrentNativePoolSnapshotReader = ({ signer, owner, candidate
   readOwner: (id: bigint, block: CurrentPoolBlock, closed: boolean) => Promise<string>;
   canonical: (hash: string) => Promise<Canonical | null>; decrypt: (cipher: PrivateUint256Output) => bigint;
 }) => {
-  requireCurrentPoolProof(JSON.stringify(candidate) === JSON.stringify(native), 'Native Pool reader candidate changed.');
+  requireCurrentPoolProof(isCurrentNativeSwapCandidate(candidate), 'Native Pool reader candidate changed.');
   const word = async (slot: bigint, block: CurrentPoolBlock,at=candidate.core) => {
     await guard(); const v = await rpc('eth_getStorageAt', [at, toBeHex(slot), { blockHash: block.hash, requireCanonical: true }]);
     await guard(); requireCurrentPoolProof(typeof v === 'string' && /^0x[0-9a-fA-F]{64}$/.test(v), 'Malformed native Pool storage word.');

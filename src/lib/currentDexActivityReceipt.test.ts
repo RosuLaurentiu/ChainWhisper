@@ -2,7 +2,6 @@ import { Interface, toBeHex } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as limitCodec from './currentDexLimit';
 import { readCurrentDexActivityReceipt } from './currentDexActivityReceipt';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as exit } from './currentDexExitCandidate';
 import { currentDexOwnerTransferAbi as transfers } from './currentDexOwnerTokenProof';
 import { currentSharedTokenFundingAbi } from './currentSharedDexTokenFunding';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as historyCandidate } from './dexV2Deployment';
@@ -10,6 +9,8 @@ import type { CurrentDexActivityCandidate } from './currentDexActivityDiscovery'
 
 const owner = `0x${'22'.repeat(20)}`, hash = toBeHex(3, 32), blockHash = toBeHex(4, 32), zero = toBeHex(0, 20);
 const c = historyCandidate;
+// A foreign Core. decision-034 removed the old b2aa descriptor that stood here.
+const exit = { core: `0x${'55'.repeat(20)}` };
 function fixture(candidate: CurrentDexActivityCandidate = 'cheap-history') {
   const token = c.tokens[1][0], event = transfers.encodeEventLog(transfers.getEvent('Transfer')!, [zero, owner, [0n, 0n], [10_000_000_000n, 0n]]);
   const transaction = { hash, chainId: BigInt(c.chainId), from: owner, to: token, value: 0n,

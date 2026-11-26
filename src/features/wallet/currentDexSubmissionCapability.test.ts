@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Interface, JsonRpcProvider, JsonRpcSigner, toBeHex } from '@coti-io/coti-ethers';
 import { issueCurrentDexSubmissionCapability } from './currentDexSubmissionCapability';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, resolveCurrentCheapDexCandidate } from '../../lib/dexV2Deployment';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE } from '../../lib/currentDexExitCandidate';
 import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from '../../lib/appShared/contracts';
 import * as display from '../../lib/currentDexDisplay';
 import type { TradeActionConfirmModel } from '../../lib/tradeActionConfirm';
@@ -10,6 +9,8 @@ import { currentCheapDexQuoteProtocol, type CurrentCheapDexCandidateKey } from '
 import * as tokenProof from '../../lib/currentDexOwnerTokenProof';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI } from '../../lib/currentDexOperation';
+// Another contract version. decision-034 removed the b2aa descriptor that stood here; a changed identity stands for it.
+const otherVersion = { ...STAGED_SHARED_HISTORY_DEX_CANDIDATE, graph: '11'.repeat(32), packageSha256: '22'.repeat(32), core: `0x${'33'.repeat(20)}` };
 
 const mocks = vi.hoisted(() => ({ issue: vi.fn(), pool: vi.fn(), limit: vi.fn(), graph: vi.fn(), decrypt: vi.fn(), sharedFunding: vi.fn(), sharedFunds: vi.fn(), cheap: vi.fn(), receipt: vi.fn(), fillGraph: null as string | null, fillRead: vi.fn(), foreground: vi.fn() }));
 vi.mock('../../lib/appShared/core', async original => ({ ...await original<typeof import('../../lib/appShared/core')>(),
@@ -531,7 +532,8 @@ describe('selected candidate acceptance review metadata', () => {
   it.each(['missing', 'other', 'spoof', 'unknown', 'same', 'blank', 'decimals'])('rejects %s before private receipt read or confirmation', async fault => {
     const f = await fixture('cheap-history'), confirm = vi.fn();
     if (fault === 'missing') Object.assign(f.issued.intent, { candidate: undefined });
-    if (fault === 'other') Object.assign(f.issued.intent, { candidate: STAGED_EXIT_PREVIEW_DEX_CANDIDATE });
+    // A whole other identity; decision-034 removed the b2aa descriptor that stood here.
+    if (fault === 'other') Object.assign(f.issued.intent, { candidate: { ...f.c, graph: toBeHex(2n, 32), packageSha256: '22'.repeat(32), core: `0x${'33'.repeat(20)}` } });
     if (fault === 'spoof') Object.assign(f.issued.intent, { candidate: { ...f.c, graph: toBeHex(1n, 32) } });
     if (fault === 'unknown') f.issued.intent.inputToken = `0x${'11'.repeat(20)}`;
     if (fault === 'same') f.issued.intent.outputToken = f.issued.intent.inputToken;
@@ -545,7 +547,7 @@ describe('selected candidate acceptance review metadata', () => {
     expect(f.send).not.toHaveBeenCalled(); expect(f.signer.getNonce).not.toHaveBeenCalled(); expect(f.signer.sendTransaction).not.toHaveBeenCalled();
   });
   it.each(['missing','old']as const)('rejects new-candidate %s identity before private review',async fault=>{
-    const f=await fixture('cheap-history'),confirm=vi.fn();Object.assign(f.issued.intent,{candidate:fault==='missing'?undefined:STAGED_EXIT_PREVIEW_DEX_CANDIDATE});
+    const f=await fixture('cheap-history'),confirm=vi.fn();Object.assign(f.issued.intent,{candidate:fault==='missing'?undefined:otherVersion});
     await expect(f.options.reviewAcceptance!(f.issued as never,confirm)).rejects.toThrow(fault==='missing'?'differs from the selected DEX candidate':'do not match a reviewed candidate');
     expect(mocks.receipt).not.toHaveBeenCalled();expect(f.readCurrent).not.toHaveBeenCalled();expect(confirm).not.toHaveBeenCalled();expect(f.send).not.toHaveBeenCalled();expect(f.signer.sendTransaction).not.toHaveBeenCalled();
   });
@@ -783,8 +785,8 @@ describe('current DEX submission owner capability', () => {
     expect(pool.candidate).toBe('cheap-history'); expect(limit.candidate).toBe('cheap-history');
     await pool.attest(head); await limit.attest(head);
     expect(mocks.graph.mock.calls[mocks.graph.mock.calls.length - 1][0]).toMatchObject({ candidate: 'cheap-history', blockNumber: head.number, blockHash: head.hash });
-    mocks.graph.mockResolvedValue({ graph: STAGED_EXIT_PREVIEW_DEX_CANDIDATE.graph,
-      packageSha256: STAGED_EXIT_PREVIEW_DEX_CANDIDATE.packageSha256, core: STAGED_EXIT_PREVIEW_DEX_CANDIDATE.core });
+    mocks.graph.mockResolvedValue({ graph: otherVersion.graph,
+      packageSha256: otherVersion.packageSha256, core: otherVersion.core });
     await expect(pool.attest(head)).rejects.toThrow('graph changed');
     await expect(limit.attest(head)).rejects.toThrow('graph changed');
     expect(sendTransaction).not.toHaveBeenCalled();
@@ -848,7 +850,7 @@ describe('current DEX submission owner capability', () => {
 describe('saved six-market candidate recovery dispatch', () => {
   it.each(['unknown-graph', 'wrong-core'])('rejects a saved %s record of another contract version without recovery', async fault => {
     vi.clearAllMocks();
-    const saved = STAGED_EXIT_PREVIEW_DEX_CANDIDATE, owner = `0x${'22'.repeat(20)}`, txHash = toBeHex(91n, 32);
+    const saved = otherVersion, owner = `0x${'22'.repeat(20)}`, txHash = toBeHex(91n, 32);
     const pending = { version: 1, chainId: saved.chainId.toString(), owner,
       core: fault === 'wrong-core' ? `0x${'33'.repeat(20)}` : saved.core,
       graph: fault === 'unknown-graph' ? toBeHex(93n, 32) : `0x${saved.graph}`,

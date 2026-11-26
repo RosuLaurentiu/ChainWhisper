@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { readCurrentDexActivityPage, buildCurrentDexActivityEntries } from './currentDexActivity';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as historyCandidate } from './dexV2Deployment';
 import type { CurrentDexActivityRow } from './currentDexActivityReceipt';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as candidate } from './currentDexExitCandidate';
 import type { SharedWalletSession } from './walletSession';
+
+// decision-034: the saved Quote fixture uses the current candidate; the b2aa descriptor was removed.
+const candidate = historyCandidate;
 
 const owner = `0x${'22'.repeat(20)}`, hash = `0x${'33'.repeat(32)}`;
 const fixture = () => {

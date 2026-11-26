@@ -7,7 +7,7 @@ import { assertCurrentAppInitialClaimAuthority, CURRENT_APP_REPLACEMENT_TRIAL, C
 
 import { currentTokenFundingAbi } from './currentDexTokenFunding';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
-import { CURRENT_EXIT_SWAP_GAS_CAPS, usesCurrentSwapAccounting, currentSwapFixedGasPrice } from './currentDexExitSwapPolicy';
+import { CURRENT_EXIT_SWAP_GAS_CAPS, usesCurrentSwapAccounting, CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
 import type { CurrentDexOwnerTokenAmounts, CurrentDexOwnerTokenPhase } from './currentDexOwnerTokenProof';
 import { Interface, keccak256, toUtf8Bytes } from '@coti-io/coti-ethers';
 import type { issueCurrentDexQuoteCapability } from '../features/wallet/currentDexQuoteCapability';
@@ -336,7 +336,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
     const head=await currentHead(undefined,cap,cap===gasCaps()['fast-pool'].quote);
     const resources=await requireNativeResources(head,undefined,cap);
     if(!resources)throw new Error('Owner normal-use resources are unavailable.');
-    assertCurrentDexBrowserWindow(signer,c.graph,owner,core,chainId,now(),resources.latestNonce,cap,currentSwapFixedGasPrice(c));
+    assertCurrentDexBrowserWindow(signer,c.graph,owner,core,chainId,now(),resources.latestNonce,cap,CURRENT_NATIVE_FIXED_GAS_PRICE);
     const budget:CurrentNativeSwapCheckpoint=hasCurrentNativeSigningBudget(signer)?currentNativeSwapCheckpoint(signer):
       {version:2,owner:owner.toLowerCase(),candidateGraph:c.graph,start:String(now()),committedWei:'0',activeSwap:null,charges:[]};
     validateCurrentNativeSwapCheckpoint(budget,owner,c,signer);

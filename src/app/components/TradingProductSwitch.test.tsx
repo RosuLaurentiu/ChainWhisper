@@ -2,7 +2,7 @@ import { Children, createElement, isValidElement, type ComponentProps, type Reac
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import TradingProductSwitch from './TradingProductSwitch';
-// The selected current candidate. The descriptor in lib/currentDexHistoryCandidate is an earlier record that the App does not select.
+// The selected current candidate (build 13).
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from '../../lib/dexV2Deployment';
 import { CURRENT_DEX_DISPLAY_PAIR as P } from '../../lib/currentDexDisplay';
 import type { P2PTradingHeaderContext } from '../../features/trading/components/P2PTradingPage.helpers';

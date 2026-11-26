@@ -1,5 +1,4 @@
 import { Interface, getAddress } from '@coti-io/coti-ethers';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as candidate } from './currentDexExitCandidate';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 import type { PrivateUint256Output } from './privateUint256';
 
@@ -67,7 +66,7 @@ export const verifyCurrentDexOwnerTokenMovements = async ({ binding, receipt, am
       blockHash: log.blockHash, removed: log.removed }))) });
   const core = address(b.core), owner = address(b.owner), destination = address(b.destination);
   const input = address(b.inputToken), output = address(b.outputToken);
-  const selected = [candidate, STAGED_SHARED_HISTORY_DEX_CANDIDATE].find(c =>
+  const selected = [STAGED_SHARED_HISTORY_DEX_CANDIDATE].find(c =>
     b.graph === c.graph && b.packageSha256 === c.packageSha256 &&
     b.chainId === BigInt(c.chainId) && same(core, c.core));
   if (!selected) fail('CANDIDATE');

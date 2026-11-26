@@ -8,7 +8,6 @@ import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c, resolveCurrentCheapDexCandida
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY as key, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from './currentDexPendingAttempt';
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
-import { STAGED_GAP_DEX_CANDIDATE as currentGap } from './currentDexGapCandidate';
 import { wasCurrentDexUnsentReleased } from './currentDexSendBoundary';
 import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 // CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.
@@ -151,59 +150,6 @@ describe('held top-up snapshot release after owner review (CW-135)',()=>{
     expect(f.transport.send).toHaveBeenCalledOnce();
   });
 });
-describe.runIf(resolveCurrentCheapDexCandidate('cheap-history').graph===currentGap.graph)('initial-claim snapshot hold recovery',()=>{
-  for(const recoveryOnly of [false,true])it.each(['success','independent','revision','closed','forged','wrong-owner','wrong-hash','wrong-chain','wrong-core','wrong-graph','wrong-package',
-    'top-up','target','operation','other-failure','reverted','changed-record','storage-failure','archive-readback','slot-after-archive','reorg'] as const)(`retains ${recoveryOnly?'superseded':'current'} proof and never resends: %s`,async fault=>{
-    const f=preparedFixture('cheap-history');allowLocalTechnicalSubmission();
-    await f.adapter.submitPoolPositionAction(f.prepared as never);
-    const pending={...JSON.parse(f.storage.get(key)!),verificationBlocked:true,verificationFailure:'snapshot-financial-state',
-      ...(fault==='top-up'?{poolTopUpHash:toBeHex(99n,32)}:{}),...(fault==='target'?{target:toBeHex(99n,20)}:{}),
-      ...(fault==='operation'?{operationId:'99'}:{}),...(fault==='other-failure'?{verificationFailure:'snapshot-envelope'}:{})};
-    const original=JSON.stringify(pending);f.storage.set(key,original);
-    if(fault==='independent'){
-      const held=JSON.stringify({...pending,nonce:3,txHash:toBeHex(98n,32)});
-      f.storage.set(key,held);f.storage.set(CURRENT_POOL_REFRESH_ATTEMPT_KEY,JSON.stringify({original:held,attempt:original}));
-    }
-    if(fault==='reverted')f.receipt.status=0;
-    const currentProof={action:'snapshot',positionId:8n,transactionHash:fault==='wrong-hash'?toBeHex(99n,32):txHash,producerHash:txHash,
-      status:'active-snapshot-verified',privateAccountingVerified:false,readyToSign:false,
-      producer:{status:fault==='closed'?4n:1n,revisions:[fault==='revision'?2n:1n,1n,1n,1n]},
-      snapshot:{chainId:fault==='wrong-chain'?1n:chainId,owner:fault==='wrong-owner'?toBeHex(1n,20):owner,core:fault==='wrong-core'?toBeHex(1n,20):f.candidate.core,
-        graph:fault==='wrong-graph'?'changed':f.candidate.graph,packageSha256:fault==='wrong-package'?'changed':f.candidate.packageSha256}};
-    const proof=recoveryOnly?{...currentProof.snapshot,action:'snapshot-recovery',positionId:8n,transactionHash:currentProof.transactionHash,
-      status:'superseded-snapshot-recovery-only',claimStatus:currentProof.producer.status,revisions:currentProof.producer.revisions,
-      latestSnapshotHash:toBeHex(80n,32),latestSnapshotBlock:{number:11n,hash:toBeHex(81n,32)},block:{number:12n,hash:toBeHex(82n,32)},
-      privateAccountingVerified:false,readyToSign:false}:currentProof;
-    if(fault!=='forged')brands.set(proof,f.signer);
-    const verify=vi.fn(async()=>{
-      if(fault==='changed-record')f.storage.set(key,JSON.stringify({...pending,nonce:8}));
-      if(fault==='reorg')f.transport.readBlockHash.mockResolvedValue(toBeHex(999n,32));
-      if(fault==='storage-failure')vi.spyOn(window.sessionStorage,'setItem').mockImplementation(()=>{throw new Error('Storage failed');});
-      if(fault==='archive-readback')vi.spyOn(window.sessionStorage,'setItem').mockImplementation(()=>{});
-      if(fault==='slot-after-archive')vi.spyOn(window.sessionStorage,'setItem').mockImplementation((name,value)=>{
-        f.storage.set(name,value);f.storage.set(key,JSON.stringify({...pending,nonce:8}));
-      });
-      return proof;
-    });
-    if(['success','independent'].includes(fault)){
-      expect(await f.adapter.recoverPendingPoolPositionAttempt(verify as never)).toBe(proof);
-      expect(f.storage.has(fault==='independent'?CURRENT_POOL_REFRESH_ATTEMPT_KEY:key)).toBe(false);
-      const archives=[...f.storage.entries()].filter(([k])=>k.startsWith('chainwhisper:dex:verified-pool-snapshot:'));
-      expect(archives).toHaveLength(1);expect(JSON.parse(archives[0][1])).toMatchObject({original,intervalAccounting:'not-reconstructed'});
-      if(recoveryOnly)expect(JSON.parse(archives[0][1])).toMatchObject({verification:'7bed-superseded-initial-claim-snapshot-recovery-only',latestSnapshotHash:toBeHex(80n,32)});
-      if(fault==='independent')expect(f.storage.has(key)).toBe(true);
-    }else if(['top-up','other-failure','reverted'].includes(fault)){
-      expect(await f.adapter.recoverPendingPoolPositionAttempt(verify as never)).toMatchObject({verificationBlocked:true});
-      expect(verify).not.toHaveBeenCalled();expect(f.storage.get(key)).toBe(original);
-    }else{
-      await expect(f.adapter.recoverPendingPoolPositionAttempt(verify as never)).rejects.toThrow();
-      expect(f.storage.has(key)).toBe(true);
-      if(fault==='target'||fault==='operation')expect(verify).not.toHaveBeenCalled();
-    }
-    expect(f.transport.send).toHaveBeenCalledOnce();
-  });
-});
-
 describe('current snapshot final signing baseline',()=>{
   it('checks the full baseline once, after fit and before reserving the send',async()=>{
     const f=preparedFixture('cheap-history');allowLocalTechnicalSubmission();

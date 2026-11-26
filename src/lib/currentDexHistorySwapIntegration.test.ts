@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as retired } from './currentDexHistoryCandidate';
 import { selectCurrentDexCandidate } from './selectedCurrentDexCandidate';
-import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as b2aa } from './currentDexExitCandidate';
 import { assertCurrentD06AppAuthority } from './currentDexC1SwapPolicy';
 import { currentCheapDexGasCaps } from './currentDexSubmission';
 import { currentNativeSigningBudget, currentNativeSwapCheckpoint, recordCurrentNativeSwapHash, restoreCurrentNativeSwapCheckpoint, usesCurrentNativeSwapChecks, validateCurrentNativeSwapCheckpoint } from './currentDexNativeSwapPolicy';
 
 const hash = (byte: string) => `0x${byte.repeat(32)}`;
 const owner = `0x${'12'.repeat(20)}`;
-// The swap policy binds to the selected current candidate. The earlier 7b67 descriptor is a record only.
+// The swap policy binds to the selected current candidate. decision-034 removed the earlier descriptors;
+// a changed identity stands for them.
 const history = selectCurrentDexCandidate(undefined);
+const other = { ...history, graph: '11'.repeat(32), packageSha256: '22'.repeat(32), core: `0x${'33'.repeat(20)}` };
 
 describe('selected candidate swap technical integration', () => {
   it('selects current history phase caps and preserves unapproved App holds', () => {
@@ -21,7 +21,7 @@ describe('selected candidate swap technical integration', () => {
     const scope = { principal: owner, destination: owner, profile: 'cheap-async' as const,
       inputToken: history.tokenMetadata[0].address, outputToken: history.tokenMetadata[1].address, maximumInput: 1_000_000n };
     expect(() => assertCurrentD06AppAuthority(history.graph, scope)).toThrow('signing hold');
-    expect(() => assertCurrentD06AppAuthority(b2aa.graph)).toThrow('connected App-wallet hold');
+    expect(() => assertCurrentD06AppAuthority(other.graph)).toThrow('connected App-wallet hold');
   });
 
   it('captures and restores exact Quote and Accept charges at 50Mwei', () => {
@@ -58,9 +58,8 @@ describe('selected candidate swap technical integration', () => {
     const saved = currentNativeSwapCheckpoint(signer);
 
     expect(() => validateCurrentNativeSwapCheckpoint(saved, `0x${'13'.repeat(20)}`, history)).toThrow();
-    expect(() => validateCurrentNativeSwapCheckpoint(saved, owner, b2aa)).toThrow();
-    expect(() => validateCurrentNativeSwapCheckpoint(saved, owner, retired)).toThrow();
-    expect(() => currentNativeSigningBudget({}, owner, () => 100n, retired)).toThrow('identity changed');
+    expect(() => validateCurrentNativeSwapCheckpoint(saved, owner, other)).toThrow();
+    expect(() => currentNativeSigningBudget({}, owner, () => 100n, other)).toThrow('identity changed');
     expect(() => validateCurrentNativeSwapCheckpoint({ ...saved, charges: saved.charges.map((row, i) =>
       i === 0 ? { ...row, gasPrice: '52000000' } : row) }, owner, history)).toThrow();
     expect(() => validateCurrentNativeSwapCheckpoint({ ...saved, charges: saved.charges.map((row, i) =>

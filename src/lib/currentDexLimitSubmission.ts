@@ -8,7 +8,7 @@ import { resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } fro
 import { currentLimitAbiForCandidate,resolveCurrentLimitScope,CURRENT_LIMIT_CREATE_GAS_CAP,CURRENT_LIMIT_SNAPSHOT_GAS_CAP,decodeCurrentLimitMint,decodeCurrentLimitOwnerEvent,CURRENT_LIMIT_OWNER_GAS_CAPS,currentLimitOwnerNativeAdmission,assertCurrentLimitNativeAdmission,currentLimitOwnerMethod,isKnownCurrentLimitProofMismatch,type CurrentLimitOwnerAction } from './currentDexLimit';
 import { decodeCurrentPoolNftTransfer } from './currentDexPoolPosition';
 import { resolvePreparedDexScope } from './currentDexPreparedScope';
-import { currentSwapFixedGasPrice } from './currentDexExitSwapPolicy';
+import { CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
 import { isCurrentAppLimitTopUpRepair } from './currentDexC1SwapPolicy';
 // Keep the canonical baseline independent of mutable provider receipt objects.
 const snapshotReceipt = (receipt: NonNullable<Awaited<ReturnType<CurrentTransport['waitForReceipt']>>>) => {
@@ -89,7 +89,7 @@ export const createCurrentLimitSubmissionAdapter=({signer,ownerAddress,chainId,t
       !same(proof.transactionHash,p.txHash)||proof.nonce!==p.nonce||keccak256(proof.data).toLowerCase()!==p.callHash||typeof proof.topUpAmount!=='bigint'||proof.topUpAmount<=0n)throw new Error('Top-up reconciliation differs from the blocked owner transaction.');
     const decoded=shape(p.phase,proof.data),result=proof.result;
     if(ownerAction(proof.data)!=='topup'||decoded[0]!==proof.positionId||result.positionId!==proof.positionId||!same(result.owner,owner)||!same(result.transactionHash,p.txHash)||result.closed||!result.refreshRequired||result.values!==null||result.amounts!==null||proof.privateReceiptDebitsVerified!==true||typeof proof.privateWalletDeltaVerified!=='boolean')throw new Error('Top-up reconciliation has another action or result.');
-    const request={chainId,from:owner,to:core,value:0n as const,data:proof.data,nonce:p.nonce,gasLimit:CURRENT_LIMIT_OWNER_GAS_CAPS.topup,gasPrice:currentSwapFixedGasPrice(c)};
+    const request={chainId,from:owner,to:core,value:0n as const,data:proof.data,nonce:p.nonce,gasLimit:CURRENT_LIMIT_OWNER_GAS_CAPS.topup,gasPrice:CURRENT_NATIVE_FIXED_GAS_PRICE};
     const canonical=snapshotReceipt(await boundary.verifyMinedCall(request,p.txHash));
     if(BigInt(canonical.blockNumber!)!==proof.receiptBlock.number||!same(canonical.blockHash??null,proof.receiptBlock.hash))throw new Error('Top-up reconciliation receipt block changed.');
     if(proof.privateWalletDeltaVerified){
