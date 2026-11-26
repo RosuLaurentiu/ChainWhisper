@@ -11,9 +11,6 @@ import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { readCurrentDexPendingAttempt, currentDexPendingStorage } from '../../lib/currentDexPendingAttempt';
 import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from '../../lib/appShared/contracts';
 import { decryptPrivateBoolOutput, decryptPrivateUint256Output, encryptPrivateUint256Input } from '../../lib/privateUint256';
-import { createCurrentTokenFundingAdapter, currentTokenFundingAbi, CURRENT_TOKEN_FUNDING_CAP } from '../../lib/currentDexTokenFunding';
-import { createCurrentTokenRefillSubmissionAdapter } from '../../lib/currentDexTokenRefillSubmission';
-import { CURRENT_NATIVE_TOKEN_REFILL_BINDING } from '../../lib/currentDexNativeTokenRefillDeployment';
 import { prepareCurrentDexAcceptance } from '../../lib/currentDexQuoteReview';
 import { createCurrentPoolSubmissionAdapter } from '../../lib/currentDexPoolSubmission';
 import { createCurrentPoolPositionSubmissionAdapter } from '../../lib/currentDexPoolPositionSubmission';
@@ -443,68 +440,8 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         if(scope.prepared&&prepared.marketId!==scope.marketId)throw new Error('Limit funding market changed.');
         return requirePrivateFunding(scope.poolTokens[prepared.intent.sellToken0 ? 0 : 1],prepared.intent.amount,head,candidate,scope.prepared);
       } });
-    const assertFundingResources = async () => {
-        await assertCurrent(); assertSnapshotCurrent();
-        if (!signer.getUserOnboardInfo()?.aesKey?.trim()) throw new Error('Unlock privacy before current-token funding.');
-        const [latest, pending, gasRaw, balanceRaw] = await Promise.all([signer.getNonce('latest'), signer.getNonce('pending'),
-          readProvider.send('eth_gasPrice', []), readProvider.send('eth_getBalance', [ownerAddress, 'latest'])]);
-        await assertCurrent(); assertSnapshotCurrent();
-        const gasPrice = BigInt(gasRaw), balance = BigInt(balanceRaw);
-        if (latest !== pending || !Number.isSafeInteger(latest) || latest < 0) throw new Error('Current-token wallet nonce is pending or changed.');
-        if (gasPrice <= 0n || gasPrice > 50_000_000n || balance < CURRENT_TOKEN_FUNDING_CAP * gasPrice + 10n ** 16n) throw new Error('Current-token gas price or recovery reserve is insufficient.');
-      };
-    const createHistoricalFunding = () => createCurrentTokenFundingAdapter({ ownerAddress, chainId, transport, candidate, attest: attestCheap,
-      encrypt: (amount, tokenAddress, selector) => encryptPrivateUint256Input(signer, amount, tokenAddress, selector),
-      assertResources: assertFundingResources,
-      readState: async (index, head) => {
-        await assertCurrent(); assertSnapshotCurrent();
-        if (!signer.getUserOnboardInfo()?.aesKey?.trim()) throw new Error('Unlock privacy before checking private current-token funds.');
-        const tokenAddress = cheapCandidate.tokens[index][0];
-        const read = async (method: string, values: unknown[] = []) => {
-          const raw = await readProvider.send('eth_call', [{ from: ownerAddress, to: tokenAddress,
-            data: currentTokenFundingAbi.encodeFunctionData(method, values) }, { blockHash: head.hash, requireCanonical: true }]);
-          await assertCurrent(); assertSnapshotCurrent();
-          const valuesOut = currentTokenFundingAbi.decodeFunctionResult(method, raw);
-          if (currentTokenFundingAbi.encodeFunctionResult(method, valuesOut).toLowerCase() !== String(raw).toLowerCase()) throw new Error('Current-token output encoding changed.');
-          return valuesOut[0];
-        };
-        const [balanceCt, allowanceCt, claimed, faucetAmount, decimals, publicAmounts, encryptionAddress] = await Promise.all([
-          read('balanceOf', [ownerAddress]), read('allowance', [ownerAddress, cheapCandidate.core]), read('faucetClaimed', [ownerAddress]),
-          read('faucetAmount'), read('decimals'), read('publicAmountsEnabled'), read('accountEncryptionAddress', [ownerAddress])]);
-        const amount = (cipher: Parameters<typeof decryptPrivateUint256Output>[1]) => BigInt(cipher.ciphertextHigh) === 0n && BigInt(cipher.ciphertextLow) === 0n ? 0n : decryptPrivateUint256Output(signer, cipher);
-        const observed = Object.freeze({ tokenIndex: index, token: tokenAddress, owner: ownerAddress, block: head,
-          balance: amount(balanceCt), allowance: amount(allowanceCt.ownerCiphertext), claimed: Boolean(claimed),
-          faucetAmount: BigInt(faucetAmount), decimals: BigInt(decimals), publicAmounts: Boolean(publicAmounts), encryptionAddress: String(encryptionAddress) });
-        await attestCheap(head); await assertCurrent(); assertSnapshotCurrent(); return observed;
-      } });
-    // Historical token runtime checks belong to the historical funding path.
-    // A selected six-market sender must not construct that unrelated adapter.
-    type HistoricalFunding=ReturnType<typeof createHistoricalFunding>;
-    let historicalFunding:HistoricalFunding|undefined;
-    const getHistoricalFunding=()=>historicalFunding??=createHistoricalFunding();
-    const funding:HistoricalFunding=Object.freeze({
-      readCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['readCurrentTokenFunding']>)=>getHistoricalFunding().readCurrentTokenFunding(...args),
-      prepareCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['prepareCurrentTokenFunding']>)=>getHistoricalFunding().prepareCurrentTokenFunding(...args),
-      submitCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['submitCurrentTokenFunding']>)=>getHistoricalFunding().submitCurrentTokenFunding(...args),
-      recoverPendingCurrentTokenFunding:async(...args:Parameters<HistoricalFunding['recoverPendingCurrentTokenFunding']>)=>getHistoricalFunding().recoverPendingCurrentTokenFunding(...args),
-    });
-    const refill = createCurrentTokenRefillSubmissionAdapter({ signer, ownerAddress, chainId, transport, candidate,
-      binding: CURRENT_NATIVE_TOKEN_REFILL_BINDING,
-      attest: attestCheap, assertResources: assertFundingResources,
-      readState: (index, head) => funding.readCurrentTokenFunding(index, head),
-      decrypt: cipher => decryptPrivateUint256Output(signer, cipher),
-      rpc: async (method, params) => {
-        await assertCurrent(); assertSnapshotCurrent();
-        const value = await readProvider.send(method, params);
-        await assertCurrent(); assertSnapshotCurrent(); return value;
-      },
-      readReceiptBlock: async number => {
-        await assertCurrent(); assertSnapshotCurrent();
-        const block = await readProvider.send('eth_getBlockByNumber', [`0x${number.toString(16)}`, false]) as Record<string, string> | null;
-        await assertCurrent(); assertSnapshotCurrent();
-        if (!block || BigInt(block.number) !== BigInt(number) || !/^0x[0-9a-fA-F]{64}$/.test(block.hash)) throw new Error('Refill receipt block is unavailable.');
-        return Object.freeze({ number: BigInt(block.number), hash: block.hash, timestamp: BigInt(block.timestamp), gasLimit: BigInt(block.gasLimit) });
-      } });
+    // decision-034 (CW-140.13): the earlier token funding and refill adapters were removed. Only the removed fa71
+    // candidate admitted their sends; current claims, refills and approvals use the shared adapter below.
     const fundingReadScope = () => {
       const capturedKey = args.sessionOnboardInfo?.[ownerAddress.toLowerCase()]?.aesKey?.trim();
       const guard = async () => {
@@ -544,7 +481,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
         if (!block || BigInt(block.number) !== BigInt(number) || !/^0x[0-9a-fA-F]{64}$/.test(block.hash)) throw new Error('Beta funding receipt block is unavailable.');
         return Object.freeze({ number: BigInt(block.number), hash: block.hash, timestamp: BigInt(block.timestamp), gasLimit: BigInt(block.gasLimit) });
       } });
-    return Object.freeze({ ...cheap, ...pool, ...positions, ...limit, ...funding, ...refill, ...sharedFunding,
+    return Object.freeze({ ...cheap, ...pool, ...positions, ...limit, ...sharedFunding,
       readSharedSwapInputFunding: async (inputToken: string, outputToken: string) => {
         if (!sharedCandidate) throw new Error('Swap input funds require the selected shared candidate.');
         const scope = fundingReadScope(); await scope.assertCurrent();

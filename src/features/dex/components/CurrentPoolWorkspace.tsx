@@ -547,7 +547,9 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
           return;
         }
       }
-      const observed = tokenPending ? preparedCandidate ? await next.recoverPendingSharedPoolApproval() : await next.recoverPendingCurrentTokenFunding() : await next.recoverPendingPoolAttempt();
+      // decision-034 (CW-140.13): the earlier token funding recovery was removed with its adapter.
+      if (tokenPending && !preparedCandidate) throw new Error('Pool approval recovery needs the prepared Pool candidate.');
+      const observed = tokenPending ? await next.recoverPendingSharedPoolApproval() : await next.recoverPendingPoolAttempt();
       assertScope(captured);
       setSender({ value: next, scope: captured });
       if (!observed) { setBlocked(false); setMessage('No pending Pool attempt was found.'); return; }

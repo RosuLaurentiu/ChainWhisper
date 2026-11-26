@@ -624,7 +624,7 @@ describe('selected six-market Limit funding',()=>{
       mocks.decrypt.mockImplementation((_,cipher:{ciphertextHigh:bigint;ciphertextLow:bigint})=>{expect([1n,2n]).toContain(cipher.ciphertextHigh);return cipher.ciphertextLow;});mocks.graph.mockResolvedValue({graph:c.graph,packageSha256:c.packageSha256,core:c.core});
       mocks.issue.mockImplementation(async args=>args.bindCapability({assertCurrent:async()=>{},assertSnapshotCurrent:()=>{},chainId:BigInt(c.chainId),ownerAddress:owner,readProvider:{send},signer}));
       const capability=await issueCurrentDexSubmissionCapability({candidate:'cheap-history',admission:null}as never);
-      if(pair.canonicalId==="1"&&sellToken0){await expect(capability.readCurrentTokenFunding(0)).rejects.toThrow('runtime has no funding evidence');expect(send).not.toHaveBeenCalled();}
+      if(pair.canonicalId==="1"&&sellToken0){expect('readCurrentTokenFunding' in capability).toBe(false);expect(send).not.toHaveBeenCalled();}
       const options=mocks.limit.mock.calls[mocks.limit.mock.calls.length-1][0]as Parameters<typeof import('../../lib/currentDexLimitSubmission').createCurrentLimitSubmissionAdapter>[0],prepared={marketId:pair.marketId,poolTokens:pair.tokens,intent:{sellToken0,amount:100n}};
       await expect(options.requireFunding(prepared as never,head)).resolves.toBeUndefined();allowance=101n;await expect(options.requireFunding(prepared as never,head)).resolves.toBeUndefined();allowance=99n;await expect(options.requireFunding(prepared as never,head)).rejects.toThrow('insufficient');
       expect(()=>options.requireFunding({...prepared,marketId:c.pairs.find(p=>p.marketId!==pair.marketId)!.marketId}as never,head)).toThrow('market changed');expect(signer.sendTransaction).not.toHaveBeenCalled();
@@ -791,14 +791,15 @@ describe('current DEX submission owner capability', () => {
     await expect(limit.attest(head)).rejects.toThrow('graph changed');
     expect(sendTransaction).not.toHaveBeenCalled();
   });
-  it('exposes native refill recovery but holds submission before nonce, estimate or wallet calls', async () => {
+  it('exposes no earlier token funding or refill path (CW-140.13)', async () => {
     const sendTransaction = vi.fn(), estimateGas = vi.fn(), getNonce = vi.fn(), send = vi.fn();
     mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: vi.fn(), assertSnapshotCurrent: vi.fn(),
       chainId: 7082400n, ownerAddress: `0x${'22'.repeat(20)}`, readProvider: { send }, signer: { sendTransaction, estimateGas, getNonce } }));
     const capability = await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never);
-    expect(typeof capability.readCurrentTokenRefillSubmission).toBe('function');
-    expect(typeof capability.recoverPendingCurrentTokenRefill).toBe('function');
-    await expect(capability.submitCurrentTokenRefill({} as never)).rejects.toThrow();
+    for (const removed of ['readCurrentTokenFunding', 'prepareCurrentTokenFunding', 'submitCurrentTokenFunding', 'recoverPendingCurrentTokenFunding',
+      'readCurrentTokenRefillSubmission', 'prepareCurrentTokenRefill', 'submitCurrentTokenRefill', 'recoverPendingCurrentTokenRefill']) {
+      expect(removed in capability).toBe(false);
+    }
     expect(getNonce).not.toHaveBeenCalled(); expect(estimateGas).not.toHaveBeenCalled();
     expect(sendTransaction).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });

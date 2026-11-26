@@ -22,7 +22,7 @@ function fixture(Workspace = CurrentPoolWorkspace) {
   vi.stubGlobal('window', { sessionStorage: { getItem: (key: string) => records.get(key) ?? null,
     setItem: writes, removeItem: writes } });
   const makeSender = () => ({ recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null as unknown),
-    recoverPendingPoolAttempt: vi.fn(async () => null as unknown), recoverPendingCurrentTokenFunding: vi.fn(async () => null as unknown) });
+    recoverPendingPoolAttempt: vi.fn(async () => null as unknown) });
   const first = makeSender(), next = makeSender(); let selected = first;
   const getSender = vi.fn(async () => selected);
   const session = { walletAddress: owner, chainId: Number(candidate.chainId), browserProvider: { request: vi.fn() },
@@ -65,10 +65,9 @@ describe('current Pool recovery session cache', () => {
     hooks.states[13] = { phase: phase === 'pool-preview' ? 'approval-0' : 'preview', scope: hooks.refs[2].current, recover: oldRecover };
     f.change('onboard'); const before = f.journal(phase);
     const pending = { status: 'manual-reconciliation-required', readyToSign: false };
-    f.next.recoverPendingPoolAttempt.mockResolvedValue(pending); f.next.recoverPendingCurrentTokenFunding.mockResolvedValue(pending);
+    f.next.recoverPendingPoolAttempt.mockResolvedValue(pending);
     await f.check(); expect(oldRecover).not.toHaveBeenCalled();
     expect(f.next.recoverPendingPoolAttempt).toHaveBeenCalledTimes(phase === 'pool-preview' ? 1 : 0);
-    expect(f.next.recoverPendingCurrentTokenFunding).toHaveBeenCalledTimes(phase === 'token-approve' ? 1 : 0);
     expect(f.records.get(CURRENT_DEX_PENDING_ATTEMPT_KEY)).toBe(before); expect(f.writes).not.toHaveBeenCalled();
     expect(f.button('Preview deposit').props.disabled).toBe(true); expect(f.button('Check Pool status').props.disabled).toBe(false);
   });

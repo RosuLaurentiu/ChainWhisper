@@ -33,7 +33,7 @@ function fixture(kind: 'pool' | 'position' | 'limit', components = {
     prepareLimit: vi.fn(async () => null), prepareOwnerAction: vi.fn(async () => ({ data: 'local' })) };
   const sender = { checkCurrentCheapCandidate: vi.fn(async () => ({ ...candidate, chainId: BigInt(candidate.chainId), owner })),
     submitPoolPreview: vi.fn(), submitPoolFunding: vi.fn(async () => ({ transactionHash: 'local', recover: vi.fn() })),
-    recoverPendingPoolAttempt: vi.fn(async () => null), submitCurrentTokenFunding: vi.fn(),
+    recoverPendingPoolAttempt: vi.fn(async () => null),
     recoverPendingPoolPositionAttempt: vi.fn(async () => null),
     recoverCurrentPreparedPoolFundingResult: vi.fn(async () => null), recoverCurrentPreparedPoolPositionResult: vi.fn(async () => null),
     submitPoolPositionAction: vi.fn(), submitLimit: vi.fn(),
@@ -129,6 +129,6 @@ it.each(['pool','position','limit'] as const)('serializes actual current %s publ
   const metadata=kind==='pool'?f.sender.recoverPendingPoolAttempt:kind==='position'?
     f.sender.recoverPendingPoolPositionAttempt:f.sender.recoverPendingLimitAttempt;
   expect(metadata).toHaveBeenCalledOnce();expect(text(f.render())).toContain('No pending');
-  for(const send of [f.sender.submitPoolPreview,f.sender.submitPoolFunding,f.sender.submitCurrentTokenFunding,
+  for(const send of [f.sender.submitPoolPreview,f.sender.submitPoolFunding,
     f.sender.submitPoolPositionAction,f.sender.submitLimit,f.sender.submitLimitOwner])expect(send).not.toHaveBeenCalled();
 });
