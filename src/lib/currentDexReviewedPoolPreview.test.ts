@@ -49,24 +49,29 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const txHash = `0x${'22'.repeat(32)}`;
 
 describe('owner-reviewed Testnet Pool preview recovery', () => {
-  it.each(['approved', 'declined', 'pending nonce', 'different call', 'changed record', 'no browser lease', 'archive failure', 'already archived'] as const)(
-    'checks the one-time owner-reviewed preview release: %s', async scenario => {
+  it.each(['approved', 'approved other call', 'declined', 'pending nonce', 'used nonce', 'funding record', 'record with hash', 'changed record',
+    'no browser lease', 'archive failure', 'already archived'] as const)(
+    'checks the owner-reviewed release of an unsent preview: %s', async scenario => {
       const owner = '0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d';
       const f = fixture(owner), { signer, adapter } = f;
       if (scenario !== 'no browser lease') browserContexts.set(signer, { owner });
       const c = resolveCurrentCheapDexCandidate('cheap-history');
       const pendingKey = currentDexScopedRecordKey(CURRENT_DEX_PENDING_ATTEMPT_KEY, { chainId: c.chainId, graph: c.graph, owner });
+      // CW-134: the release no longer binds one recorded call. The second call hash is the 2026-11-26 owner record.
+      const callHash = scenario === 'approved other call' ? '0x92b13e4c0793a7f35486548557d7060d6ec60d7c19764092464f265299c4cde9' :
+        '0x7d97428b902a35aac58e004dc55f6e436d008001883e547dbfc10f8ed19456c0';
       const record = { version: 1, chainId: c.chainId, graph: `0x${c.graph}`, owner, core: c.core,
-        phase: 'pool-preview', nonce: 508, txHash: null, callHash: scenario === 'different call' ? txHash :
-          '0x7d97428b902a35aac58e004dc55f6e436d008001883e547dbfc10f8ed19456c0' };
+        phase: scenario === 'funding record' ? 'pool-fund' : 'pool-preview', nonce: 508,
+        txHash: scenario === 'record with hash' ? txHash : null, callHash, ...(scenario === 'funding record' ? { poolTopUpHash: null } : {}) };
       const raw = JSON.stringify(record, null, 2);
       f.values.set(pendingKey, raw);
-      await expect(adapter.recoverPendingPoolAttempt()).resolves.toMatchObject({ status: 'manual-reconciliation-required' });
+      if (scenario !== 'record with hash') await expect(adapter.recoverPendingPoolAttempt()).resolves.toMatchObject({ status: 'manual-reconciliation-required' });
       expect(f.transport.readNativeResources).not.toHaveBeenCalled();
       const original = f.transport.readNativeResources.getMockImplementation()!;
       f.transport.readNativeResources.mockImplementation(async head => {
         if (scenario === 'changed record') f.values.set(pendingKey, JSON.stringify({ ...record, txHash }));
-        return { ...await original(head), latestNonce: 508, pendingNonce: scenario === 'pending nonce' ? 509 : 508 };
+        return { ...await original(head), latestNonce: scenario === 'used nonce' ? 509 : 508,
+          pendingNonce: scenario === 'pending nonce' || scenario === 'used nonce' ? 509 : 508 };
       });
       if (scenario === 'archive failure') {
         const set = f.values.set.bind(f.values);
@@ -77,11 +82,11 @@ describe('owner-reviewed Testnet Pool preview recovery', () => {
       }
       const review = vi.fn(async () => scenario !== 'declined');
       const result = adapter.releaseReviewedPoolPreview(review);
-      if (scenario === 'approved' || scenario === 'already archived') {
+      if (scenario === 'approved' || scenario === 'approved other call' || scenario === 'already archived') {
         await expect(result).resolves.toBe(true);
         expect(f.values.has(pendingKey)).toBe(false);
         f.newTab();
-        expect([...f.values.values()]).toEqual([raw]);
+        expect([...f.values]).toEqual([[`chainwhisper:dex:reviewed-pool-preview:v1:${c.chainId}:${c.graph}:${owner}:508:${callHash}`, raw]]);
         if (scenario === 'already archived') {
           f.values.set(pendingKey, raw);
           await expect(adapter.releaseReviewedPoolPreview(review)).rejects.toThrow();
@@ -90,11 +95,13 @@ describe('owner-reviewed Testnet Pool preview recovery', () => {
       } else if (scenario === 'declined') {
         await expect(result).resolves.toBe(false);
         expect(f.transport.readNativeResources).not.toHaveBeenCalled();
+        expect(f.values.get(pendingKey)).toBe(raw);
       } else {
         await expect(result).rejects.toThrow();
         expect(f.values.has(pendingKey)).toBe(true);
+        expect([...f.values.keys()]).toEqual([pendingKey]);
       }
-      if (scenario === 'different call' || scenario === 'no browser lease') expect(review).not.toHaveBeenCalled();
+      if (scenario === 'funding record' || scenario === 'record with hash' || scenario === 'no browser lease') expect(review).not.toHaveBeenCalled();
       expect(f.transport.send).not.toHaveBeenCalled();
     });
 });

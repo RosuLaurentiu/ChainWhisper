@@ -279,9 +279,9 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       const released=await sender.releaseReviewedPoolPreview(async()=>{
         assertScope(captured);
         const confirmed=await requestConfirmation({
-          title:'Release the failed top-up preview',primaryLabel:'Release saved preview',fundingMoves:[],stats:[],
+          title:'Release the unsent Pool preview',primaryLabel:'Release saved preview',fundingMoves:[],stats:[],
           summaryRows:[{label:'Wallet nonce',value:String(savedFunding!.nonce)}],
-          message:'Continue only if MetaMask shows Failed with no transaction hash. The App checks the nonce again and preserves the original record. Release sends no transaction. A late wallet broadcast is still possible.'
+          message:'Continue only if your wallet shows Failed or Rejected with no transaction hash. The App checks the wallet nonce again and preserves the original record. A preview moves no tokens. Release sends no transaction. A late wallet broadcast is still possible until this nonce is used.'
         });
         assertScope(captured);
         return confirmed;
@@ -380,9 +380,10 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
     </section><section className="dex-owner-detail" aria-label="Position details">
     <header className="dex-owner-heading"><h2>{current?`Position #${id}`:'Position details'}</h2></header>
     {reviewablePreview?<div className="dex-owner-progress">
-      <p>{privacyReady?'One-time recovery is available for the failed top-up preview.':'Unlock privacy to review the failed top-up preview.'}</p>
-      <button type="button" disabled={!connected||!privacyReady||busy} onClick={()=>{void reviewFailedPreview();}}>Review one-time recovery</button>
-    </div>:poolFundingPending&&!topUpOpen?<p className="dex-owner-progress" role="note">A saved liquidity attempt needs a status check. For a top-up, select its position and open Add liquidity. For a new position, return to the pool creation form.</p>:
+      <p>{privacyReady?'If your wallet shows this request as Failed or Rejected with no transaction hash, you can review and release the saved Pool preview.':'Unlock privacy to review the saved Pool preview.'}</p>
+      <button type="button" disabled={!connected||!privacyReady||busy} onClick={()=>{void reviewFailedPreview();}}>Review unsent preview</button>
+    </div>:null}
+    {poolFundingPending&&!topUpOpen?<p className="dex-owner-progress" role="note">A saved liquidity attempt needs a status check. For a top-up, select its position and open Add liquidity. For a new position, return to the pool creation form.</p>:
       (blocked||savedActionPending)&&!topUpOpen?<p role="note">{value?.status===4n?'Position closed. Use Check position status to reconcile the outstanding transaction before another verification request.':independentRefresh?'The old verification hold remains. You may review a new paid private refresh; spending actions stay locked. The old transaction will not be resent.':'A transaction is pending or needs verification. Actions remain locked. Do not resend.'}</p>:null}
     {!id?<p className="dex-owner-selection-empty">Select a position to see its details.</p>:null}
     {signedSnapshot&&(!ownedDiscovery||id)?<>{!ownedDiscovery?<p>{preparedCandidate?'Use an owned claim NFT and its confirmed funding or snapshot transaction. Private reads require its current owner proof.':'Use the new NFT ID from Add liquidity. Only that admitted claim can refresh or exit in this trial.'}</p>:null}

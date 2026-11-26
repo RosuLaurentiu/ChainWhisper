@@ -44,14 +44,14 @@ describe('current liquidity NFT controls',()=>{
       actions:{getCurrentDexPoolPositionCapability:getPositions,getCurrentDexSubmissionCapability:async()=>({releaseReviewedPoolPreview})}
     } as unknown as SharedWalletSession;
     const render=()=>{hooks.index=0;hooks.refIndex=0;return CurrentPoolPositionsWorkspace({sharedWalletSession:session,candidateKey:'cheap-history'});};
-    const review=elements(render()).find(x=>x.type==='button'&&text(x.props.children)==='Review one-time recovery');
+    const review=elements(render()).find(x=>x.type==='button'&&text(x.props.children)==='Review unsent preview');
     expect(review?.props.disabled).toBe(false);
     expect(releaseReviewedPoolPreview).not.toHaveBeenCalled();
     review!.props.onClick!();
     await vi.waitFor(()=>expect(text(render())).toContain('Failed preview released.'));
     expect(getPositions).not.toHaveBeenCalled();
     expect(releaseReviewedPoolPreview).toHaveBeenCalledOnce();
-    expect(text(render())).not.toContain('Review one-time recovery');
+    expect(text(render())).not.toContain('Review unsent preview');
   });
   it('directs a saved Pool preview to its funding form instead of position recovery',()=>{
     const c=STAGED_SHARED_HISTORY_DEX_CANDIDATE,owner=`0x${'22'.repeat(20)}`;

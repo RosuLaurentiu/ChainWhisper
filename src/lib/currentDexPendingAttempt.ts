@@ -1,5 +1,4 @@
 // Public reconciliation metadata only. Storage is a duplicate-send guard, not signing authority.
-import { id } from '@coti-io/coti-ethers';
 import { currentPoolVerificationFailure, isCurrentPoolVerificationFailure, type CurrentPoolVerificationFailure } from './currentDexPoolProofError';
 type PendingStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type CurrentDexPendingAttempt = Readonly<{
@@ -16,15 +15,15 @@ export type CurrentDexPendingAttempt = Readonly<{
   walletRejected?: true;
 }>;
 export const CURRENT_DEX_PENDING_ATTEMPT_KEY = 'chainwhisper:dex:current-pending-attempt:v1';
-const REVIEWED_POOL_PREVIEW_ARCHIVE_KEY = 'chainwhisper:dex:reviewed-pool-preview:cw-129';
+// The first reviewed record (CW-129) stays under its own key. Later records get one key each.
+const REVIEWED_POOL_PREVIEW_ARCHIVE_PREFIX = 'chainwhisper:dex:reviewed-pool-preview:v1';
 
-// CW-129 binds one recorded Testnet request without including its calldata or position ID.
+// CW-134: any Pool preview with no returned hash can be released after owner review. A preview moves
+// no tokens. Funding and every other phase stay held. The send boundary still checks the wallet nonce.
 export const isReviewedPoolPreview = (attempt: CurrentDexPendingAttempt | null): boolean =>
   !!attempt && attempt.phase === 'pool-preview' && attempt.txHash === null &&
   attempt.walletRejected === undefined && attempt.verificationBlocked === undefined &&
-  attempt.target === undefined && attempt.operationId === undefined &&
-  id([attempt.chainId, attempt.graph, attempt.owner, attempt.core, attempt.phase, attempt.nonce, attempt.callHash].join(':')) ===
-    '0x22eb74a672e1238f12a4b1cb326e6a6752086f2dc345a48cddfd2f97c6c5515e';
+  attempt.target === undefined && attempt.operationId === undefined && attempt.poolTopUpHash === undefined;
 export type CurrentDexOwnerRecoveryView = 'positions' | 'liquidity' | 'activity';
 // This selects a view only. It never verifies or clears the saved action.
 export const currentDexOwnerRecovery = (attempt: CurrentDexPendingAttempt | null,
@@ -399,11 +398,13 @@ export const archiveReviewedPoolPreview = (storage: PendingStorage, attempt: Cur
   if (typeof window === 'undefined' || !('localStorage' in window))
     throw new Error('Shared browser storage is unavailable. Keep the pending record.');
   const raw = storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY);
-  if (raw === null || !isReviewedPoolPreview(attempt) || !same(JSON.parse(raw), attempt) ||
-      storage.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY) !== null || storage.getItem(REVIEWED_POOL_PREVIEW_ARCHIVE_KEY) !== null)
-    throw new Error('The one-time recovery record changed or was already saved. Keep the pending record.');
-  storage.setItem(REVIEWED_POOL_PREVIEW_ARCHIVE_KEY, raw);
-  if (storage.getItem(REVIEWED_POOL_PREVIEW_ARCHIVE_KEY) !== raw || storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY) !== raw)
+  if (raw === null || !isReviewedPoolPreview(attempt) || !same(JSON.parse(raw), attempt)) throw new Error('The reviewed preview record changed. Keep the pending record.');
+  // One preserved copy for each released record. The same record is never released twice.
+  const archiveKey = `${REVIEWED_POOL_PREVIEW_ARCHIVE_PREFIX}${recordScopeSuffix(attempt.chainId, attempt.graph, attempt.owner)}:${attempt.nonce}:${attempt.callHash}`;
+  if (storage.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY) !== null || storage.getItem(archiveKey) !== null)
+    throw new Error('The reviewed preview record changed or was already saved. Keep the pending record.');
+  storage.setItem(archiveKey, raw);
+  if (storage.getItem(archiveKey) !== raw || storage.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY) !== raw)
     throw new Error('The original preview record could not be preserved. Keep the pending record.');
   clearCurrentDexPendingAttempt(storage, attempt);
 };

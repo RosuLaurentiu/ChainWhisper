@@ -505,7 +505,7 @@ export const createCurrentAttemptBoundary = ({ storage, c, core, owner, chainId,
   // It signs nothing and sends nothing. Any failed check leaves the record in place.
   const releaseUnsent = async (browserSigner: object | undefined, review?: () => Promise<boolean>): Promise<boolean> => {
     const saved = pending();
-    if (review && !isReviewedPoolPreview(saved)) throw new Error('The saved preview does not match the one-time recovery.');
+    if (review && !isReviewedPoolPreview(saved)) throw new Error('Only a Pool preview with no transaction hash can be released after review.');
     if (!saved || saved.txHash !== null || (!review && saved.walletRejected !== true)) return false;
     if (saved.chainId !== chainId.toString() || saved.owner !== owner.toLowerCase() || saved.core !== core.toLowerCase() ||
         saved.graph !== `0x${c.graph}`.toLowerCase())
