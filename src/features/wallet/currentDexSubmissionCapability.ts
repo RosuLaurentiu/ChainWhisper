@@ -2,11 +2,8 @@ import { Interface, Network, toBeHex, toQuantity, getBytes, hexlify, type Transa
   type TransactionReceiptParams, type LogParams } from '@coti-io/coti-ethers';
 import { loadCotiStartupReadProvider, sendCotiScopedRead } from '../../lib/appShared/core';
 import { createBrowserWalletRuntimeReadGuard } from '../../lib/browserWalletRuntimeScope';
-import {
-  createCurrentCheapDexSubmissionAdapter,
-  type CurrentDexSubmissionAdmission,
-  type CurrentTransport
-} from '../../lib/currentDexSubmission';
+import { createCurrentCheapDexSubmissionAdapter, type CurrentDexSubmissionAdmission } from '../../lib/currentDexSubmission';
+import { type CurrentTransport } from '../../lib/currentDexSendBoundary';
 import { createDexV2ReadCapability, readCurrentDexOperation, readCurrentSharedPoolDexGraph } from '../../lib/dexV2Chain';
 import { resolveCurrentCheapDexCandidate, currentCheapDexCandidateKey, type CurrentCheapDexCandidateKey } from '../../lib/dexV2Deployment';
 import { currentDexDisplayPair } from '../../lib/currentDexDisplay';

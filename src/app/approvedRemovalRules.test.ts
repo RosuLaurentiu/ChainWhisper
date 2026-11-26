@@ -10,12 +10,12 @@ const read = (file: string) => readFileSync(join(SRC_ROOT, file), 'utf8').replac
 
 describe('owner-approved removals (CW-097)', () => {
   it('1: shows the Swap timing panel only on the Vite development server', () => {
-    const page = read('features/dex/components/DexV2Page.tsx');
+    const page = (read('features/dex/components/DexV2Page.tsx') + read('features/dex/components/CurrentSwapWorkspace.tsx'));
     expect(page).toContain('{import.meta.env.DEV && activeJourney && !walletChanged ? <details aria-label="Local trial timing">');
   });
 
   it('2: removes Trial token addresses (the pair picker lists the same addresses)', () => {
-    expect(read('features/dex/components/DexV2Page.tsx')).not.toContain('Trial token addresses');
+    expect((read('features/dex/components/DexV2Page.tsx') + read('features/dex/components/CurrentSwapWorkspace.tsx'))).not.toContain('Trial token addresses');
   });
 
   it('3: no longer mounts the hidden P2P Testnet tools and keeps their source files', () => {

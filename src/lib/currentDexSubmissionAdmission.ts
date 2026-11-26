@@ -3,7 +3,8 @@ import { keccak256 } from '@coti-io/coti-ethers';
 import { assertCurrentCheapDexPreparedQuote, assertCurrentCheapDexIssuedQuote } from '../features/wallet/currentDexQuoteCapability';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, currentCheapDexQuoteProtocol,
   currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate } from './dexV2Deployment';
-import type { CurrentCheapDexPreparedQuote, CurrentCheapDexIssuedQuote, CurrentDexPreparedAcceptance } from './currentDexSubmission';
+import type { CurrentCheapDexPreparedQuote, CurrentCheapDexIssuedQuote } from './currentDexSubmission';
+import type { CurrentDexPreparedAcceptance } from './currentDexSendBoundary';
 
 export const CURRENT_DEX_SUBMISSION_VERSION = 'async-submission-phase-v2' as const;
 export const CURRENT_DEX_SUBMISSION_CANDIDATE_SHA256 = '8f629796995885e09983c6e502b2a7e96d93ce61b542da55362777147057f4c8' as const;

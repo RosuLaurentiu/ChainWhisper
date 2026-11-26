@@ -9,7 +9,7 @@ import { CURRENT_DEX_PENDING_ATTEMPT_KEY as key, CURRENT_POOL_REFRESH_ATTEMPT_KE
 import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
 import { STAGED_GAP_DEX_CANDIDATE as currentGap } from './currentDexGapCandidate';
-import { wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { wasCurrentDexUnsentReleased } from './currentDexSendBoundary';
 import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 // CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.
 const browserContexts=vi.hoisted(()=>new WeakMap<object,{owner:string}>());

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { JsonRpcProvider } from '@coti-io/coti-ethers';
-import { createCurrentAttemptBoundary, CURRENT_NATIVE_FIXED_GAS_PRICE as fee, CURRENT_NATIVE_RECOVERY_RESERVE as reserve } from './currentDexSubmission';
+import { CURRENT_NATIVE_FIXED_GAS_PRICE as fee } from './currentDexExitSwapPolicy';
+import { CURRENT_NATIVE_RECOVERY_RESERVE as reserve } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './dexV2Deployment';
 
 function fixture(now = () => 100n) {

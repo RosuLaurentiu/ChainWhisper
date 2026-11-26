@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { CurrentTransport } from './currentDexSubmission';
+import type { CurrentTransport } from './currentDexSendBoundary';
 import { verifyCurrentDexCanonicalInclusion } from './currentDexCanonicalInclusion';
 import { issueCurrentDexSubmissionCapability } from '../features/wallet/currentDexSubmissionCapability';
 

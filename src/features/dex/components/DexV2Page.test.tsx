@@ -8,17 +8,19 @@ import DexV2Page, {
   ModeNavigation,
   resolveDexModeFromPath,
   parseCurrentTrialAtoms,
+  parseCurrentTrialPriceLimit,
+} from './DexV2Page';
+import {
   parseCurrentSwapAmount,
   parseCurrentSwapFillPercent,
   parseCurrentSwapPriceLimit,
-  parseCurrentTrialPriceLimit,
   reconcileCurrentTrialPending,
   verifyCurrentTrialCandidate,
   recoverOrReconcileCurrentTrial,
   hasCurrentTrialSavedAction,
   currentTrialAttemptPresentation,
   readCurrentSwapInputFunding,
-} from './DexV2Page';
+} from './CurrentSwapWorkspace';
 
 // These server-rendered views read the same pending-attempt store as the browser.
 beforeEach(() => {
@@ -221,7 +223,7 @@ describe('DexV2Page', () => {
     expect(observed.attempt).toBe(attempt);
     expect(observed.sender).toEqual({ recoverPendingCurrentCheapAttempt });
 
-    const source = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
+    const source = ['./DexV2Page.tsx', './CurrentSwapWorkspace.tsx'].map(file => readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')).join('\n');
     expect(source).toContain('Open mined, but this session has no authenticated Quote origin. Accept is unavailable.');
     expect(source).toContain('currentTrialAttemptPresentation(attempt)');
   });
@@ -250,7 +252,7 @@ describe('DexV2Page', () => {
   // Testnet App check, 2026-11-15: after a released approval the screen kept "Check funding and continue".
   // The swap workspace has no render harness, so this test binds the wiring in the source.
   it('clears the funding check state when a funding rejection is released', () => {
-    const source = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
+    const source = ['./DexV2Page.tsx', './CurrentSwapWorkspace.tsx'].map(file => readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')).join('\n');
     const released = source.slice(source.indexOf('if (wasCurrentDexUnsentReleased(cause)) {'));
     const branch = released.slice(0, released.indexOf('return;'));
     expect(branch).toContain('if (!fundingPending && !sharedFundingPending.current) setFundingRecovery(false);');
@@ -271,7 +273,7 @@ describe('DexV2Page', () => {
     expect(pending.recover).toHaveBeenCalledTimes(2);
     expect(recoverPendingCurrentCheapAttempt).toHaveBeenCalledTimes(2);
     expect(getCapability).not.toHaveBeenCalled();
-    const source = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
+    const source = ['./DexV2Page.tsx', './CurrentSwapWorkspace.tsx'].map(file => readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')).join('\n');
     expect(source).toContain("outcome.attempt?.status === 'observed-reverted'");
     expect(source).toContain('pending || savedActionPending || issued || unknownOrigin');
     expect(source).toContain("if (pending.phase === 'quote')");
@@ -287,7 +289,7 @@ describe('DexV2Page', () => {
     expect(markup).toContain('Pools only');
     expect(markup).not.toContain('one private transaction');
     expect(markup).not.toContain('Testnet ready');
-    const source = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
+    const source = ['./DexV2Page.tsx', './CurrentSwapWorkspace.tsx'].map(file => readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')).join('\n');
     expect(markup).not.toContain('Check current contracts');
     expect(source).not.toContain("? 'Testnet ready'");
     expect(markup).toContain('You send');
@@ -379,7 +381,7 @@ describe('DexV2Page', () => {
 
 
   it('keeps keeper work out of the primary Swap action', () => {
-    const pageSource = readFileSync(fileURLToPath(new URL('./DexV2Page.tsx', import.meta.url)), 'utf8');
+    const pageSource = ['./DexV2Page.tsx', './CurrentSwapWorkspace.tsx'].map(file => readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')).join('\n');
 
     expect(pageSource).not.toContain('Manual test controls');
     expect(pageSource).not.toContain('processManually');

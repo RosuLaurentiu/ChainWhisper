@@ -9,7 +9,8 @@ import { currentSharedTokenFundingAbi } from './currentSharedDexTokenFunding';
 import { CURRENT_SHARED_TOKEN_DISTRIBUTION } from './currentSharedDexTokenDistribution';
 import { currentDexOwnerTransferAbi } from './currentDexOwnerTokenProof';
 import type { PrivateUint256Output } from './privateUint256';
-import type { CurrentTransport, MinedReceipt } from './currentDexSubmission';
+import type { MinedReceipt } from './currentDexSendBoundary';
+import type { CurrentTransport } from './currentDexSendBoundary';
 import type { CurrentDexActivityCandidate } from './currentDexActivityDiscovery';
 
 type Transaction = NonNullable<Awaited<ReturnType<CurrentTransport['readTransaction']>>>;

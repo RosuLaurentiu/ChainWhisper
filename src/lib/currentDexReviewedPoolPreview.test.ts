@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveCurrentCheapDexCandidate } from './dexV2Deployment';
 import { createCurrentPoolSubmissionAdapter } from './currentDexPoolSubmission';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY, currentDexScopedRecordKey } from './currentDexPendingAttempt';
-import type { CurrentTransport } from './currentDexSubmission';
+import type { CurrentTransport } from './currentDexSendBoundary';
 
 const browserContexts = vi.hoisted(() => new WeakMap<object, { owner: string }>());
 vi.mock('../features/wallet/ownerCotiMetaMaskCapability', () => ({

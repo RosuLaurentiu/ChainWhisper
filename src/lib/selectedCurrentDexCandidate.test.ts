@@ -19,7 +19,8 @@ import { readCurrentDexDisplay } from './currentDexDisplay';
 import { CURRENT_BROWSER_DEX_GRAPH, CURRENT_BROWSER_DEX_CORE, isCurrentDexBrowserSigner } from './currentDexBrowserPolicy';
 import { SHARED_RECEIPT_LIMIT_FILL_HISTORY_GRAPH } from './currentDexLimitFillHistory';
 import { currentNativeDexDailyPriceConfig } from './currentDexNativeDailyPriceTestnet';
-import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
+import { type CurrentTransport } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 
 describe('fixed current App candidate selection', () => {
   it('copies the captured public data exactly and keeps native admission held', () => {

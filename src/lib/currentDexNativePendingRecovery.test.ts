@@ -1,6 +1,7 @@
 import { Interface, keccak256 } from '@coti-io/coti-ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createCurrentCheapDexSubmissionAdapter, currentCheapDexGasCaps, type CurrentTransport } from './currentDexSubmission';
+import { createCurrentCheapDexSubmissionAdapter, currentCheapDexGasCaps } from './currentDexSubmission';
+import { type CurrentTransport } from './currentDexSendBoundary';
 import { resolveCurrentCheapDexCandidate, currentCheapDexQuoteProtocol, currentCheapDexStages, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, encodeCurrentDexQuoteRequest, type CurrentCheapDexProfile } from './currentDexOperation';
 import { CURRENT_DEX_ACCEPT_ABI, CURRENT_SLIPPAGE_DEX_ACCEPT_ABI } from './currentDexQuoteReview';

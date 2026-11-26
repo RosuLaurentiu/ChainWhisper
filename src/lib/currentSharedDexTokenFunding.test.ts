@@ -8,7 +8,8 @@ import { CURRENT_SHARED_TOKEN_DISTRIBUTION as policy, CURRENT_SHARED_DEX_TOKENS,
 import { readCurrentDexPendingAttempt, reserveCurrentDexPendingAttempt, CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY, currentDexScopedRecordKey } from './currentDexPendingAttempt';
 import { currentTokenFundingAbi as approvalAbi } from './currentDexTokenFunding';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './dexV2Deployment';
-import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { wasCurrentDexUnsentReleased } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 import type { CurrentPoolPreparedFunding, CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
 import type { CurrentLimitFundingReview } from '../features/wallet/currentDexLimitCapability';

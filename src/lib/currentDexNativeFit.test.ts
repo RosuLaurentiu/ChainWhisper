@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createCurrentAttemptBoundary, currentCheapDexGasCaps } from './currentDexSubmission';
+import { currentCheapDexGasCaps } from './currentDexSubmission';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE, rejectUnprovenNativeAdmission } from './dexV2Deployment';
 import { CURRENT_EXIT_SWAP_GAS_CAPS } from './currentDexExitSwapPolicy';
 

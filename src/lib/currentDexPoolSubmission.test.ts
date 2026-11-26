@@ -10,7 +10,7 @@ import { CurrentPoolProofMismatch } from './currentDexPoolProofError';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY } from './currentDexPendingAttempt';
 import * as currentDexC1SwapPolicy from './currentDexC1SwapPolicy';
 
-import { wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { wasCurrentDexUnsentReleased } from './currentDexSendBoundary';
 import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 
 // CW-086: only a registered signer has the browser wallet context. Every other signer keeps the engineering path.

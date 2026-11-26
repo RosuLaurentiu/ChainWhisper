@@ -1,6 +1,7 @@
 import { getAddress, keccak256 } from '@coti-io/coti-ethers';
 import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, type CurrentCheapDexCandidateKey } from './dexV2Deployment';
-import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
+import { type CurrentTransport } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { currentDexPendingStorage, clearCurrentDexPendingAttempt, blockCurrentTokenFundingVerification, recordCurrentDexPendingHash } from './currentDexPendingAttempt';
 import { currentTokenFundingAbi, CURRENT_TOKEN_FAUCET_AMOUNT, type CurrentTokenFundingState } from './currentDexTokenFunding';
 import { readCurrentTokenRefill, currentTokenRefillAbi, CURRENT_TOKEN_REFILL_AMOUNT, CURRENT_TOKEN_REFILL_COOLDOWN, type CurrentTokenRefillBinding, type CurrentTokenRefillState } from './currentDexTokenRefill';

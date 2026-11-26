@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { STAGED_EXIT_PREVIEW_DEX_CANDIDATE as current } from './currentDexExitCandidate';
 import { STAGED_NATIVE_DEX_CANDIDATE as historical } from './currentDexNativeCandidate';
-import { createCurrentAttemptBoundary, CURRENT_NATIVE_FIXED_GAS_PRICE, CURRENT_NATIVE_RECOVERY_RESERVE } from './currentDexSubmission';
+import { CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
+import { CURRENT_NATIVE_RECOVERY_RESERVE } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { CURRENT_EXIT_SWAP_GAS_CAPS, CURRENT_EXIT_SWAP_FIXED_GAS_PRICE, currentSwapFixedGasPrice } from './currentDexExitSwapPolicy';
 import { STAGED_D06_DEX_CANDIDATE } from './currentDexC1Candidate';
 import { encodeCurrentDexQuoteRequest } from './currentDexOperation';

@@ -2,7 +2,10 @@ import { AbiCoder, Interface, getAddress, keccak256 } from '@coti-io/coti-ethers
 import { isCurrentDexBrowserSigner } from './currentDexBrowserPolicy';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolPreparedPreview, type CurrentPoolPreparedFunding,
   type CurrentPoolPreparedTopUpPreview, type CurrentPoolPreparedTopUpFunding } from '../features/wallet/currentDexPoolFundingCapability';
-import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased, type CurrentDexSendProgress, type CurrentTransport } from './currentDexSubmission';
+import { type CurrentDexSendProgress } from './currentDexSubmission';
+import { type CurrentTransport } from './currentDexSendBoundary';
+import { wasCurrentDexUnsentReleased } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { blockCurrentPoolVerification, clearCurrentDexPendingAttempt, currentDexPendingStorage } from './currentDexPendingAttempt';
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI, decodeCurrentPoolFundingEvent, decodeCurrentPoolClaimMint, encodePreparedPoolTopUp, usesPackedPoolInputs } from './currentDexPoolFunding';
 import { resolveCurrentCheapDexCandidate, rejectUnprovenNativeAdmission, currentCheapDexCandidateKey, STAGED_SHARED_HISTORY_DEX_CANDIDATE, type CurrentCheapDexCandidateKey, type CurrentCheapDexCandidate } from './dexV2Deployment';

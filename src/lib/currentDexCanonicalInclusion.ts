@@ -1,4 +1,4 @@
-import type { CurrentTransport } from './currentDexSubmission';
+import type { CurrentTransport } from './currentDexSendBoundary';
 
 type Inputs = Parameters<NonNullable<CurrentTransport['verifyCanonicalInclusion']>>;
 type Rpc = (method: string, params: unknown[]) => Promise<unknown>;

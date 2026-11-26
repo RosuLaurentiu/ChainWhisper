@@ -13,7 +13,8 @@ import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from './appShared/contracts';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_DEX_OPERATION_LOOKUPS_KEY, readCurrentDexOperationLookups,
   recordCurrentDexOperationLookup } from './currentDexPendingAttempt';
 import { CURRENT_DEX_NATIVE_RELOAD_KEY, CURRENT_DEX_NORMAL_USE_RELOAD_KEY, currentDexNormalUseReloadKey, readCurrentDexNativeReload, writeCurrentDexNativeReload } from './currentDexNativeReload';
-import { createCurrentAttemptBoundary, type CurrentTransport } from './currentDexSubmission';
+import { type CurrentTransport } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 import { currentDexOwnerTransferAbi } from './currentDexOwnerTokenProof';
 import { currentNativeSigningBudget, currentNativeSwapCheckpoint, hasCurrentNativeSigningBudget } from './currentDexNativeSwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY } from './currentDexC1SwapPolicy';

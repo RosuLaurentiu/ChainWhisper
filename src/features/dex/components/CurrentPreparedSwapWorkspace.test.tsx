@@ -1,6 +1,8 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CurrentSwapWorkspace, reconcileCurrentTrialPending, verifyCurrentTrialCandidate } from './DexV2Page';
+import { verifyCurrentTrialCandidate } from './CurrentSwapWorkspace';
+import { reconcileCurrentTrialPending } from './CurrentSwapWorkspace';
+import { CurrentSwapWorkspace } from './CurrentSwapWorkspace';
 import { currentCheapDexStages, resolveCurrentCheapDexCandidate, type CurrentCheapDexCandidateKey } from '../../../lib/dexV2Deployment';
 import { readCurrentDexDisplay, parseDexCandidateTokenAmount, formatDexCandidateTokenAmount } from '../../../lib/currentDexDisplay';
 import CurrentSharedTestTokenControls from './CurrentSharedTestTokenControls';

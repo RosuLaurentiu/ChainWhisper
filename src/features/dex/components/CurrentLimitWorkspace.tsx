@@ -1,4 +1,4 @@
-import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSubmission';
+import { wasCurrentDexUnsentReleased } from '../../../lib/currentDexSendBoundary';
 import { CURRENT_UNSENT_RELEASED_MESSAGE, currentDexRecordScope } from '../../../lib/currentDexDisplay';
 import TokenApprovalChoice, { useTokenApprovalMode } from '../../wallet/TokenApprovalChoice';
 import { useRef,useState, type ReactNode } from 'react';

@@ -11,7 +11,8 @@ import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as candidate } from './selectedCurr
 import { CURRENT_APP_SWAP_OWNER } from './currentDexC1SwapPolicy';
 import { currentDexNormalUseReloadKey } from './currentDexNativeReload';
 import { readCurrentDexPendingAttempt, type CurrentDexPendingAttempt } from './currentDexPendingAttempt';
-import { createCurrentAttemptBoundary, wasCurrentDexUnsentReleased } from './currentDexSubmission';
+import { wasCurrentDexUnsentReleased } from './currentDexSendBoundary';
+import { createCurrentAttemptBoundary } from './currentDexSendBoundary';
 
 const chainId = 7082400n;
 const hash = (byte: string) => `0x${byte.repeat(32)}`;
