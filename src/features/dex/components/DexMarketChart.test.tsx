@@ -4,7 +4,7 @@ import { AbiCoder, Interface } from '@coti-io/coti-ethers';
 import { readCurrentDexDailyPrice,type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { currentDexMarketReference } from '../../../lib/currentDexMarketReference';
-import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles,buildCurrentDexChartCarryPoints,wrapExpandedChartFocus} from './DexMarketChart';
+import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles,buildCurrentDexChartCarryPoints,buildCurrentDexChartLiveCandle,wrapExpandedChartFocus} from './DexMarketChart';
 describe('DexMarketChart actual daily sample display',()=>{
   it('plots the last verified update on its completed day and keeps the live price separate',async()=>{
     const f=makeHistoryFixture(), event=new Interface(['event PoolReferenceUpdated(bytes32 indexed market, bytes32 indexed pair, bytes32 schema, bytes data)']);
@@ -137,6 +137,11 @@ describe('DexMarketChart actual daily sample display',()=>{
   });
   it.each(['suppressed','empty'] as const)('makes %s explicit without altering old samples',async mode=>{
     const f=makeHistoryFixture(mode),snapshot=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});const markup=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" history={{status:mode==='empty'?'empty':'ready',snapshot}}/>);expect(markup).toContain(mode==='empty'?'No saved daily samples':'suppressed or source changed');
+  });
+  it('draws the current day as a candle from the last verified price to the live price',()=>{
+    expect(buildCurrentDexChartLiveCandle({price:0.17,timestamp:1000},{timestamp:2000,price:0.21},20)).toEqual({day:'20',timestamp:2000,price:0.21,live:true,
+      openingPrice:0.17,openingTimestamp:1000,body:[0.17,0.21]});
+    expect(buildCurrentDexChartLiveCandle(undefined,{timestamp:2000,price:0.21},20)).toEqual({day:'20',timestamp:2000,price:0.21,live:true,separateLive:true});
   });
   it('retains separate recurring order levels',()=>{
     const markup=renderToStaticMarkup(<DexMarketChart recurringBuyLabel="Buy cwTPB" recurringBuyPrice={0.95} recurringSellLabel="Sell cwTPB" recurringSellPrice={1.05} showMarketSeries={false}/>);expect(markup).toContain('Buy cwTPB');expect(markup).toContain('Sell cwTPB');expect(markup).not.toContain('Daily samples');
