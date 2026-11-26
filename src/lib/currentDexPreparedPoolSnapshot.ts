@@ -483,7 +483,7 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
       await attest(block);
     }
     const observed = reuseIssuedState ? retained.state : await selectedState(producer.positionId, block);
-    requireProof(same({ ...observed, block: null }, { ...retained.state, block: null }), 'Prepared Pool producer is stale; sign a new snapshot.');
+    requireProof(same({ ...withoutSeparateC1(observed), block: null }, { ...withoutSeparateC1(retained.state), block: null }), 'Prepared Pool producer is stale; sign a new snapshot.');
     if (producer.status !== 4n) requireProof((await call(currentPoolNftAbi, nft, 'ownerOf', [producer.positionId], block))[0].toLowerCase() === owner.toLowerCase(), 'Prepared Pool owner changed.');
     await checkedGuard(); onVerifiedState?.(observed); return producer;
   };
@@ -508,20 +508,28 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
   return Object.freeze({ state, selectedState, issue, readSnapshot, verifySupersededSnapshot, current, wallets, canonical });
 };
 
+// CW-135: Core words 50..98 hold the C1 state of the primary market. Words 58..98 are its active state, which
+// the C1 service changes in every window. In the selected (browser) scope that is service state, not Pool
+// accounting. C1 configuration (50..57), every other Core word, and every ledger, anchor, claim, custody and
+// NFT word stay in each comparison. The full six-market scope keeps the complete C1 comparison.
+const separateC1Word = (index: number) => index >= 58 && index <= 98;
+export const withoutSeparateC1 = <T extends PreparedPoolAccountingState>(s: T): T =>
+  isPreparedPoolSelectedState(s) && Array.isArray(s.core) ? { ...s, core: s.core.map((v, i) => separateC1Word(i) ? 'separate-c1' : v) } : s;
+
 export const checkPreparedPoolSnapshotOnlyChange = (before: PreparedPoolAccountingState, after: PreparedPoolAccountingState) => {
   if(isPreparedPoolSelectedState(before))checkPreparedPoolSelectedScope(before);
   if(isPreparedPoolSelectedState(after))checkPreparedPoolSelectedScope(after);
   const closed = BigInt(before.claim[0]) === 4n;
   const cleanClaim = (claim: readonly string[]) => claim.map((v, i) =>
     (closed ? i >= 14 && i < 54 && (i - 14) % 4 >= 2 : i >= 13 && i < 54) ? 'snapshot' : v);
-  const clean = (s: PreparedPoolAccountingState) => ({ ...s, block: null, claim: cleanClaim(s.claim), claims: { ...s.claims,
+  const clean = (s: PreparedPoolAccountingState) => ({ ...withoutSeparateC1(s), block: null, claim: cleanClaim(s.claim), claims: { ...s.claims,
     [String(s.positionId)]: { marketId: s.marketId, words: cleanClaim(s.claim) } } });
   requireProof(same(clean(before), clean(after)), 'Prepared snapshot changed financial state.');
 };
 
 // Frozen 7c allocator counters advance across users; C1 active state is separate.
 const advancingCoreFields = [11,12,13,14,16,17];
-const creationCore = (s:PreparedPoolSelectedState) => s.core.map((v,i)=>advancingCoreFields.includes(i)?'allocator':i>=58&&i<=98?'separate-c1':v);
+const creationCore = (s:PreparedPoolSelectedState) => s.core.map((v,i)=>advancingCoreFields.includes(i)?'allocator':separateC1Word(i)?'separate-c1':v);
 const checkCreationCore = (before:PreparedPoolSelectedState,after:PreparedPoolSelectedState) => {
   requireProof(advancingCoreFields.every(i=>BigInt(after.core[i])>=BigInt(before.core[i])) && same(creationCore(before),creationCore(after)),
     'Prepared Pool creation Core configuration or monotonic counters changed.');

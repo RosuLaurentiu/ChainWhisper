@@ -92,6 +92,19 @@ describe('prepared Pool management accounting', () => {
     const before=select(f.input.before),managed=select(f.input.managed),after=select(f.after),input={...f.input,before,managed};
     const expected=transition(input)as PreparedPoolManagementExpectation;
     expect(snapshot({expected,managed,snapshot:after,observedAmounts:f.observedAmounts,managedWallets:input.managedWallets,snapshotWallets:clone(input.managedWallets)}).privateAccountingVerified).toBe(true);
+    // CW-135: a C1 window changes only the separate C1 active words (58..98) of Core. It is not Pool accounting.
+    const windowManaged=clone(managed),windowAfter=clone(after);
+    for(const i of [58,64,88,98])(windowManaged.core as string[])[i]=w(700+i);
+    for(const i of [63,66])(windowAfter.core as string[])[i]=w(900+i);
+    const windowExpected=transition({...input,managed:windowManaged})as PreparedPoolManagementExpectation;
+    expect(snapshot({expected:windowExpected,managed:windowManaged,snapshot:windowAfter,observedAmounts:f.observedAmounts,
+      managedWallets:input.managedWallets,snapshotWallets:clone(input.managedWallets)}).privateAccountingVerified).toBe(true);
+    for(const i of [57,99]){
+      const badManaged=clone(managed),badAfter=clone(after);(badManaged.core as string[])[i]=w(999);(badAfter.core as string[])[i]=w(999);
+      expect(()=>transition({...input,managed:badManaged}),`managed core ${i}`).toThrow();
+      expect(()=>snapshot({expected,managed,snapshot:badAfter,observedAmounts:f.observedAmounts,managedWallets:input.managedWallets,
+        snapshotWallets:clone(input.managedWallets)}),`snapshot core ${i}`).toThrow();
+    }
     for(const fault of ['anchor','ever-funded','nft-minted','escrow']as const){
       const bad=clone(managed);
       if(fault==='anchor')(bad.anchors[6]as string[])[13]=w(99);

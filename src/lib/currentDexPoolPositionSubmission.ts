@@ -43,6 +43,9 @@ type SnapshotCapability = Awaited<ReturnType<typeof issueCurrentDexPoolPositionC
 type SnapshotVerifier = (id: bigint, hash: string) => Promise<Awaited<ReturnType<SnapshotCapability['verifyPlainSnapshot'] | SnapshotCapability['verifySupersededPlainSnapshot']>>>;
 const ownerRecoveries=new WeakMap<object,Map<string,()=>Promise<NativeOwnerResult>>>();
 const same=(a:string|null,b:string)=>typeof a==='string'&&a.toLowerCase()===b.toLowerCase();
+// CW-135: the owner reviews a held top-up snapshot before its record is released. Values stay in memory only.
+export type CurrentPoolTopUpHoldReview = (facts: Readonly<{ positionId: bigint; fundingHash: string; snapshotHash: string;
+  shares: bigint; totalShares: bigint }>) => Promise<boolean>;
 const shape=(phase:string,data:string,owner:string,preparedCandidate=false,exitCandidate=false)=>{
   if(phase==='pool-snapshot') { const values=currentNativePoolSnapshotAbi.decodeFunctionData('poolSnapshot',data);
     if(values[0]<(preparedCandidate?8n:20n)||currentNativePoolSnapshotAbi.encodeFunctionData('poolSnapshot',values).toLowerCase()!==data.toLowerCase())throw new Error('Non-canonical native Pool snapshot.');return values; }
@@ -200,7 +203,7 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     const recover=ownerRecoveries.get(signer)?.get(`${pending.phase}:${pending.callHash}`);
     if(!recover)return null;return recover();
   };
-  const inspectPending=async(boundary:ReturnType<typeof createCurrentAttemptBoundary>,storage:ReturnType<typeof currentDexPendingStorage>,retain=false,verifySnapshot?:SnapshotVerifier)=>{
+  const inspectPending=async(boundary:ReturnType<typeof createCurrentAttemptBoundary>,storage:ReturnType<typeof currentDexPendingStorage>,retain=false,verifySnapshot?:SnapshotVerifier,reviewTopUpHold?:CurrentPoolTopUpHoldReview)=>{
     await transport.assertCurrent();const pending=boundary.pending();if(!pending)return null;
     if(pending.chainId!==chainId.toString()||!same(pending.owner,owner)||!same(pending.core,core)||pending.graph!==`0x${candidate.graph}`||
       !['pool-owner','pool-transfer','pool-snapshot'].includes(pending.phase))throw new Error('Pending action belongs to another owner or adapter.');
@@ -229,6 +232,51 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       if(!same(encoded.data,log.data)||encoded.topics.length!==log.topics.length||encoded.topics.some((v,i)=>!same(v,log.topics[i])))throw new Error('Snapshot metadata event is non-canonical.');
     }
     await recheck(request,pending.txHash,canonical,true);
+    // CW-135: a held top-up snapshot. The App checked the exact funding debits before it requested this snapshot.
+    // Recovery proves both mined calls again, authenticates the snapshot as the current owner state and needs
+    // owner review. The earlier comparison with the preview is not reconstructed. An accounting mismatch
+    // (top-up-accounting) and every other named failure keep the hold.
+    if(verifySnapshot&&reviewTopUpHold&&!retain&&candidateKey==='cheap-history'&&candidate.graph===currentCandidate.graph&&
+      candidate.packageSha256===currentCandidate.packageSha256&&canonical.status===1&&pending.phase==='pool-snapshot'&&
+      pending.verificationBlocked===true&&typeof pending.poolTopUpHash==='string'&&
+      (pending.verificationFailure==='pool-proof'||pending.verificationFailure==='snapshot-financial-state')&&
+      pending.target===undefined&&pending.operationId===undefined){
+      const fundingHash=pending.poolTopUpHash,funding=await transport.readTransaction(fundingHash);await transport.assertCurrent();
+      if(!funding||typeof funding.gasLimit!=='bigint'||typeof funding.nonce!=='number')throw new Error('Top-up funding transaction is unavailable. Keep the hold.');
+      const fundingGasLimit=funding.gasLimit,fundingNonce=funding.nonce;
+      const call=abi.decodeFunctionData('managePoolPosition',funding.data);
+      // ChainWhisperPoolOwner.Action.TOP_UP = 0.
+      if(!same(abi.encodeFunctionData('managePoolPosition',call),funding.data)||call[0]!==decoded[0]||call[2]!==0n)
+        throw new Error('Saved top-up funding call differs from this position. Keep the hold.');
+      const fundingReceipt=snapshotReceipt(await boundary.verifyMinedCall(Object.freeze({chainId,from:owner,to:core,value:0n,
+        data:funding.data,nonce:fundingNonce,gasLimit:fundingGasLimit}),fundingHash));
+      if(fundingReceipt.status!==1||fundingReceipt.blockNumber==null||canonical.blockNumber==null||fundingReceipt.blockNumber>=canonical.blockNumber)
+        throw new Error('Top-up funding did not succeed before its snapshot. Keep the hold.');
+      const result=await verifySnapshot(decoded[0],pending.txHash);
+      if(result.status!=='active-snapshot-verified')throw new Error('A later snapshot replaced this top-up snapshot. Keep the hold.');
+      assertVerifiedCurrentPoolSnapshot(result,signer);
+      await transport.assertCurrent();
+      const view=result.snapshot;
+      if(result.positionId!==decoded[0]||!same(result.transactionHash,pending.txHash)||view.chainId!==chainId||
+        !same(view.owner,owner)||!same(view.core,core)||view.graph!==candidate.graph||view.packageSha256!==candidate.packageSha256||
+        result.producer.status!==1n)throw new Error('Verified snapshot differs from the saved operation.');
+      boundary.requireOwnPending(pending,pending.txHash);
+      if(await reviewTopUpHold(Object.freeze({positionId:decoded[0] as bigint,fundingHash,snapshotHash:pending.txHash,
+        shares:result.producer.amounts.shares,totalShares:result.producer.amounts.totalShares}))===true){
+        await recheck(request,pending.txHash,canonical);
+        boundary.requireOwnPending(pending,pending.txHash);
+        const original=storage!.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY);
+        const archiveKey=`chainwhisper:dex:reviewed-top-up-snapshot:v1:${chainId}:${owner.toLowerCase()}:${core.toLowerCase()}:${pending.txHash}`;
+        const record=JSON.stringify({original,verification:'owner-reviewed-top-up-snapshot-current-state',blockHash:canonical.blockHash,
+          fundingBlockHash:fundingReceipt.blockHash,intervalAccounting:'not-reconstructed'});
+        const existing=storage!.getItem(archiveKey);
+        if(existing!==null&&existing!==record)throw new Error('Saved top-up review record changed. Keep the hold.');
+        storage!.setItem(archiveKey,record);
+        if(storage!.getItem(archiveKey)!==record)throw new Error('Top-up review record was not retained. Keep the hold.');
+        clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,pending.txHash));
+        return result;
+      }
+    }
     if(verifySnapshot&&candidateKey==='cheap-history'&&candidate.graph===currentCandidate.graph&&
       candidate.packageSha256===currentCandidate.packageSha256&&canonical.status===1&&
       pending.phase==='pool-snapshot'&&pending.verificationFailure==='snapshot-financial-state'&&
@@ -269,14 +317,14 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       ...closed,transactionHash:pending.txHash,phase:pending.phase,privateAccountingVerified:false as const,readyToSign:false as const});
   };
   return Object.freeze({submitPoolPositionAction,recoverCurrentPreparedPoolPositionResult,recoverCurrentNativePoolPositionResult,
-    recoverPendingPoolPositionAttempt:async(verifySnapshot?:SnapshotVerifier)=>{
+    recoverPendingPoolPositionAttempt:async(verifySnapshot?:SnapshotVerifier,reviewTopUpHold?:CurrentPoolTopUpHoldReview)=>{
       const held=boundary.pending();
       if(held&&storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)!==null){
         const refreshStorage=currentPoolRefreshStorage(storage,held);
         const refreshBoundary=createCurrentAttemptBoundary({storage:refreshStorage,c:candidate,core,owner,chainId,transport,attest,now,historical:false,canonicalIndexProof:true});
         return inspectPending(refreshBoundary,refreshStorage,true,verifySnapshot);
       }
-      return inspectPending(boundary,storage,false,verifySnapshot);
+      return inspectPending(boundary,storage,false,verifySnapshot,reviewTopUpHold);
     }});
 };
 

@@ -99,6 +99,50 @@ function preparedFixture(candidateKey:CurrentCheapDexCandidateKey='cheap-prepare
   return{...f,candidate,adapter:f.make(undefined,candidateKey)};
 }
 
+describe('held top-up snapshot release after owner review (CW-135)',()=>{
+  it.each(['approved','declined','no-review','accounting-failure','funding-missing','other-position','not-top-up','funding-reverted','funding-after','superseded','forged','closed','changed-record'] as const)(
+    'releases only a proved and reviewed record: %s',async fault=>{
+    const f=preparedFixture('cheap-history');preparedAdmission.allowed=true;allowLocalTechnicalSubmission();
+    await f.adapter.submitPoolPositionAction(f.prepared as never);
+    const fundingHash=toBeHex(77n,32),snapshotTx=f.tx();
+    const pending={...JSON.parse(f.storage.get(key)!),verificationBlocked:true,poolTopUpHash:fundingHash,
+      verificationFailure:fault==='accounting-failure'?'top-up-accounting':'pool-proof'};
+    const original=JSON.stringify(pending);f.storage.set(key,original);
+    const fundingTx={chainId,from:owner,to:f.candidate.core,value:0n,nonce:3,gasLimit:100_000_000n,hash:fundingHash,blockNumber:fault==='funding-after'?10:9,blockHash:toBeHex(29n,32),
+      data:abi.encodeFunctionData('managePoolPosition',[fault==='other-position'?9n:8n,context,fault==='not-top-up'?7n:0n,'0x'])};
+    const fundingReceipt={hash:fundingHash,status:fault==='funding-reverted'?0:1,from:owner,to:f.candidate.core,blockNumber:fundingTx.blockNumber,blockHash:fundingTx.blockHash,logs:[]};
+    f.transport.readTransaction.mockImplementation((async(h:string)=>h===fundingHash?fault==='funding-missing'?null:fundingTx:snapshotTx) as never);
+    f.transport.waitForReceipt.mockImplementation((async(h:string)=>h===fundingHash?fundingReceipt:f.receipt) as never);
+    f.transport.readBlockHash.mockImplementation((async(n:number)=>n===fundingTx.blockNumber&&fault!=='funding-after'?fundingTx.blockHash:hash) as never);
+    const proof={action:'snapshot',positionId:8n,transactionHash:txHash,producerHash:txHash,
+      status:fault==='superseded'?'superseded-snapshot-recovery-only':'active-snapshot-verified',privateAccountingVerified:false,readyToSign:false,
+      producer:{status:fault==='closed'?4n:1n,revisions:[2n,1n,1n,1n],amounts:{shares:150n,totalShares:1000n}},
+      snapshot:{chainId,owner,core:f.candidate.core,graph:f.candidate.graph,packageSha256:f.candidate.packageSha256}};
+    if(fault!=='forged')brands.set(proof,f.signer);
+    const verify=vi.fn(async()=>{if(fault==='changed-record')f.storage.set(key,JSON.stringify({...pending,nonce:8}));return proof;});
+    const review=vi.fn(async()=>fault!=='declined');
+    const run=()=>f.adapter.recoverPendingPoolPositionAttempt(verify as never,fault==='no-review'?undefined:review);
+    if(fault==='approved'){
+      expect(await run()).toBe(proof);
+      expect(review).toHaveBeenCalledWith({positionId:8n,fundingHash,snapshotHash:txHash,shares:150n,totalShares:1000n});
+      expect(f.storage.has(key)).toBe(false);
+      const archives=[...f.storage.entries()].filter(([k])=>k.startsWith('chainwhisper:dex:reviewed-top-up-snapshot:v1:'));
+      expect(archives).toHaveLength(1);
+      expect(JSON.parse(archives[0][1])).toEqual({original,verification:'owner-reviewed-top-up-snapshot-current-state',blockHash:hash,
+        fundingBlockHash:fundingTx.blockHash,intervalAccounting:'not-reconstructed'});
+      expect(archives[0][1]).not.toContain('150');
+    }else if(['declined','no-review','accounting-failure'].includes(fault)){
+      expect(await run()).toMatchObject({status:'observed-mined-verification-held',verificationBlocked:true});
+      expect(f.storage.get(key)).toBe(original);
+      if(fault!=='declined'){expect(verify).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();}
+    }else{
+      await expect(run()).rejects.toThrow();
+      expect(f.storage.has(key)).toBe(true);expect(review).not.toHaveBeenCalled();
+      expect([...f.storage.keys()].some(k=>k.startsWith('chainwhisper:dex:reviewed-top-up-snapshot:'))).toBe(false);
+    }
+    expect(f.transport.send).toHaveBeenCalledOnce();
+  });
+});
 describe.runIf(resolveCurrentCheapDexCandidate('cheap-history').graph===currentGap.graph)('initial-claim snapshot hold recovery',()=>{
   for(const recoveryOnly of [false,true])it.each(['success','independent','revision','closed','forged','wrong-owner','wrong-hash','wrong-chain','wrong-core','wrong-graph','wrong-package',
     'top-up','target','operation','other-failure','reverted','changed-record','storage-failure','archive-readback','slot-after-archive','reorg'] as const)(`retains ${recoveryOnly?'superseded':'current'} proof and never resends: %s`,async fault=>{

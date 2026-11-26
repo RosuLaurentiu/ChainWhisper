@@ -621,7 +621,13 @@ describe('prepared bounded financial preservation', () => {
   });
   it.each([false,true])('preserves C1 configuration, lifecycle and accounting checks (closed=%s)', async closed => {
     const f=fixture(closed),before=await f.reader.selectedState(8n,block);
+    // CW-135: C1 configuration (50..57) stays protected. The C1 service changes its active state (58..98) in each window.
     for(let index=50;index<=98;index++){
+      const bad=structuredClone(before);(bad.core as string[])[index]=word(BigInt(before.core[index])+1n);
+      if(index<58)expect(()=>checkPreparedPoolSnapshotOnlyChange(before,bad)).toThrow('financial state');
+      else expect(()=>checkPreparedPoolSnapshotOnlyChange(before,bad)).not.toThrow();
+    }
+    for(const index of [49,99]){
       const bad=structuredClone(before);(bad.core as string[])[index]=word(BigInt(before.core[index])+1n);
       expect(()=>checkPreparedPoolSnapshotOnlyChange(before,bad)).toThrow('financial state');
     }
@@ -702,5 +708,24 @@ describe('selected Pool scan reuse by storage root (CW-133)', () => {
     f.revoke();
     await expect(f.reader.selectedState(8n, block)).rejects.toThrow('lease revoked');
     expect(calls.eth_getStorageAt).toBe(6 * 810);
+  });
+});
+
+describe('separate C1 Core words in producer and snapshot comparisons (CW-135)', () => {
+  it('keeps a producer current across a C1 window and rejects another Core word', async () => {
+    const f = fixture(), producer = await f.reader.issue(8n, 'snapshot', transactionHash);
+    for (const slot of [58n, 64n, 88n, 98n]) f.put(candidate.core, slot, word(700));
+    await expect(f.reader.current(producer, block)).resolves.toBe(producer);
+    f.put(candidate.core, 57n, word(700));
+    await expect(f.reader.current(producer, block)).rejects.toThrow('Prepared Pool producer is stale; sign a new snapshot.');
+  });
+  it.each([57n, 99n, 10n])('accepts a snapshot-only change across a C1 window and rejects Core word %s', async other => {
+    const f = fixture(), before = await f.reader.selectedState(8n, block);
+    for (const slot of [63n, 66n, 74n, 88n]) f.put(candidate.core, slot, word(700));
+    const window = await f.reader.selectedState(8n, block);
+    expect(() => checkPreparedPoolSnapshotOnlyChange(before, window)).not.toThrow();
+    f.put(candidate.core, other, word(700));
+    const changed = await f.reader.selectedState(8n, block);
+    expect(() => checkPreparedPoolSnapshotOnlyChange(before, changed)).toThrow('Prepared snapshot changed financial state.');
   });
 });

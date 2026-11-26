@@ -86,6 +86,14 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
     }catch{return null;}
   })();
   const poolFundingPending=!!savedFunding;
+  // CW-135: both top-up transactions are mined, but the last check of the App stopped.
+  const heldTopUpSnapshot=(()=>{
+    if(!preparedCandidate||!savedActionPending)return false;
+    try{
+      const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
+      return saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&typeof saved.poolTopUpHash==='string'&&!!saved.txHash;
+    }catch{return false;}
+  })();
   const reviewablePreview=isReviewedPoolPreview(savedFunding);
   const independentRefresh=(()=>{try{
     const storage=currentDexPendingStorage(recordScope);
@@ -318,7 +326,19 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
           const result=latestHash&&latestHash.toLowerCase()!==hash.toLowerCase()
             ?await capability.verifySupersededPlainSnapshot(positionId,hash,latestHash):await capability.verifyPlainSnapshot(positionId,hash);
           assertScope(captured);return result;}:undefined;
-      const observed=await sender.recoverPendingPoolPositionAttempt(verifySnapshot);assertScope(captured);
+      const reviewTopUpHold=async(facts:{positionId:bigint;fundingHash:string;snapshotHash:string;shares:bigint;totalShares:bigint})=>{
+        assertScope(captured);
+        const confirmed=await requestConfirmation({
+          title:'Release the held top-up record',primaryLabel:'Release record',fundingMoves:[],stats:[],
+          summaryRows:[{label:'Position NFT',value:facts.positionId.toString()},{label:'Top-up transaction',value:facts.fundingHash},
+            {label:'Snapshot transaction',value:facts.snapshotHash},{label:'Your shares now',value:facts.shares.toString()},
+            {label:'Pool total shares',value:facts.totalShares.toString()}],
+          message:'Both transactions are mined. The App read your shares from this snapshot with your key. It did not finish its comparison with the top-up preview. Release the record only if your shares are correct. Release sends no transaction.'
+        });
+        assertScope(captured);
+        return confirmed;
+      };
+      const observed=await sender.recoverPendingPoolPositionAttempt(verifySnapshot,reviewTopUpHold);assertScope(captured);
       if(observed?.status==='released-unsent'){setPending(null);setBlocked(hasCurrentDexPendingAction(recordScope));setMessage(CURRENT_UNSENT_RELEASED_MESSAGE);return;}
       if(observed?.status==='superseded-snapshot-recovery-only'){
         setTransactionHash(observed.transactionHash);setPending(null);setSnapshot(null);setExitPreview(null);setProducerHash(observed.latestSnapshotHash);
@@ -379,6 +399,10 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
     </section><section className="dex-owner-detail" aria-label="Position details">
     <header className="dex-owner-heading"><h2>{current?`Position #${id}`:'Position details'}</h2></header>
+    {heldTopUpSnapshot&&!topUpOpen?<div className="dex-owner-progress">
+      <p>{privacyReady?'Your top-up and its snapshot are mined. The App did not finish its last check. Review the held top-up to release its record.':'Unlock privacy to review the held top-up.'}</p>
+      <button type="button" disabled={!connected||!privacyReady||busy||context.chain!==Number(candidate.chainId)} onClick={()=>{void refresh();}}>Review held top-up</button>
+    </div>:null}
     {reviewablePreview?<div className="dex-owner-progress">
       <p>{privacyReady?'If your wallet shows this request as Failed or Rejected with no transaction hash, you can review and release the saved Pool preview.':'Unlock privacy to review the saved Pool preview.'}</p>
       <button type="button" disabled={!connected||!privacyReady||busy} onClick={()=>{void reviewFailedPreview();}}>Review unsent preview</button>
