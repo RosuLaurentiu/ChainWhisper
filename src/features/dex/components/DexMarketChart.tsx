@@ -34,7 +34,8 @@ export function buildCurrentDexChartCandles(saved:readonly Sample[],live:{timest
   if(!live||!latest)return saved;
   const day=String(Math.floor(live.timestamp/DAY)),sameDay=day===latest.day;
   const openingPrice=sameDay?latest.openingPrice??latest.price:BigInt(day)===BigInt(latest.day)+1n?latest.price:undefined;
-  const current:Sample={day,timestamp:live.timestamp,price:live.price,...(live.recorded?{recorded:true}:{live:true}),...(openingPrice===undefined?{}:{openingPrice,body:[openingPrice,live.price]})};
+  const openingTimestamp=sameDay&&latest.openingPrice!==undefined?latest.openingTimestamp:latest.timestamp;
+  const current:Sample={day,timestamp:live.timestamp,price:live.price,...(live.recorded?{recorded:true}:{live:true}),...(openingPrice===undefined?{}:{openingPrice,openingTimestamp,body:[openingPrice,live.price]})};
   return [...saved.filter(point=>point.day!==day),current];
 }
 /** Owner decision 2026-11-21: each day with no saved sample after a candle shows a dotted mark, candle-wide, at the last
@@ -56,7 +57,7 @@ export function CandleMark({x=0,y=0,width=0,height=0,payload}:{x?:number;y?:numb
       <line x1={x+(width-markWidth)/2} x2={x+(width+markWidth)/2} y1={mid} y2={mid} stroke="rgba(190,195,215,0.85)" strokeWidth={2} strokeDasharray="1.5 1.5"/>
     </g>;
   }
-  const label=`${formatDay(payload.timestamp)}${tailNote(payload)}: ${payload.openingPrice===undefined?'single observed price':`open ${formatPrice(payload.openingPrice)}, close`} ${formatPrice(payload.price)}`;
+  const label=`${formatDay(payload.timestamp)}${tailNote(payload)}: ${payload.openingPrice===undefined?'sample':`earlier sample ${formatPrice(payload.openingPrice)}, displayed sample`} ${formatPrice(payload.price)}`;
   const color=payload.price>=(payload.openingPrice??payload.price)?'#26d6a0':'#ef49c1';
   const bodyHeight=payload.body?Math.max(Math.abs(height),2):2,bodyWidth=Math.min(width,8);
   const top=(height<0?y+height:y)-(bodyHeight-Math.abs(height))/2;
@@ -75,8 +76,12 @@ export function SampleTooltip({active,payload,preview,ratioLabel}:{active?:boole
   const point=payload?.[0]?.payload;if(!active||!point)return null;
   return <div className="dex-market-chart-tooltip"><strong>{formatDay(Number(point.day)*DAY)} UTC</strong>
     <small>{ratioLabel}{preview?' · Illustrative preview':''}{point.carry?' · No saved sample':tailNote(point)}</small>
-    {point.openingPrice===undefined?null:<div>Open <b>{formatPrice(point.openingPrice)}</b></div>}
-    <div>{point.carry?'Last saved price':point.openingPrice===undefined?'Price':'Close'} <b>{formatPrice(point.price)}</b></div></div>;
+    {point.openingPrice===undefined?null:<>
+      <div>Earlier sample <b>{formatPrice(point.openingPrice)}</b></div>
+      {point.openingTimestamp===undefined?null:<small>{formatTime(point.openingTimestamp)} UTC</small>}
+    </>}
+    <div>{point.carry?'Last saved price':point.live?'Live price':point.recorded?'Last observed price':preview?'Preview sample':'Saved sample'} <b>{formatPrice(point.price)}</b></div>
+    {point.carry?null:<small>{formatTime(point.timestamp)} UTC</small>}</div>;
 }
 /** CW-098: while the chart covers the page, Tab must not reach the hidden controls behind it. Returns the control to focus, or null to let the browser move focus. */
 export function wrapExpandedChartFocus<T>(items:readonly T[],active:T|null,backward:boolean):T|null{
@@ -184,7 +189,7 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       {preview?<strong>Illustrative preview · not market data</strong>:null}
       {illustrative&&!snapshot?<button type="button" aria-pressed={preview} onClick={()=>setPreviewSelected(v=>!v)}>{preview?'Hide illustrative preview':'Show illustrative preview'}</button>:null}
       <details><summary>Details</summary>{currentNotice?<p>{currentNotice}</p>:null}<p>{preview?'Preview never supplies Quote or settlement.':message[1]}</p>
-        {visible.length?<p>Body: previous recorded close → latest recorded price. No intraday high/low or final day close.</p>:null}
+        {visible.length?<p>Each bar connects two samples. Hover to see their UTC times.</p>:null}
         {live?<p>{live.recorded?'The current UTC day shows the last recorded Pool price; the current price is not verified. It is not a saved daily record.'
           :'The current UTC day updates from the live price; it is not a saved daily record.'} A single observation is a flat mark.</p>:null}
         {carryPoints.length?<p>Dotted marks show the last saved price on days without a saved sample. They are not records and do not prove the price was unchanged.</p>:null}
@@ -192,8 +197,8 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       </details>
     </div>:null}
     {showMarketSeries&&visibleSlots.length?<details className="dex-market-history-data"><summary>{preview?'Preview data':'Price data'}</summary><table>
-      <caption>{ratioLabel} · {preview?'illustrative preview':'actual daily observations; missing days are gaps'}. Open uses the previous-day record; close uses the latest record. No intraday high/low or final day close.</caption>
-      <thead><tr><th scope="col">UTC day</th><th scope="col">Open · previous record</th><th scope="col">Opening time UTC</th><th scope="col">Close · latest record</th><th scope="col">Closing time UTC</th>{preview?null:<><th scope="col">Source blocks · open / close</th><th scope="col">Record time UTC / block</th></>}</tr></thead>
+      <caption>{ratioLabel} · {preview?'illustrative preview':'one saved sample per UTC day; missing days are gaps'}.</caption>
+      <thead><tr><th scope="col">UTC day</th><th scope="col">Earlier sample</th><th scope="col">Earlier sample time UTC</th><th scope="col">{preview?'Displayed sample':'Saved sample'}</th><th scope="col">Sample time UTC</th>{preview?null:<><th scope="col">Source blocks · earlier / saved</th><th scope="col">Record time UTC / block</th></>}</tr></thead>
       <tbody>{visibleSlots.map(slot=>{const point=visible.find(p=>p.day===slot.day);return <tr key={slot.day}><td>{formatDay(Number(slot.day)*DAY)}</td><td>{point?.openingPrice===undefined?'—':formatPrice(point.openingPrice)}</td><td>{point?.openingTimestamp===undefined?'—':formatTime(point.openingTimestamp)}</td><td>{point?formatPrice(point.price):'Gap — no sample'}</td><td>{point?formatTime(point.timestamp):'—'}</td>{preview?null:<><td>{point?`${point.openingSourceBlock??'—'} / ${point.sourceBlock}`:'—'}</td><td>{point?.recordedAt?`${formatTime(Number(point.recordedAt))} / ${point.recordBlock}`:'—'}</td></>}</tr>;})}</tbody>
     </table></details>:null}
   </section>;

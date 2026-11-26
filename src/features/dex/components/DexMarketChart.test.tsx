@@ -55,23 +55,25 @@ describe('DexMarketChart actual daily sample display',()=>{
       expect(JSON.stringify(snapshot.slots)).toBe(saved);
     }finally{clock.mockRestore();}
   });
-  it('keeps the tooltip compact and leaves provenance in Price data',()=>{
-    const point={day:'20740',timestamp:1791989427,price:1,openingPrice:1.1,sourceBlock:'10080535',recordedAt:'1791989433',recordBlock:'10080538'};
+  it('labels both daily samples with their UTC times and leaves block provenance in Price data',()=>{
+    const timestamp=Date.parse('2026-11-26T00:00:19Z')/1000;
+    const point={day:String(Math.floor(timestamp/86400)),timestamp,price:0.175377,openingPrice:1,openingTimestamp:Date.parse('2026-11-25T00:07:00Z')/1000,sourceBlock:'10080535',recordedAt:String(timestamp+11),recordBlock:'10080538'};
     const markup=renderToStaticMarkup(<SampleTooltip active payload={[{payload:point}]} preview={false} ratioLabel="HBR/BCN"/>);
-    expect(markup).toContain('UTC');expect(markup).toContain('HBR/BCN');expect(markup).toContain('Open');expect(markup).toContain('Close');
-    expect(markup).not.toMatch(/source block|10080535|10080538|Recorded|intraday|Latest record|Previous record/);
+    expect(markup).toContain('HBR/BCN');expect(markup).toContain('Earlier sample');expect(markup).toContain('Saved sample');
+    expect(markup).toContain('00:07:00 UTC');expect(markup).toContain('00:00:19 UTC');
+    expect(markup).not.toMatch(/source block|10080535|10080538|Open|Close/);
     const single=renderToStaticMarkup(<SampleTooltip active payload={[{payload:{...point,openingPrice:undefined}}]} preview={false} ratioLabel="HBR/BCN"/>);
-    expect(single).toContain('Price');expect(single).not.toMatch(/Open|Close/);
+    expect(single).toContain('Saved sample');expect(single).not.toContain('Earlier sample');
     expect(renderToStaticMarkup(<SampleTooltip active payload={[{payload:point}]} preview ratioLabel="HBR/BCN"/>)).toContain('Illustrative preview');
     expect(renderToStaticMarkup(<SampleTooltip active={false} payload={[{payload:point}]} preview={false} ratioLabel="HBR/BCN"/>)).toBe('');
   });
   it('uses one live candle/UTC day without bridging gaps or changing saved records',()=>{
-    const saved=[{day:'20000',timestamp:20000*86400+60,price:1},{day:'20001',timestamp:20001*86400+60,price:2,openingPrice:1,body:[1,2] as [number,number]}];
+    const saved=[{day:'20000',timestamp:20000*86400+60,price:1},{day:'20001',timestamp:20001*86400+60,price:2,openingPrice:1,openingTimestamp:20000*86400+60,body:[1,2] as [number,number]}];
     const before=JSON.stringify(saved);
-    expect(buildCurrentDexChartCandles(saved,{timestamp:20001*86400+120,price:1.5})).toEqual([saved[0],{day:'20001',timestamp:20001*86400+120,price:1.5,openingPrice:1,body:[1,1.5],live:true}]);
-    expect(buildCurrentDexChartCandles(saved,{timestamp:20002*86400,price:3})[2]).toMatchObject({openingPrice:2,body:[2,3],live:true});
+    expect(buildCurrentDexChartCandles(saved,{timestamp:20001*86400+120,price:1.5})).toEqual([saved[0],{day:'20001',timestamp:20001*86400+120,price:1.5,openingPrice:1,openingTimestamp:saved[0].timestamp,body:[1,1.5],live:true}]);
+    expect(buildCurrentDexChartCandles(saved,{timestamp:20002*86400,price:3})[2]).toMatchObject({openingPrice:2,openingTimestamp:saved[1].timestamp,body:[2,3],live:true});
     expect(buildCurrentDexChartCandles(saved,{timestamp:20004*86400,price:3})[2]).not.toHaveProperty('openingPrice');
-    expect(buildCurrentDexChartCandles(saved,{timestamp:20002*86400,price:3,recorded:true})[2]).toEqual({day:'20002',timestamp:20002*86400,price:3,openingPrice:2,body:[2,3],recorded:true});
+    expect(buildCurrentDexChartCandles(saved,{timestamp:20002*86400,price:3,recorded:true})[2]).toEqual({day:'20002',timestamp:20002*86400,price:3,openingPrice:2,openingTimestamp:saved[1].timestamp,body:[2,3],recorded:true});
     expect(renderToStaticMarkup(<svg><CandleMark payload={{day:'20002',timestamp:20002*86400,price:3,openingPrice:2,body:[2,3],recorded:true}}/></svg>)).toContain('Last recorded, not saved');
     expect(renderToStaticMarkup(<SampleTooltip active payload={[{payload:{day:'20002',timestamp:20002*86400,price:3,recorded:true}}]} preview={false} ratioLabel="HBR/BCN"/>)).toContain('Last recorded, not saved');
     expect(buildCurrentDexChartCandles(saved,null)).toBe(saved);expect(JSON.stringify(saved)).toBe(before);
@@ -98,7 +100,7 @@ describe('DexMarketChart actual daily sample display',()=>{
   it('renders exact observed time/source and recording provenance with gaps and reciprocal units',async()=>{
     const f=makeHistoryFixture(),snapshot=await readCurrentDexDailyPrice({provider:f.provider,manifest:f.manifest,finalityLagBlocks:0});
     const normal=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" history={{status:'ready',snapshot}}/>);
-    expect(normal).toContain('DEX daily sampled price history');expect(normal).toContain('Last sample 2 cwTPB/cwTPA');expect(normal).toContain('Gap — no sample');expect(normal).toContain('02:00:00');expect(normal).toContain('02:00:05');expect(normal).toContain('>— / 90</td>');expect(normal).toContain('Open uses the previous-day record');expect(normal).toContain('No intraday high/low or final day close');expect(normal).not.toContain('candle preview');expect(normal).not.toContain('Volume');
+    expect(normal).toContain('DEX daily sampled price history');expect(normal).toContain('Last sample 2 cwTPB/cwTPA');expect(normal).toContain('Gap — no sample');expect(normal).toContain('02:00:00');expect(normal).toContain('02:00:05');expect(normal).toContain('>— / 90</td>');expect(normal).toContain('Earlier sample time UTC');expect(normal).toContain('one saved sample per UTC day');expect(normal).not.toContain('candle preview');expect(normal).not.toContain('Volume');
     const inverse=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPA" quoteSymbol="cwTPB" priceDisplayInverted history={{status:'ready',snapshot}}/>);expect(inverse).toContain('Last sample 0.5 cwTPA/cwTPB');expect(inverse).toContain('02:00:00');
     const reversed=renderToStaticMarkup(<DexMarketChart baseSymbol="cwTPB" quoteSymbol="cwTPA" history={{status:'ready',snapshot}}/>);
     expect(reversed).toContain('Last sample 0.5 cwTPA/cwTPB');expect(reversed).toContain('02:00:00');

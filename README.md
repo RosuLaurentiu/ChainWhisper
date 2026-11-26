@@ -75,7 +75,7 @@ The chat app is a wallet-native encrypted messenger for COTI.
 
 The DEX uses shared Full Range pools, liquidity-position NFTs and plain Limit orders.
 
-- Trade supports Fast pool swaps, asynchronous same-pair swaps and Limit creation. It shows the current market reference, daily chart, editable 0.5% initial slippage and exact review terms.
+- Trade supports Fast pool swaps, asynchronous same-pair swaps and Limit creation. It shows the current market reference, daily chart, editable 0.5% initial slippage and exact review terms. The daily chart tooltip shows the actual UTC times of the samples each bar connects.
 - Liquidity creates and funds current pool positions. Manage provides orders, positions, activity and required owner recovery.
 - The four private test tokens have claim/refill controls. Contract eligibility, balances, transaction fit, exact accounting and no-resend checks still apply.
 - Keeper, Limit matching, C1 and price recording are separate services. A frontend build does not start them.
