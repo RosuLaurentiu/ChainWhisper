@@ -1,4 +1,5 @@
 import { defineConfig, type Plugin } from 'vite';
+import { configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
@@ -28,6 +29,11 @@ export default defineConfig(({ mode }) => {
     ...(mode === 'coti-testnet-candidate' ? { hmr: false } : {}),
     // Evidence snapshots are not App inputs; watching them blocks cold startup.
     watch: { ignored: ['**/reports/**'] }
+  },
+  test: {
+    // CW-114: reports/ keeps evidence snapshots with old copies of src tests. A `vitest run src` path
+    // filter also matches reports/**/src, so those copies must never be collected.
+    exclude: [...configDefaults.exclude, 'reports/**']
   },
   build: {
     chunkSizeWarningLimit: 900,
