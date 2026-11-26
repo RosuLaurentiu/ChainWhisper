@@ -12,7 +12,8 @@ import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi, currentPool
 import { currentNativePoolSnapshotAbi } from './currentDexNativePoolSnapshot';
 import { requireCurrentNativePoolSession, CURRENT_NATIVE_POOL_PROFILE, CURRENT_NATIVE_POOL_LIMITS } from './currentDexNativePoolPolicy';
 import { currentNativeSigningBudget, isCurrentNativeSwapCandidate, recordCurrentNativePoolOutcome, completeCurrentNativePoolScope } from './currentDexNativeSwapPolicy';
-import { isKnownCurrentPoolProofMismatch, CurrentPoolProofMismatch } from './currentDexPoolProofError';
+import { isKnownCurrentPoolProofMismatch, CurrentPoolProofMismatch, isReviewableTopUpFailure } from './currentDexPoolProofError';
+import { addCurrentPositionReview, readCurrentPositionReviews, releaseCurrentPositionReview } from './currentDexPositionReview';
 import { assertCurrentPoolFundingPrepared, type CurrentPoolTopUpResult } from '../features/wallet/currentDexPoolFundingCapability';
 
 // Native ownership and previewed exit: shared-history-pool-{ownership,withdrawal}-2026-10-13/RESULT.json.
@@ -77,6 +78,21 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       const id=`${attempt.phase}:${attempt.callHash}`,exact=attemptKeys.get(signer)?.get(id);
       if(exact!==undefined){submitted.get(signer)?.delete(exact);attemptKeys.get(signer)!.delete(id);}
     }});
+  // CW-135 / CW-140.02: proves that the saved top-up funding of this position succeeded before its snapshot.
+  const proveTopUpFunding=async(attempts:ReturnType<typeof createCurrentAttemptBoundary>,fundingHash:string,positionId:bigint,
+    snapshot:ReturnType<typeof snapshotReceipt>)=>{
+    const funding=await transport.readTransaction(fundingHash);await transport.assertCurrent();
+    if(!funding||typeof funding.gasLimit!=='bigint'||typeof funding.nonce!=='number')throw new Error('Top-up funding transaction is unavailable. Keep the hold.');
+    const call=abi.decodeFunctionData('managePoolPosition',funding.data);
+    // ChainWhisperPoolOwner.Action.TOP_UP = 0.
+    if(!same(abi.encodeFunctionData('managePoolPosition',call),funding.data)||call[0]!==positionId||call[2]!==0n)
+      throw new Error('Saved top-up funding call differs from this position. Keep the hold.');
+    const fundingReceipt=snapshotReceipt(await attempts.verifyMinedCall(Object.freeze({chainId,from:owner,to:core,value:0n,
+      data:funding.data,nonce:funding.nonce,gasLimit:funding.gasLimit}),fundingHash));
+    if(fundingReceipt.status!==1||fundingReceipt.blockNumber==null||snapshot.blockNumber==null||fundingReceipt.blockNumber>=snapshot.blockNumber)
+      throw new Error('Top-up funding did not succeed before its snapshot. Keep the hold.');
+    return fundingReceipt;
+  };
   const recheck=async(request:Parameters<typeof boundary.recheckMinedCall>[0],hash:string,before:ReturnType<typeof snapshotReceipt>,failed=false)=>{
     if(isCurrentNativeSwapCandidate(candidate)||preparedCandidate)return boundary.recheckMinedCall(request,hash,before,failed);
     const after=snapshotReceipt(await boundary.verifyMinedCall(request,hash,failed));
@@ -86,6 +102,9 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
   };
   let keys=submitted.get(signer);if(!keys){keys=new Set();submitted.set(signer,keys);}
   const submitPoolPositionAction=async(prepared:CurrentPoolPreparedPositionAction|CurrentPoolPreparedSnapshot|CurrentPoolPreparedExitPreview,topUp?:CurrentPoolTopUpResult,options?:{refreshHeldSnapshot:true})=>{
+    // CW-140.02: a position that waits for the owner's review accepts no new transaction until it is released.
+    if(readCurrentPositionReviews(storage,{chainId:chainId.toString(),owner,core}).some(row=>row.positionId===String(prepared.positionId)))
+      throw new Error('This position waits for your review. Confirm its shares first. Nothing was sent.');
     let sendStorage=storage,sendBoundary=boundary;
     const held=options?.refreshHeldSnapshot?boundary.pending():null;
     if(options){
@@ -239,19 +258,9 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     if(verifySnapshot&&reviewTopUpHold&&!retain&&candidateKey==='cheap-history'&&candidate.graph===currentCandidate.graph&&
       candidate.packageSha256===currentCandidate.packageSha256&&canonical.status===1&&pending.phase==='pool-snapshot'&&
       pending.verificationBlocked===true&&typeof pending.poolTopUpHash==='string'&&
-      (pending.verificationFailure==='pool-proof'||pending.verificationFailure==='snapshot-financial-state')&&
+      isReviewableTopUpFailure(pending.verificationFailure)&&
       pending.target===undefined&&pending.operationId===undefined){
-      const fundingHash=pending.poolTopUpHash,funding=await transport.readTransaction(fundingHash);await transport.assertCurrent();
-      if(!funding||typeof funding.gasLimit!=='bigint'||typeof funding.nonce!=='number')throw new Error('Top-up funding transaction is unavailable. Keep the hold.');
-      const fundingGasLimit=funding.gasLimit,fundingNonce=funding.nonce;
-      const call=abi.decodeFunctionData('managePoolPosition',funding.data);
-      // ChainWhisperPoolOwner.Action.TOP_UP = 0.
-      if(!same(abi.encodeFunctionData('managePoolPosition',call),funding.data)||call[0]!==decoded[0]||call[2]!==0n)
-        throw new Error('Saved top-up funding call differs from this position. Keep the hold.');
-      const fundingReceipt=snapshotReceipt(await boundary.verifyMinedCall(Object.freeze({chainId,from:owner,to:core,value:0n,
-        data:funding.data,nonce:fundingNonce,gasLimit:fundingGasLimit}),fundingHash));
-      if(fundingReceipt.status!==1||fundingReceipt.blockNumber==null||canonical.blockNumber==null||fundingReceipt.blockNumber>=canonical.blockNumber)
-        throw new Error('Top-up funding did not succeed before its snapshot. Keep the hold.');
+      const fundingHash=pending.poolTopUpHash,fundingReceipt=await proveTopUpFunding(boundary,fundingHash,decoded[0] as bigint,canonical);
       const result=await verifySnapshot(decoded[0],pending.txHash);
       if(result.status!=='active-snapshot-verified')throw new Error('A later snapshot replaced this top-up snapshot. Keep the hold.');
       assertVerifiedCurrentPoolSnapshot(result,signer);
@@ -307,6 +316,27 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
       clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,pending.txHash));
       return result;
     }
+    // CW-140.02: a mined, held top-up snapshot moves to the review list of its own position. Its wallet nonce is no
+    // longer uncertain, so Swap, Limit and other positions are free again; only this position stays locked until the
+    // owner reviews it. The top-up funding is proved again here; nothing is signed, sent or reconstructed.
+    if(!retain&&preparedCandidate&&candidateKey==='cheap-history'&&candidate.graph===currentCandidate.graph&&
+      candidate.packageSha256===currentCandidate.packageSha256&&pending.phase==='pool-snapshot'&&pending.verificationBlocked===true&&
+      typeof pending.poolTopUpHash==='string'&&storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)===null&&
+      pending.target===undefined&&pending.operationId===undefined&&typeof canonical.blockHash==='string'){
+      const topUp=typeof pending.poolTopUpHash==='string'&&canonical.status===1&&isReviewableTopUpFailure(pending.verificationFailure);
+      const fundingReceipt=topUp?await proveTopUpFunding(boundary,pending.poolTopUpHash!,decoded[0] as bigint,canonical):null;
+      await recheck(request,pending.txHash,canonical,true);
+      boundary.requireOwnPending(pending,pending.txHash);
+      const original=storage!.getItem(CURRENT_DEX_PENDING_ATTEMPT_KEY);
+      if(original===null)throw new Error('The saved position record changed. Keep the hold.');
+      addCurrentPositionReview(storage,{chainId:chainId.toString(),owner,core},{version:1,positionId:(decoded[0] as bigint).toString(),
+        txHash:pending.txHash.toLowerCase(),poolTopUpHash:typeof pending.poolTopUpHash==='string'?pending.poolTopUpHash.toLowerCase():null,
+        verificationFailure:pending.verificationFailure??null,reviewable:topUp,canonicalStatus:canonical.status===0?0:1,
+        blockHash:canonical.blockHash.toLowerCase(),fundingBlockHash:typeof fundingReceipt?.blockHash==='string'?fundingReceipt.blockHash.toLowerCase():null,original});
+      clearCurrentDexPendingAttempt(storage,boundary.requireOwnPending(pending,pending.txHash));
+      return Object.freeze({status:'moved-to-position-review' as const,positionId:decoded[0] as bigint,transactionHash:pending.txHash,
+        reviewable:topUp,verificationFailure:pending.verificationFailure,privateAccountingVerified:false as const,readyToSign:false as const});
+    }
     // A public receipt cannot clear a prior private-proof failure or recreate its baseline.
     const closed=canonical.status===1&&action==='close'?{closedPositionId:decoded[0] as bigint}:{};
     if(retain||pending.verificationBlocked||pending.poolTopUpHash)return Object.freeze({status:canonical.status===0?'observed-reverted-verification-held' as const:'observed-mined-verification-held' as const,
@@ -316,7 +346,44 @@ export const createCurrentPoolPositionSubmissionAdapter=({signer,ownerAddress,ch
     return Object.freeze({status:canonical.status===0?'observed-reverted' as const:'observed-mined' as const,
       ...closed,transactionHash:pending.txHash,phase:pending.phase,privateAccountingVerified:false as const,readyToSign:false as const});
   };
+  // CW-140.02: releases one reviewed top-up position. Proves the saved snapshot and funding again, authenticates the
+  // snapshot as the current owner state and asks the owner to confirm the shares. Release sends no transaction.
+  const reviewScope={chainId:chainId.toString(),owner,core};
+  const releasePositionReview=async(txHash:string,verifySnapshot:SnapshotVerifier,review:CurrentPoolTopUpHoldReview)=>{
+    await transport.assertCurrent();
+    const entry=readCurrentPositionReviews(storage,reviewScope).find(row=>row.txHash===txHash.toLowerCase());
+    if(!entry)return null;
+    if(!entry.reviewable||!entry.poolTopUpHash||!entry.fundingBlockHash)throw new Error('This position needs manual reconciliation. Its review stays.');
+    const positionId=BigInt(entry.positionId);
+    let saved:{nonce?:unknown;callHash?:unknown};
+    try{saved=JSON.parse(entry.original);}catch{throw new Error('The saved review record is invalid. Keep the review.');}
+    const tx=await transport.readTransaction(entry.txHash);await transport.assertCurrent();
+    if(!tx||typeof saved.nonce!=='number'||keccak256(tx.data).toLowerCase()!==saved.callHash)throw new Error('The reviewed snapshot transaction changed. Keep the review.');
+    if(shape('pool-snapshot',tx.data,owner,preparedCandidate,exitCandidate)[0]!==positionId)throw new Error('The reviewed snapshot is for another position. Keep the review.');
+    const request=Object.freeze({chainId,from:owner,to:core,value:0n,data:tx.data,nonce:saved.nonce,gasLimit:30_000_000n});
+    const canonical=snapshotReceipt(await boundary.verifyMinedCall(request,entry.txHash,true));
+    if(canonical.status!==1||typeof canonical.blockHash!=='string'||canonical.blockHash.toLowerCase()!==entry.blockHash)
+      throw new Error('The reviewed snapshot receipt changed. Keep the review.');
+    const fundingReceipt=await proveTopUpFunding(boundary,entry.poolTopUpHash,positionId,canonical);
+    if(typeof fundingReceipt.blockHash!=='string'||fundingReceipt.blockHash.toLowerCase()!==entry.fundingBlockHash)
+      throw new Error('The reviewed top-up receipt changed. Keep the review.');
+    const result=await verifySnapshot(positionId,entry.txHash);
+    if(result.status!=='active-snapshot-verified')throw new Error('A later snapshot replaced this top-up snapshot. Keep the review.');
+    assertVerifiedCurrentPoolSnapshot(result,signer);await transport.assertCurrent();
+    const view=result.snapshot;
+    if(result.positionId!==positionId||!same(result.transactionHash,entry.txHash)||view.chainId!==chainId||!same(view.owner,owner)||
+      !same(view.core,core)||view.graph!==candidate.graph||view.packageSha256!==candidate.packageSha256||result.producer.status!==1n)
+      throw new Error('Verified snapshot differs from the saved review.');
+    if(await review(Object.freeze({positionId,fundingHash:entry.poolTopUpHash,snapshotHash:entry.txHash,
+      shares:result.producer.amounts.shares,totalShares:result.producer.amounts.totalShares}))!==true)return Object.freeze({status:'review-kept' as const});
+    await recheck(request,entry.txHash,canonical);
+    releaseCurrentPositionReview(storage,reviewScope,entry.txHash,JSON.stringify({original:entry.original,
+      verification:'owner-reviewed-top-up-snapshot-current-state',blockHash:canonical.blockHash,fundingBlockHash:fundingReceipt.blockHash,
+      intervalAccounting:'not-reconstructed'}));
+    return result;
+  };
   return Object.freeze({submitPoolPositionAction,recoverCurrentPreparedPoolPositionResult,recoverCurrentNativePoolPositionResult,
+    releasePositionReview,readPositionReviews:()=>readCurrentPositionReviews(storage,reviewScope),
     recoverPendingPoolPositionAttempt:async(verifySnapshot?:SnapshotVerifier,reviewTopUpHold?:CurrentPoolTopUpHoldReview)=>{
       const held=boundary.pending();
       if(held&&storage?.getItem(CURRENT_POOL_REFRESH_ATTEMPT_KEY)!==null){

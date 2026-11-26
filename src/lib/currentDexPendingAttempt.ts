@@ -36,9 +36,12 @@ export const currentDexOwnerRecovery = (attempt: CurrentDexPendingAttempt | null
     attempt.phase === 'pool-preview' || attempt.phase === 'pool-fund' && attempt.poolTopUpHash !== null ? 'liquidity' : 'positions';
   const preview = attempt.phase === 'pool-preview';
   return { view, alternateView: preview ? 'positions' as const : null,
-    label: preview ? 'Open new-Pool recovery' : view === 'activity' ? 'Open order recovery' : view === 'liquidity' ? 'Open liquidity recovery' : 'Open position recovery',
-    message: preview ? 'A Pool preview needs verification. For a new Pool, open Liquidity. For a top-up, open Manage → Positions. Use the existing action recovery; do not request another preview.' :
-      `${view === 'activity' ? 'A Limit' : 'A Pool'} action needs verification. Open ${view === 'activity' ? 'Manage → Orders' : view === 'positions' ? 'Manage → Positions' : 'Liquidity'} and use Status and recovery. The saved record stays protected. Do not resend.` };
+    // CW-140.02: one plain message and one button per item that needs attention.
+    label: preview ? 'Open the new Pool' : view === 'activity' ? 'Open the order' : view === 'liquidity' ? 'Open Liquidity' : 'Open the position',
+    message: preview ? 'A Pool preview needs your attention. For a new Pool, open Liquidity; for a top-up, open the position. Nothing is resent.' :
+      view === 'activity' ? 'A Limit order needs your attention. Open it to check its status. Nothing is resent.' :
+      view === 'liquidity' ? 'A deposit needs your attention. Open Liquidity to finish it. Nothing is resent.' :
+      'A position needs your attention. Open it to check its status. Nothing is resent.' };
 };
 export const CURRENT_POOL_REFRESH_ATTEMPT_KEY = 'chainwhisper:dex:pool-refresh-attempt:v1';
 // Public lookup only. Confirmed Accept is no longer an uncertain send, but its

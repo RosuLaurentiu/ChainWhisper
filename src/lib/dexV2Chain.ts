@@ -132,6 +132,8 @@ type Binding = Readonly<{
   request: ReadProvider['request'];
   chainId: bigint;
   assertCurrent: () => void | Promise<void>;
+  /** Public contract qualification is shared by every capability with this scope (CW-140.03). */
+  qualificationScope: object;
 }>;
 
 declare const DEX_V2_READ_CAPABILITY_BRAND: unique symbol;
@@ -154,7 +156,8 @@ export type AttestedDexV2Deployment = Readonly<{
 
 const CAPABILITIES = new WeakMap<object, Binding>();
 const ATTESTED = new WeakSet<object>();
-const SHARED_QUALIFICATIONS = new WeakMap<Binding, Readonly<{ identity: string; number: bigint; hash: string;
+// Keyed by the read provider of one page session. A reuse still checks the qualification block hash on the new capability.
+const SHARED_QUALIFICATIONS = new WeakMap<object, Readonly<{ identity: string; number: bigint; hash: string;
   registryImmutableProof?: true; lastBlock?: Readonly<{ number: bigint; hash: string; timestamp: bigint }> }>>();
 
 const quantity = (value: unknown, label: string, maximum = UINT256_MAX): bigint => {
@@ -261,17 +264,24 @@ const requireRuntime = async (
 export const createDexV2ReadCapability = ({
   provider,
   chainId,
-  assertCurrent
+  assertCurrent,
+  qualificationScope
 }: {
   provider: ReadProvider;
   chainId: bigint;
   assertCurrent: () => void | Promise<void>;
+  /** The shared read provider. Capabilities without one qualify the contracts on their own. */
+  qualificationScope?: object;
 }): DexV2ReadCapability => {
   if (!provider || typeof provider.request !== 'function' || typeof assertCurrent !== 'function' || chainId <= 0n) {
     throw new Error('DEX V2 read capability input is invalid.');
   }
   const capability = Object.freeze({}) as DexV2ReadCapability;
-  CAPABILITIES.set(capability, Object.freeze({ request: provider.request.bind(provider), chainId, assertCurrent }));
+  if (qualificationScope !== undefined && (typeof qualificationScope !== 'object' || qualificationScope === null)) {
+    throw new Error('DEX V2 read capability input is invalid.');
+  }
+  CAPABILITIES.set(capability, Object.freeze({ request: provider.request.bind(provider), chainId, assertCurrent,
+    qualificationScope: qualificationScope ?? capability }));
   return capability;
 };
 
@@ -646,12 +656,13 @@ export const readCurrentSharedPoolDexGraph = async ({ capability, blockNumber, b
       }
       return readCanonicalHead();
     };
-    const identity = candidate === 'cheap-history' ? JSON.stringify(m) : null;
+    const identity = candidate === 'cheap-history' ? `${binding.chainId}:${JSON.stringify(m)}` : null;
     const currentGraph = candidate === 'cheap-history' && isFixedCurrentDexCandidate(m);
-    let qualified = identity ? SHARED_QUALIFICATIONS.get(binding) : undefined;
-    if (SHARED_QUALIFICATIONS.get(binding)?.identity !== identity || currentGraph && qualified?.lastBlock && blockNumber < qualified.lastBlock.number) {
-      SHARED_QUALIFICATIONS.delete(binding); qualified = undefined;
-    }
+    let qualified = identity ? SHARED_QUALIFICATIONS.get(binding.qualificationScope) : undefined;
+    if (qualified && qualified.identity !== identity) { SHARED_QUALIFICATIONS.delete(binding.qualificationScope); qualified = undefined; }
+    // CW-140.03: capabilities in one scope read at different heads. A read before the qualification block
+    // qualifies on its own and leaves the cache unchanged; a later read reuses it after the block-hash check below.
+    if (qualified && blockNumber < qualified.number) qualified = undefined;
     const reuse = qualified?.identity === identity;
     const coreRuntime = m.runtimes.find(([role]) => role === 'ChainWhisperDexCore')![2];
     const graphAt = (timestamp: bigint) => Object.freeze({ graph: m.graph, packageSha256: m.packageSha256, chainId: binding.chainId,
@@ -673,16 +684,17 @@ export const readCurrentSharedPoolDexGraph = async ({ capability, blockNumber, b
     };
     const rememberBlock = (timestamp: bigint) => {
       if (!identity) return;
-      const current = SHARED_QUALIFICATIONS.get(binding);
+      const current = SHARED_QUALIFICATIONS.get(binding.qualificationScope);
       if (current !== qualified) {
         if (!current || current.identity !== identity || current.lastBlock?.number === blockNumber && current.lastBlock.hash !== canonicalHash) {
           throw new Error('Current DEX qualification changed during read.');
         }
         return; // Another checked observation owns the cache; an older completion cannot replace it.
       }
-      SHARED_QUALIFICATIONS.set(binding, Object.freeze({ identity, number: qualified?.number ?? blockNumber, hash: qualified?.hash ?? canonicalHash,
+      SHARED_QUALIFICATIONS.set(binding.qualificationScope, Object.freeze({ identity, number: qualified?.number ?? blockNumber, hash: qualified?.hash ?? canonicalHash,
         ...(qualified?.registryImmutableProof ? { registryImmutableProof: true as const } : {}),
-        ...(currentGraph ? { lastBlock: Object.freeze({ number: blockNumber, hash: canonicalHash, timestamp }) } : {}) }));
+        ...(currentGraph ? { lastBlock: qualified?.lastBlock && qualified.lastBlock.number > blockNumber ? qualified.lastBlock :
+          Object.freeze({ number: blockNumber, hash: canonicalHash, timestamp }) } : {}) }));
     };
     if (currentGraph && reuse && qualified?.lastBlock?.number === blockNumber) {
       if (qualified.lastBlock.hash !== canonicalHash) throw new Error('Current DEX observed block changed.');
@@ -786,7 +798,7 @@ export const readCurrentSharedPoolDexGraph = async ({ capability, blockNumber, b
     if (!reuse) rememberBlock(timestamp);
     return graphAt(timestamp);
   } catch (error) {
-    SHARED_QUALIFICATIONS.delete(binding);
+    SHARED_QUALIFICATIONS.delete(binding.qualificationScope);
     throw error;
   }
 };
@@ -803,8 +815,8 @@ export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, b
 }) => {
   const binding = bindingFor(capability), scope = resolvePreparedDexScope(candidate), m = scope.candidate;
   const graph = await readCurrentSharedPoolDexGraph({ capability, blockNumber, blockHash, candidate: scope.key });
-  const identity = scope.key === 'cheap-history' && isFixedCurrentDexCandidate(m) ? JSON.stringify(m) : null;
-  const qualified = SHARED_QUALIFICATIONS.get(binding);
+  const identity = scope.key === 'cheap-history' && isFixedCurrentDexCandidate(m) ? `${binding.chainId}:${JSON.stringify(m)}` : null;
+  const qualified = SHARED_QUALIFICATIONS.get(binding.qualificationScope);
   const reuseImmutable = identity !== null && qualified?.identity === identity && qualified.registryImmutableProof === true;
   try {
   const canonicalHash = graph.block.hash;
@@ -858,15 +870,15 @@ export const readPreparedDexMarketRegistry = async ({ capability, blockNumber, b
       (await readBlock(binding, BigInt(m.attestationBlock.number), 'Prepared registry origin')).hash !== m.attestationBlock.hash ||
       (await readBlock(binding, blockNumber, 'Prepared registry block')).hash !== canonicalHash) throw new Error('Prepared registry anchor changed.');
   await binding.assertCurrent();
-  if (!reuseImmutable && identity !== null && qualified?.identity === identity && SHARED_QUALIFICATIONS.get(binding) === qualified) {
-    SHARED_QUALIFICATIONS.set(binding, Object.freeze({ ...qualified, registryImmutableProof: true }));
+  if (!reuseImmutable && identity !== null && qualified?.identity === identity && SHARED_QUALIFICATIONS.get(binding.qualificationScope) === qualified) {
+    SHARED_QUALIFICATIONS.set(binding.qualificationScope, Object.freeze({ ...qualified, registryImmutableProof: true }));
   }
   return Object.freeze({ graph: m.graph, packageSha256: m.packageSha256, chainId: graph.chainId, core: m.core, releaseId: m.releaseId,
     attestationSha256: m.attestationSha256, block: graph.block, registryRevision: markets[0].registryRevision,
     markets: Object.freeze(markets), tokens: Object.freeze(m.tokenMetadata.map((token, index) =>
       Object.freeze({ ...token, runtimeHash: m.tokens[index][1] }))), readyToSign: false as const });
   } catch (error) {
-    SHARED_QUALIFICATIONS.delete(binding);
+    SHARED_QUALIFICATIONS.delete(binding.qualificationScope);
     throw error;
   }
 };

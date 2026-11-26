@@ -37,7 +37,7 @@ describe('four-asset beta funding controls', () => {
     const storage={getItem:(name:string)=>name==='chainwhisper:dex:current-pending-attempt:v1'?saved:null,setItem:vi.fn(),removeItem:vi.fn()};
     vi.stubGlobal('window',{sessionStorage:storage});
     const getSender=vi.fn();f.session.actions={getCurrentDexSubmissionCapability:getSender} as never;
-    expect(text(f.render())).toContain('A Pool action needs verification.');
+    expect(text(f.render())).toContain('A position needs your attention.');
     const check=elements(f.render()).find(e=>e.type==='button'&&text(e.props.children)==='Check confirmation')!;
     expect(check.props.disabled).toBe(true);check.props.onClick!();
     await vi.waitFor(()=>expect(hooks.states[1]).toBe(false));

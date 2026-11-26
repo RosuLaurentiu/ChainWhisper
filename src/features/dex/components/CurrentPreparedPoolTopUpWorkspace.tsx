@@ -277,6 +277,13 @@ export default function CurrentPreparedPoolTopUpWorkspace({ session, position, d
         if (!current(preview) && !current(funding) && !current(managed)) onReleased();
         return;
       }
+      // CW-140.02: the mined top-up waits for the owner's review on its position; the rest of the DEX is free.
+      if (observed.status === 'moved-to-position-review') {
+        setPending(null); setPreview(null); setFunding(null); setManaged(null); setApprovalState(null);
+        show('Your top-up went through. Confirm your shares on this position to unlock it. Swaps are unlocked.');
+        onReleased();
+        return;
+      }
       if (observed.status === 'observed-mined' || observed.status === 'observed-reverted') {
         setPending(null); setPreview(null); setFunding(null); setManaged(null); setApprovalState(null); setStopped();
         show('Transaction ' + (observed.status === 'observed-mined' ? 'mined' : 'reverted') +

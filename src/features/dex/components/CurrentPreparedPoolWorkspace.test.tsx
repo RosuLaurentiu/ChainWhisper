@@ -111,7 +111,7 @@ describe('prepared Pool creation view', () => {
       graph:'0x'+candidate.graph,phase:'pool-owner',nonce:12,txHash:'0x'+'33'.repeat(32),callHash:'0x'+'44'.repeat(32)});
     vi.stubGlobal('window',{sessionStorage:{getItem:(k:string)=>k===CURRENT_DEX_PENDING_ATTEMPT_KEY?saved:null}});
     expect(f.button('Preview deposit').props.disabled).toBe(true);
-    f.button('Open position recovery').props.onClick!();
+    f.button('Open the position').props.onClick!();
     expect(open).toHaveBeenCalledOnce();expect(f.getSender).not.toHaveBeenCalled();
     saved=null;
     expect(f.button('Preview deposit').props.disabled).toBe(false);
@@ -311,6 +311,8 @@ describe('prepared Pool creation view', () => {
     expect(field('Pool starting price').value).toBe(String(Number((1 / live).toPrecision(6))));
     f.props.priceDisplayInverted = false;
     expect(text(f.render())).toContain('Live Pool price, rounded.');
+    // CW-140.08: with a live price the field is the deposit price, not only a starting price.
+    expect(text(f.render())).toContain(`Price *`);
     // A reference for another pair is not used.
     (f.props as { marketReference?: CurrentDexMarketReference }).marketReference =
       currentDexMarketReference({ status: 'empty', snapshot: await readCurrentDexDailyPrice({ provider: history.provider,

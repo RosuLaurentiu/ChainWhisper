@@ -2,11 +2,11 @@ import { POOL_EXIT_PREVIEW_ABI, computePoolExitPreviewContext } from '../../lib/
 import * as poolInputs from '../../lib/currentDexPoolFunding';
 import type { PreparedPoolStoredState } from '../../lib/currentDexPreparedPoolSnapshot';
 import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCurrentPoolPositionSubmissionAdapter } from '../../lib/currentDexPoolPositionSubmission';
 import { CURRENT_APP_POOL_ENGINEERING_OWNERS } from '../../lib/currentDexC1SwapPolicy';
 import { CURRENT_DEX_PENDING_ATTEMPT_KEY, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../lib/currentDexPendingAttempt';
-import { issueCurrentDexPoolPositionCapability, assertCurrentPoolPositionPrepared, assertVerifiedCurrentPoolSnapshot, assertVerifiedSupersededPoolSnapshot } from './currentDexPoolPositionCapability';
+import { issueCurrentDexPoolPositionCapability, assertCurrentPoolPositionPrepared, assertVerifiedCurrentPoolSnapshot, assertVerifiedSupersededPoolSnapshot, resetOwnedPositionBurnHistory } from './currentDexPoolPositionCapability';
 import { resolvePreparedDexScope } from '../../lib/currentDexPreparedScope';
 import { currentPoolPositionAbi as abi, currentPoolNftAbi as nftAbi } from '../../lib/currentDexPoolPosition';
 import { usesTransactionScopedPoolSnapshots } from '../../lib/currentDexSnapshotAdmission';
@@ -453,6 +453,7 @@ describe('active snapshot final signing baseline',()=>{
 });
 
 describe('current owner Pool inventory capability',()=>{
+  beforeEach(()=>resetOwnedPositionBurnHistory());
   const mapping=(key:bigint|string,root:bigint,type='uint256')=>keccak256(AbiCoder.defaultAbiCoder().encode([type,'uint256'],[key,root]));
   async function inventoryFixture(key:'cheap-exit'|'cheap-history'='cheap-exit'){
     const f=await fixture(key),candidate=resolvePreparedDexScope(key).candidate;
@@ -490,8 +491,26 @@ describe('current owner Pool inventory capability',()=>{
       address:nft,blockNumber:height,removed:false});
     f.provider.getLogs.mockResolvedValue([burn(owner)]);
     expect((await f.cap.readOwnedPositions()).positions).toMatchObject([{positionId:43n,status:1n},{positionId:55n,status:4n}]);
-    f.provider.getLogs.mockResolvedValue([burn(recipient)]);
+    f.provider.getLogs.mockResolvedValue([burn(recipient)]);resetOwnedPositionBurnHistory();
     await expect(f.cap.readOwnedPositions()).rejects.toThrow();
+  });
+  it('reads burn history incrementally from the last canonical block (CW-140.04)',async()=>{
+    const f=await inventoryFixture('cheap-history'),candidate=resolvePreparedDexScope('cheap-history').candidate;
+    const nft=candidate.companions.find(([name])=>name==='ChainWhisperDexPositionNFT')![1],origin=Number(candidate.attestationBlock.number);
+    let height=origin+1;const original=f.provider.send.getMockImplementation()!;
+    f.provider.send.mockImplementation(async(method,params)=>{
+      if(method==='eth_getBlockByNumber')return {number:typeof params[0]==='string'&&params[0].startsWith('0x')?params[0]:'0x'+height.toString(16),hash};
+      if(method==='eth_call'&&params[0].to===candidate.core&&abi.parseTransaction({data:params[0].data})?.args[0]===55n)
+        return abi.encodeFunctionResult('poolPublicState',[{...f.state,status:4n}]);
+      return original(method,params);
+    });
+    const burn={...nftAbi.encodeEventLog(nftAbi.getEvent('Transfer')!,[owner,'0x'+'00'.repeat(20),55n]),address:nft,blockNumber:height,removed:false};
+    f.provider.getLogs.mockResolvedValueOnce([burn]);
+    expect((await f.cap.readOwnedPositions()).positions.map(p=>p.positionId)).toEqual([43n,55n]);
+    expect((f.provider.getLogs.mock.calls.slice(-1)[0] as unknown[])[0]).toMatchObject({fromBlock:origin,toBlock:origin+1});
+    height=origin+5;f.provider.getLogs.mockResolvedValueOnce([]);
+    expect((await f.cap.readOwnedPositions()).positions.map(p=>p.positionId)).toEqual([43n,55n]);
+    expect((f.provider.getLogs.mock.calls.slice(-1)[0] as unknown[])[0]).toMatchObject({fromBlock:origin+2,toBlock:origin+5});
   });
   it.each(['ownership','pool-state','reorg','privacy'] as const)('rejects %s change and returns no stale owner list',async fault=>{
     const f=await inventoryFixture(),original=f.provider.send.getMockImplementation()!;

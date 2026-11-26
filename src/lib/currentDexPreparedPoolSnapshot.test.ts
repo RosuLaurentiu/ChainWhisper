@@ -353,7 +353,8 @@ describe('prepared Pool source-bound storage and authenticated producers', () =>
     expect(Object.keys(baseline.claims)).toHaveLength(51);
     expect(Object.keys(baseline.fixedSources)).toEqual(['50', '51']);
     expect(Object.keys(baseline.nftOwners)).toHaveLength(52);
-    expect(calls).toEqual({ eth_getStorageAt: 5093 });
+    // CW-140.03: one keyed eth_getProof attempt; this fixture answers none, so the reader uses single reads.
+    expect(calls).toEqual({ eth_getStorageAt: 5093, eth_getProof: 1 });
     const stateCalls = { ...calls };
     for (const method of Object.keys(calls)) delete calls[method];
     const snapshot = await f.reader.readSnapshot(8n, transactionHash);
@@ -660,13 +661,14 @@ describe('selected Pool scan reuse by storage root (CW-133)', () => {
   it('reads only the six pinned storage roots while contract storage is unchanged', async () => {
     const f = fixture(), { calls, proofs } = rooted(f);
     const first = await f.reader.selectedState(8n, block);
-    expect(calls).toMatchObject({ eth_getStorageAt: 810, eth_getProof: 6 });
+    // CW-140.03: six storage roots plus one keyed attempt that this fixture does not answer.
+    expect(calls).toMatchObject({ eth_getStorageAt: 810, eth_getProof: 7 });
     const second = await f.reader.selectedState(8n, later);
-    expect(calls).toMatchObject({ eth_getStorageAt: 810, eth_getProof: 12 });
+    expect(calls).toMatchObject({ eth_getStorageAt: 810, eth_getProof: 13 });
     expect(second.block).toEqual(later);
     expect({ ...second, block: null }).toEqual({ ...first, block: null });
-    expect(proofs.slice(6).map(([account]) => account)).toEqual([candidate.core, ...candidate.tokens.map(([token]) => token), nft]);
-    proofs.slice(6).forEach(params => expect(params.slice(1)).toEqual([[], { blockHash: later.hash, requireCanonical: true }]));
+    expect(proofs.slice(7).map(([account]) => account)).toEqual([candidate.core, ...candidate.tokens.map(([token]) => token), nft]);
+    proofs.slice(7).forEach(params => expect(params.slice(1)).toEqual([[], { blockHash: later.hash, requireCanonical: true }]));
     const next = await f.reader.selectedState(null, block), again = await f.reader.selectedState(null, later);
     expect(calls.eth_getStorageAt).toBe(1620);
     expect(again.positionId).toBe(next.positionId);
@@ -727,5 +729,69 @@ describe('separate C1 Core words in producer and snapshot comparisons (CW-135)',
     f.put(candidate.core, other, word(700));
     const changed = await f.reader.selectedState(8n, block);
     expect(() => checkPreparedPoolSnapshotOnlyChange(before, changed)).toThrow('Prepared snapshot changed financial state.');
+  });
+});
+
+describe('batched storage reads by eth_getProof (CW-140.03)', () => {
+  const proved = (f: ReturnType<typeof fixture>, fault?: 'short' | 'key' | 'address' | 'refused') => {
+    const send = f.provider.send.bind(f.provider), calls: Record<string, number> = {};
+    f.provider.send = async (method, params) => {
+      calls[method] = (calls[method] ?? 0) + 1;
+      if (method !== 'eth_getProof') return send(method, params);
+      const [account, keys] = params as [string, string[]];
+      if (fault === 'refused') throw new Error('COTI RPC reads stopped after HTTP 403. No automatic retry.');
+      if (!keys.length) return { address: account, storageHash: word(55) };
+      const storageProof = keys.map((key, i) => ({ key: fault === 'key' && i === 0 ? word(999999) : key,
+        value: toBeHex(BigInt(f.slots.get(`${account.toLowerCase()}:${BigInt(key)}`) ?? zero)), proof: [] }));
+      return { address: fault === 'address' ? owner : account, storageHash: word(55), storageProof: fault === 'short' ? storageProof.slice(1) : storageProof };
+    };
+    return calls;
+  };
+  it('reads the selected scan in about 30 requests and returns the same state as single reads', async () => {
+    const single = await fixture().reader.selectedState(8n, block);
+    const f = fixture(), calls = proved(f), batched = await f.reader.selectedState(8n, block);
+    expect({ ...batched, block: null }).toEqual({ ...single, block: null });
+    expect(calls.eth_getStorageAt ?? 0).toBeLessThanOrEqual(6);
+    expect(calls.eth_getProof).toBeLessThanOrEqual(40);
+  });
+  it.each(['short', 'key', 'address', 'refused'] as const)('falls back to single reads when a proof answer is %s', async fault => {
+    const single = await fixture().reader.selectedState(8n, block);
+    const f = fixture(), calls = proved(f, fault), batched = await f.reader.selectedState(8n, block);
+    expect({ ...batched, block: null }).toEqual({ ...single, block: null });
+    expect(calls.eth_getStorageAt).toBe(810);
+  });
+});
+
+describe('shared Pool activity between a top-up and its snapshot (CW-140.01)', () => {
+  type Mutable = { core: string[]; markets: Record<string, string[]>; anchors: string[][]; claim: string[];
+    claims: Record<string, { marketId: string; words: string[] }>; ledgers: Record<string, string[]>; escrows: Record<string, string[]>;
+    custody: Record<string, string[]>; nftOwners: Record<string, string>; counter: bigint; operation: bigint };
+  const selected = async () => { const f = fixture(); return f.reader.selectedState(8n, block); };
+  // A C1 Commit or another user's swap, deposit or Limit fill writes these words. None of them is the owner's state.
+  it('accepts Pool trades, deposits and Limit fills by other accounts', async () => {
+    const before = await selected(), after = structuredClone(before) as unknown as Mutable;
+    const raw = after.markets[before.marketId], token = before.market.token0, anchorId = String(BigInt(raw[18]));
+    for (const i of [11, 14, 25, 38, 40, 41, 48, 49, 52, 54, 65, 69]) raw[i] = word(900 + i);
+    after.anchors[0][20] = word(901); after.claims[anchorId].words[20] = word(901);
+    after.ledgers[token][0] = word(902); after.ledgers[token][7] = word(903); after.ledgers[token][10] = word(904);
+    after.custody[token][1] = word(905);
+    for (const i of [11, 12, 13, 17]) after.core[i] = word(BigInt(before.core[i]) + 1n);
+    after.counter = BigInt(after.core[11]); after.operation = BigInt(after.core[12]);
+    expect(() => checkPreparedPoolSnapshotOnlyChange(before, after as never)).not.toThrow();
+  });
+  it.each([
+    ['owner claim word', (s: Mutable, b: { marketId: string; positionId: bigint }) => { s.claim[2] = word(7); s.claims[String(b.positionId)].words[2] = word(7); }],
+    ['owner principal escrow', (s: Mutable, b: { market: { token0: string } }) => { s.escrows[b.market.token0][0] = word(7); }],
+    ['position NFT owner', (s: Mutable, b: { positionId: bigint }) => { s.nftOwners[String(b.positionId)] = word(7); }],
+    ['Pool token identity', (s: Mutable, b: { marketId: string }) => { s.markets[b.marketId][2] = word(7); }],
+    ['tier anchor identity', (s: Mutable, b: { marketId: string }) => { s.markets[b.marketId][20] = word(7); }],
+    ['engine runtime hash', (s: Mutable, b: { marketId: string }) => { s.markets[b.marketId][56] = word(7); }],
+    ['token ledger initialized flag', (s: Mutable, b: { market: { token0: string } }) => { s.ledgers[b.market.token0][11] = word(7); }],
+    ['Core configuration word', (s: Mutable) => { s.core[10] = word(7); }],
+  ] as const)('rejects a change of the %s', async (_name, edit) => {
+    const before = await selected(), after = structuredClone(before) as unknown as Mutable;
+    edit(after, before as never);
+    // Identity words also fail the selected-scope check first, with its own message.
+    expect(() => checkPreparedPoolSnapshotOnlyChange(before, after as never)).toThrow(/Prepared (snapshot changed financial state|selected Pool)/);
   });
 });

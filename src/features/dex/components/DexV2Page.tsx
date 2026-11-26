@@ -39,6 +39,7 @@ import { CURRENT_CHEAP_DEX_CANDIDATE, currentCheapDexQuoteProtocol, currentCheap
 import { assertCurrentSwapCandidate } from '../../../lib/currentDexNativeSwapPolicy';
 import { CURRENT_EXIT_SWAP_GAS_CAPS, currentSwapFixedGasPrice, usesCurrentSwapAccounting } from '../../../lib/currentDexExitSwapPolicy';
 import { resolvePreparedDexScope } from '../../../lib/currentDexPreparedScope';
+import { currentDexManageAttentionView } from '../../../lib/currentDexPositionReview';
 import { CurrentDexPrivateReceiptError, wasCurrentDexUnsentReleased, type CurrentCheapDexIssuedQuote, type CurrentCheapDexPreparedQuote } from '../../../lib/currentDexSubmission';
 import type { CurrentCheapDexProfile } from '../../../lib/currentDexOperation';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
@@ -1238,13 +1239,27 @@ export default function DexV2Page({
     ? selectedPair : CURRENT_DEX_DISPLAY_PAIR;
   const selectMode = (mode: DexMode) => { setActiveMode(mode); onNavigateMode?.(mode); };
   const inspect = (mode: DexMode) => { if (mode === 'activity') setActivityView('orders'); selectMode(mode); };
+  // CW-140.08: Manage opens on the view of the saved item that waits for the owner.
+  const attentionView = () => {
+    const owner = sharedWalletSession?.walletAddress;
+    if (typeof window === 'undefined' || !owner) return null;
+    const prepared = swapCandidate === 'cheap-prepared' || swapCandidate === 'cheap-exit' || swapCandidate === 'cheap-history';
+    const c = prepared ? resolvePreparedDexScope(swapCandidate).candidate : resolveCurrentCheapDexCandidate(swapCandidate);
+    return currentDexManageAttentionView(currentDexPendingStorage(currentDexRecordScope(c, owner)),
+      { chainId: String(c.chainId), owner: owner.toLowerCase(), core: c.core.toLowerCase(), graph: `0x${c.graph}`.toLowerCase() });
+  };
+  const openMode = (mode: DexMode) => {
+    if (mode !== 'activity' || management) { selectMode(mode); return; }
+    const view = attentionView();
+    if (view === 'positions') selectMode('positions'); else inspect('activity');
+  };
   const managementTabs = (className: string) => <nav className={`dex-v2-section-tabs ${className}`} aria-label="Manage views">
     <button type="button" aria-current={activeMode === 'activity' && activityView === 'orders' ? 'page' : undefined} onClick={() => { setActivityView('orders'); selectMode('activity'); }}>Orders</button>
     <button type="button" aria-current={activeMode === 'positions' ? 'page' : undefined} onClick={() => selectMode('positions')}>Positions</button>
     <button type="button" aria-current={activeMode === 'activity' && activityView === 'history' ? 'page' : undefined} onClick={() => { setActivityView('history'); selectMode('activity'); }}>History</button>
   </nav>;
   return <main className={`dex-v2-page${management ? ' dex-v2-manage' : ''}${mobileKeyboardOpen ? ' dex-v2-keyboard-open' : ''}`}>
-    <ModeNavigation activeMode={activeMode} onOpenAgent={onOpenAgent} onSelect={selectMode} />
+    <ModeNavigation activeMode={activeMode} onOpenAgent={onOpenAgent} onSelect={openMode} />
     <section className="dex-v2-main">
       <div className="dex-v2-content-grid">
         <details className="dex-market-chart-host" open={!management || undefined}>

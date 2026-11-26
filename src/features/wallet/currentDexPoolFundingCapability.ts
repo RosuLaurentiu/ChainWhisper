@@ -44,7 +44,7 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
     const fundingAbi = preparedCandidate ? preparedAbi : abi;
     const previewSelector = fundingAbi.getFunction('previewPoolFunding')!.selector;
     const fundingSelector = fundingAbi.getFunction('createPoolPosition')!.selector;
-    const capability = createDexV2ReadCapability({ chainId, assertCurrent,
+    const capability = createDexV2ReadCapability({ chainId, assertCurrent, qualificationScope: readProvider,
       provider: { request: ({ method, params }) => readProvider.send(method, params ?? []) } });
     const guard = async () => { await assertCurrent(); assertSnapshotCurrent(); };
     const checkedGraph = async (blockNumber: bigint, blockHash: string) => {
@@ -181,15 +181,17 @@ export const issueCurrentDexPoolFundingCapability = ({candidate: candidateKey = 
             await assertPreview(); await latest();
           };
           const assertBeforeFunding = async () => {
-            await assertApprovalCurrent(); const fresh = await latest(); checkWallets(fresh.wallets, 'fund'); admittedWallets = fresh.wallets;
+            if (abandoned) throw new CurrentPoolProofMismatch('This unfunded Pool top-up was stopped.');
+            await assertPreview(); const fresh = await latest(); checkWallets(fresh.wallets, 'fund'); admittedWallets = fresh.wallets;
           };
-          const assertUnfundedCleanupCurrent = async () => { const fresh = await latest(); checkWallets(fresh.wallets, 'cleanup'); };
+          const cleanupState = async () => { const fresh = await latest(); checkWallets(fresh.wallets, 'cleanup'); return fresh; };
+          const assertUnfundedCleanupCurrent = async () => { await cleanupState(); };
           const abandonUnfunded = async (confirm: (values: { allowances: readonly [bigint, bigint] }) => Promise<boolean>) => {
             if (typeof confirm !== 'function') throw new Error('Pool top-up stop requires explicit confirmation.');
-            await assertUnfundedCleanupCurrent(); const fresh = await latest();
+            const fresh = await cleanupState();
             const allowances = Object.freeze(poolTokens.map(token => fresh.wallets.find(wallet => same(wallet.token, token))!.allowance)) as readonly [bigint, bigint];
             if (!await confirm({ allowances })) { await guard(); return null; }
-            await assertUnfundedCleanupCurrent(); const final = await latest();
+            const final = await cleanupState();
             requireCurrentPoolProof(poolTokens.every((token, i) => final.wallets.find(wallet => same(wallet.token, token))!.allowance === allowances[i]), 'Pool top-up allowances changed during stop confirmation.');
             abandoned = true; admittedWallets = null;
             const cleanupRequired = Object.freeze(allowances.map(value => value !== 0n)) as readonly [boolean, boolean];

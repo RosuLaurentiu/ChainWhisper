@@ -177,7 +177,7 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       }
     };
     const legacy = createCurrentDexSubmissionAdapter({ quoteAdmission: admission, transport });
-    const readCapability = createDexV2ReadCapability({ chainId, assertCurrent,
+    const readCapability = createDexV2ReadCapability({ chainId, assertCurrent, qualificationScope: readProvider,
       provider: { request: ({ method, params }) => readProvider.send(method, params ?? []) } });
     const attest = async (head: { number: bigint; hash: string }) => {
       const graph = await readCurrentSharedPoolDexGraph({ capability: readCapability,
@@ -780,11 +780,13 @@ export const issueCurrentDexSubmissionCapability = ({ admission, candidate = 'ch
       waitForCurrentCheapReceipt: async (transactionHash: string) => {
         await assertCurrent(); assertSnapshotCurrent();
         if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash) || BigInt(transactionHash) === 0n) throw new Error('Invalid DEX transaction hash.');
-        let receipt;
-        try { receipt = await readProvider.waitForTransaction(transactionHash, 1, 60_000); }
-        catch (cause) {
-          if (!cause || typeof cause !== 'object' || !('code' in cause) || cause.code !== 'TIMEOUT') throw cause;
-          receipt = null;
+        // CW-140.04: a receipt read every 2 s for up to 60 s (the default provider poll was 4 s).
+        const deadline = Date.now() + 60_000;
+        let receipt = await readProvider.getTransactionReceipt(transactionHash);
+        while (!receipt && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 2_000));
+          await assertCurrent(); assertSnapshotCurrent();
+          receipt = await readProvider.getTransactionReceipt(transactionHash);
         }
         await assertCurrent(); assertSnapshotCurrent();
         return receipt !== null;

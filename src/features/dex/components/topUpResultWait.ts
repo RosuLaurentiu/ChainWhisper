@@ -1,6 +1,7 @@
 // CW-136: bounded public wait for one submitted top-up transaction.
 // It reads the receipt only. It signs nothing, sends nothing and clears no record.
-export const TOP_UP_RESULT_WAIT = { tries: 6, delayMs: 5_000 };
+// CW-140.04: a read every 2 s for up to 60 s (it was 6 reads 5 s apart), then Check status.
+export const TOP_UP_RESULT_WAIT = { tries: 31, delayMs: 2_000 };
 
 type ReceiptProvider = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 

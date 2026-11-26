@@ -140,9 +140,37 @@ export const createPreparedOwnerPoolSnapshotReader = ({ signer, owner, candidate
     requireProof(typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value), 'Invalid prepared Pool storage word.');
     return (value as string).toLowerCase();
   };
+  // CW-140.03: one eth_getProof call returns up to 100 storage words of one account at the pinned block. These are the
+  // same RPC answers as eth_getStorageAt (one request instead of up to 100); a selected scan is about 29 requests instead
+  // of about 810. A refused, partial or malformed answer falls back to single reads. Lease errors still stop the read.
+  // After one unusable answer this reader uses single reads only, so a gateway without keyed proofs costs one request.
+  const PROOF_KEYS = 100;
+  let keyedProofs = true;
+  const proofWords = async (at: string, slots: readonly bigint[], block: PreparedPoolBlock): Promise<string[] | null> => {
+    if (!keyedProofs) return null;
+    type Proof = { address?: unknown; storageProof?: { key?: unknown; value?: unknown }[] } | null;
+    await checkedGuard();
+    const proof = await (provider.send('eth_getProof', [at, slots.map(slot => toBeHex(slot, 32)), tag(block)]) as Promise<Proof>).catch((): Proof => null);
+    await checkedGuard();
+    const unusable = () => { keyedProofs = false; return null; };
+    if (!proof || typeof proof !== 'object' || typeof proof.address !== 'string' || proof.address.toLowerCase() !== at.toLowerCase() ||
+        !Array.isArray(proof.storageProof) || proof.storageProof.length !== slots.length) return unusable();
+    const result: string[] = [];
+    for (const [i, row] of proof.storageProof.entries()) {
+      if (!row || typeof row.key !== 'string' || typeof row.value !== 'string' || !/^0x[0-9a-fA-F]{1,64}$/.test(row.key) ||
+          !/^0x[0-9a-fA-F]{0,64}$/.test(row.value) || BigInt(row.key) !== slots[i]) return unusable();
+      result.push(toBeHex(row.value === '0x' ? 0n : BigInt(row.value), 32).toLowerCase());
+    }
+    return result;
+  };
   const words = async (at: string, base: bigint, count: number, block: PreparedPoolBlock) => {
     const result: string[] = [];
-    for (let i = 0; i < count; i += 12) result.push(...await Promise.all(Array.from({ length: Math.min(12, count - i) }, (_, j) => word(at, base + BigInt(i + j), block))));
+    for (let i = 0; i < count; i += PROOF_KEYS) {
+      const slots = Array.from({ length: Math.min(PROOF_KEYS, count - i) }, (_, j) => base + BigInt(i + j));
+      const proved = await proofWords(at, slots, block);
+      if (proved) { result.push(...proved); continue; }
+      for (let j = 0; j < slots.length; j += 12) result.push(...await Promise.all(slots.slice(j, j + 12).map(slot => word(at, slot, block))));
+    }
     return Object.freeze(result);
   };
   const canonical = async (transactionHash: string): Promise<Canonical | null> => {
@@ -516,13 +544,36 @@ const separateC1Word = (index: number) => index >= 58 && index <= 98;
 export const withoutSeparateC1 = <T extends PreparedPoolAccountingState>(s: T): T =>
   isPreparedPoolSelectedState(s) && Array.isArray(s.core) ? { ...s, core: s.core.map((v, i) => separateC1Word(i) ? 'separate-c1' : v) } : s;
 
+// CW-140.01: words that other accounts write between a top-up and its snapshot. A top-up is a C1 trigger, so a C1
+// Commit (or another user's swap, deposit or Limit fill) can land between the funding and the snapshot. Layout of
+// build 13 (convergence-build-13 storageLayout): MarketState words 11..14 Pool inventory liabilities, 25..38 tier
+// total shares, 40 open positions, 41..48 Pool work, 49 and 52..54 Limit source and page counters, 65..69 Limit
+// liabilities and authority revision; TokenAccounting words 0..7 and 9..10 global escrow, proceeds, inventory and
+// fees; Core token custody; the seven tier anchor claims; Core allocation counters 11..17. The owner's claim,
+// principal escrow (TokenAccounting word 8 mapping), NFT, the Pool identity and configuration words and every
+// other Core word stay exact. Shares and total shares are checked against the preview by the caller.
+const sharedMarketWord = (i: number) => i >= 11 && i <= 14 || i >= 25 && i <= 38 || i >= 40 && i <= 49 || i >= 52 && i <= 54 || i >= 65 && i <= 69;
+const sharedLedgerWord = (i: number) => i <= 7 || i === 9 || i === 10;
+const sharedCoreWord = (i: number) => i >= 11 && i <= 17;
+const withoutSharedPoolActivity = (s: PreparedPoolSelectedState) => {
+  const anchorIds = new Set(s.markets[s.marketId].slice(PREPARED_POOL_LAYOUT.anchors, PREPARED_POOL_LAYOUT.anchors + 7).map(v => String(BigInt(v))));
+  const mask = (words: readonly string[], shared: (i: number) => boolean) => words.map((v, i) => shared(i) ? 'shared-pool' : v);
+  const record = (r: Readonly<Record<string, readonly string[]>>, shared: (i: number) => boolean) =>
+    Object.fromEntries(Object.entries(r).map(([key, words]) => [key, mask(words, shared)]));
+  return { ...s, counter: null, operation: null, core: mask(s.core, sharedCoreWord), markets: record(s.markets, sharedMarketWord),
+    anchors: s.anchors.map(words => mask(words, () => true)), ledgers: record(s.ledgers, sharedLedgerWord), custody: record(s.custody, () => true),
+    claims: Object.fromEntries(Object.entries(s.claims).map(([id, claim]) => [id, anchorIds.has(id) && id !== String(s.positionId) ?
+      { marketId: claim.marketId, words: mask(claim.words, () => true) } : claim])) };
+};
+
 export const checkPreparedPoolSnapshotOnlyChange = (before: PreparedPoolAccountingState, after: PreparedPoolAccountingState) => {
   if(isPreparedPoolSelectedState(before))checkPreparedPoolSelectedScope(before);
   if(isPreparedPoolSelectedState(after))checkPreparedPoolSelectedScope(after);
   const closed = BigInt(before.claim[0]) === 4n;
   const cleanClaim = (claim: readonly string[]) => claim.map((v, i) =>
     (closed ? i >= 14 && i < 54 && (i - 14) % 4 >= 2 : i >= 13 && i < 54) ? 'snapshot' : v);
-  const clean = (s: PreparedPoolAccountingState) => ({ ...withoutSeparateC1(s), block: null, claim: cleanClaim(s.claim), claims: { ...s.claims,
+  const shared = (s: PreparedPoolAccountingState) => isPreparedPoolSelectedState(s) ? withoutSharedPoolActivity(withoutSeparateC1(s)) : withoutSeparateC1(s);
+  const clean = (s: PreparedPoolAccountingState) => ({ ...shared(s), block: null, claim: cleanClaim(s.claim), claims: { ...shared(s).claims,
     [String(s.positionId)]: { marketId: s.marketId, words: cleanClaim(s.claim) } } });
   requireProof(same(clean(before), clean(after)), 'Prepared snapshot changed financial state.');
 };

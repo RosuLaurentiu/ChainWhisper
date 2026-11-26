@@ -40,7 +40,7 @@ export const issueCurrentDexLimitCapability=({candidate='cheap-current',selected
     const scope=resolveCurrentLimitScope(candidate,selectedPair),c=scope.candidate,abi=currentLimitAbiForCandidate(candidate);
     const poolTokens=[...c.tokens].sort(([a],[b])=>BigInt(a)<BigInt(b)?-1:1),marketFields=Object.freeze({marketId:scope.marketId,poolTokens:scope.poolTokens});
     const initialAes=signer.getUserOnboardInfo()?.aesKey;
-    const readCapability=createDexV2ReadCapability({chainId,assertCurrent,provider:{request:({method,params})=>readProvider.send(method,params??[])}});
+    const readCapability=createDexV2ReadCapability({chainId,assertCurrent,qualificationScope:readProvider,provider:{request:({method,params})=>readProvider.send(method,params??[])}});
     const guard=async()=>{await assertCurrent();assertSnapshotCurrent();if(!initialAes?.trim()||signer.getUserOnboardInfo()?.aesKey!==initialAes)throw new Error('Unlock the same owner privacy session for Limit preparation.');};
     const graph=async(block:{number:bigint;hash:string},capability=readCapability)=>{
       await guard();

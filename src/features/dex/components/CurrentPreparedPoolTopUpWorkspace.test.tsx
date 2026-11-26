@@ -49,7 +49,7 @@ const text = (node: ReactNode): string => Array.isArray(node) ? node.map(text).j
 type FundingCap = Awaited<ReturnType<typeof issueCurrentDexPoolFundingCapability>>;
 type PositionsCap = Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
 const owner = `0x${'22'.repeat(20)}`, hash = `0x${'33'.repeat(32)}`, snapshotHash = `0x${'44'.repeat(32)}`;
-// CW-136: the automatic result check keeps its six-try bound; tests remove only the wait between tries.
+// CW-140.04: the automatic result check keeps its bound (TOP_UP_RESULT_WAIT.tries); tests remove only the wait between tries.
 TOP_UP_RESULT_WAIT.delayMs = 0;
 
 describe.each(['cheap-prepared', 'cheap-exit', 'cheap-history'] as const)('%s prepared consumers', key => {
@@ -471,10 +471,10 @@ describe('prepared Pool top-up money flow', () => {
     expect(f.receiptReads()).toBe(3); expect(f.previewRecover).toHaveBeenCalledOnce();
     expect(text(f.render())).toContain('Private top-up preview verified.'); expect(f.button('Check status')).toBeUndefined();
   });
-  it('stops at six receipt reads, keeps the pending state and falls back to Check status', async () => {
+  it('stops at the bounded receipt reads, keeps the pending state and falls back to Check status', async () => {
     const f = fixture(); hooks.allowNative = true; f.enter(); f.receiptPending();
     await f.click('Preview top-up');
-    expect(f.receiptReads()).toBe(6); expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.submitPreview).toHaveBeenCalledOnce();
+    expect(f.receiptReads()).toBe(TOP_UP_RESULT_WAIT.tries); expect(f.previewRecover).not.toHaveBeenCalled(); expect(f.submitPreview).toHaveBeenCalledOnce();
     expect(text(f.render())).toContain('The transaction is not confirmed yet. Select Check status in a moment. Do not resend.');
     expect(f.steps()).toMatchObject({ title: 'Step 2 of 4', detail: 'A transaction is submitted. Select Check status.' });
     expect(f.button('Preview top-up')!.disabled).toBe(true); expect(f.button('Review and deposit')).toBeUndefined();

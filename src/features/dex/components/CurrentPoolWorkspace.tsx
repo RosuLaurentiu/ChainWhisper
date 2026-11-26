@@ -686,9 +686,10 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       {nativeTrial ? <p className="dex-v2-activation-note">This Testnet join uses 100 of each token, 0.1% spread and 0.5% funding tolerance.</p> : null}
       {/* Owner decision 2026-11-18: the price comes first; it and one amount fill the other amount. */}
       <section className="dex-v2-pool-section dex-v2-pool-price-section">
-          <label><span><strong>Starting price <span aria-hidden="true">*</span></strong><small>{priceUnits}</small></span><input aria-label="Pool starting price" inputMode="decimal" placeholder="0.00" required
+          <label><span><strong>{livePoolPrice !== null ? 'Price' : 'Starting price'} <span aria-hidden="true">*</span></strong><small>{priceUnits}</small></span><input aria-label="Pool starting price" inputMode="decimal" placeholder="0.00" required
             value={effectivePrice} disabled={fieldsDisabled || nativeTrial} onChange={event => editPrice(event.target.value)} /></label>
-          <p>{livePoolPrice !== null ? 'Live Pool price, rounded. The deposit follows the Pool price; this one is used only if the Pool is empty.' : 'Used only if the Pool is empty.'}</p>
+          <p>{livePoolPrice !== null ? 'Live Pool price, rounded. It fills the other amount. It sets the starting price only if this spread has no liquidity yet.'
+            : 'Fills the other amount. It sets the starting price only if this Pool has no liquidity yet.'}</p>
       </section>
       <section className="dex-v2-pool-section dex-v2-pool-amounts-section">
         <header><h3>Deposit amounts</h3></header>
@@ -738,14 +739,14 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
         ? <PrivacyLockedNotice message="Your deposit preview is locked." disabled={busy}
           onUnlock={sharedWalletSession?.actions?.unlockPrivacy ? () => sharedWalletSession.actions!.unlockPrivacy() : undefined} />
         : <p className="dex-v2-activation-note" role="status">{(messageScope.current === scope.current && message) || (connected ? !previewInputsValid ? 'Enter both deposit amounts and a valid price and tolerance.' : 'Review your deposit before any tokens move.' : 'Connect your wallet on COTI Testnet to prepare this Pool.')}</p>}
-      {connected ? <button className="dex-v2-current-pool-status" type="button" disabled={busy} onClick={() => { void refresh(); }}>{positionPending?'Open position recovery':'Check Pool status'}</button> : null}
+      {connected ? <button className="dex-v2-current-pool-status" type="button" disabled={busy} onClick={() => { void refresh(); }}>{positionPending?'Open the position':'Check Pool status'}</button> : null}
       <details className="dex-v2-pool-help"><summary>How liquidity works<ChevronDown size={16} aria-hidden="true" /></summary><div>
         <p>Shared Full Range Pool. Your shares belong to a position NFT, not an LP token.</p>
         <p>Preview costs network gas but moves no tokens and creates no position. Deposit needs separate review, private balances and token approvals for both tokens.</p>
         <p>A starting price is required for preview. An existing Pool uses its reserve ratio.</p>
       </div></details>
       {preparedCandidate ? <details className="dex-v2-setup"><summary>Status and recovery</summary>{recovery}</details> : recovery}
-      {savedActionPending ? <p role="alert">{positionPending?'A saved position transaction needs a status check before you can preview another deposit. Open position recovery, then select Check position status.':'A saved action needs a status check. Open its status and recovery in History before a new deposit.'}</p> : null}
+      {savedActionPending ? <p role="alert">{positionPending?'A position needs your attention before another deposit. Open the position to check its status. Nothing is resent.':'A saved action needs a status check. Open its status and recovery in History before a new deposit.'}</p> : null}
       {transactionHash ? <p className="dex-v2-activation-note dex-v2-pool-transaction">Transaction <a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${transactionHash}`}
         target="_blank" rel="noreferrer" title={transactionHash} aria-label={`View transaction ${transactionHash}`}>{transactionHash.slice(0, 6)}…{transactionHash.slice(-4)}</a>
         <button type="button" onClick={() => { void navigator.clipboard?.writeText(transactionHash); }} aria-label="Copy transaction hash">Copy</button></p> : null}

@@ -40,7 +40,7 @@ export default function CurrentOwnedPoolPositions({session,candidateKey='cheap-e
       current?.state==='loading'?<p role="status">Loading your positions…</p>:current?.state==='error'?<p role="alert">Could not load positions. Refresh to try again.</p>:null}
     <div className="dex-owner-list-items">{current?.inventory?.positions.map(position=><button type="button" className="dex-owner-item" key={position.positionId.toString()} aria-label={`Open liquidity NFT ${position.positionId}`}
       aria-pressed={selectedId===position.positionId.toString()} disabled={disabled} onClick={()=>onSelect(position.positionId)}><span className="dex-owner-item-title">Position #{position.positionId.toString()}</span><span className="dex-owner-item-meta">Liquidity position</span><span className="dex-owner-status" data-state={['pending','active','paused','pending','closed'][Number(position.status)]}>{['None','Active','Paused','Needs privacy activation','Closed'][Number(position.status)]}</span></button>)}</div>
-    {current?.inventory&&!current.inventory.complete?<p role="alert">Position discovery is incomplete. Use manual lookup if your position is missing.</p>:
+    {current?.inventory&&!current.inventory.complete?<p role="alert">Position discovery is incomplete: the network did not answer every read. Select Refresh to try again, or find a position by ID.</p>:
       current?.inventory?.positions.length===0?<p className="dex-owner-empty">No liquidity positions. Add liquidity to create your first position.</p>:null}
   </section>;
 }

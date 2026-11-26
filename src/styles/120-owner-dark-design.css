@@ -1640,3 +1640,6 @@
   :root body .app-shell-dex-v2 .trading-market-change[data-price-state="last-known"] > span { flex: 0 0 112px; min-width: 0; font-size: .75rem; }
   :root body .app-shell-dex-v2 .trading-market-change[data-price-state="last-known"] > small { flex: 1 1 0; min-width: 0; white-space: normal; text-align: right; line-height: 1.2; }
 }
+
+/* CW-140.08: notes and status lines in the DEX forms read at 14 px or more. The chart keeps its own sizes. */
+:root body .app-shell-dex-v2 .dex-v2-form-column :is(p, [role="status"], [role="alert"]):not(.sr-only) { font-size: max(.875rem, 14px); }

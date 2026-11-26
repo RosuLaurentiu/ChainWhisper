@@ -15,7 +15,7 @@ export const issueCurrentDexReceiptCapability = (args: IssueArgs) => issueOwnerC
   capabilityLabel: 'current DEX receipts',
   requirePrivacy: true,
   bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, chainId, ownerAddress }) => {
-    const capability = createDexV2ReadCapability({ chainId, assertCurrent,
+    const capability = createDexV2ReadCapability({ chainId, assertCurrent, qualificationScope: readProvider,
       provider: { request: ({ method, params }) => readProvider.send(method, params ?? []) } });
     const revealSnapshot = async <T extends { encrypted: Awaited<ReturnType<typeof readCurrentDexPrincipalReceipt>>['encrypted'] }>(snapshot: T) => {
       await assertCurrent();

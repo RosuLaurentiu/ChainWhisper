@@ -83,7 +83,7 @@ const inputSignature = (value: unknown) => {
 export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCotiMetaMaskCapability({
   ...args, capabilityLabel: 'current DEX quote preparation', requirePrivacy: true,
   bindCapability: async ({ assertCurrent, assertSnapshotCurrent, readProvider, signer, chainId, ownerAddress }) => {
-    const capability = createDexV2ReadCapability({ chainId, assertCurrent,
+    const capability = createDexV2ReadCapability({ chainId, assertCurrent, qualificationScope: readProvider,
       provider: { request: ({ method, params }) => readProvider.send(method, params ?? []) } });
     const legacy = Object.freeze({ prepareQuote: async (request: {
       graph: Omit<Parameters<typeof readCurrentDexGraph>[0], 'capability'> | SharedPoolGraphRequest;

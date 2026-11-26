@@ -18,6 +18,7 @@ import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionC
 import './CurrentPoolPositionsWorkspace.css';
 import CurrentOwnedLimits from './CurrentOwnedLimits';
 import CurrentLimitFills from './CurrentLimitFills';
+import CurrentLimitSteps from './CurrentLimitSteps';
 import { currentDexPendingStorage,readCurrentDexPendingAttempt } from '../../../lib/currentDexPendingAttempt';
 import { getProviderErrorMessage,isProviderActionRejected } from '../../../lib/appShared/core';
 export const currentLimitIntent=(sellToken0:boolean,amount:string,price:string,minimum:string)=>{
@@ -121,6 +122,8 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
   };
   const currentOwner=ownerResult?.scope===scope.current&&ownerResult.value.positionId.toString()===ownerId&&privacyReady?ownerResult:null;
   const [topUpApprovalMode, setTopUpApprovalMode, getTopUpApprovalMode] = useTokenApprovalMode(`${state.owner}:${c.graph}:${ownerPair?.join(':')}:${currentOwner?.value.amounts?.sellToken0}`);
+  // CW-140.08: last hook, so the positional hook mocks of the existing tests keep their indices.
+  const [approvedScope,setApprovedScope]=useState<object|null>(null);
   const loadClosed=async()=>{
     if(!selectedOrder?.closed||selectedOrder.id.toString()!==ownerId||!connected||!privacyReady||inFlight.current||busy||blocked||savedActionPending)return;
     const captured=scope.current;inFlight.current=true;setBusy(true);setOwnerResult(null);
@@ -191,7 +194,7 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
         if(pending.phase==='limit-approval'){
           const approval=await pending.recover()as{fundingOutcome:string;privateAccountingVerified:boolean};assertScope(captured);
           if(!approval.privateAccountingVerified||!['verified','reverted'].includes(approval.fundingOutcome))throw new Error('Exact Limit allowance accounting is unavailable. Reconcile before retrying.');
-          setPending(null);setBlocked(false);notice(approval.fundingOutcome==='reverted'?'Limit allowance reverted. Review a fresh allowance.':'Exact private Limit allowance verified. Review the order again with fresh funding checks.');return;
+          setPending(null);setBlocked(false);setApprovedScope(approval.fundingOutcome==='verified'?captured:null);notice(approval.fundingOutcome==='reverted'?'Limit allowance reverted. Review a fresh allowance.':'Exact private Limit allowance verified. Review the order again with fresh funding checks.');return;
         }
         const result=await pending.recover()as CurrentLimitCreationResult|CurrentLimitOwnerResult;assertScope(captured);
         if(pending.phase==='limit-owner'){if(!pending.ownerCapability)throw new Error('Limit owner capability is unavailable.');applyOwnerResult(result as CurrentLimitOwnerResult,pending.ownerCapability,captured);return;}
@@ -266,6 +269,9 @@ export default function CurrentLimitWorkspace({sharedWalletSession,view='create'
       ?<button className="dex-v2-review-button" type="button" disabled={busy||blocked||savedActionPending} onClick={()=>{void sharedWalletSession.actions!.unlockPrivacy().catch(()=>undefined);}}>Unlock privacy</button>
       :<button className="dex-v2-review-button" type="button" disabled={!connected||busy||blocked||savedActionPending} onClick={()=>{void create();}}>Review order</button>}
     {ownedDiscovery?<button type="button" disabled={!connected||!privacyReady||busy||blocked||savedActionPending} onClick={()=>{void approve('create');}}>Review exact order allowance</button>:null}
+    <CurrentLimitSteps approvalStep={ownedDiscovery} approved={approvedScope===scope.current} created={creation?.scope===scope.current}
+      verified={verified?.scope===scope.current} live={pending?.scope===scope.current&&['limit-approval','limit-create','limit-snapshot'].includes(pending.phase)
+        ?pending.phase as 'limit-approval'|'limit-create'|'limit-snapshot':null}/>
     {creation?.scope===scope.current?<><p>Minted NFT {creation.value.positionId.toString()}. Private terms verification is pending.</p><button type="button" disabled={busy||blocked} onClick={()=>{void snapshot();}}>Refresh private Limit result</button></>:null}
     {verified?.scope===scope.current?<p>Verified plain Limit NFT {verified.id.toString()}</p>:null}
     {view==='create'?recovery:null}

@@ -13,7 +13,8 @@ describe('owner recovery routing',()=>{
     const attempt={...saved,phase};
     const route=currentDexOwnerRecovery(attempt,saved)!;
     expect(route.view).toBe(phase.startsWith('limit-')?'activity':['pool-preview','pool-fund'].includes(phase)?'liquidity':'positions');
-    expect(route.message).toMatch(/Do not resend\.|do not request another preview\./);expect(attempt.txHash).toBeNull();
+    // CW-140.02: plain wording; every route still states that nothing is resent.
+    expect(route.message).toMatch(/needs your attention\..*Nothing is resent\.$/);expect(attempt.txHash).toBeNull();
   });
   it('uses the existing funding marker for top-ups and offers both origins for an unmarked preview',()=>{
     expect(currentDexOwnerRecovery({...saved,phase:'pool-fund',poolTopUpHash:null},saved)?.view).toBe('positions');

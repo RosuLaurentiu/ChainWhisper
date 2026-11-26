@@ -21,7 +21,8 @@ import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionC
 import './CurrentPoolPositionsWorkspace.css';
 import CurrentPreparedPoolTopUpWorkspace from './CurrentPreparedPoolTopUpWorkspace';
 import CurrentOwnedPoolPositions from './CurrentOwnedPoolPositions';
-import { currentPoolVerificationMessage } from '../../../lib/currentDexPoolProofError';
+import { currentPoolVerificationMessage, isReviewableTopUpFailure } from '../../../lib/currentDexPoolProofError';
+import { currentPositionReviewFor, readCurrentPositionReviews } from '../../../lib/currentDexPositionReview';
 import { usesTransactionScopedPoolSnapshots } from '../../../lib/currentDexSnapshotAdmission';
 import { currentDexPendingStorage, readCurrentDexPendingAttempt, heldPoolSnapshotRefreshEligible, isReviewedPoolPreview, CURRENT_POOL_REFRESH_ATTEMPT_KEY } from '../../../lib/currentDexPendingAttempt';
 type Capability=Awaited<ReturnType<typeof issueCurrentDexPoolPositionCapability>>;
@@ -87,13 +88,22 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
   })();
   const poolFundingPending=!!savedFunding;
   // CW-135: both top-up transactions are mined, but the last check of the App stopped.
-  const heldTopUpSnapshot=(()=>{
-    if(!preparedCandidate||!savedActionPending)return false;
+  // CW-140.02: the release review accepts only some hold reasons; every other reason keeps manual reconciliation.
+  const heldTopUp=(()=>{
+    if(!preparedCandidate||!savedActionPending)return null;
     try{
       const saved=readCurrentDexPendingAttempt(currentDexPendingStorage(recordScope));
-      return saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&typeof saved.poolTopUpHash==='string'&&!!saved.txHash;
-    }catch{return false;}
+      if(!(saved?.phase==='pool-snapshot'&&saved.verificationBlocked===true&&typeof saved.poolTopUpHash==='string'&&!!saved.txHash))return null;
+      return {reviewable:isReviewableTopUpFailure(saved.verificationFailure),failure:saved.verificationFailure};
+    }catch{return null;}
   })();
+  // CW-140.02: mined top-ups that wait for the owner's review lock only their own position.
+  const positionReviews=(()=>{
+    if(!preparedCandidate||!context.owner)return [];
+    try{return readCurrentPositionReviews(currentDexPendingStorage(recordScope),{chainId:String(candidate.chainId),owner:context.owner,core:candidate.core});}
+    catch{return [];}
+  })();
+  const selectedReview=currentPositionReviewFor(positionReviews,id);
   const reviewablePreview=isReviewedPoolPreview(savedFunding);
   const independentRefresh=(()=>{try{
     const storage=currentDexPendingStorage(recordScope);
@@ -301,6 +311,39 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       }
     }catch(error){fail(error,captured);}finally{inFlight.current=false;setBusy(false);}
   };
+  // CW-140.02: the snapshot verifier and the top-up confirmation are shared by the saved-action check and the review list.
+  const snapshotVerifier=(captured:object)=>privacyReady&&getPositions&&usesTransactionScopedPoolSnapshots(candidate)?
+    async(positionId:bigint,hash:string)=>{assertScope(captured);setTransactionHash(hash);
+      const capability=await getPositions(BigInt(candidate.chainId),{candidate:candidateKey});assertScope(captured);
+      const latestHash=current&&snapshot.value.positionId===positionId?producerHash.trim():'';
+      const result=latestHash&&latestHash.toLowerCase()!==hash.toLowerCase()
+        ?await capability.verifySupersededPlainSnapshot(positionId,hash,latestHash):await capability.verifyPlainSnapshot(positionId,hash);
+      assertScope(captured);return result;}:undefined;
+  const topUpReview=(captured:object)=>async(facts:{positionId:bigint;fundingHash:string;snapshotHash:string;shares:bigint;totalShares:bigint})=>{
+    assertScope(captured);
+    const confirmed=await requestConfirmation({
+      title:'Confirm your top-up',primaryLabel:'Confirm and unlock',fundingMoves:[],stats:[],
+      summaryRows:[{label:'Position',value:`#${facts.positionId}`},{label:'Your shares now',value:facts.shares.toString()},
+        {label:'Pool total shares',value:facts.totalShares.toString()},{label:'Top-up transaction',value:facts.fundingHash},
+        {label:'Snapshot transaction',value:facts.snapshotHash}],
+      message:'Both transactions are mined. Your shares were read with your key. Confirm if they look right. This sends no transaction.'
+    });
+    assertScope(captured);
+    return confirmed;
+  };
+  const reviewPosition=async(txHash:string)=>{
+    if(!getSender||inFlight.current||busy||topUpOpen||context.chain!==Number(candidate.chainId))return;
+    const captured=scope.current,verify=snapshotVerifier(captured);
+    if(!verify){setMessage('Unlock privacy to review this position.');return;}
+    inFlight.current=true;setBusy(true);
+    try{
+      const sender=await getSender(BigInt(candidate.chainId),{candidate:preparedScope!.key});assertScope(captured);
+      const result=await sender.releasePositionReview(txHash,verify,topUpReview(captured));assertScope(captured);
+      if(result&&'status'in result&&result.status==='review-kept'){setMessage('The review stays. This position remains locked; nothing was sent.');return;}
+      setMessage(result?'Top-up confirmed. This position is unlocked.':'This review is no longer saved.');
+      if(result&&'positionId'in result)void read(result.positionId);
+    }catch(error){fail(error,captured);}finally{inFlight.current=false;setBusy(false);}
+  };
   const refresh=async()=>{
     if(!getSender||inFlight.current||busy||topUpOpen||context.chain!==Number(candidate.chainId))return;inFlight.current = true; setBusy(true);const captured=scope.current;
     try{
@@ -319,27 +362,14 @@ export default function CurrentPoolPositionsWorkspace({sharedWalletSession,candi
       const sender=await getSender(BigInt(candidate.chainId),preparedCandidate?{candidate:preparedScope!.key}:nativeTrial?{nativePoolProfile:CURRENT_NATIVE_POOL_PROFILE}:undefined);assertScope(captured);
       if(!snapshotHeld&&!ownerHeld&&preparedCandidate){const result=await sender.recoverCurrentPreparedPoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
       if(!snapshotHeld&&nativeTrial){const result=await sender.recoverCurrentNativePoolPositionResult();assertScope(captured);if(acceptPrivateResult(result,captured))return;}
-      const verifySnapshot=privacyReady&&getPositions&&usesTransactionScopedPoolSnapshots(candidate)?
-        async(positionId:bigint,hash:string)=>{assertScope(captured);setTransactionHash(hash);
-          const capability=await getPositions(BigInt(candidate.chainId),{candidate:candidateKey});assertScope(captured);
-          const latestHash=current&&snapshot.value.positionId===positionId?producerHash.trim():'';
-          const result=latestHash&&latestHash.toLowerCase()!==hash.toLowerCase()
-            ?await capability.verifySupersededPlainSnapshot(positionId,hash,latestHash):await capability.verifyPlainSnapshot(positionId,hash);
-          assertScope(captured);return result;}:undefined;
-      const reviewTopUpHold=async(facts:{positionId:bigint;fundingHash:string;snapshotHash:string;shares:bigint;totalShares:bigint})=>{
-        assertScope(captured);
-        const confirmed=await requestConfirmation({
-          title:'Release the held top-up record',primaryLabel:'Release record',fundingMoves:[],stats:[],
-          summaryRows:[{label:'Position NFT',value:facts.positionId.toString()},{label:'Top-up transaction',value:facts.fundingHash},
-            {label:'Snapshot transaction',value:facts.snapshotHash},{label:'Your shares now',value:facts.shares.toString()},
-            {label:'Pool total shares',value:facts.totalShares.toString()}],
-          message:'Both transactions are mined. The App read your shares from this snapshot with your key. It did not finish its comparison with the top-up preview. Release the record only if your shares are correct. Release sends no transaction.'
-        });
-        assertScope(captured);
-        return confirmed;
-      };
+      const verifySnapshot=snapshotVerifier(captured),reviewTopUpHold=topUpReview(captured);
       const observed=await sender.recoverPendingPoolPositionAttempt(verifySnapshot,reviewTopUpHold);assertScope(captured);
       if(observed?.status==='released-unsent'){setPending(null);setBlocked(hasCurrentDexPendingAction(recordScope));setMessage(CURRENT_UNSENT_RELEASED_MESSAGE);return;}
+      // CW-140.02: the mined top-up moved to its position's review list; the rest of the DEX is free again.
+      if(observed?.status==='moved-to-position-review'){
+        setTransactionHash(observed.transactionHash);setPending(null);setBlocked(hasCurrentDexPendingAction(recordScope));setId(observed.positionId.toString());
+        setMessage(`Your top-up went through. Swaps and other positions are unlocked. Position #${observed.positionId} waits for your review.`);return;
+      }
       if(observed?.status==='superseded-snapshot-recovery-only'){
         setTransactionHash(observed.transactionHash);setPending(null);setSnapshot(null);setExitPreview(null);setProducerHash(observed.latestSnapshotHash);
         const held=hasCurrentDexPendingAction(recordScope);setBlocked(held);
@@ -374,6 +404,27 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       }else{setBlocked(true);setMessage('Position transaction is pending or needs a status check. Do not resend.');}
     }catch(error){setBlocked(true);fail(error,captured);}finally{inFlight.current = false; setBusy(false);}
   };
+  // CW-140.02: a held top-up is checked once by itself when privacy is unlocked. The check is read-only; it opens the
+  // existing release confirmation when the mined state allows it. It never signs, sends or releases on its own.
+  // The saved-action check needs no privacy: without it, a mined top-up moves to its position's review list.
+  const autoChecked=useRef('');
+  const autoCheckKey=heldTopUp&&connected&&!topUpOpen&&context.chain===Number(candidate.chainId)?
+    `${context.owner}:${candidateKey}:${privacyReady?'private':'public'}`:'';
+  useEffect(()=>{
+    if(!autoCheckKey||autoChecked.current===autoCheckKey||busy||inFlight.current)return;
+    autoChecked.current=autoCheckKey;void refresh();
+  // refresh reads the current render's scope; the key alone decides when the single check runs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[autoCheckKey,busy]);
+  // A reviewable position opens its share confirmation once, after privacy is unlocked.
+  const autoReviewed=useRef('');
+  const autoReviewKey=selectedReview?.reviewable&&connected&&privacyReady&&!topUpOpen&&!heldTopUp&&context.chain===Number(candidate.chainId)?
+    `${context.owner}:${selectedReview.txHash}`:'';
+  useEffect(()=>{
+    if(!autoReviewKey||autoReviewed.current===autoReviewKey||busy||inFlight.current)return;
+    autoReviewed.current=autoReviewKey;void reviewPosition(selectedReview!.txHash);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[autoReviewKey,busy]);
   const value=current?snapshot?.value:null;
   const validExitPreview=exitPreview?.scope===scope.current&&value?.positionId===exitPreview.value.positionId&&
     value.context===exitPreview.value.snapshot.context&&(()=>{try{const fraction=currentPoolWithdrawalFraction(percentage);
@@ -399,9 +450,18 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       <button type="button" disabled={!connected||busy||topUpOpen} onClick={()=>{void read();}}>Load private position</button></details>
     </section><section className="dex-owner-detail" aria-label="Position details">
     <header className="dex-owner-heading"><h2>{current?`Position #${id}`:'Position details'}</h2></header>
-    {heldTopUpSnapshot&&!topUpOpen?<div className="dex-owner-progress">
-      <p>{privacyReady?'Your top-up and its snapshot are mined. The App did not finish its last check. Review the held top-up to release its record.':'Unlock privacy to review the held top-up.'}</p>
-      <button type="button" disabled={!connected||!privacyReady||busy||context.chain!==Number(candidate.chainId)} onClick={()=>{void refresh();}}>Review held top-up</button>
+    {selectedReview&&!topUpOpen?<div className="dex-owner-progress dex-needs-attention" role="status">
+      {selectedReview.reviewable?<>
+        <p><strong>Your top-up went through.</strong> {privacyReady?'Confirm your shares to unlock this position.':'Unlock privacy, then confirm your shares to unlock this position.'}</p>
+        <button type="button" disabled={!connected||!privacyReady||busy||context.chain!==Number(candidate.chainId)} onClick={()=>{void reviewPosition(selectedReview.txHash);}}>Confirm shares</button>
+      </>:<p><strong>This position needs manual reconciliation.</strong> {currentPoolVerificationMessage(selectedReview.verificationFailure)} Swaps and other positions are not affected. No tokens move while it waits.</p>}
+    </div>:null}
+    {heldTopUp&&!topUpOpen?<div className="dex-owner-progress dex-needs-attention" role="status">
+      {heldTopUp.reviewable?<>
+        <p><strong>Your top-up went through.</strong> {privacyReady?'The App is checking it now. If it asks, confirm that your shares are correct.':
+          'Unlock privacy and the App checks it for you.'}</p>
+        <button type="button" disabled={!connected||!privacyReady||busy||context.chain!==Number(candidate.chainId)} onClick={()=>{void refresh();}}>Check again</button>
+      </>:<p><strong>Your top-up went through, but one check needs manual reconciliation.</strong> {currentPoolVerificationMessage(heldTopUp.failure)} No tokens move while it waits.</p>}
     </div>:null}
     {reviewablePreview?<div className="dex-owner-progress">
       <p>{privacyReady?'If your wallet shows this request as Failed or Rejected with no transaction hash, you can review and release the saved Pool preview.':'Unlock privacy to review the saved Pool preview.'}</p>
@@ -427,7 +487,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
       'Partial withdrawal and transfer integration is incomplete.'} Close and top-up require exact accounting checks and a separate paid snapshot.</p>:null}
     {value&&preparedCandidate&&value.status===1n&&value.amounts&&producerHash&&value.poolTokens&&sharedWalletSession?<details className="dex-owner-action" name="pool-owner-actions" open={topUpOpen||undefined}><summary>Add liquidity</summary><CurrentPreparedPoolTopUpWorkspace
       session={sharedWalletSession} candidateKey={preparedScope!.key} position={{positionId:value.positionId,context:value.context,producerHash,poolTokens:value.poolTokens,block:value.block}}
-      disabled={busy||blocked||savedActionPending&&!topUpOpen}
+      disabled={busy||blocked||!!selectedReview||savedActionPending&&!topUpOpen}
       onBegin={()=>setTopUpManagement({scope:scope.current,id,managed:false})}
       onReleased={()=>setTopUpManagement(null)}
       onManaged={()=>setTopUpManagement({scope:scope.current,id,managed:true})}
@@ -438,7 +498,7 @@ setMessage(`Position transaction ${observed.status==='observed-mined-verificatio
         setMessage('Top-up complete. Exact private debits and fresh position shares verified.');}}/></details>:null}
     {topUpOpen&&!savedActionPending?<p>{topUpManagement?.managed?'Top-up debits are checked. Use its verification snapshot before another position action.':
       'Top-up is in progress. Complete it, or stop and clear its approvals before another position action.'}</p>:null}
-    {value ? <fieldset className="dex-v2-panel-fields dex-owner-actions" disabled={busy||blocked||savedActionPending||topUpOpen}><details className="dex-owner-action" name="pool-owner-actions"><summary>Withdraw liquidity</summary><div className="dex-v2-panel-fields">
+    {value ? <fieldset className="dex-v2-panel-fields dex-owner-actions" disabled={busy||blocked||savedActionPending||topUpOpen||!!selectedReview}><details className="dex-owner-action" name="pool-owner-actions"><summary>Withdraw liquidity</summary><div className="dex-v2-panel-fields">
     {!nativeTrial?<>{!preparedCandidate||exitCandidate?<label>Withdrawal (%)<input aria-label="Liquidity withdrawal percentage" inputMode="decimal" value={percentage} disabled={busy||blocked} onChange={event=>setPercentage(event.target.value)}/></label>:null}
     <details className="dex-v2-setup"><summary>Minimum payouts</summary><div>
       <label>{labels[0]}<input aria-label={preparedCandidate?`${labels[0]} minimum payout`:'Test token 1 minimum payout'} inputMode="decimal" value={minimum0} disabled={busy||blocked} onChange={event=>setMinimum0(event.target.value)}/></label>

@@ -817,19 +817,26 @@ describe('current DEX submission owner capability', () => {
     expect(getNonce).not.toHaveBeenCalled(); expect(estimateGas).not.toHaveBeenCalled();
     expect(sendTransaction).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
-  it('waits for one confirmation without signing and retains session checks on timeout', async () => {
-    const waitForTransaction = vi.fn(), sendTransaction = vi.fn(), guard = vi.fn(async () => {});
+  it('reads the receipt every 2 s for up to 60 s without signing and retains session checks (CW-140.04)', async () => {
+    const getTransactionReceipt = vi.fn(), sendTransaction = vi.fn(), guard = vi.fn(async () => {});
     mocks.issue.mockImplementation(async args => args.bindCapability({ assertCurrent: guard, assertSnapshotCurrent: guard,
       chainId: 7082400n, ownerAddress: `0x${'22'.repeat(20)}`,
-      readProvider: { waitForTransaction }, signer: { sendTransaction } }));
+      readProvider: { getTransactionReceipt }, signer: { sendTransaction } }));
     const capability = await issueCurrentDexSubmissionCapability({ admission: null } as never);
     const hash = `0x${'11'.repeat(32)}`;
-    waitForTransaction.mockResolvedValueOnce({ status: 1 });
+    getTransactionReceipt.mockResolvedValueOnce({ status: 1 });
     expect(await capability.waitForCurrentCheapReceipt(hash)).toBe(true);
-    expect(waitForTransaction).toHaveBeenCalledWith(hash, 1, 60_000);
-    waitForTransaction.mockRejectedValueOnce({ code: 'TIMEOUT' });
-    expect(await capability.waitForCurrentCheapReceipt(hash)).toBe(false);
-    waitForTransaction.mockRejectedValueOnce(new Error('RPC failed'));
+    expect(getTransactionReceipt).toHaveBeenCalledWith(hash);
+    vi.useFakeTimers();
+    try {
+      getTransactionReceipt.mockReset(); getTransactionReceipt.mockResolvedValueOnce(null).mockResolvedValueOnce({ status: 1 });
+      const later = capability.waitForCurrentCheapReceipt(hash); await vi.advanceTimersByTimeAsync(2_000);
+      expect(await later).toBe(true); expect(getTransactionReceipt).toHaveBeenCalledTimes(2);
+      getTransactionReceipt.mockReset(); getTransactionReceipt.mockResolvedValue(null);
+      const timeout = capability.waitForCurrentCheapReceipt(hash); await vi.advanceTimersByTimeAsync(62_000);
+      expect(await timeout).toBe(false); expect(getTransactionReceipt.mock.calls.length).toBeLessThanOrEqual(32);
+    } finally { vi.useRealTimers(); }
+    getTransactionReceipt.mockReset(); getTransactionReceipt.mockRejectedValueOnce(new Error('RPC failed'));
     await expect(capability.waitForCurrentCheapReceipt(hash)).rejects.toThrow('RPC failed');
     guard.mockRejectedValueOnce(new Error('Session revoked'));
     await expect(capability.waitForCurrentCheapReceipt(hash)).rejects.toThrow('Session revoked');

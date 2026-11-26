@@ -132,9 +132,24 @@ describe('held top-up snapshot release after owner review (CW-135)',()=>{
         fundingBlockHash:fundingTx.blockHash,intervalAccounting:'not-reconstructed'});
       expect(archives[0][1]).not.toContain('150');
     }else if(['declined','no-review','accounting-failure'].includes(fault)){
-      expect(await run()).toMatchObject({status:'observed-mined-verification-held',verificationBlocked:true});
-      expect(f.storage.get(key)).toBe(original);
+      // CW-140.02: the mined top-up moves to the review list of its position; the saved-action record is free.
+      const reviewable=fault!=='accounting-failure';
+      expect(await run()).toMatchObject({status:'moved-to-position-review',positionId:8n,reviewable});
+      expect(f.storage.has(key)).toBe(false);
+      const reviews=[...f.storage.entries()].filter(([k])=>k.startsWith('chainwhisper:dex:position-review:v1:'));
+      expect(reviews).toHaveLength(1);
+      expect(JSON.parse(reviews[0][1])).toEqual([expect.objectContaining({positionId:'8',original,reviewable,
+        fundingBlockHash:reviewable?fundingTx.blockHash:null,verificationFailure:reviewable?'pool-proof':'top-up-accounting'})]);
       if(fault!=='declined'){expect(verify).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();}
+      const approve=vi.fn(async()=>true);
+      if(reviewable){
+        // One confirmation releases it from the review list; the archive keeps the original record.
+        expect(await f.adapter.releasePositionReview(txHash,verify as never,approve)).toBe(proof);
+        expect(approve).toHaveBeenCalledWith({positionId:8n,fundingHash,snapshotHash:txHash,shares:150n,totalShares:1000n});
+        expect([...f.storage.keys()].some(k=>k.startsWith('chainwhisper:dex:position-review:v1:'))).toBe(false);
+        const archived=[...f.storage.entries()].filter(([k])=>k.startsWith('chainwhisper:dex:reviewed-position:v1:'));
+        expect(archived).toHaveLength(1);expect(JSON.parse(archived[0][1])).toMatchObject({original,verification:'owner-reviewed-top-up-snapshot-current-state'});
+      }else await expect(f.adapter.releasePositionReview(txHash,verify as never,approve)).rejects.toThrow('manual reconciliation');
     }else{
       await expect(run()).rejects.toThrow();
       expect(f.storage.has(key)).toBe(true);expect(review).not.toHaveBeenCalled();
@@ -372,9 +387,19 @@ describe.each(['cheap-prepared','cheap-exit','cheap-history'] as const)('%s owne
       if(outcome!=='reload'&&outcome!=='reverted')await expect(sent.recover()).rejects.toThrow();
       const saved=f.storage.get(key)!;
       if(outcome==='final-receipt')f.receipt.blockHash=hash;
-      expect(await f.make({},candidateKey).recoverPendingPoolPositionAttempt()).toMatchObject({status:outcome==='reverted'?'observed-reverted-verification-held':'observed-mined-verification-held',poolTopUpHash:fundingHash,privateAccountingVerified:false,readyToSign:false});
-      expect(f.storage.get(key)).toBe(saved);
-      await expect(f.make({},candidateKey).submitPoolPositionAction(f.prepared as never,topUp as never)).rejects.toThrow();
+      const observed=await f.make({},candidateKey).recoverPendingPoolPositionAttempt();
+      if(candidateKey==='cheap-history'&&['accounting','unverified','final-receipt','funding-after-recheck'].includes(outcome)){
+        // CW-140.02: a mined, verification-held top-up moves to its position's review list; the position stays locked.
+        expect(observed).toMatchObject({status:'moved-to-position-review',positionId:8n,reviewable:false,privateAccountingVerified:false,readyToSign:false});
+        expect(f.storage.has(key)).toBe(false);
+        expect([...f.storage.entries()].filter(([k])=>k.startsWith('chainwhisper:dex:position-review:v1:')).map(([,v])=>JSON.parse(v)[0]))
+          .toEqual([expect.objectContaining({positionId:'8',original:saved,reviewable:false})]);
+        await expect(f.make({},candidateKey).submitPoolPositionAction(f.prepared as never,topUp as never)).rejects.toThrow('waits for your review');
+      }else{
+        expect(observed).toMatchObject({status:outcome==='reverted'?'observed-reverted-verification-held':'observed-mined-verification-held',poolTopUpHash:fundingHash,privateAccountingVerified:false,readyToSign:false});
+        expect(f.storage.get(key)).toBe(saved);
+        await expect(f.make({},candidateKey).submitPoolPositionAction(f.prepared as never,topUp as never)).rejects.toThrow();
+      }
     }
     expect(topUp.verifySnapshot).toHaveBeenCalledTimes(outcome==='reload'||outcome==='reverted'?0:1);expect(f.transport.send).toHaveBeenCalledOnce();
   });

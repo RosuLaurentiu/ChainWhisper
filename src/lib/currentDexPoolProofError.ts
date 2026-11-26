@@ -27,8 +27,19 @@ export const currentPoolVerificationFailures = Object.freeze({
 export type CurrentPoolVerificationFailure = keyof typeof currentPoolVerificationFailures;
 export const isCurrentPoolVerificationFailure = (value: unknown): value is CurrentPoolVerificationFailure =>
   typeof value === 'string' && Object.prototype.hasOwnProperty.call(currentPoolVerificationFailures, value);
-export const currentPoolVerificationFailure = (error: unknown): CurrentPoolVerificationFailure =>
-  (Object.entries(currentPoolVerificationFailures).find(([, message]) => error instanceof Error && error.message === message)?.[0] as CurrentPoolVerificationFailure | undefined) ?? 'pool-proof';
+// CW-140.02: an error may carry its fixed code (`poolVerificationCode`). Without one, the exact message selects the
+// code. currentDexPoolProofError.test.ts fails when a mapped message no longer occurs in the App source, so a
+// reworded check cannot silently fall back to 'pool-proof'.
+export const currentPoolVerificationFailure = (error: unknown): CurrentPoolVerificationFailure => {
+  const coded = error && typeof error === 'object' ? (error as { poolVerificationCode?: unknown }).poolVerificationCode : undefined;
+  if (isCurrentPoolVerificationFailure(coded)) return coded;
+  return (Object.entries(currentPoolVerificationFailures).find(([, message]) => error instanceof Error && error.message === message)?.[0] as CurrentPoolVerificationFailure | undefined) ?? 'pool-proof';
+};
+// CW-140.02: the only hold reasons that the owner-reviewed release of a held top-up snapshot accepts
+// (currentDexPoolPositionSubmission.ts, inspectPending). Every other reason keeps its manual reconciliation.
+export const CURRENT_REVIEWABLE_TOP_UP_FAILURES: readonly CurrentPoolVerificationFailure[] = Object.freeze(['pool-proof', 'snapshot-financial-state']);
+export const isReviewableTopUpFailure = (failure: unknown) =>
+  isCurrentPoolVerificationFailure(failure) && CURRENT_REVIEWABLE_TOP_UP_FAILURES.includes(failure);
 export const currentPoolVerificationMessage = (failure: unknown) => isCurrentPoolVerificationFailure(failure)
   ? currentPoolVerificationFailures[failure] : 'The original verification reason was not retained.';
 export const isKnownCurrentPoolProofMismatch = (error: unknown) => error instanceof CurrentPoolProofMismatch ||

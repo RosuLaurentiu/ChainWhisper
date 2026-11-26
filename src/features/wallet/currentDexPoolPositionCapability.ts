@@ -53,6 +53,9 @@ export const assertCurrentPoolPositionPrepared = (value: unknown, signer: object
   if (!value || typeof value !== 'object' || preparedSessions.get(value) !== signer) throw new Error('Position action was not prepared in this owner wallet session.');
 };
 const same = (a: string | null, b: string) => typeof a === 'string' && a.toLowerCase() === b.toLowerCase();
+// CW-140.04: last checked burn history of each owner's position NFTs, for this page session.
+const ownedBurnHistory = new Map<string, Readonly<{ toBlock: number; hash: string; burned: readonly bigint[] }>>();
+export const resetOwnedPositionBurnHistory = () => ownedBurnHistory.clear();
 const uint = (v: bigint, bits: number, positive = false) => {
   if (typeof v !== 'bigint' || v < (positive ? 1n : 0n) || v >= 1n << BigInt(bits)) throw new Error('Invalid position action amount.');
 };
@@ -65,7 +68,7 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
     const poolTokens = [...candidate.tokens].sort(([a],[b]) => BigInt(a) < BigInt(b) ? -1 : 1);
     const guard = async () => { await assertCurrent(); assertSnapshotCurrent();
       if (!signer.getUserOnboardInfo()?.aesKey?.trim()) throw new Error('Unlock owner privacy before reading or managing this position.'); };
-    const capability = createDexV2ReadCapability({ chainId, assertCurrent,
+    const capability = createDexV2ReadCapability({ chainId, assertCurrent, qualificationScope: readProvider,
       provider: { request: ({ method, params }) => readProvider.send(method, params ?? []) } });
     const checkGraph = async (block: {number: bigint;hash:string}) => {
       await guard();
@@ -536,16 +539,27 @@ export const issueCurrentDexPoolPositionCapability = ({candidate: candidateKey =
         const burned=new Set<bigint>();
         let complete=inventory.complete;
         if(candidateKey==='cheap-history'){
-          const fromBlock=Number(preparedScope!.candidate.attestationBlock.number);
-          const logs=await readProvider.getLogs({address:nft,fromBlock,toBlock:Number(block.number),
+          // CW-140.04: burn history is read once from the deployment block, then only from the last checked block,
+          // while that block is still canonical. A changed or missing anchor reads the full range again.
+          const origin=Number(preparedScope!.candidate.attestationBlock.number),cacheKey=`${chainId}:${nft.toLowerCase()}:${ownerAddress.toLowerCase()}`;
+          const cached=ownedBurnHistory.get(cacheKey);let fromBlock=origin,prior:readonly bigint[]=[];
+          if(cached&&cached.toBlock<=Number(block.number)){
+            const anchor=await readProvider.send('eth_getBlockByNumber',[`0x${cached.toBlock.toString(16)}`,false]).catch(()=>null);await guard();
+            if(anchor&&typeof anchor.hash==='string'&&same(anchor.hash,cached.hash)){fromBlock=cached.toBlock+1;prior=cached.burned;}
+          }
+          const logs=fromBlock>Number(block.number)?[]:await readProvider.getLogs({address:nft,fromBlock,toBlock:Number(block.number),
             topics:nftAbi.encodeFilterTopics('Transfer',[ownerAddress,zeroAddress])}).catch(()=>null);
           await guard();
-          if(!logs||logs.length>256)complete=false;
-          else for(const log of logs){
-            if(log.removed||log.blockNumber<fromBlock||log.blockNumber>Number(block.number))throw new Error('Position burn history changed.');
-            const id=BigInt(log.topics[3]);
-            decodeCurrentPoolNftTransfer([log],nft,ownerAddress,zeroAddress,id);
-            burned.add(id);
+          if(!logs||logs.length+prior.length>256)complete=false;
+          else{
+            for(const log of logs){
+              if(log.removed||log.blockNumber<fromBlock||log.blockNumber>Number(block.number))throw new Error('Position burn history changed.');
+              const id=BigInt(log.topics[3]);
+              decodeCurrentPoolNftTransfer([log],nft,ownerAddress,zeroAddress,id);
+              burned.add(id);
+            }
+            for(const id of prior)burned.add(id);
+            ownedBurnHistory.set(cacheKey,Object.freeze({toBlock:Number(block.number),hash:block.hash,burned:Object.freeze([...burned])}));
           }
         }
         for(const positionId of [...inventory.positionIds,...burned]){

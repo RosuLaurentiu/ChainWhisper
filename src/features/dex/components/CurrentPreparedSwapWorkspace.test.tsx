@@ -114,8 +114,8 @@ it('routes a saved Pool snapshot to position recovery without calling the swap r
   const storage={getItem:(name:string)=>name===CURRENT_DEX_PENDING_ATTEMPT_KEY?saved:null,setItem:vi.fn(),removeItem:vi.fn()};
   vi.stubGlobal('window',{sessionStorage:storage});
   f.click('Check current state');
-  await vi.waitFor(()=>expect(text(f.render())).toContain('A Pool action needs verification.'));
-  f.click('Open position recovery');expect(onInspect).toHaveBeenCalledWith('positions');
+  await vi.waitFor(()=>expect(text(f.render())).toContain('A position needs your attention.'));
+  f.click('Open the position');expect(onInspect).toHaveBeenCalledWith('positions');
   expect(f.sender.recoverPendingCurrentCheapAttempt).not.toHaveBeenCalled();expect(f.getCapability).not.toHaveBeenCalled();
   expect(f.button('Get Quote')!.props.disabled).toBe(true);expect(storage.setItem).not.toHaveBeenCalled();expect(storage.removeItem).not.toHaveBeenCalled();
 });
