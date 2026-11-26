@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { AbiCoder, Interface, keccak256 } from '@coti-io/coti-ethers';
 import { decodeUint, encodeKey, encrypt } from '@coti-io/coti-sdk-typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CURRENT_SHARED_DEX_TOKENS as tokens, CURRENT_SHARED_TOKEN_DISTRIBUTION as p, readCurrentSharedDexTokenDistribution, resolveCurrentSharedTokenDistribution,
+import { CURRENT_SHARED_DEX_TOKENS as tokens, CURRENT_SHARED_TOKEN_DISTRIBUTION, readCurrentSharedDexTokenDistribution, resolveCurrentSharedTokenDistribution,
   currentSharedDistributionCoreAbi, currentSharedDistributionTokenAbi } from './currentSharedDexTokenDistribution';
 import type { CurrentCheapDexCandidateKey } from './dexV2Deployment';
 import { CURRENT_SHARED_TOKEN_FUNDS_LAYOUT as layout, currentSharedTokenFundsAbi as abi, readCurrentSharedDexTokenFunds, readCurrentSharedDexSwapFunds } from './currentSharedDexTokenFunds';
@@ -17,6 +17,9 @@ const cipherWord = (value: bigint) => {
 };
 const encrypted = (value: bigint) => ({ ciphertextHigh: cipherWord(value >> 128n), ciphertextLow: cipherWord(value & ((1n << 128n) - 1n)) });
 const empty = () => ({ ciphertextHigh: 0n, ciphertextLow: 0n });
+// An earlier-Core distribution with the same vault and token rules. Until decision-034 the module defaults were the
+// 85767 prepared Core; a changed identity now stands for it.
+const p = { ...CURRENT_SHARED_TOKEN_DISTRIBUTION, core: `0x${'5a'.repeat(20)}`, graph: '5b'.repeat(32), packageSha256: '5c'.repeat(32) };
 const snapshot = () => ({ owner, head, core: p.core, graph: p.graph, packageSha256: p.packageSha256, vault: p.vault, readyToSign: false as const,
   tokens: tokens.map(t => ({ ...t, claimed: true, initialClaimAvailability: 'claimed' as const, refillAvailability: 'ready' as const,
     quota: p.initialQuota, nextClaimAt: 0n, initialAmount: p.initialAmount, refillAmount: p.refillAmount })) });
