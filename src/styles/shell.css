@@ -1,0 +1,2151 @@
+/* App shell: top header, navigation, route shells, the Trading shell and market bar, loading and error states.
+   The import order in styles.css is part of the cascade: see APP/reports/css-by-feature-2026-11-27. */
+
+.top-header {
+  min-height: var(--header-height);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: var(--z-header);
+  border-color: var(--border-subtle);
+  background: rgba(9, 10, 18, 0.9);
+  backdrop-filter: blur(18px);
+}
+
+.top-header-bar {
+  display: grid;
+  min-height: var(--header-height);
+  align-items: stretch;
+}
+
+.top-header-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  padding: 10px 22px;
+  border-color: var(--border-subtle);
+}
+
+.top-header-brand-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 10px;
+}
+
+.top-header-brand-logo-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.top-header-brand-logo {
+  object-fit: cover;
+  display: block;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.top-header-brand-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.top-header-brand-title {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.top-header-brand-subtitle {
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.top-header-brand-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.top-header-right {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 10px 22px;
+}
+
+.top-header-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 14px;
+  min-width: 0;
+}
+
+.top-header-links a {
+  color: var(--muted);
+  font-size: 0.86rem;
+  text-decoration: none;
+}
+
+.top-header-links a:hover {
+  color: var(--text);
+}
+
+.top-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.top-header-nav {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.top-header-app-nav {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.top-header-has-wallet.top-header-no-links .top-header-bar {
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+
+.top-header-mobile-links {
+  display: none;
+}
+
+.top-header-mobile-wallet {
+  display: none;
+}
+
+.top-header-mobile-nav {
+  display: none;
+}
+
+.top-header-mobile-home {
+  display: none;
+}
+
+.top-header-mobile-app-nav {
+  display: none;
+}
+
+.sound-toggle-btn {
+  border: 1px solid var(--border);
+  color: var(--text);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.sound-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sound-toggle-btn[aria-pressed="true"] {
+  background: rgba(139, 92, 246, 0.2);
+  color: #d6c8ff;
+  border-color: #d6c8ff;
+  box-shadow: 0 2px 6px rgba(139, 92, 246, 0.18);
+}
+.sound-toggle-btn[aria-pressed="false"] {
+  opacity: 0.9;
+  color: var(--muted);
+}
+
+.app-shell-landing .top-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  backdrop-filter: blur(14px);
+}
+
+.header-icon-btn {
+  border: 1px solid var(--border);
+  color: var(--text);
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+}
+
+.header-icon-btn[aria-expanded="true"] {
+  border-color: #d6c8ff;
+  background: rgba(139, 92, 246, 0.2);
+  color: #d6c8ff;
+}
+
+.header-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.top-header-help-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.top-header-brand,
+.top-header-right {
+  background: rgba(13, 14, 24, 0.9);
+}
+
+.header-icon-btn,
+.sound-toggle-btn {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border-color: var(--border-default);
+  border-radius: var(--radius-md);
+  background: rgba(18, 20, 32, 0.86);
+  transition:
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
+}
+
+.header-icon-btn:hover,
+.sound-toggle-btn:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-emphasis);
+  background: var(--brand-soft);
+}
+
+.top-header-ecosystem-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.top-header-ecosystem-menu > summary {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: rgba(18, 20, 32, 0.84);
+  padding: 0 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  list-style: none;
+  transition:
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.top-header-ecosystem-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.top-header-ecosystem-menu[open] > summary,
+.top-header-ecosystem-menu > summary:hover {
+  border-color: var(--border-emphasis);
+  background: var(--brand-soft);
+  color: var(--text-primary);
+}
+
+.top-header-ecosystem-menu[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.top-header-ecosystem-menu .top-header-links {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: var(--z-popover);
+  width: min(320px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: rgba(18, 20, 32, 0.98);
+  box-shadow: var(--shadow-overlay);
+  padding: 6px;
+}
+
+.top-header-ecosystem-menu .top-header-links a {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  font-size: 0.78125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.top-header-ecosystem-menu .top-header-links a:hover {
+  background: var(--brand-soft);
+  color: var(--text-primary);
+}
+:root body .app-shell :is(.top-header, .top-header-brand, .top-header-actions, .top-header-bar, .trading-product-bar, .trading-market-context,
+  .app-root, .chat-panel, .chat-shell, .swap-page-shell, .landing-shell, .dex-v2-page) {
+  background: var(--surface-canvas);
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+/* A single quiet header. Each selected item keeps its visible purple cue. */
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch) {
+  background: transparent;
+  border-color: var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch) button {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+  box-shadow: none;
+}
+/* Only icon buttons need the 44 px width; a min-width on every button would undo wider set widths (Open Chat). */
+:root body .app-shell:is(.app-shell-swap, .app-shell-landing) .header-icon-btn { min-width: 44px; }
+
+@media (min-width: 920.02px) {
+  .app-shell-chat .top-header.top-header-has-wallet.top-header-no-links .top-header-bar {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+  .app-shell-wallet .top-header-app-nav { position: static; transform: none; }
+  .app-shell-wallet .top-header-actions { margin-left: auto; gap: 8px; }
+  :root body .app-shell > .top-header .top-header-brand {
+    padding-left: var(--app-edge-inset);
+  }
+  :root body .app-shell > .top-header .top-header-right {
+    padding-right: var(--app-edge-inset);
+  }
+}
+
+@media (min-width: 920.02px) and (max-width: 1180px) {
+  .app-shell-trades .top-header-bar {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 920.02px) {
+  .app-shell-wallet .top-header-bar { grid-template-columns: 250px minmax(0, 1fr); }
+}
+
+@media (min-width: 920.02px) and (max-width: 1180px) {
+  .app-shell-trades .top-header-brand {
+    padding-inline: 14px;
+  }
+
+  .app-shell-trades .top-header-right {
+    flex-wrap: wrap;
+    align-content: center;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+  }
+}
+
+@media (min-width: 920.02px) {
+  .app-shell-wallet .top-header-right { position: static; width: auto; justify-content: flex-start; gap: 10px; padding-inline: 14px; }
+}
+
+@media (min-width: 920.02px) and (max-width: 1180px) {
+  .app-shell-trades .top-header-nav {
+    order: 2;
+    flex: 1 0 100%;
+    justify-content: stretch;
+  }
+
+  .app-shell-trades .top-header-actions {
+    margin-left: auto;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 920px) {
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: auto;
+    min-width: 200px;
+    max-width: min(360px, 48vw);
+  }
+}
+
+/* 2026 refinement: one compact mobile app header and predictable Home grid.
+   These rules replace the older stacked app-navigation and wallet rows while
+   retaining their class names for component and browser-test compatibility. */
+@media (max-width: 920px) {
+  .top-header,
+  .app-shell-landing .top-header {
+    z-index: var(--z-header);
+  }
+
+  .top-header .top-header-bar,
+  .top-header.top-header-no-links .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-bar {
+    display: grid;
+    align-items: center;
+    background: rgba(10, 11, 19, 0.96);
+    min-height: var(--ux-mobile-app-header);
+    height: var(--ux-mobile-app-header);
+  }
+
+  .top-header .top-header-brand,
+  .top-header.top-header-no-links .top-header-brand {
+    display: flex;
+    align-items: center;
+    border: 0;
+    background: transparent;
+  }
+
+  .top-header .top-header-brand-main {
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .top-header .top-header-mobile-home {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .top-header .top-header-mobile-utility-cluster {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid rgba(121, 95, 184, 0.48);
+    border-radius: 13px;
+    background: rgba(15, 16, 27, 0.82);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 8px 20px rgba(0, 0, 0, 0.12);
+    padding: 2px;
+  }
+
+  .top-header
+    .top-header-mobile-utility-cluster
+    :is(.header-icon-btn, .sound-toggle-btn):is(:hover, :focus-visible),
+  .top-header .top-header-mobile-utility-cluster .sound-toggle-btn[aria-pressed='true'] {
+    border-color: transparent;
+    background: rgba(139, 92, 246, 0.16);
+  }
+
+  .top-header .top-header-brand-title {
+    max-width: 110px;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .top-header .top-header-brand-subtitle {
+    max-width: 110px;
+    font-size: 0.7rem;
+  }
+
+  .top-header.top-header-no-links .top-header-right,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-right,
+  .top-header .top-header-right {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .top-header .top-header-actions {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .top-header .top-header-brand-actions,
+  .top-header .top-header-mobile-app-nav {
+    display: none;
+  }
+
+  .top-header .header-icon-btn,
+  .top-header .sound-toggle-btn,
+  .top-header .top-header-help-btn {
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    border-radius: 11px;
+  }
+
+  .top-header .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: auto;
+    min-width: 0;
+    display: block;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-links.open {
+    max-height: min(560px, calc(100dvh - var(--header-height) - 24px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    box-shadow: var(--shadow-overlay);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 10px;
+    width: min(240px, calc(100vw - 20px));
+    z-index: 45;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-elev-2);
+  }
+
+  .top-header-mobile-ecosystem-section {
+    display: grid;
+    gap: 7px;
+  }
+
+  .top-header-mobile-menu-label {
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .top-header-mobile-utility-row {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 0;
+  }
+
+  .top-header-mobile-ecosystem-links {
+    display: grid;
+    gap: 4px;
+  }
+
+  .top-header .top-header-mobile-ecosystem-links a {
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    padding: 0 10px;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    text-align: left;
+  }
+
+  .top-header .top-header-mobile-ecosystem-links a:hover {
+    background: var(--brand-soft);
+    color: var(--text-primary);
+  }
+
+  .top-header {
+    position: relative;
+    width: 100%;
+    max-width: 100vw;
+    min-width: 0;
+  }
+
+  .top-header .top-header-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    background: var(--bg-elev-1);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .top-header .top-header-brand {
+    border-right: none;
+    min-width: 0;
+    padding: 12px 14px;
+  }
+
+  .top-header.top-header-no-links .top-header-brand {
+    gap: 8px;
+    min-width: 0;
+    display: flex;
+    grid-template-columns: none;
+    align-items: center;
+    padding: 8px 6px 8px 12px;
+  }
+
+  .top-header .top-header-brand,
+  .top-header.top-header-no-links .top-header-brand {
+    padding-block: 5px;
+  }
+
+  .top-header.top-header-no-links .top-header-brand {
+    padding-block: 4px;
+  }
+
+  .top-header.top-header-no-links .top-header-brand-actions {
+    margin-left: 0;
+  }
+
+  .top-header .top-header-right {
+    gap: 8px;
+    padding: 12px 14px 12px 0;
+    background: transparent;
+    min-width: max-content;
+  }
+
+  .top-header.top-header-no-links .top-header-right {
+    padding-left: 0;
+  }
+
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-right {
+    padding-left: 0;
+  }
+
+  .top-header .top-header-brand-actions,
+  .top-header .top-header-actions {
+    gap: 6px;
+  }
+
+  .top-header .top-header-brand-logo {
+    border-radius: 7px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .top-header .top-header-links {
+    display: none;
+  }
+
+  .top-header .top-header-mobile-links.open a {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elev-3);
+    padding: 7px 10px;
+    color: var(--text);
+    font-size: 0.84rem;
+    text-align: left;
+  }
+
+  .top-header .top-header-mobile-links.open a:hover {
+    border-color: var(--border-strong);
+    background: rgba(139, 92, 246, 0.16);
+  }
+
+  .top-header .top-header-mobile-wallet {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    justify-items: stretch;
+    gap: 0;
+    border-top: 1px solid rgba(74, 64, 112, 0.5);
+    border-bottom: 1px solid rgba(74, 64, 112, 0.5);
+    background:
+      linear-gradient(180deg, rgba(13, 13, 23, 0.98), rgba(8, 8, 15, 0.94));
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
+    padding: 6px 8px;
+  }
+
+  .top-header .top-header-mobile-nav {
+    display: block;
+  }
+
+  .top-header .top-header-mobile-app-nav {
+    display: flex;
+    align-items: stretch;
+    border-top: 1px solid rgba(74, 64, 112, 0.42);
+    background: rgba(10, 10, 18, 0.82);
+    overflow: visible;
+    min-height: var(--ux-mobile-global-nav);
+    grid-template-columns: minmax(0, 1fr);
+    border-bottom: 0;
+    padding: 0 5px;
+  }
+
+  .top-header .top-header-mobile-network-strip {
+    flex: 0 0 auto;
+    align-items: center;
+    padding: 2px 8px 2px 0;
+    display: none;
+  }
+
+  .app-shell-landing .top-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+  }
+  .top-header.top-header-no-links .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-bar {
+    grid-template-columns: minmax(102px, 1fr) auto;
+  }
+
+  .top-header.top-header-has-mobile-home .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-mobile-home .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet.top-header-has-mobile-home .top-header-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-right {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-actions {
+    width: 100%;
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline {
+    justify-self: end;
+  }
+
+  .top-header.top-header-no-links .top-header-right,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 8px 8px 8px 0;
+    background: transparent;
+  }
+
+  .top-header.top-header-no-links .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: min(142px, 37vw);
+    min-width: 0;
+    display: block;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-network {
+    display: none;
+  }
+
+  .top-header .top-header-mobile-utility-cluster .sound-toggle-btn {
+    display: none;
+  }
+}
+
+/* 2026-08-24 refinement: compact shared mobile shell, creation form, and portfolio positions. */
+@media (max-width: 920px) {
+  .top-header.top-header-no-links .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-bar,
+  .top-header.top-header-has-mobile-home .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-mobile-home .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet.top-header-has-mobile-home .top-header-bar {
+    min-height: var(--ux-mobile-app-header);
+    height: var(--ux-mobile-app-header);
+  }
+
+  .app-shell-wallet .top-header-mobile-utility-cluster { display: flex; min-height: 46px; }
+  .app-shell-wallet .top-header .top-header-mobile-network-strip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+  }
+  .app-shell-wallet .top-header-help-btn { display: none; }
+  .app-shell-wallet .top-header-actions { margin-left: auto; }
+  .app-shell .top-header.top-header-has-mobile-wallet .top-header-mobile-wallet.top-header-mobile-wallet-inline:has(.wallet-header-panel-connected) {
+    width: 192px;
+    min-width: 192px;
+    max-width: 192px;
+  }
+
+  .app-shell:is(.app-shell-trades, .app-shell-dex-v2).mobile-trading-scrolled > .top-header {
+    min-height: var(--ux-mobile-global-nav);
+  }
+  .app-shell:is(.app-shell-trades, .app-shell-dex-v2).mobile-trading-scrolled > .top-header > .top-header-bar {
+    min-height: 0;
+    height: 0;
+    max-height: 0;
+    overflow: hidden;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+  }
+  .app-shell > .top-header > .top-header-bar {
+    max-height: var(--ux-mobile-app-header);
+    box-sizing: border-box;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    transition:
+      max-height 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      min-height 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      height 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      padding 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 150ms ease,
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .app-shell .top-header .top-header-mobile-utility-cluster {
+    min-height: 36px;
+    height: 36px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+  .app-shell .top-header .top-header-mobile-home .header-icon-btn {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    border: 1px solid var(--approved-border);
+    border-radius: 8px;
+  }
+  .app-shell .top-header .top-header-brand {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  .app-shell .top-header .top-header-right {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .top-header .top-header-mobile-wallet {
+    padding: 6px 8px 7px;
+  }
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-brand {
+    width: 48px;
+    padding: 8px 4px 8px 10px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-brand-main {
+    gap: 0;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-brand-copy {
+    display: none;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: 146px;
+    max-width: 146px;
+  }
+}
+
+@media (max-width: 430px) {
+  .top-header .top-header-brand-title,
+  .top-header .top-header-brand-subtitle {
+    max-width: 84px;
+  }
+
+  .top-header:not(.top-header-has-mobile-wallet) .top-header-brand-title,
+  .top-header:not(.top-header-has-mobile-wallet) .top-header-brand-subtitle {
+    max-width: 132px;
+  }
+
+  .top-header .header-icon-btn,
+  .top-header .top-header-help-btn {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 920px) {
+  .top-header .header-icon-btn,
+  .top-header .top-header-help-btn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 430px) {
+  .top-header .top-header-brand-copy {
+    display: none;
+  }
+
+  .top-header .top-header-brand,
+  .top-header.top-header-no-links .top-header-brand {
+    padding-left: 8px;
+  }
+}
+
+@media (max-width: 380px) {
+  .app-shell .top-header.top-header-has-mobile-wallet .top-header-mobile-wallet.top-header-mobile-wallet-inline:has(.wallet-header-panel-connected),
+  .app-shell .top-header.top-header-has-mobile-wallet .top-header-mobile-wallet-inline .wallet-header-panel-connected {
+    width: 170px;
+    min-width: 170px;
+    max-width: 170px;
+  }
+}
+
+.app-header-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.app-header-nav button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 2px;
+  white-space: nowrap;
+  min-height: 44px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  transition:
+    color var(--motion-fast) ease,
+    background var(--motion-fast) ease;
+}
+/* Shared tactile controls */
+button:not(:disabled),
+.top-header-ecosystem-menu > summary,
+.contact-card[role='button'] {
+  transition-duration: var(--motion-hover);
+  transition-timing-function: var(--ease-tactile);
+}
+
+:is(
+  .contact-card,
+  .treasury-meta-card-link,
+  .app-shell-trades .p2p-order-card
+) {
+  transition:
+    translate var(--motion-hover) var(--ease-tactile),
+    border-color var(--motion-hover) ease,
+    background-color var(--motion-hover) ease,
+    box-shadow var(--motion-hover) ease,
+    color var(--motion-hover) ease;
+}
+/* Privacy Portal */
+.privacy-token-list > button,
+.privacy-mobile-token-menu > button,
+.swap-token-chip,
+.privacy-direction-switch .swap-pill-option {
+  transition:
+    translate var(--motion-hover) var(--ease-tactile),
+    border-color var(--motion-hover) ease,
+    background-color var(--motion-hover) ease,
+    box-shadow var(--motion-hover) ease,
+    color var(--motion-hover) ease;
+}
+
+.app-header-nav button::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  left: 0;
+  border-radius: 999px 999px 0 0;
+  background: transparent;
+  bottom: -10px;
+  height: 2px;
+}
+
+.app-header-nav {
+  gap: clamp(18px, 2.2vw, 34px);
+}
+
+.app-header-nav button:hover,
+.app-header-nav button.active {
+  color: var(--text-primary);
+}
+
+.top-header-app-nav .app-header-nav {
+  gap: 4px;
+  border: 1px solid rgba(155, 124, 255, 0.16);
+  border-radius: var(--radius-md);
+  background: rgba(18, 20, 32, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  padding: 3px;
+}
+
+.top-header-app-nav .app-header-nav button {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 0 13px;
+  transition:
+    transform var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+button:not(:disabled):active,
+.top-header-ecosystem-menu > summary:active,
+.contact-card[role='button']:active {
+  filter: brightness(0.97);
+  scale: 0.985;
+  translate: 0 1px;
+  transition-duration: var(--motion-press);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .contact-card[role='button']:hover,
+  .treasury-meta-card-link:hover {
+    border-color: rgba(167, 139, 250, 0.5);
+    box-shadow: 0 10px 26px rgba(2, 3, 10, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.08);
+    translate: 0 -1px;
+  }
+}
+
+.app-shell-home .landing-module-card:focus-within,
+.contact-card[role='button']:focus-within,
+.treasury-meta-card-link:focus-visible {
+  border-color: rgba(196, 181, 253, 0.58);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.14);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .privacy-token-list > button:hover,
+  .privacy-mobile-token-menu > button:hover {
+    translate: 0 -1px;
+  }
+}
+
+.top-header-app-nav .app-header-nav button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(155, 124, 255, 0.22);
+  background: rgba(139, 92, 246, 0.09);
+  box-shadow: 0 6px 16px rgba(3, 4, 12, 0.18);
+}
+
+.top-header-app-nav .app-header-nav button::after {
+  right: 12px;
+  bottom: 3px;
+  left: 12px;
+  height: 2px;
+  opacity: 0;
+  transform: scaleX(0.45);
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
+}
+
+.top-header-app-nav .app-header-nav button:hover::after {
+  background: rgba(155, 109, 255, 0.52);
+  opacity: 0.55;
+  transform: scaleX(0.72);
+}
+:root body .app-shell :is(.app-header-nav, .p2p-product-view-tabs) {
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+}
+:root body .app-shell .app-header-nav button::after { content: none; }
+:root body .app-shell :is(.app-header-nav, .p2p-trade-tabs, .p2p-agent-mode-toggle) button { border: 0; border-radius: 0; }
+
+@media (max-width: 920px) {
+  .top-header .top-header-mobile-links .app-header-nav {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    overflow: visible;
+  }
+
+  .top-header .top-header-mobile-links .app-header-nav button {
+    min-height: 44px;
+    justify-content: flex-start;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: rgba(10, 11, 19, 0.64);
+    padding: 0 11px;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+  }
+
+  .top-header .top-header-mobile-links .app-header-nav button::after {
+    inset: 7px auto 7px 0;
+    width: 2px;
+    height: auto;
+    border-radius: 0 2px 2px 0;
+  }
+
+  .top-header .top-header-mobile-app-nav > .app-header-nav {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    display: flex;
+    gap: 0;
+    padding: 0 10px;
+  }
+
+  .top-header .top-header-mobile-app-nav > .app-header-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .top-header .top-header-mobile-app-nav .app-header-nav button::after {
+    bottom: 0;
+    height: 2px;
+  }
+
+  .top-header .top-header-mobile-nav .app-header-nav {
+    width: 100%;
+    justify-content: space-around;
+    overflow: visible;
+  }
+
+  .top-header .top-header-mobile-nav .app-header-nav button {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding-inline: 5px;
+    font-size: 0.68rem;
+  }
+
+  .top-header .top-header-mobile-app-nav .app-header-nav {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    overflow: visible;
+  }
+
+  .top-header .top-header-mobile-app-nav .app-header-nav button {
+    min-width: 0;
+    min-height: var(--ux-mobile-global-nav);
+    padding: 0 3px;
+    font-size: 0.75rem;
+    white-space: normal;
+    padding-inline: 9px;
+  }
+  /* 2. 12 px text floor (the bottom navigation keeps its size). Measured at 390 px on every page. */
+  :root body .app-shell :is(.app-header-nav button, .connect-btn.wallet-inline-btn.wallet-primary-action span, .trading-ratio-value,
+    .trading-product-switch button, .dex-market-chart-legend small, .dex-market-chart-actions button,
+    .dex-market-history-data :is(caption, th, td), .tx-steps-node, .tx-steps-label, .dex-v2-pool-step-number, .dex-v2-pool-steps span,
+    .p2p-agent-mode-toggle button, .p2p-agent-empty-state span, .p2p-agent-context-heading :is(span, strong), .p2p-agent-context :is(span, small),
+    .p2p-agent-quick-actions small, .p2p-offers-filter-toggle :is(span, small), .p2p-offers-list-head span, .p2p-offers-empty.is-note button,
+    .p2p-offers-market-row :is(span, strong), .p2p-offers-chart span, .p2p-offers-chart-empty, .standalone-trade-visibility strong,
+    .trade-compose-field-label, .trade-compose-field-value, .trade-compose-max, .trade-compose-advanced-options :is(span, small),
+    .trade-compose-privacy-copy span, .trade-compose-expiry label, .trade-compose-expiry-toggle, .trade-compose-warning :is(p, strong),
+    .trade-compose-submit-context :is(span, strong), .trade-compose-readiness, .p2p-my-trades-wallet-card p,
+    .p2p-my-trades-empty-slot :is(strong, p)) {
+    font-size: .75rem;
+  }
+  /* 5. Top menu labels on one line; the Portal title shows; "Pools only" stays next to the mode toggle; one frame on
+     the header Connect control; one main-button style on Swap and Limit; 44 px tap areas on two small links. */
+  :root body .app-shell .app-header-nav button { white-space: nowrap; padding-inline: 4px; }
+}
+
+@media (max-width: 430px) {
+  .top-header .top-header-mobile-app-nav .app-header-nav button {
+    font-size: 0.72rem;
+    line-height: 1.05;
+  }
+}
+
+@media (max-width: 360px) {
+  .top-header .top-header-mobile-app-nav .app-header-nav button {
+    font-size: 0.68rem;
+  }
+}
+
+.chat-placeholder {
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  padding: 28px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  width: 100%;
+  text-align: center;
+}
+
+.app-root,
+.top-header-bar {
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+
+.dex-v2-page {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.app-shell > .treasury-shell {
+  --route-inline-gutter: 40px;
+  min-height: 0;
+  height: 100%;
+  max-width: none;
+  margin-inline: 0;
+  align-content: start;
+  grid-auto-rows: max-content;
+  padding-inline: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-shell > .treasury-shell > * {
+  width: min(calc(100% - var(--route-inline-gutter)), 1520px);
+  margin-inline: auto;
+}
+
+@media (max-width: 1080px) {
+  .dex-v2-page { grid-template-columns: 188px minmax(0, 1fr); }
+}
+
+@media (max-width: 920px) {
+  .swap-page-shell {
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 820px) {
+  .dex-v2-page { width: 100%; min-width: 0; max-width: 100%; display: block; overflow: visible; }
+}
+
+.route-loading {
+  width: min(520px, 100%);
+  align-self: start;
+  justify-self: center;
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 12px;
+  background: rgba(17, 17, 27, 0.68);
+  padding: 16px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
+}
+
+.route-loading-treasury {
+  width: min(860px, 100%);
+}
+
+.route-loading-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(235, 229, 255, 0.82);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.route-loading-lines {
+  display: grid;
+  gap: 9px;
+}
+
+.route-loading-lines span {
+  position: relative;
+  display: block;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(235, 229, 255, 0.08);
+}
+
+.route-loading-lines span::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+  animation: chat-image-shimmer 1.35s ease-in-out infinite;
+}
+
+.standalone-trades-shell .route-loading-lines span::before {
+  transform: none;
+  opacity: 0.55;
+  animation: none;
+}
+
+.route-loading-lines span:nth-child(1) {
+  width: 74%;
+}
+
+.route-loading-lines span:nth-child(2) {
+  width: 92%;
+}
+
+.route-loading-lines span:nth-child(3) {
+  width: 58%;
+}
+
+.route-loading-lines span:nth-child(4) {
+  width: 82%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-loading-lines span::before,
+  .chat-message-skeleton-bubble::before,
+  .group-message-skeleton-bubble::before {
+    animation: none;
+  }
+}
+
+.app-error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.app-header-nav button.active::after {
+  background: var(--brand-strong);
+  box-shadow: 0 -3px 14px rgba(139, 92, 246, 0.28);
+}
+
+.top-header-app-nav .app-header-nav button.active {
+  border-color: rgba(155, 124, 255, 0.32);
+  background: var(--brand-soft);
+  box-shadow: inset 0 0 0 1px rgba(155, 124, 255, 0.04);
+}
+
+.top-header-app-nav .app-header-nav button.active::after {
+  background: var(--brand-strong);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.34);
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.trading-product-switch button.active {
+  background: linear-gradient(135deg, rgba(96, 60, 174, 0.9), rgba(112, 79, 171, 0.82));
+  box-shadow: inset 0 0 0 1px rgba(181, 137, 255, 0.24), 0 6px 20px rgba(92, 53, 180, 0.16);
+  color: #fff;
+}
+:root body .app-shell :is(.app-header-nav, .p2p-product-view-tabs) :is(button.active, button[aria-current="page"]) { background: transparent; }
+
+@media (max-width: 920px) {
+  .top-header .top-header-mobile-links .app-header-nav button.active {
+    border-color: var(--border-emphasis);
+    background: var(--brand-soft);
+    color: var(--text-primary);
+  }
+
+  .mobile-bottom-nav button.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+}
+
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .mobile-bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 999;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 10px max(8px, env(safe-area-inset-bottom, 0px));
+    background: rgba(10, 10, 17, 0.92);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -8px 20px rgba(5, 5, 12, 0.45);
+    pointer-events: auto;
+  }
+
+  .mobile-bottom-nav button {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--border);
+    background: var(--bg-elev-3);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 8px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .mobile-bottom-nav button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+@media (max-height: 520px) {
+  :root body .app-shell .mobile-bottom-nav { padding: 2px 8px max(2px, env(safe-area-inset-bottom, 0px)); gap: 4px; }
+  :root body .app-shell .mobile-bottom-nav button { min-height: 44px; padding-block: 4px; }
+}
+
+.app-shell-landing > .landing-shell > *,
+.app-shell > :is(.swap-page-shell, .treasury-shell) > * {
+  animation: cw-route-enter var(--motion-enter) var(--ease-enter);
+}
+
+@media (max-width: 720px) {
+  .landing-shell,
+  .treasury-shell {
+    padding: 12px 0 24px;
+    gap: 12px;
+  }
+}
+
+.dex-v2-loading-shell {
+  padding: 32px;
+}
+
+/* Privacy Portal density: keep the full conversion workspace visible on desktop. */
+@media (min-width: 920.02px) {
+  .swap-page-shell {
+    padding: 16px 20px 20px;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell-landing > .landing-shell,
+  .app-shell > .treasury-shell {
+    --route-inline-gutter: 0px;
+  }
+}
+
+/* Shared Trading shell: the global header owns Trading; this slim local bar owns DEX/P2P. */
+.trading-product-bar {
+  align-items: center;
+  justify-content: center;
+
+/* Shared market context */
+  min-height: 76px;
+  display: block;
+  border-bottom: 1px solid var(--approved-border-soft);
+  background: linear-gradient(180deg, rgba(11, 14, 24, 0.99), rgba(8, 10, 18, 0.99));
+  padding: 0 22px;
+}
+
+.trading-product-switch {
+  align-items: center;
+  width: auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  margin-left: 22px;
+  border: 1px solid var(--approved-border);
+  border-radius: 10px;
+  background: rgba(15, 18, 30, 0.94);
+  padding: 3px;
+}
+
+.trading-product-switch > svg {
+  margin: 0 5px;
+  color: rgba(196, 181, 253, 0.8);
+}
+
+.trading-ratio-value {
+  transform-origin: left center;
+  animation: cw-ratio-flip 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.trading-market-context {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(300px, 0.92fr) minmax(420px, 1.35fr) minmax(130px, 0.42fr) minmax(260px, 0.72fr);
+  align-items: center;
+  margin: 0 auto;
+}
+
+.trading-market-pair-picker,
+.trading-market-ratio,
+.trading-market-change {
+  min-width: 0;
+  border-right: 1px solid var(--approved-border-soft);
+}
+
+.trading-market-pair-picker {
+  position: relative;
+}
+
+.trading-market-pair {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-right: 24px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.trading-market-pair::-webkit-details-marker { display: none; }
+
+.trading-market-token {
+  width: 33px;
+  height: 33px;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+}
+
+.trading-market-token-base { background: linear-gradient(145deg, #1689ee, #0a5bbc); }
+.trading-market-token-quote { margin-left: -4px; background: linear-gradient(145deg, #20d8ad, #078d73); }
+
+.trading-market-pair strong {
+  overflow: hidden;
+  margin-left: 3px;
+  color: #f7f5ff;
+  font: 700 1rem "Space Grotesk", sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trading-market-pair > svg {
+  margin-left: auto;
+  color: #aaa7ba;
+}
+
+.trading-market-pair-picker[open] .trading-market-pair > svg { transform: rotate(180deg); }
+
+.trading-market-token-menu {
+  position: absolute;
+  z-index: calc(var(--z-header) + 4);
+  top: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  border: 1px solid var(--approved-border);
+  border-radius: 10px;
+  background: #0a0c15;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.48);
+/* One network at a time keeps the shared token catalog readable. */
+  width: min(440px, calc(100vw - 44px));
+  gap: 10px;
+  padding: 12px;
+}
+
+.trading-market-token-menu section { display: grid; gap: 8px; }
+.trading-market-token-menu section > span { color: var(--approved-muted); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+.trading-market-token-menu section > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.trading-market-token-menu section > div > span {
+  border: 1px solid var(--approved-border-soft);
+  border-radius: 6px;
+  background: rgba(18, 21, 34, 0.9);
+  color: #b8b4c6;
+  padding: 6px 9px;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.trading-market-ratio {
+  display: grid;
+  gap: 8px;
+  padding: 0 28px;
+}
+
+.trading-market-ratio > span,
+.trading-market-change > span {
+  color: var(--approved-muted);
+  font-size: 0.78rem;
+}
+
+.trading-market-ratio > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.trading-market-ratio strong {
+  overflow: hidden;
+  color: #faf9ff;
+  font: 600 1.2rem "Space Grotesk", sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trading-market-ratio strong small {
+  color: #a9a6b7;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.trading-market-ratio button {
+  position: relative;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #dedbea;
+  padding: 0 12px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.trading-market-ratio button::after {
+  position: absolute;
+  content: "";
+  z-index: 0;
+  inset: 4px 0;
+  border: 1px solid var(--approved-border);
+  border-radius: 8px;
+  background: rgba(12, 15, 25, 0.86);
+}
+
+.trading-market-ratio button svg,
+.trading-market-ratio button span {
+  position: relative;
+  z-index: 1;
+}
+
+.trading-market-change {
+  display: grid;
+  gap: 8px;
+  padding: 0 22px;
+}
+
+.trading-market-change strong {
+  color: var(--approved-green);
+  font: 700 1rem "Space Grotesk", sans-serif;
+}
+
+.trading-product-switch button {
+  min-height: 45px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #a7a4b7;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+/* Compact shared pair catalog. */
+.trading-market-token-menu > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--approved-border-soft);
+  padding-bottom: 11px;
+}
+.trading-market-token-menu > header span,
+.trading-market-token-menu details summary span {
+  color: var(--approved-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.trading-market-token-menu > header strong { color: #fff; font-size: 0.82rem; }
+.trading-market-token-menu details { display: grid; gap: 8px; }
+.trading-market-token-menu details summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+.trading-market-token-menu details summary::-webkit-details-marker { display: none; }
+.trading-market-token-menu details summary small { color: #777389; font-size: 0.66rem; margin-left: auto; }
+.trading-market-token-menu details > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.trading-market-token-menu details > div > span {
+  border: 1px solid var(--approved-border-soft);
+  border-radius: 6px;
+  background: rgba(18, 21, 34, 0.9);
+  color: #b8b4c6;
+  padding: 6px 9px;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+.trading-market-token-menu details summary svg { margin-left: 7px; color: #8f8b9f; }
+.trading-market-token-menu details[open] summary svg { transform: rotate(180deg); }
+.trading-market-catalog[hidden] { display: none; }
+.trading-market-catalog { display: grid; gap: 9px; padding: 2px; }
+.trading-market-token-choice { display: grid; min-width: 0; gap: 4px; color: var(--approved-muted); font-size: 0.72rem; }
+.trading-market-token-choice select {
+  width: 100%; min-width: 0; min-height: 34px; padding: 6px 9px;
+  border: 1px solid var(--approved-border-soft); border-radius: 6px;
+  background: #101018; color: #f0ecf8; font: inherit;
+}
+.trading-market-token-choice select:focus-visible { outline: 2px solid #a76bff; outline-offset: 2px; }
+.trading-market-token-choice select:disabled { opacity: 0.55; }
+.trading-market-catalog > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--approved-muted);
+  font-size: 0.66rem;
+}
+.trading-market-catalog > header span {
+  font-weight: 750;
+  text-transform: uppercase;
+}
+/* The displayed ratio is the reverse-price control. */
+.trading-market-ratio .trading-ratio-trigger {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 42px;
+  gap: 10px;
+  margin: -4px -8px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 8px;
+}
+.trading-market-ratio .trading-ratio-trigger::after { display: none; }
+.trading-market-ratio .trading-ratio-trigger:hover,
+.trading-market-ratio .trading-ratio-trigger:focus-visible {
+  border-color: var(--approved-border);
+  background: rgba(18, 21, 34, 0.72);
+}
+.trading-market-ratio .trading-ratio-trigger strong {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.trading-market-ratio .trading-ratio-trigger svg {
+  flex: 0 0 auto;
+  color: var(--approved-purple-bright);
+}
+/* Keep keyboard navigation as clear as pointer navigation across Trading. */
+.trading-market-pair,
+.trading-product-switch button,
+.app-shell-trades .p2p-offer-rate-row {
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+.dex-token-identity { display: grid; gap: 6px; padding: 10px 12px; font-size: 0.82rem; }
+.dex-token-identity small { font-size: 0.7rem; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .trading-market-pair strong { white-space: normal; font-size: 0.85rem; }
+.app-shell-dex-v2 .trading-market-pair strong > small { display: block; color: #b7b2c4; font-size: 0.8rem; line-height: 1.4; }
+:root body .app-shell .trading-market-change strong { color: var(--text-secondary); }
+:root body .app-shell .trading-market-change[data-price-state="stale"] strong,
+:root body .app-shell .trading-market-change[data-price-state="unavailable"] strong { color: #f6c466; }
+:root body .app-shell .trading-market-change[data-price-state="available"] strong { color: #55d6af; }
+:root body .app-shell .trading-market-token-details { margin-top: 12px; border-top: 1px solid var(--border-subtle); }
+:root body .app-shell .trading-market-token-details > summary { min-height: 40px; padding-block: 10px; display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; color: var(--text-secondary); font-size: .8125rem; font-weight: 600; }
+/* CW-097. Market bar: owner decision 2026-11-18 removes the line right of the live price block. The DEX / P2P
+   switch next to it has its own frame, so the two lines read as a double border. */
+:root body .app-shell .trading-product-bar .trading-market-change { border-right: 0; }
+:root body .app-shell .trading-market-token-details > summary::-webkit-details-marker { display: none; }
+:root body .app-shell .trading-market-token-details > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+:root body .app-shell .trading-market-token-details[open] > summary { color: var(--text-primary); }
+:root body .app-shell .trading-market-token-details[open] > summary::after { transform: translateY(2px) rotate(225deg); }
+:root body .app-shell :is(.trading-market-catalog > header :is(span, small), .trading-market-token-details .dex-token-identity small,
+  .treasury-meta-card > span, .treasury-shell article > span, .privacy-token-rail-note, .privacy-connection-copy > span,
+  .privacy-connection-facts small) {
+  font-size: .75rem;
+}
+:root body .app-shell .trading-token-mark {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--token-tone);
+  color: var(--token-ink);
+  font-size: .72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+:root body .app-shell .trading-market-pair .trading-token-mark.trading-market-token {
+  width: 30px;
+  height: 30px;
+  background: var(--token-tone);
+  font-size: .85rem;
+  box-shadow: 0 0 0 2px var(--surface-canvas);
+}
+:root body .app-shell .trading-market-pair .trading-token-mark.trading-market-token-quote { margin-left: -6px; }
+:root body .app-shell .trading-market-catalog > header span { color: var(--text-secondary); font-size: .8rem; font-weight: 600; text-transform: none; letter-spacing: 0; }
+:root body .app-shell .trading-market-token-menu:has(> .trading-market-catalog-pair) { width: min(360px, calc(100vw - 16px)); padding: 10px; }
+:root body .app-shell .trading-market-catalog.trading-market-catalog-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0; }
+:root body .app-shell .trading-market-catalog-pair > :is(header, .trading-market-token-details) { grid-column: 1 / -1; }
+:root body .app-shell .trading-market-catalog-pair .trading-market-token-choice { gap: 4px; color: var(--text-secondary); font-size: .75rem; }
+:root body .app-shell .trading-market-catalog-pair .trading-market-token-choice select { width: 100%; min-width: 0; min-height: 44px; }
+
+/* Align the market pair boundary with the shared desktop header brand boundary. */
+@media (min-width: 1181px) {
+  .trading-market-context {
+    grid-template-columns: 298px 320px minmax(130px, 1fr) 230px;
+  }
+
+  .trading-market-change { padding-left: 14px; }
+}
+
+/* Compact desktop product switch. */
+@media (min-width: 920.02px) {
+  .trading-product-bar { padding: 0 14px 0 22px; }
+  .trading-product-switch {
+    width: min(100%, 230px);
+    justify-self: end;
+    margin-left: 0;
+  }
+  .trading-product-switch button { min-height: 38px; }
+}
+
+/* Keep Trading route changes on fixed tracks and use the open P2P navigation row. */
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .trading-market-pair-picker {
+    border-left: 0;
+  }
+  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) > .trading-product-bar {
+    padding-inline: var(--trading-content-gutter);
+  }
+}
+
+@media (min-width: 920.02px) and (max-width: 1180px) {
+  .app-shell-trades .trading-market-context {
+    grid-template-columns: 298px minmax(260px, 1fr) minmax(90px, 0.35fr) minmax(180px, 0.65fr);
+  }
+
+  .app-shell-dex-v2 .trading-market-context {
+    grid-template-columns: 298px minmax(260px, 1fr) minmax(90px, 0.35fr) minmax(180px, 0.65fr);
+    height: auto;
+    min-height: 76px;
+  }
+
+  .app-shell-dex-v2 .trading-product-bar {
+    height: auto;
+  }
+  :root body .app-shell-trades :is(.trading-product-bar, .trading-market-context) {
+    height: auto;
+    min-height: 76px;
+  }
+  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) .trading-market-context {
+    grid-template-columns: minmax(180px, 0.9fr) minmax(160px, 0.8fr) minmax(240px, 1.2fr) minmax(180px, 0.7fr);
+  }
+}
+
+@media (max-width: 1120px) {
+  .trading-market-context { grid-template-columns: minmax(245px, 0.8fr) minmax(370px, 1.25fr) minmax(105px, 0.42fr) minmax(220px, 0.72fr); }
+  .trading-market-ratio { padding-inline: 20px; }
+}
+
+@media (min-width: 920.02px) {
+  .trading-market-ratio { padding: 0 20px 0 22px; }
+}
+
+@media (max-width: 1120px) {
+  .trading-market-ratio button { font-size: 0; }
+  .trading-market-ratio button svg { margin: 0; }
+}
+
+@media (max-height: 520px) and (max-width: 920px) {
+  :root body .app-shell .trading-product-switch,
+  :root body .app-shell .dex-v2-mode-nav { min-height: 44px; height: auto; }
+}
+
+@media (max-width: 920px) {
+  .app-shell-trades .trading-product-bar {
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context));
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context));
+    padding-block: 2px;
+  }
+
+  .trading-product-bar {
+    position: sticky;
+    top: 0;
+    z-index: calc(var(--z-header) - 1);
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context));
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context));
+    border-top: 1px solid var(--approved-border-soft);
+    padding: 2px 7px 3px;
+  }
+  .trading-market-context {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(138px, 0.9fr) minmax(0, 1.1fr);
+    grid-template-rows: var(--ux-mobile-trading-nav) var(--ux-mobile-pair-context);
+    column-gap: 8px;
+    align-items: center;
+  }
+  .trading-market-pair {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: var(--ux-mobile-pair-context);
+    display: flex;
+    gap: 5px;
+    border-right: 1px solid var(--approved-border-soft);
+    padding: 0 8px 0 2px;
+  }
+  .trading-market-token {
+    width: 22px;
+    height: 22px;
+  }
+  .trading-market-token svg {
+    width: 14px;
+    height: 14px;
+  }
+  .trading-market-token-quote { margin-left: -7px; }
+  .trading-market-pair strong {
+    margin-left: 1px;
+    font-size: 0.7rem;
+  }
+  .trading-market-pair > svg { display: none; }
+  .trading-market-pair-picker { grid-column: 1; grid-row: 2; border-right: 1px solid var(--approved-border-soft); }
+  .trading-market-pair-picker .trading-market-pair { grid-column: auto; grid-row: auto; border-right: 0; }
+  .trading-market-token-menu { position: absolute; top: 100%; right: auto; left: 0; max-height: calc(100dvh - 190px); overflow: auto; }
+  .trading-market-ratio {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+    display: block;
+    border-right: 0;
+    padding: 0;
+  }
+  .trading-market-ratio > span { display: none; }
+  .trading-market-ratio > div {
+    grid-template-columns: minmax(0, 1fr) 30px;
+    gap: 5px;
+    display: block;
+  }
+  .trading-market-ratio strong {
+    font-size: 0.72rem;
+  }
+  .trading-market-ratio strong small { font-size: 0.62rem; }
+  .trading-market-ratio button {
+    position: relative;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    padding: 0;
+    font-size: 0;
+  }
+  .trading-market-ratio button::after {
+    position: absolute;
+    content: "";
+    z-index: 0;
+    inset: 7px;
+    border: 1px solid var(--approved-border);
+    border-radius: 7px;
+    background: rgba(12, 15, 25, 0.86);
+  }
+  .trading-market-ratio button svg {
+    position: relative;
+    z-index: 1;
+    margin: 0;
+  }
+  .trading-market-change { display: none; }
+  .trading-product-switch {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    width: 100%;
+    height: 32px;
+    margin: 0;
+    border-color: var(--approved-border-soft);
+    border-radius: 5px;
+    background: rgba(11, 14, 24, 0.96);
+    padding: 2px;
+  }
+  .trading-product-switch button { min-height: 28px; border-radius: 4px; font-size: 0.72rem; }
+  .trading-market-ratio .trading-ratio-trigger {
+    width: 100%;
+    min-width: 0;
+    min-height: var(--ux-mobile-pair-context);
+    justify-content: space-between;
+    margin: 0;
+    padding: 0 4px;
+  }
+  .app-shell-dex-v2 .trading-product-bar {
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 80px);
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 80px);
+  }
+  .app-shell-dex-v2 .trading-market-context {
+    height: auto;
+    grid-template-rows: var(--ux-mobile-trading-nav) var(--ux-mobile-pair-context) 72px;
+  }
+  .app-shell-dex-v2 .trading-market-change {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-row: 3;
+    gap: 2px;
+    padding: 4px 2px;
+    min-width: 0;
+  }
+  .app-shell-dex-v2 .trading-market-change small { font-size: 0.7rem; }
+  .app-shell-dex-v2 .trading-product-switch { height: 50px; }
+  :root body .app-shell-dex-v2 .trading-product-bar {
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px);
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px);
+  }
+  :root body .app-shell-dex-v2 .trading-market-context { grid-template-rows: var(--ux-mobile-trading-nav) var(--ux-mobile-pair-context) 36px; }
+  :root body .app-shell-dex-v2 .trading-market-change { display: flex; align-items: center; justify-content: space-between; }
+}
+
+/* CW-097. Mobile refinement: owner decision 2026-11-18 (mobile audit items 1-5). Phone layout only; the bottom
+   navigation is unchanged by owner choice. */
+@media (max-width: 920px) {
+  /* 1. Market line in one row: "COTI Testnet", price and age. The live detail hides; "Last Pool price" stays and
+     may wrap inside the 36 px row. */
+  :root body .app-shell-dex-v2 .trading-market-change { flex-wrap: nowrap; gap: 8px; padding: 0 2px; }
+  :root body .app-shell-trades .trading-product-switch {
+    height: 50px;
+  }
+  :root body .app-shell.app-shell-trades > .trading-product-bar {
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 6px);
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 6px);
+  }
+  :root body .app-shell.app-shell-dex-v2.app-shell-trades > .trading-product-bar {
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px);
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px);
+  }
+  :root body .app-shell-dex-v2 .trading-market-change > span { flex: 1 1 auto; min-width: 0; line-height: 1.2; }
+  :root body .app-shell-dex-v2 .trading-market-change > :is(strong, small) { flex: 0 0 auto; white-space: nowrap; }
+  :root body .app-shell-dex-v2 .trading-market-change:not([data-price-state="last-known"]) .trading-market-change-detail { display: none; }
+  :root body .app-shell-dex-v2 .trading-market-change small { font-size: .75rem; }
+  :root body .app-shell .trading-market-pair strong { font-size: .85rem; }
+  /* Last recorded price: the long "Recorded <date>" text wraps on the right so "COTI Testnet · Last Pool price" keeps
+     room; both stay inside the 36 px row. */
+  :root body .app-shell-dex-v2 .trading-market-change[data-price-state="last-known"] > span { flex: 0 0 112px; min-width: 0; font-size: .75rem; }
+  :root body .app-shell-dex-v2 .trading-market-change[data-price-state="last-known"] > small { flex: 1 1 0; min-width: 0; white-space: normal; text-align: right; line-height: 1.2; }
+}
+
+@media (max-width: 340px) {
+  .trading-product-bar {
+    padding-inline: 6px;
+  }
+
+  .trading-market-context {
+    grid-template-columns: minmax(118px, 0.76fr) minmax(0, 1.24fr);
+    column-gap: 4px;
+  }
+
+  .trading-market-pair {
+    gap: 3px;
+    padding-right: 5px;
+  }
+
+  .trading-market-token {
+    width: 20px;
+    height: 20px;
+  }
+
+  .trading-market-token-quote {
+    display: none;
+  }
+
+  .trading-market-pair strong {
+    font-size: 0.64rem;
+  }
+
+  .trading-market-ratio strong {
+    overflow: visible;
+    font-size: 0.68rem;
+    line-height: 1.05;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .trading-market-ratio strong small {
+    font-size: 0.6rem;
+  }
+
+  .trading-market-ratio > div {
+    grid-template-columns: minmax(0, 1fr) 44px;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trading-ratio-value {
+    animation: none !important;
+  }
+  .trading-market-pair,
+  .trading-product-switch button,
+  .app-shell-trades .p2p-offer-rate-row {
+    transition: none;
+  }
+}
+
+/* Route content enters; the shared header remains stationary. */
+.app-shell > :is(.standalone-trades-shell, .swap-page-shell, .treasury-shell),
+.app-shell-chat > .app-root {
+  animation: cw-route-chrome-enter var(--motion-enter) var(--ease-enter);
+}
+
+.app-shell-trades .standalone-trades-shell {
+  width: 100%;
+  max-width: 1760px;
+  margin: 0 auto;
+  background: var(--approved-bg);
+}
+
+@keyframes cw-ratio-flip {
+  from {
+    opacity: 0.35;
+    transform: translateY(3px);
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.trading-market-token-menu section > div > span.selected { border-color: rgba(139, 92, 246, 0.72); color: #fff; }
+.trading-market-token-menu details > div > span.selected {
+  border-color: rgba(139, 92, 246, 0.72);
+  color: #fff;
+}
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-main,
+  .app-shell-trades .standalone-trades-shell {
+    width: 100%;
+    max-width: none;
+    margin-inline: 0;
+  }
+}

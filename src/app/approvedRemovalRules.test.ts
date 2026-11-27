@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { allStylesheets, findRule, mediaAt, stylesheet } from './cssRuleTestHelpers';
 
 // CW-097. The owner approved six remove-or-move items on 2026-11-16 ("All yes"). These tests bind each one to
 // its source, so a later edit cannot bring a development panel back into the published App by accident.
@@ -41,12 +42,16 @@ describe('owner-approved removals (CW-097)', () => {
   });
 
   it('6: hides the duplicate private trade link button on desktop and keeps it on small screens', () => {
-    const css = read('styles/120-owner-dark-design.css');
-    const block = css.slice(css.indexOf('/* CW-097. P2P:'));
-    const desktop = block.slice(block.indexOf('@media (min-width: 920.02px)'), block.indexOf('@media (max-width: 920px)'));
-    expect(desktop).toContain(':root body .app-shell-trades .p2p-offers-private-link-tool { display: none; }');
-    // Small screens keep the button: no phone rule hides it (the 2026-11-18 mobile block only gives it a solid frame).
-    expect(block.slice(block.indexOf('@media (max-width: 920px)'))).not.toMatch(/p2p-offers-private-link-tool[^{]*\{[^}]*display:\s*none/u);
+    // CW-158: the rule is looked up in the P2P stylesheet, with its @media condition.
+    const hide = findRule(stylesheet('p2p'), ':root body .app-shell-trades .p2p-offers-private-link-tool { display: none; }', '(min-width: 920.02px)');
+    expect(hide.media).toBe('(min-width: 920.02px)');
+    // Small screens keep the button: no phone rule in any stylesheet hides it (the 2026-11-18 mobile rules only give
+    // it a solid frame).
+    const css = allStylesheets();
+    for (let at = css.indexOf('p2p-offers-private-link-tool'); at > -1; at = css.indexOf('p2p-offers-private-link-tool', at + 1)) {
+      if (mediaAt(css, at) !== '(max-width: 920px)') continue;
+      expect(css.slice(at, css.indexOf('}', at))).not.toMatch(/^[^{]*\{[^}]*display:\s*none/u);
+    }
   });
 });
 

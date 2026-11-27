@@ -1,3 +1,6 @@
+/* Privacy Portal and token tools.
+   The import order in styles.css is part of the cascade: see APP/reports/css-by-feature-2026-11-27. */
+
 .swap-label-sr {
   position: absolute;
   width: 1px;
@@ -180,13 +183,6 @@
 .privacy-mobile-token-menu button:disabled {
   opacity: 0.48;
   cursor: not-allowed;
-}
-
-.privacy-token-list > button.active {
-  border: 1px solid #7647dc;
-  border-radius: 9px;
-  background: linear-gradient(90deg, rgba(81, 47, 146, 0.38), rgba(124, 58, 237, 0.08));
-  box-shadow: inset 0 0 20px rgba(124, 58, 237, 0.08);
 }
 
 .privacy-token-list > button > span:nth-child(2),
@@ -691,10 +687,6 @@ button.swap-token-chip {
   background: #fb7185;
 }
 
-@keyframes privacy-pulse {
-  50% { opacity: 0.42; }
-}
-
 .privacy-readiness {
   min-width: 0;
   display: grid;
@@ -793,10 +785,6 @@ button.swap-token-chip {
   animation: none;
 }
 
-@keyframes privacy-spin {
-  to { transform: rotate(360deg); }
-}
-
 .privacy-action-progress > span {
   min-width: 0;
   display: flex;
@@ -837,18 +825,6 @@ button.swap-token-chip {
   gap: 8px;
 }
 
-.swap-error {
-  flex: 1 1 auto;
-  margin: 0;
-  border: 1px solid rgba(244, 63, 94, 0.38);
-  border-radius: 10px;
-  background: rgba(244, 63, 94, 0.08);
-  color: #ffadbf;
-  padding: 9px 10px;
-  font-size: 0.8rem;
-  line-height: 1.4;
-}
-
 .swap-error-row > button {
   border: 1px solid rgba(244, 63, 94, 0.38);
   border-radius: 10px;
@@ -860,15 +836,378 @@ button.swap-token-chip {
   cursor: pointer;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .privacy-status-dot.is-loading,
-  .privacy-action-progress > i {
-    animation: none;
+.swap-page-panel {
+  min-width: 0;
+  width: 100%;
+  max-width: 960px;
+  display: grid;
+  gap: 16px;
+}
+
+.swap-page-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 24px;
+}
+
+.swap-page-heading {
+  min-width: 0;
+}
+
+.swap-page-title {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(1.85rem, 3vw, 2.2rem);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.swap-privacy-portal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 13px;
+  color: #b278ff;
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition: color 0.18s ease;
+}
+
+.swap-privacy-portal-link:hover,
+.swap-privacy-portal-link:focus-visible {
+  color: #d4b4ff;
+}
+
+.swap-page-heading p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+
+.privacy-connection-icon {
+  width: 58px;
+  height: 58px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(139, 92, 246, 0.48);
+  border-radius: 18px;
+  background: rgba(124, 58, 237, 0.13);
+  color: #c4a7ff;
+  box-shadow: 0 16px 34px rgba(69, 31, 128, 0.22);
+}
+
+.privacy-connection-copy {
+  max-width: 520px;
+  display: grid;
+  gap: 8px;
+}
+
+.privacy-connection-copy > span {
+  color: #a982ff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.privacy-connection-copy h2 {
+  margin: 0;
+  color: #f8f7fc;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(1.35rem, 2.5vw, 1.8rem);
+  line-height: 1.12;
+}
+
+.privacy-connection-copy p {
+  margin: 0;
+  color: #aaa6b9;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.privacy-connection-facts {
+  width: min(100%, 560px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(76, 72, 105, 0.42);
+  border-radius: 12px;
+  background: rgba(9, 9, 17, 0.42);
+}
+
+.privacy-connection-facts > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 13px 16px;
+}
+
+.privacy-connection-facts > span + span {
+  border-left: 1px solid rgba(76, 72, 105, 0.42);
+}
+
+.privacy-connection-facts strong {
+  color: #e9e5f2;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.privacy-connection-facts small {
+  color: #918c9f;
+  font-size: 0.69rem;
+  line-height: 1.35;
+}
+
+.privacy-connection-help {
+  min-height: 40px;
+}
+
+.swap-card .swap-route-chip svg {
+  transition: transform var(--motion-enter) var(--ease-settle);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:first-child.active) .swap-route-chip svg {
+  transform: rotate(0deg);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:last-child.active) .swap-route-chip svg {
+  transform: rotate(180deg);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:first-child.active)
+  .swap-flow
+  > .swap-asset-panel-output {
+  animation: cw-privacy-receive-emphasis var(--motion-feedback) var(--ease-settle);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:last-child.active)
+  .swap-flow
+  > .swap-asset-panel:first-child {
+  animation: cw-privacy-pay-emphasis var(--motion-feedback) var(--ease-settle);
+}
+:root body .app-shell :is(.swap-card, .modal-card, .modal-copy, .p2p-wallet-menu, .trading-market-token-menu,
+  .trade-action-confirm-modal) {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  border-radius: 6px;
+  box-shadow: var(--shadow-raised);
+}
+:root body .app-shell :is(.swap-page-panel, .swap-page-hero, .swap-asset-panel,
+  .swap-asset-panel-output, .swap-pill-switch, .swap-token-chip,
+  .privacy-token-rail, .treasury-panel, .treasury-stat-card, .treasury-state-card, .treasury-hero,
+  .treasury-meta-card, .treasury-readiness-grid article) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  border-radius: 6px;
+  box-shadow: none;
+}
+:root body .app-shell .privacy-token-rail button[aria-pressed="true"] { background: var(--surface-interactive); box-shadow: inset 2px 0 var(--brand-strong); }
+.privacy-readiness-bridge.is-error em { color: #f28b9a; }
+.privacy-readiness-bridge.is-loading em { color: #e4bd70; }
+/* The Portal pair search keeps its input inside one 44 px field with the App field tokens. */
+:root body .app-shell-swap .privacy-token-search {
+  height: auto;
+  min-height: 44px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--surface-base);
+}
+:root body .app-shell-swap .privacy-token-search input { background: transparent; }
+
+@media (min-width: 1100px) {
+  .swap-flow {
+    grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .swap-card .swap-route-chip svg {
+    rotate: 90deg;
+  }
+}
+
+@media (min-width: 920.02px) {
+  .swap-page-panel {
+    max-width: 1180px;
+    gap: 10px;
+  }
+
+  .swap-page-hero {
+    min-height: 30px;
+    align-items: center;
+  }
+
+  .swap-page-heading p {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+
+  .swap-privacy-portal-link {
+    margin-left: 0;
+  }
+
+  .privacy-portal-workspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  .privacy-token-rail {
+    min-height: 0;
+    padding: 10px 8px;
+  }
+
+  .privacy-token-rail-title {
+    padding: 0 4px 8px;
+  }
+
+  .privacy-token-search {
+    height: 36px;
+  }
+
+  .privacy-token-list {
+    margin-top: 6px;
+  }
+
+  .privacy-token-list > button {
+    min-height: 46px;
+    padding-block: 4px;
+  }
+
+  .privacy-token-list .privacy-token-icon {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+
+  .privacy-token-rail-note {
+    margin: 8px 5px 5px;
+    line-height: 1.3;
+  }
+
+  .privacy-direction-switch {
+    padding: 3px;
+  }
+
+  .privacy-direction-switch .swap-pill-option {
+    min-height: 42px;
+    padding-block: 8px;
+  }
+
+  .swap-asset-panel {
+    min-height: 112px;
+    padding: 12px 14px;
+  }
+
+  .swap-asset-panel-output {
+    margin-top: 10px;
+  }
+}
+
+@media (min-width: 1100px) {
+  .swap-asset-panel-output {
+    margin-top: 0;
+  }
+}
+
+@media (min-width: 920.02px) {
+  .swap-panel-main {
+    margin-top: 8px;
+  }
+
+  .swap-panel-main input,
+  .swap-panel-main-readonly strong {
+    font-size: clamp(2rem, 4vw, 2.4rem);
+  }
+
+  .swap-token-chip {
+    min-height: 48px;
+  }
+
+  .swap-route-chip {
+    width: 44px;
+    height: 44px;
+    transform: translateY(5px);
+  }
+}
+
+@media (min-width: 1100px) {
+  .swap-route-chip {
+    transform: none;
+  }
+}
+
+@media (min-width: 920.02px) {
+  .privacy-quote-table {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .privacy-quote-table > div {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+
+  .privacy-quote-table > div:nth-child(odd):not(:last-child) {
+    border-right: 1px solid rgba(76, 72, 105, 0.35);
+  }
+
+  .privacy-quote-table > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .privacy-readiness {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    padding: 9px 11px;
+  }
+
+  .privacy-readiness-bridge {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-right: 12px;
+  }
+
+  .privacy-readiness-private {
+    align-items: center;
+    padding-left: 12px;
+  }
+
+  .privacy-readiness-private > svg {
+    margin-top: 0;
+  }
+
+  .privacy-readiness-private > span {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 3px 8px;
+  }
+
+  .privacy-readiness p {
+    margin: 0;
+  }
+
+  .swap-action-btn {
+    min-height: 46px;
   }
 }
 
 @media (max-width: 920px) {
-
   .privacy-portal-workspace {
     display: block;
   }
@@ -893,6 +1232,8 @@ button.swap-token-chip {
     color: #f7f5ff;
     font-family: inherit;
     cursor: pointer;
+    min-height: 48px;
+    padding: 8px 11px;
   }
 
   .privacy-mobile-token-picker > button > span {
@@ -934,11 +1275,6 @@ button.swap-token-chip {
     cursor: pointer;
   }
 
-  .privacy-mobile-token-menu button.active {
-    border-color: #7647dc;
-    background: rgba(124, 58, 237, 0.13);
-  }
-
   .privacy-token-chip-chevron {
     display: block;
   }
@@ -957,10 +1293,111 @@ button.swap-token-chip {
 
   .privacy-readiness-private {
     padding-left: 0;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 6px;
+    align-items: center;
   }
 
   .privacy-wisp-brand-row {
     padding: 4px 3px 0;
+  }
+  .swap-page-panel {
+    max-width: 778px;
+  }
+}
+
+/* The same hierarchy on smaller screens, with touch targets kept at 44px or more. */
+@media (max-width: 920px) {
+  .swap-page-panel {
+    gap: 10px;
+  }
+
+  .swap-page-hero {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .swap-page-title {
+    font-size: clamp(1.8rem, 7vw, 2.1rem);
+  }
+
+  .swap-page-heading p {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+
+  .swap-privacy-portal-link {
+    margin-left: 0;
+    width: auto;
+  }
+
+  .privacy-direction-switch {
+    padding: 3px;
+  }
+
+  .swap-panel-main {
+    margin-top: 7px;
+  }
+
+  .swap-route-chip {
+    width: 46px;
+    height: 46px;
+    transform: translateY(5px);
+  }
+
+  .privacy-quote-table {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .privacy-quote-table > div:nth-child(odd):not(:last-child) {
+    border-right: 1px solid rgba(76, 72, 105, 0.35);
+  }
+
+  .privacy-quote-table > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .privacy-readiness-private > svg {
+    margin-top: 0;
+  }
+
+  .privacy-readiness-private > span {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 2px 7px;
+  }
+
+  .swap-action-btn {
+    min-height: 48px;
+  }
+  :root body .app-shell .swap-page-heading h1.swap-page-title.swap-label-sr {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 4px 0 6px;
+    padding: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell .swap-privacy-portal-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 
@@ -969,18 +1406,60 @@ button.swap-token-chip {
     gap: 12px;
     padding: 10px;
   }
+}
 
+/* Keep the disconnected Portal informative without presenting unusable conversion controls. */
+.privacy-connection-card {
+  min-height: 330px;
+  align-content: center;
+  justify-items: center;
+  gap: 18px;
+  padding: clamp(30px, 6vw, 64px);
+  text-align: center;
+}
+
+@media (min-width: 920.02px) {
+  .swap-card {
+    gap: 10px;
+    padding: 10px;
+  }
+}
+
+@media (max-width: 520px) {
   .privacy-direction-switch .swap-pill-option {
     min-height: 43px;
     padding: 9px 7px;
     font-size: 0.83rem;
   }
+}
 
+@media (max-width: 920px) {
+  .privacy-direction-switch .swap-pill-option {
+    min-height: 44px;
+    padding-block: 8px;
+  }
+}
+
+@media (max-width: 520px) {
   .swap-asset-panel {
     min-height: 132px;
     padding: 14px 13px;
   }
+}
 
+@media (max-width: 920px) {
+  .swap-asset-panel {
+    min-height: 108px;
+    padding: 10px 11px;
+  }
+
+  .swap-asset-panel-output {
+    margin-top: 8px;
+    padding-top: 24px;
+  }
+}
+
+@media (max-width: 520px) {
   .swap-panel-head {
     align-items: flex-start;
   }
@@ -1002,12 +1481,29 @@ button.swap-token-chip {
     padding: 7px 10px;
     font-size: 0.92rem;
   }
+}
 
+@media (max-width: 920px) {
+  .swap-token-chip {
+    min-height: 48px;
+  }
+}
+
+@media (max-width: 520px) {
   .privacy-quote-table > div {
     padding: 8px 11px;
     font-size: 0.73rem;
   }
+}
 
+@media (max-width: 920px) {
+  .privacy-quote-table > div {
+    min-height: 34px;
+    padding-block: 6px;
+  }
+}
+
+@media (max-width: 520px) {
   .privacy-quote-table strong,
   .privacy-quote-table a {
     max-width: 62%;
@@ -1016,7 +1512,15 @@ button.swap-token-chip {
   .privacy-readiness {
     padding: 14px 13px;
   }
+}
 
+@media (max-width: 920px) {
+  .privacy-readiness {
+    padding: 8px 9px;
+  }
+}
+
+@media (max-width: 520px) {
   .privacy-readiness strong {
     font-size: 0.82rem;
   }
@@ -1024,7 +1528,17 @@ button.swap-token-chip {
   .privacy-readiness p {
     font-size: 0.76rem;
   }
+}
 
+@media (max-width: 920px) {
+  .privacy-readiness p {
+    margin: 0;
+    font-size: 0.7rem;
+    line-height: 1.25;
+  }
+}
+
+@media (max-width: 520px) {
   .privacy-mobile-token-menu {
     grid-template-columns: minmax(0, 1fr);
     max-height: 340px;
@@ -1043,5 +1557,107 @@ button.swap-token-chip {
 
   .swap-error-row > button {
     min-height: 38px;
+  }
+  .privacy-connection-card {
+    min-height: 0;
+    gap: 16px;
+    padding: 26px 18px;
+  }
+}
+
+@media (max-width: 920px) {
+  .swap-card {
+    gap: 8px;
+    padding: 10px;
+  }
+}
+
+@media (max-width: 520px) {
+  .privacy-connection-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .privacy-connection-facts > span + span {
+    border-top: 1px solid rgba(76, 72, 105, 0.42);
+    border-left: 0;
+  }
+
+  .privacy-connection-help {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .privacy-status-dot.is-loading,
+  .privacy-action-progress > i {
+    animation: none;
+  }
+}
+
+.privacy-token-list > button.active {
+  border: 1px solid #7647dc;
+  border-radius: 9px;
+  background: linear-gradient(90deg, rgba(81, 47, 146, 0.38), rgba(124, 58, 237, 0.08));
+  box-shadow: inset 0 0 20px rgba(124, 58, 237, 0.08);
+}
+
+@media (max-width: 920px) {
+  .privacy-mobile-token-menu button.active {
+    border-color: #7647dc;
+    background: rgba(124, 58, 237, 0.13);
+  }
+}
+
+@keyframes privacy-pulse {
+  50% { opacity: 0.42; }
+}
+
+@keyframes privacy-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cw-privacy-pay-emphasis {
+  0% {
+    box-shadow: 0 0 0 rgba(139, 92, 246, 0);
+    scale: 0.995;
+  }
+
+  45% {
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.32), 0 12px 30px rgba(91, 33, 182, 0.13);
+    scale: 1.004;
+  }
+
+  100% {
+    box-shadow: 0 0 0 rgba(139, 92, 246, 0);
+    scale: 1;
+  }
+}
+
+@keyframes cw-privacy-receive-emphasis {
+  0% {
+    box-shadow: 0 0 0 rgba(56, 189, 248, 0);
+    scale: 0.995;
+  }
+
+  45% {
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3), 0 12px 30px rgba(14, 165, 233, 0.12);
+    scale: 1.004;
+  }
+
+  100% {
+    box-shadow: 0 0 0 rgba(56, 189, 248, 0);
+    scale: 1;
+  }
+}
+/* CW-097. Portal, Private TVL, Home and the pair picker: the App touch size on every page (Portal, TVL
+   and Home were outside it, with 32-38 px header controls and a 66 px header), one disclosure chevron
+   for Token contracts and the 12 px text floor in the pair picker and on the TVL and Portal cards. */
+:root body .app-shell:is(.app-shell-swap, .app-shell-landing) :is(button, input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, summary) {
+  min-height: 44px;
+}
+
+@media (max-width: 920px) {
+  .app-shell.app-shell-swap {
+    padding-bottom: 0;
   }
 }

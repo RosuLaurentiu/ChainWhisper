@@ -1,0 +1,1733 @@
+/* DEX: swap, Limit, Liquidity, positions, orders, activity, the market chart and test tokens.
+   The import order in styles.css is part of the cascade: see APP/reports/css-by-feature-2026-11-27. */
+
+.dex-v2-mode-nav {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  padding: 36px 16px 24px;
+}
+
+.dex-v2-mode-nav > strong {
+  display: block;
+  margin: 0 16px 24px;
+  font: 700 1.35rem "Space Grotesk", sans-serif;
+}
+
+.dex-v2-mode-nav button {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 600 0.96rem "Inter", sans-serif;
+  padding: 0 18px;
+  text-align: left;
+}
+
+.dex-v2-mode-nav button:hover,
+.dex-v2-mode-nav button.active {
+  border-color: rgba(139, 92, 246, 0.42);
+  background: linear-gradient(100deg, rgba(139, 92, 246, 0.19), rgba(139, 92, 246, 0.08));
+  color: #a878ff;
+}
+
+.dex-v2-main {
+  min-width: 0;
+  overflow: auto;
+  padding: 36px 34px 44px;
+}
+
+.dex-v2-content-grid {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.32fr) minmax(330px, 0.9fr);
+  gap: 22px;
+}
+
+.dex-v2-form-column {
+  min-width: 0;
+}
+
+.app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav {
+  min-height: 58px;
+  display: flex;
+  align-items: end;
+  border: 0;
+  border-bottom: 1px solid var(--approved-border-soft);
+  background: rgba(8, 10, 18, 0.96);
+  padding: 0;
+}
+
+.app-shell-dex-v2 .dex-v2-mode-nav > strong { display: none; }
+
+.app-shell-dex-v2 .dex-v2-mode-nav button {
+  position: relative;
+  min-height: 57px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #a6a2b7;
+  padding: 0 2px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  justify-content: center;
+}
+
+.app-shell-dex-v2 .dex-v2-mode-nav button svg { display: none; }
+
+.app-shell-dex-v2 .dex-v2-main {
+  width: 100%;
+  max-width: 1760px;
+  margin: 0 auto;
+  padding: 0 18px 32px;
+}
+
+.app-shell-dex-v2 .dex-v2-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(380px, 0.95fr);
+  gap: 0;
+  align-items: start;
+}
+
+.app-shell-dex-v2 .dex-v2-form-column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-left: 1px solid var(--approved-border-soft);
+  padding: 28px 20px 20px 38px;
+}
+.app-shell-dex-v2 .dex-v2-section-tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--approved-border); }
+.app-shell-dex-v2 .dex-v2-section-tabs button {
+  flex: 1; min-height: 42px; padding: 10px 12px; color: #aaa7b9; background: transparent; border: 0; border-bottom: 2px solid transparent; font-family: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+}
+.app-shell-dex-v2 .dex-v2-section-tabs button[aria-current="page"] { color: #f4efff; border-bottom-color: #a879ff; }
+.app-shell-dex-v2 .dex-v2-workspace-panel { min-width: 0; }
+.app-shell-dex-v2 .dex-market-chart-host { min-width: 0; }
+:root body .app-shell :is(.dex-v2-section-tabs, .dex-v2-swap-mode-toggle) button { border-radius: 0; }
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-form-column { grid-row: 1; }
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-market-chart-host { grid-row: 2; margin-top: 16px; }
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-market-chart-host > summary {
+  min-height: 44px;
+  padding: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+:root body .app-shell-dex-v2 .dex-v2-section-tabs { margin: 0 0 12px; }
+:root body .app-shell-dex-v2 :is(.dex-v2-section-tabs, .dex-v2-current-side-toggle, .dex-v2-swap-mode-toggle, .dex-v2-setting-presets) button {
+  min-height: 44px;
+  height: auto;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: .8125rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+/* CW-097. DEX column divider: owner decision 2026-11-18 removes the vertical line on the left of the Trade,
+   Limit and Liquidity column (desktop). The chart already sits in its own framed box. */
+:root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-v2-form-column { border-left: 0; }
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-main {
+    overflow: visible;
+    padding: 0 14px 0 var(--trading-content-gutter);
+  }
+
+  .app-shell-dex-v2 .dex-v2-content-grid {
+    width: 100%;
+    max-width: none;
+    margin-inline: 0;
+  }
+
+  .app-shell-dex-v2 .dex-v2-form-column { gap: 8px; padding: 16px 18px 8px 28px; }
+
+  .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav,
+  .app-shell-trades :is(.p2p-market-overview-head, .p2p-create-overview-head) {
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+  }
+
+  .app-shell-dex-v2 .dex-v2-mode-nav button,
+  .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 36px;
+    align-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    box-shadow: none;
+    color: #aaa6b7;
+    padding: 0 12px;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav {
+    display: grid;
+    grid-template-columns: var(--dex-workspace-columns);
+    column-gap: var(--dex-workspace-column-gap);
+    width: 100%;
+    min-height: var(--dex-navigation-height);
+    margin-left: 0;
+    padding: var(--dex-workspace-top-gap) 14px 16px var(--trading-content-gutter);
+    border: 0;
+    background: transparent;
+    box-sizing: border-box;
+  }
+  /* Reuse the empty chart-column space beside the desktop navigation. */
+  .app-shell-dex-v2 .dex-market-chart-host {
+    margin-top: calc(-1 * var(--dex-chart-top-extension));
+  }
+  :root body .app-shell-dex-v2 .dex-v2-main {
+    padding: 0 var(--dex-page-end-inset) 24px var(--trading-content-gutter);
+  }
+  :root body .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav {
+    display: grid;
+    grid-template-columns: var(--dex-workspace-columns);
+    column-gap: var(--dex-workspace-column-gap);
+    align-items: center;
+    min-height: 64px;
+    padding: 8px var(--dex-page-end-inset) 8px var(--trading-content-gutter);
+  }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid:not(.dex-v2-management-grid) {
+    grid-template-columns: var(--dex-workspace-columns);
+    gap: var(--dex-workspace-column-gap);
+    padding: 0;
+  }
+}
+
+/* Management gives the task space first; the same chart stays available. */
+:root body .app-shell-dex-v2 .dex-v2-manage .dex-v2-content-grid { grid-template-columns: minmax(0, 1fr); }
+
+@media (min-width: 920.02px) {
+  :root body .app-shell-dex-v2 .dex-v2-form-column {
+    padding: 12px 0 0;
+  }
+}
+
+/* Short desktop windows: tighter form rhythm, so the main action needs less scroll at 1280 x 560. */
+@media (min-width: 920.02px) and (max-height: 700px) {
+  :root body .app-shell-dex-v2 .dex-v2-form-column { padding-top: 8px; }
+  :root body .app-shell-dex-v2 .dex-v2-section-tabs { margin-bottom: 8px; }
+}
+
+@media (max-width: 1120px) {
+  .app-shell-dex-v2 .dex-v2-content-grid { grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.9fr); }
+}
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-content-grid {
+    grid-template-columns: var(--dex-workspace-columns);
+    column-gap: var(--dex-workspace-column-gap);
+  }
+}
+
+@media (min-width: 1181px) {
+  .app-shell-dex-v2 .dex-v2-content-grid {
+    grid-template-columns: var(--dex-workspace-columns);
+    column-gap: 10px;
+  }
+}
+
+@media (max-width: 1080px) {
+  .dex-v2-main { padding-inline: 22px; }
+  .dex-v2-content-grid { grid-template-columns: minmax(0, 1fr) 320px; }
+  .dex-v2-mode-nav button { gap: 11px; padding-inline: 12px; }
+}
+
+@media (max-width: 920px) {
+  .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: calc(var(--z-header) + 2);
+    min-height: var(--ux-mobile-workspace-nav);
+    align-items: stretch;
+    border-top: 1px solid var(--approved-border-soft);
+    border-bottom: 0;
+    background: rgba(8, 10, 18, 0.985);
+    padding: 0 3px env(safe-area-inset-bottom, 0px);
+    box-shadow: 0 -10px 28px rgba(2, 3, 8, 0.72);
+  }
+  .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav button svg { width: 16px; height: 16px; display: block; }
+  .app-shell-dex-v2 .dex-v2-main { padding: 0 8px calc(var(--ux-mobile-workspace-nav) + 10px + env(safe-area-inset-bottom, 0px)); }
+  .app-shell-dex-v2 .dex-v2-page.dex-v2-keyboard-open > .dex-v2-mode-nav { display: none; }
+  .app-shell-dex-v2 .dex-v2-page.dex-v2-keyboard-open .dex-v2-main { padding-bottom: 10px; }
+  .app-shell-dex-v2 .dex-v2-content-grid { grid-template-columns: 1fr; }
+  .app-shell-dex-v2 .dex-v2-form-column { border-left: 0; padding: 20px 6px 10px; }
+  .app-shell-dex-v2 .dex-v2-content-grid > .dex-v2-form-column { grid-row: 1; }
+  .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host { grid-row: 2; margin-top: 20px; }
+  /* The Manage market chart disclosure uses the one DEX chevron and the summary text style. */
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host > summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 12px;
+    list-style: none;
+    color: var(--text-secondary);
+    font-size: .8125rem;
+    font-weight: 600;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host > summary::-webkit-details-marker { display: none; }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host > summary::after {
+    content: "";
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    margin: 0 4px 0 auto;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+  }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart-host[open] > summary::after { transform: translateY(2px) rotate(225deg); }
+}
+
+@media (max-width: 820px) {
+  .dex-v2-page > .dex-v2-mode-nav { display: none; }
+  .dex-v2-main { width: 100%; max-width: 100%; overflow: visible; padding: 28px 16px 48px; }
+  .dex-v2-content-grid { display: flex; flex-direction: column; }
+  .dex-v2-content-grid,
+  .dex-v2-form-column { width: 100%; max-width: 100%; }
+  .dex-v2-form-column { order: 1; }
+}
+
+@media (max-width: 760px) {
+  .app-shell-dex-v2 .dex-v2-section-tabs { margin-bottom: 16px; }
+}
+
+@media (max-width: 520px) {
+  .dex-v2-main { padding: 25px 14px 40px; }
+}
+
+.dex-v2-swap-card {
+  border: 1px solid rgba(89, 87, 117, 0.52);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(17, 18, 30, 0.96), rgba(11, 12, 21, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  position: relative;
+  overflow: hidden;
+}
+/* Current Quote/Accept uses the same compact terminal language as DEX strategy forms. */
+.app-shell-dex-v2 .dex-v2-current-swap {
+  gap: 12px;
+  padding-bottom: 18px;
+}
+
+.app-shell-dex-v2 .dex-v2-current-swap-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-shell-dex-v2 .dex-v2-current-swap-heading > div:first-child { display: grid; gap: 5px; }
+.app-shell-dex-v2 .dex-v2-current-swap-heading h2,
+.app-shell-dex-v2 .dex-v2-current-swap-heading p { margin: 0; }
+.app-shell-dex-v2 .dex-v2-current-swap-heading h2 {
+  color: var(--approved-purple-bright);
+  font: 700 1.45rem "Space Grotesk", sans-serif;
+}
+.app-shell-dex-v2 .dex-v2-current-swap-heading p {
+  color: #a5a1b4;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+.app-shell-dex-v2 .dex-v2-swap-mode-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  border: 1px solid var(--approved-border);
+  border-radius: 7px;
+  padding: 2px;
+}
+.app-shell-dex-v2 .dex-v2-swap-mode-toggle button {
+  min-height: 25px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #888395;
+  padding: 0 9px;
+  font-size: 0.62rem;
+  font-weight: 650;
+}
+.app-shell-dex-v2 .dex-v2-swap-mode-toggle button[aria-pressed="true"] { background: #37215a; color: #f2eaff; }
+.app-shell-dex-v2 .dex-v2-swap-mode-toggle button:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.app-shell-dex-v2 .dex-v2-current-amounts {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+.app-shell-dex-v2 .dex-v2-current-amounts label {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--approved-border);
+  border-radius: 9px;
+  background: #0d101a;
+  padding: 12px 14px 14px;
+}
+.app-shell-dex-v2 .dex-v2-current-amounts label > span { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.app-shell-dex-v2 .dex-v2-current-amounts strong { color: #aaa7b9; font-size: 0.72rem; }
+.app-shell-dex-v2 .dex-v2-current-amounts small { color: #8f8a9f; font-size: 0.64rem; }
+.app-shell-dex-v2 .dex-v2-current-amounts input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f1eef8;
+  padding: 0;
+  font: 650 1.9rem "Space Grotesk", sans-serif;
+}
+.app-shell-dex-v2 .dex-v2-current-amounts input::placeholder { color: #565261; }
+.app-shell-dex-v2 .dex-v2-current-amounts input:disabled { opacity: 0.55; }
+
+.app-shell-dex-v2 .dex-v2-current-direction {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 4px solid #090b13;
+  border-radius: 50%;
+  background: #25163f;
+  color: #f1eef8;
+  padding: 5px;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+.app-shell-dex-v2 .dex-v2-current-direction > svg { color: #a879ff; }
+.app-shell-dex-v2 .dex-v2-current-direction:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.app-shell-dex-v2 .dex-v2-current-advanced {
+  overflow: hidden;
+  border: 1px solid var(--approved-border);
+  border-radius: 8px;
+  background: rgba(11, 14, 23, 0.78);
+}
+.app-shell-dex-v2 .dex-v2-current-advanced > summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  padding: 0 12px;
+}
+.app-shell-dex-v2 .dex-v2-current-advanced > summary::-webkit-details-marker { display: none; }
+.app-shell-dex-v2 .dex-v2-current-advanced > summary strong { font-size: 0.72rem; }
+.app-shell-dex-v2 .dex-v2-current-advanced > summary span { color: #a879ff; font-size: 0.65rem; }
+.app-shell-dex-v2 .dex-v2-current-advanced > div { display: grid; gap: 10px; border-top: 1px solid var(--approved-border-soft); padding: 12px; }
+.app-shell-dex-v2 .dex-v2-current-advanced p { margin: 0; }
+.app-shell-dex-v2 .dex-v2-current-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.app-shell-dex-v2 .dex-v2-current-fields label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border-bottom: 1px solid var(--approved-border-soft);
+  padding: 11px 12px;
+}
+.app-shell-dex-v2 .dex-v2-current-fields label:nth-child(odd) { border-right: 1px solid var(--approved-border-soft); }
+.app-shell-dex-v2 .dex-v2-current-fields label:last-child { border-right: 0; }
+.app-shell-dex-v2 .dex-v2-current-fields label > span { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.app-shell-dex-v2 .dex-v2-current-fields strong { color: #aaa7b9; font-size: 0.68rem; font-weight: 600; }
+.app-shell-dex-v2 .dex-v2-current-fields small { color: #777286; font-size: 0.59rem; }
+.app-shell-dex-v2 .dex-v2-current-fields input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f1eef8;
+  padding: 0;
+  font: 650 1.15rem "Space Grotesk", sans-serif;
+}
+.app-shell-dex-v2 .dex-v2-current-fields input::placeholder { color: #565261; }
+.app-shell-dex-v2 .dex-v2-current-fields input:disabled { opacity: 0.55; }
+
+.app-shell-dex-v2 .dex-v2-current-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.app-shell-dex-v2 .dex-v2-current-actions > button:not(.dex-v2-review-button) {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--approved-border);
+  border-radius: 8px;
+  background: rgba(14, 17, 27, 0.88);
+  color: #c8c3d2;
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+.app-shell-dex-v2 .dex-v2-current-actions > button:disabled { cursor: not-allowed; opacity: 0.48; }
+
+.app-shell-dex-v2 .dex-v2-current-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid rgba(139, 92, 246, 0.24);
+  border-radius: 8px;
+  background: rgba(67, 44, 105, 0.17);
+  color: #a879ff;
+  padding: 11px 12px;
+}
+.app-shell-dex-v2 .dex-v2-current-warning > div { min-width: 0; display: grid; gap: 3px; }
+.app-shell-dex-v2 .dex-v2-current-warning strong { color: #f1eef8; font-size: 0.75rem; }
+.app-shell-dex-v2 .dex-v2-current-warning span { color: #a5a1b4; font-size: 0.65rem; line-height: 1.4; }
+.app-shell-dex-v2 .dex-v2-current-warning details { margin-top: 3px; color: #a99abb; font-size: 0.61rem; }
+.app-shell-dex-v2 .dex-v2-current-warning summary { cursor: pointer; }
+.app-shell-dex-v2 .dex-v2-current-warning p { overflow-wrap: anywhere; margin: 8px 0 0; line-height: 1.45; }
+
+.app-shell-dex-v2 .dex-v2-swap-card {
+  position: relative;
+  display: grid;
+  gap: 15px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 6px 0 0;
+}
+.app-shell-dex-v2 .dex-v2-token-funding { margin: 12px 0; border: 1px solid #302a45; border-radius: 9px; padding: 12px; }
+.app-shell-dex-v2 .dex-v2-token-funding > summary { cursor: pointer; color: #eee7ff; font-size: 0.9rem; }
+.app-shell-dex-v2 .dex-v2-token-funding[open] > summary { margin-bottom: 12px; }
+.app-shell-dex-v2 .dex-v2-token-funding > summary:focus-visible { outline: 2px solid #a879ff; outline-offset: 2px; }
+.app-shell-dex-v2 .dex-v2-quote-output {
+  min-width: 0; display: grid; gap: 10px; padding: 12px 14px 14px; border: 1px solid var(--approved-border); border-radius: 9px; background: #0d101a;
+}
+.app-shell-dex-v2 .dex-v2-quote-output > span { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.app-shell-dex-v2 .dex-v2-quote-output output { color: #f1eef8; font: 650 1.6rem 'Space Grotesk', sans-serif; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .dex-v2-current-amounts :is(strong, small),
+.app-shell-dex-v2 .dex-v2-current-fields :is(strong, small),
+.app-shell-dex-v2 .dex-v2-current-advanced p,
+.app-shell-dex-v2 .dex-v2-current-status,
+.app-shell-dex-v2 .dex-v2-activation-note { color: #b7b2c4; font-size: 0.8rem; line-height: 1.5; }
+.app-shell-dex-v2 .dex-v2-current-amounts > label > small { font-size: 0.75rem; }
+.app-shell-dex-v2 .dex-v2-current-advanced > summary :is(strong, span) { font-size: 0.8rem; }
+.app-shell-dex-v2 .dex-v2-current-advanced > div > .dex-v2-current-fields { grid-template-columns: 1fr; }
+.app-shell-dex-v2 .dex-v2-setting-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.app-shell-dex-v2 .dex-v2-setting-presets button { min-height: 38px; background: #171321; color: #c9c2d7; border: 1px solid var(--approved-border); border-radius: 6px; }
+.app-shell-dex-v2 .dex-v2-setting-presets button[aria-pressed="true"] { border-color: #a879ff; color: #fff; background: #37215a; }
+.app-shell-dex-v2 .dex-v2-execution-choice { display: flex; align-items: center; gap: 12px; margin: 4px 0 10px; }
+.app-shell-dex-v2 .dex-v2-execution-choice > span { color: #b7b2c4; font-size: 0.76rem; }
+.app-shell-dex-v2 .dex-v2-execution-choice .dex-v2-swap-mode-toggle { flex-shrink: 0; }
+.app-shell-dex-v2 .dex-v2-execution-choice button { min-height: 34px; font-size: 0.78rem; }
+/* Inputs stay bounded; supporting sections use spacing and row dividers. */
+:root body .app-shell :is(.dex-v2-swap-card, .dex-v2-test-form,
+  .dex-v2-current-pool, .dex-v2-current-pool-positions, .dex-owner-workspace,
+  .dex-owner-summary, .dex-owner-list, .dex-v2-activity-card,
+  .standalone-trades-section, .standalone-trade-detail-section,
+  .p2p-my-trades-section, .trade-compose-panel, .trade-compose-section, .trade-compose-header,
+  .trade-compose-footer, .trade-compose-quote-dock) {
+  background: transparent;
+  border-color: var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell .dex-v2-current-amounts :is(strong, small),
+:root body .app-shell .dex-v2-quote-output :is(strong, small) { color: var(--text-secondary); }
+:root body .app-shell .dex-v2-current-amounts :is(input, output) { color: var(--text-primary); }
+:root body .app-shell :is(.dex-v2-current-direction, .dex-v2-swap-mode-toggle,
+  .dex-v2-current-side-toggle, .dex-v2-setting-presets) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+/* CW-096. Swap form: one segmented style, one amount box and one settings row.
+   In-form choices (Swap/Limit, Buy/Sell, Fast/Multi-source, slippage presets) use the chart period
+   style: a raised surface with a purple hairline. The solid purple fill stays on the main button only. */
+:root body .app-shell-dex-v2 :is(.dex-v2-section-tabs, .dex-v2-current-side-toggle, .dex-v2-swap-mode-toggle, .dex-v2-setting-presets) {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-base);
+  box-shadow: none;
+}
+:root body .app-shell .dex-v2-swap-mode-toggle button[aria-pressed="true"] {
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px var(--brand-strong);
+}
+:root body .app-shell .dex-v2-current-advanced > summary { color: var(--text-primary); }
+:root body .app-shell .dex-v2-current-advanced > summary > span { color: var(--text-secondary); }
+:root body .app-shell :is(.dex-v2-extra-settings, .dex-owner-action, .dex-owner-footer, .dex-owner-actions, .dex-history-detail) {
+  background: transparent;
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+:root body .app-shell :is(.dex-v2-extra-settings, .dex-owner-action, .dex-owner-footer) > summary { color: var(--text-secondary); }
+/* Trading forms share compact fields; wallet details stay in one disclosure. */
+:root body .app-shell-dex-v2 .dex-v2-current-swap { gap: 10px; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap :is(.dex-v2-current-amounts > label, .dex-v2-quote-output) { gap: 6px; min-height: 0; padding: 12px; border-radius: 4px; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts :is(input, output) { min-height: 44px; font-size: 1.75rem; line-height: 1.25; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-execution-choice { gap: 10px; margin: 0; flex-wrap: wrap; }
+:root body .app-shell .dex-v2-current-direction { border-radius: 50%; color: var(--text-secondary); }
+:root body .app-shell .dex-v2-current-direction svg { color: var(--text-primary); }
+:root body .app-shell .dex-v2-current-amounts > label > strong { font-size: .875rem; }
+:root body .trade-action-confirm-details { margin: 0; border-top: 1px solid var(--border-default); }
+:root body .trade-action-confirm-details > summary { min-height: 44px; padding-block: 12px; color: var(--text-secondary); cursor: pointer; font-size: .8125rem; }
+:root body .trade-action-confirm-details > p { margin: 0; color: var(--text-secondary); font-size: .8125rem; line-height: 1.5; }
+:root body .app-shell .dex-v2-progress-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+:root body .app-shell .dex-v2-progress-actions:empty { display: none; }
+:root body .app-shell .dex-v2-progress-actions > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 4px; background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: .8125rem; cursor: pointer; }
+:root body .app-shell .dex-v2-progress-actions > button:disabled { opacity: .55; cursor: not-allowed; }
+:root body .app-shell .dex-v2-recovery-details { margin: 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }
+:root body .app-shell .dex-v2-recovery-details > summary { min-height: 44px; padding-block: 12px; color: var(--text-secondary); cursor: pointer; font-size: .8125rem; }
+:root body .app-shell .dex-v2-recovery-details .dex-v2-current-fields { padding-top: 0; }
+:root body .app-shell .dex-v2-recovery-details .dex-v2-current-fields label { display: grid; gap: 8px; padding: 0; border: 0; }
+:root body .app-shell .dex-v2-recovery-details input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: .8125rem;
+}
+:root body .app-shell .dex-v2-recovery-details input:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+:root body .app-shell .dex-v2-recovery-details small { color: var(--text-secondary); line-height: 1.5; }
+:root body .app-shell .dex-v2-progress-transaction { display: inline-flex; align-items: center; width: fit-content; min-height: 32px; color: var(--brand-strong); font-size: .8125rem; text-decoration: underline; text-underline-offset: 3px; }
+/* One amount box: You send and Estimated receive share one border with a hairline between them.
+   The Buy/Sell switch sits on that hairline as a zero-height grid row. */
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-base);
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts > :is(.dex-v2-amount-input, .dex-v2-quote-output) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts > .dex-v2-quote-output { border-top: 1px solid var(--border-subtle); }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts > * > span:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts > * > span:first-child > strong {
+  color: var(--text-secondary);
+  font-size: .875rem;
+  font-weight: 600;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts > * > span:first-child > small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-amount-balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-amount-balance > small { color: var(--text-secondary); font-size: .75rem; overflow-wrap: anywhere; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-amount-max:disabled { cursor: not-allowed; opacity: .55; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts > .dex-v2-current-direction {
+  position: relative;
+  z-index: 1;
+  top: auto;
+  left: auto;
+  justify-self: center;
+  /* 44 px: the App touch-size minimum for every button. Half of it overlaps each box. */
+  width: 44px;
+  height: 44px;
+  margin: -22px 0;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 50%;
+  background: var(--surface-interactive);
+  transform: none;
+}
+/* One settings row: the swap mode on the left, the protection summary on the right. Open settings take
+   the full width under the mode. The step and cost summary follows the main button. */
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings {
+  display: flex;
+  flex-wrap: wrap;
+  /* Top, not center: a wrapped mode hint must not push Slippage below the toggle line. */
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice {
+  /* Basis 0: the mode part takes the width that Slippage leaves. Owner decision 2026-11-18: the hint stays inline next
+     to the toggle for both modes (it wraps inside its own box), so a mode change does not move the layout. */
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+  margin: 0;
+  gap: 4px 10px;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice > span { min-width: 0; color: var(--text-secondary); font-size: .75rem; line-height: 1.3; }
+/* Each mode segment takes its own text width, which leaves the hint room for one line on desktop. */
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-execution-choice > .dex-v2-swap-mode-toggle { grid-template-columns: auto auto; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced {
+  flex: 0 0 auto;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* The height of a segmented control: 44 px buttons, 2 px padding and a 1 px border on each side.
+     A fixed height, because the App touch-size rule sets min-height on every summary. */
+  height: 50px;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-base);
+  cursor: pointer;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced > summary :is(strong, span) { font-size: .8125rem; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced > summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-secondary);
+  border-bottom: 1.5px solid var(--text-secondary);
+  transform: translateY(-2px) rotate(45deg);
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced[open] {
+  flex-basis: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-base);
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced[open] > summary { border: 0; border-radius: 0; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced[open] > summary::after { transform: translateY(2px) rotate(225deg); }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-amounts-section .dex-v2-current-fields label {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: .875rem;
+  font-weight: 600;
+}
+
+:root body .app-shell-dex-v2 .dex-v2-token-funding button:not(.dex-v2-review-button) {
+  border-color: var(--border-default);
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+:root body .app-shell-dex-v2 .dex-v2-token-funding button:not(.dex-v2-review-button):disabled { opacity: .5; }
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-swap-card { gap: 10px; }
+}
+
+@media (min-width: 920.02px) and (max-height: 700px) {
+  :root body .app-shell-dex-v2 .dex-v2-current-swap { gap: 8px; padding-top: 0; }
+  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-amounts > :is(.dex-v2-amount-input, .dex-v2-quote-output) { gap: 4px; padding: 8px 14px; }
+}
+
+/* On a phone the row has no room beside the toggle: the hint takes its own line under it in both modes. */
+@media (max-width: 920px) {
+  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice > span { flex-basis: 100%; white-space: nowrap; }
+  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice { flex-wrap: nowrap; gap: 8px; }
+  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-mode-toggle button { padding-inline: 10px; }
+}
+
+@media (max-width: 820px) {
+  .app-shell-dex-v2 .dex-v2-current-fields { grid-template-columns: 1fr; }
+  .app-shell-dex-v2 .dex-v2-current-fields label,
+  .app-shell-dex-v2 .dex-v2-current-fields label:nth-child(odd) { grid-column: 1; border-right: 0; }
+  .app-shell-dex-v2 .dex-v2-current-fields label:last-child { border-bottom: 0; }
+}
+
+@media (max-width: 760px) {
+  .app-shell-dex-v2 .dex-v2-current-fields { grid-template-columns: 1fr; }
+  .app-shell-dex-v2 .dex-v2-execution-choice { flex-wrap: wrap; }
+}
+
+@media (max-width: 680px) {
+  :root body .app-shell .dex-v2-current-swap { gap: 10px; }
+}
+
+.dex-v2-review-button {
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(100deg, #7c3aed, #9659f4 52%, #6d28d9);
+  color: white;
+  font-size: 1rem;
+  font-weight: 750;
+  box-shadow: 0 12px 30px rgba(99, 44, 220, 0.24);
+}
+
+.dex-v2-review-button:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.66);
+  opacity: 0.68;
+}
+
+.dex-v2-activation-note {
+  min-height: 18px;
+  margin: 9px 4px 18px;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  text-align: center;
+}
+.app-shell-dex-v2 .dex-v2-current-actions .dex-v2-review-button { grid-column: 1 / -1; margin-top: 0; }
+
+.app-shell-dex-v2 .dex-v2-composer-heading h1,
+.app-shell-dex-v2 .dex-v2-composer-heading p { margin: 0; }
+.app-shell-dex-v2 .dex-v2-composer-heading h1 { color: var(--approved-purple-bright); font: 700 1.45rem "Space Grotesk", sans-serif; }
+.app-shell-dex-v2 .dex-v2-composer-heading p { margin-top: 7px; color: #a5a1b4; font-size: 0.8rem; }
+
+.app-shell-dex-v2 .dex-v2-review-button {
+  min-height: 55px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(100deg, #6931db, #7d3ee4 54%, #6a30d8);
+  box-shadow: 0 12px 30px rgba(94, 45, 190, 0.22);
+  color: #fff;
+  font-size: 0.9rem;
+}
+.app-shell-dex-v2 .dex-v2-review-button:disabled { background: rgba(91, 55, 161, 0.38); }
+.app-shell-dex-v2 .dex-v2-activation-note { margin: 0; }
+
+.app-shell-dex-v2 .dex-v2-pool-composer {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-left: 1px solid var(--approved-border-soft);
+  padding: 2px 18px 20px 28px;
+}
+
+.app-shell-dex-v2 .dex-v2-pool-section {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--approved-border-soft);
+  padding: 16px 0 18px;
+}
+
+.app-shell-dex-v2 .dex-v2-pool-section:first-child { padding-top: 4px; }
+.app-shell-dex-v2 .dex-v2-pool-section > header {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.app-shell-dex-v2 .dex-v2-pool-section > header h2 {
+  margin: 0;
+  color: var(--approved-purple-bright);
+  font: 700 1.05rem "Space Grotesk", sans-serif;
+}
+.app-shell-dex-v2 .dex-v2-pool-section > header span,
+.app-shell-dex-v2 .dex-v2-pool-section > header svg { color: #918da2; font-size: 0.67rem; }
+.app-shell-dex-v2 .dex-v2-pool-custom-fee {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--approved-border-soft);
+  border-radius: 8px;
+  background: rgba(11, 14, 24, 0.86);
+  color: #9995a8;
+  padding: 0 11px;
+  font-size: 0.67rem;
+}
+.app-shell-dex-v2 .dex-v2-pool-custom-fee input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f5f2fb;
+  text-align: right;
+}
+.app-shell-dex-v2 .dex-v2-pool-custom-fee.active {
+  border-color: rgba(177, 128, 255, 0.72);
+  background: rgba(102, 63, 175, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(181, 137, 255, 0.12);
+}
+.app-shell-dex-v2 .dex-v2-pool-custom-fee:has(input[aria-invalid='true']) {
+  border-color: rgba(241, 138, 155, 0.7);
+}
+
+.app-shell-dex-v2 .dex-v2-pool-amounts-section { gap: 7px; }
+.app-shell-dex-v2 .dex-v2-pool-composer > .dex-v2-review-button { margin-top: 16px; }
+.app-shell-dex-v2 .dex-v2-setup { border-top: 1px solid var(--approved-border-soft); padding-top: 4px; margin: 8px 0; }
+.app-shell-dex-v2 .dex-v2-setup > summary,
+.app-shell-dex-v2 .dex-v2-extra-settings > summary { min-height: 40px; display: flex; align-items: center; gap: 8px; color: #c2b8d3; font-size: 0.82rem; cursor: pointer; }
+.app-shell-dex-v2 .dex-v2-setup > summary::before,
+.app-shell-dex-v2 .dex-v2-extra-settings > summary::before { content: '+'; color: #b886ff; font-size: 1rem; }
+.app-shell-dex-v2 :is(.dex-v2-setup, .dex-v2-extra-settings)[open] > summary::before { content: '−'; }
+.app-shell-dex-v2 .dex-v2-setup > div { display: grid; gap: 12px; padding: 12px 0; }
+.app-shell-dex-v2 .dex-v2-setup > div p { margin: 0; }
+:root body .app-shell :is(.sr-only, .dex-owner-progress:empty) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+:root body .app-shell .dex-v2-current-swap .dex-v2-current-swap-heading { margin: 0; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-panel-fields > button.dex-v2-review-button { margin-top: 0; background: var(--brand); border-color: var(--brand); color: #fff; }
+/* CW-097. DEX: one disclosure marker, the Limit entry box and main button, compact Liquidity fields,
+   styled recovery buttons, compact test-token rows, short windows and the mobile Trading tabs.
+   Disclosures: one chevron on the right that turns when open; no "+", no browser triangle. Summaries
+   that already hold a lucide chevron (Pool settings, How liquidity works) keep their icon.
+   The Limit main button: the secondary rule above no longer matches .dex-v2-review-button in
+   .dex-owner-workspace, so Review order and Unlock privacy keep the primary fill. */
+:root body .app-shell-dex-v2 :is(.dex-v2-setup, .dex-owner-action, .dex-owner-footer, .dex-v2-extra-settings, .dex-v2-token-funding,
+  .dex-v2-recovery-details, .dex-market-history-data, :is(.dex-v2-token-funding, .dex-history-row, .dex-market-chart, .dex-v2-setup) details) > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  font-size: .8125rem;
+  font-weight: 600;
+}
+:root body .app-shell-dex-v2 :is(.dex-v2-setup, .dex-owner-action, .dex-owner-footer, .dex-v2-extra-settings, .dex-v2-token-funding,
+  .dex-v2-recovery-details, .dex-market-history-data, :is(.dex-v2-token-funding, .dex-history-row, .dex-market-chart, .dex-v2-setup) details):not(.dex-owner-danger)[open] > summary {
+  color: var(--text-primary);
+}
+:root body .app-shell-dex-v2 :is(.dex-v2-setup, .dex-owner-action, .dex-owner-footer, .dex-v2-extra-settings, .dex-v2-token-funding,
+  .dex-v2-recovery-details, .dex-market-history-data, :is(.dex-v2-token-funding, .dex-history-row, .dex-market-chart, .dex-v2-setup) details) > summary::-webkit-details-marker {
+  display: none;
+}
+:root body .app-shell-dex-v2 :is(.dex-v2-setup, .dex-owner-action, .dex-owner-footer, .dex-v2-extra-settings, .dex-v2-token-funding,
+  .dex-v2-recovery-details, .dex-market-history-data, :is(.dex-v2-token-funding, .dex-history-row, .dex-market-chart, .dex-v2-setup) details) > summary::before {
+  content: none;
+}
+:root body .app-shell-dex-v2 :is(.dex-v2-setup, .dex-owner-action, .dex-owner-footer, .dex-v2-extra-settings, .dex-v2-token-funding,
+  .dex-v2-recovery-details, .dex-market-history-data, :is(.dex-v2-token-funding, .dex-history-row, .dex-market-chart, .dex-v2-setup) details) > summary:not(:has(svg.lucide-chevron-down))::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+:root body .app-shell-dex-v2 :is(.dex-v2-setup, .dex-owner-action, .dex-owner-footer, .dex-v2-extra-settings, .dex-v2-token-funding,
+  .dex-v2-recovery-details, .dex-market-history-data, :is(.dex-v2-token-funding, .dex-history-row, .dex-market-chart, .dex-v2-setup) details)[open] > summary:not(:has(svg.lucide-chevron-down))::after {
+  transform: translateY(2px) rotate(225deg);
+}
+/* Liquidity: CW-095 panel title, one frame per amount field (section rhythm: CW-097 Pool form compact). The main button is in
+   view at 1280 x 800. Recovery buttons with no class use the secondary style. */
+:root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-composer-heading h2 { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool :is(.dex-v2-setup, .dex-v2-current-fields) button:not([class]) {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-size: .875rem;
+  font-weight: 600;
+}
+:root body .app-shell-dex-v2 section.dex-v2-current-pool :is(.dex-v2-setup, .dex-v2-current-fields) button:not([class]):disabled { opacity: .5; }
+/* CW-097. Pool form compact: owner decision 2026-11-21 (Add liquidity critique). Fewer lines, helpers left under
+   their fields, the spread select framed like the inputs, readable locked values, a full-width preview card with a
+   one-line header, and a left-aligned status with a short transaction link. */
+:root body .app-shell-dex-v2 section.dex-v2-current-pool :is(.dex-v2-pool-amounts-section, .dex-v2-pool-fee-section) { border-bottom: 0; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-section { padding: 10px 0; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-amounts-section .dex-v2-activation-note { text-align: left; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool select[aria-label="Pool spread"] { border: 1px solid var(--border-default); background: var(--surface-base); }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool :is(input, select):disabled { color: var(--text-secondary); -webkit-text-fill-color: var(--text-secondary); opacity: 1; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > .dex-v2-activation-note { text-align: left; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > .dex-v2-pool-transaction { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > .dex-v2-pool-transaction a { color: var(--brand-strong); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > .dex-v2-pool-transaction button { min-height: 32px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: 4px; background: var(--surface-base); color: var(--text-secondary); font-size: .75rem; }
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-review-button { min-height: 46px; }
+}
+
+@media (max-width: 920px) {
+  .app-shell-dex-v2 .dex-v2-composer-heading h1 { font-size: 1.15rem; }
+  .app-shell-dex-v2 .dex-v2-pool-composer {
+    grid-row: auto;
+    border-left: 0;
+    padding: 2px 6px calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .app-shell-dex-v2 .dex-v2-pool-section { padding-block: 12px 14px; }
+  .app-shell-dex-v2 .dex-v2-pool-section > header h2 { font-size: 0.98rem; }
+  :root body .app-shell-dex-v2 .dex-v2-current-limit .dex-v2-review-button { font-size: .9rem; font-weight: 750; }
+}
+
+.dex-v2-test-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 720px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(20, 19, 31, 0.78);
+}
+.dex-v2-test-form label { display: grid; gap: 7px; }
+.dex-v2-test-form label span { color: var(--text-secondary); font-size: 0.75rem; }
+.dex-v2-test-form input,
+.dex-v2-test-form select {
+  min-width: 0;
+  height: 43px;
+  border: 1px solid var(--border-emphasis);
+  border-radius: 8px;
+  background: rgba(10, 9, 18, 0.7);
+  color: var(--text);
+  padding: 0 11px;
+  font: 600 0.84rem "Inter", sans-serif;
+}
+.dex-v2-test-form > button {
+  min-height: 45px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--brand);
+  color: white;
+  font: 700 0.86rem "Inter", sans-serif;
+}
+.dex-v2-test-form > p { margin: 0; align-self: center; color: var(--text-secondary); font-size: 0.78rem; line-height: 1.45; }
+
+.app-shell-dex-v2 .dex-v2-current-side-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  border: 1px solid var(--approved-border);
+  border-radius: 8px;
+  padding: 3px;
+}
+.app-shell-dex-v2 .dex-v2-current-side-toggle button {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #aaa7b9;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.app-shell-dex-v2 .dex-v2-current-side-toggle button[aria-pressed="true"] {
+  border-color: rgba(167, 107, 255, 0.75);
+  background: #37215a;
+  color: #f4efff;
+}
+.app-shell-dex-v2 .dex-v2-current-side-toggle button:disabled { cursor: not-allowed; opacity: 0.6; }
+/* Strategies and positions use the same chart-led visual system. */
+.app-shell-dex-v2 .dex-v2-test-form,
+.app-shell-dex-v2 .dex-v2-strategy-preview {
+  border-color: var(--approved-border);
+  background: rgba(13, 16, 26, 0.76);
+  box-shadow: none;
+}
+
+.app-shell-dex-v2 .dex-v2-limit-price-field {
+  display: grid;
+  gap: 7px;
+}
+
+.app-shell-dex-v2 .dex-v2-limit-price-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #aaa7b9;
+  font-size: 0.78rem;
+}
+.app-shell-dex-v2 .dex-v2-limit-price-field > span small { color: #9a96a8; font-size: 0.68rem; font-weight: 400; }
+
+.app-shell-dex-v2 .dex-v2-limit-price-field select,
+.app-shell-dex-v2 .dex-v2-limit-price-field > input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--approved-border);
+  border-radius: 8px;
+  background: #0d101a;
+  color: #f4f1fb;
+  padding: 0 12px;
+  font: 600 0.8rem "Inter", sans-serif;
+}
+.app-shell-dex-v2 .dex-v2-limit-price-field > input { font-size: 1.02rem; }
+.app-shell-dex-v2 .dex-v2-limit-price-field > input[aria-invalid='true'] {
+  border-color: rgba(241, 138, 155, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(241, 138, 155, 0.12);
+}
+.app-shell-dex-v2 .dex-v2-panel-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.app-shell-dex-v2 :is(.dex-v2-panel-fields, .dex-v2-current-pool-positions, .dex-v2-current-pool, .dex-v2-setup) label { min-width: 0; display: grid; gap: 8px; font-size: 0.87rem; color: #ddd6e8; }
+.app-shell-dex-v2 :is(.dex-v2-panel-fields, .dex-v2-current-pool-positions, .dex-v2-current-pool, .dex-v2-setup) :is(input, select) {
+  box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--approved-border); border-radius: 7px; background: #0d101a; color: #f1eef8; font: inherit;
+}
+.app-shell-dex-v2 :is(.dex-v2-panel-fields, .dex-v2-current-pool-positions, .dex-v2-current-pool) h2 { font-size: 1.15rem; margin: 0 0 8px; color: #b886ff; }
+.app-shell-dex-v2 :is(.dex-v2-panel-fields, .dex-v2-current-pool-positions, .dex-v2-current-pool) h3 { font-size: 0.9rem; margin: 0; }
+.app-shell-dex-v2 :is(.dex-v2-panel-fields, .dex-v2-current-pool-positions, .dex-v2-current-pool, .dex-v2-setup) :is(p, small) { color: #b7b2c4; font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .dex-v2-panel-fields p { margin: 0; }
+.app-shell-dex-v2 fieldset.dex-v2-panel-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+:root body .app-shell :is(.dex-v2-current-side-toggle, .dex-v2-setting-presets) button[aria-pressed="true"] {
+  background: #6137a5;
+  color: #fff;
+  border-color: var(--brand-strong);
+  box-shadow: none;
+}
+:root body .app-shell-dex-v2 :is(.dex-v2-section-tabs, .dex-v2-current-side-toggle, .dex-v2-swap-mode-toggle, .dex-v2-setting-presets) button:is([aria-pressed="true"], [aria-current="page"]) {
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  border: 0;
+  box-shadow: inset 0 -2px var(--brand-strong);
+}
+:root body .app-shell .dex-owner-workspace { border: 0; padding: 0; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] > .dex-v2-panel-fields { gap: 12px; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-current-side-toggle button[aria-pressed="true"] { border-color: var(--brand-strong); }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border-default); border-radius: 4px; background: var(--surface-base); }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) > span { display: flex; align-items: center; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) strong { font-size: .85rem; color: var(--text-secondary); }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) input { padding: 0; border: 0; background: transparent; font-size: 1.6rem; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-fill-note { color: var(--text-secondary); font-size: .8rem; }
+/* CW-140.08: notes and status lines in the DEX forms read at 14 px or more. The chart keeps its own sizes. */
+:root body .app-shell-dex-v2 .dex-v2-form-column :is(p, [role="status"], [role="alert"]):not(.sr-only) { font-size: max(.875rem, 14px); }
+/* Limit: amount and price share one box with a hairline, as the Swap amount box; token labels are chips. */
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-base);
+}
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry > :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) {
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry > .dex-v2-limit-price-field { border-top: 1px solid var(--border-subtle); }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry > * > span > strong { color: var(--text-secondary); font-size: .875rem; font-weight: 600; }
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry > * > span > small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry input { min-height: 44px; font-size: 1.75rem; line-height: 1.25; }
+
+@media (min-width: 920.02px) and (max-height: 700px) {
+  :root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] > .dex-v2-panel-fields { gap: 8px; }
+  :root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry > :is(.dex-v2-limit-amount-field, .dex-v2-limit-price-field) { gap: 4px; padding: 8px 14px; }
+}
+
+@media (max-width: 920px) {
+  /* 7. (Owner, 2026-11-18) Manage on phones: with no order or position selected, the detail card shows only its
+     "Status and recovery" disclosure; the empty heading and placeholder hide. Desktop keeps the split placeholder. */
+  :root body .app-shell-dex-v2 .dex-owner-detail:has(> .dex-owner-selection-empty) > :is(.dex-owner-heading, .dex-owner-selection-empty) { display: none; }
+  :root body .app-shell-dex-v2 .dex-owner-detail:has(> .dex-owner-selection-empty) > details.dex-owner-footer { border-top: 0; }
+}
+
+@media (max-width: 520px) {
+  .dex-v2-test-form { grid-template-columns: 1fr; padding: 15px; }
+}
+
+.dex-v2-strategy-preview { align-self: start; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: linear-gradient(145deg, rgba(22, 20, 36, 0.94), rgba(12, 12, 21, 0.9)); }
+.dex-v2-strategy-preview header { padding: 18px; border-bottom: 1px solid var(--border); background: rgba(139, 92, 246, 0.07); }
+.dex-v2-strategy-preview header span { color: #a879ff; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.1em; }
+.dex-v2-strategy-preview h2 { margin: 6px 0 0; font: 700 0.98rem "Space Grotesk", sans-serif; }
+.dex-v2-strategy-preview dl { margin: 0; padding: 8px 18px; }
+.dex-v2-strategy-preview dl div { display: grid; grid-template-columns: minmax(100px, 0.7fr) minmax(0, 1.3fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.dex-v2-strategy-preview dl div:last-child { border-bottom: 0; }
+.dex-v2-strategy-preview dt { color: var(--text-tertiary); font-size: 0.68rem; }
+.dex-v2-strategy-preview dd { margin: 0; font-size: 0.72rem; font-weight: 700; text-align: right; }
+.dex-v2-strategy-preview > p { display: flex; gap: 9px; margin: 0; padding: 14px 18px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 0.69rem; line-height: 1.45; }
+.dex-v2-strategy-preview > p svg { flex: 0 0 auto; color: #a879ff; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview { align-self: stretch; width: 100%; margin-top: 10px; border-radius: 6px; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview > header { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview > header span { font-size: .75rem; letter-spacing: .04em; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview > header h2 { margin: 0; font-size: .9375rem; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview dl { padding: 2px 14px; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview dl div { padding: 8px 0; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview :is(dt, dd) { font-size: .8125rem; }
+:root body .app-shell-dex-v2 section.dex-v2-current-pool > aside.dex-v2-strategy-preview dt { color: var(--text-secondary); }
+
+@media (max-width: 1380px) {
+  .dex-v2-strategy-preview dd { overflow-wrap: anywhere; }
+}
+
+.app-shell-trades,
+.app-shell-dex-v2 {
+  background: var(--approved-bg);
+}
+
+.app-shell.app-shell-trades,
+.app-shell.app-shell-dex-v2 {
+  grid-template-rows: auto 76px minmax(0, 1fr);
+}
+/* DEX workspace */
+.app-shell-dex-v2 .dex-v2-page {
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  display: block;
+  overflow: auto;
+  background: var(--approved-bg);
+}
+/* CW-035.03: approved DEX presentation. Transaction controls retain their own gates. */
+.app-shell-dex-v2 .dex-v2-page [hidden] { display: none !important; }
+/* Keep standalone beta controls usable without changing their typography. */
+:root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades, .app-shell-chat)
+  :is(button, input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, summary) {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* One desktop workspace rhythm for DEX and P2P. */
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2,
+  .app-shell-trades {
+    --trading-content-gutter: clamp(28px, 2vw, 52px);
+  }
+
+  .app-shell-dex-v2 {
+    --dex-workspace-columns: minmax(0, 1.55fr) minmax(380px, 0.95fr);
+    --dex-workspace-column-gap: 0px;
+    --dex-navigation-height: 78px;
+    --dex-workspace-top-gap: 12px;
+    --dex-chart-top-extension: calc(var(--dex-navigation-height) - var(--dex-workspace-top-gap));
+  }
+}
+
+@media (min-width: 1181px) {
+  .app-shell-dex-v2 {
+    --dex-workspace-columns: minmax(0, 1fr) clamp(560px, 42vw, 720px);
+    --dex-workspace-column-gap: 10px;
+  }
+}
+
+@media (min-width: 920.02px) {
+  /* Navigation and content use the same desktop tracks on DEX and P2P. */
+  :root body .app-shell:is(.app-shell-dex-v2, .app-shell-trades) { --trading-content-gutter: var(--app-edge-inset); --trading-workspace-columns: minmax(0, 1fr) clamp(340px, 36vw, 560px); --trading-workspace-gap: 16px; }
+  :root body .app-shell-dex-v2 {
+    --dex-workspace-columns: var(--trading-workspace-columns);
+    --dex-workspace-column-gap: var(--trading-workspace-gap);
+    --dex-navigation-height: 58px;
+    --dex-workspace-top-gap: 12px;
+  }
+  /* The DEX page scrolls inside the shell; P2P does not. The page always keeps its scrollbar space, and the
+     right inset gives that space back, so the tab menu and the panels have the same edges on DEX and P2P.
+     The page scrollbar and the reserved window scrollbar have the same width: (100vw - 100%) / 2. */
+  :root body .app-shell-dex-v2 .dex-v2-page {
+    --dex-page-end-inset: calc(var(--trading-content-gutter) - (100vw - 100%) / 2);
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (min-width: 920.02px) and (max-width: 1180px) {
+  .app-shell.app-shell-dex-v2 {
+    grid-template-rows: auto minmax(76px, auto) minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 920.02px) and (max-width: 1120px) {
+  .app-shell-dex-v2 {
+    --dex-workspace-columns: minmax(0, 1.25fr) minmax(360px, 0.9fr);
+  }
+}
+
+@media (max-width: 920px) {
+  .app-shell.app-shell-trades,
+  .app-shell.app-shell-dex-v2 {
+    grid-template-rows: auto calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context)) minmax(0, 1fr);
+  }
+
+  .app-shell-dex-v2 .dex-v2-page { overflow-x: hidden; }
+  /* The header rows include the 44 px hit area and the two-line token names. */
+  .app-shell.app-shell-dex-v2 {
+    --ux-mobile-trading-nav: 52px;
+    --ux-mobile-pair-context: 52px;
+    grid-template-rows: auto calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 80px) minmax(0, 1fr);
+  }
+  /* The DEX Agent page also has the P2P shell class, so the CW-095 P2P bar height (two rows) applied and
+     the DEX price row hung 39 px into the page. The DEX shell keeps its three-row bar here. */
+  :root body .app-shell.app-shell-dex-v2.app-shell-trades {
+    grid-template-rows: auto calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 820px) {
+  .app-shell-dex-v2 {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+}
+
+.app-shell-dex-v2 .dex-v2-current-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.app-shell-dex-v2 .dex-v2-current-facts div { min-width: 0; display: grid; gap: 2px; }
+.app-shell-dex-v2 .dex-v2-current-facts dt { color: #777286; font-size: 0.58rem; }
+.app-shell-dex-v2 .dex-v2-current-facts dd { margin: 0; color: #c8c3d2; font-size: 0.65rem; overflow-wrap: anywhere; }
+
+@media (max-width: 820px) {
+  .app-shell-dex-v2 .dex-v2-current-facts { grid-template-columns: 1fr; }
+}
+
+.app-shell-dex-v2 .dex-v2-current-status { margin: 0; text-align: center; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-progress.is-idle { padding: 0; margin: 0; border: 0; background: transparent; box-shadow: none; }
+/* Pending, verified and recovery states share one boundary and one set of facts. */
+:root body .app-shell .dex-v2-current-progress { display: grid; gap: 14px; min-width: 0; padding: 16px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--surface-base); }
+:root body .app-shell .dex-v2-current-progress > p { margin: 0; color: var(--text-secondary); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
+:root body .app-shell .dex-v2-current-progress .dex-v2-current-status { color: var(--text-primary); font-size: .875rem; font-weight: 500; text-align: left; }
+:root body .app-shell .dex-v2-current-progress .dex-v2-current-result { color: var(--text-primary); }
+:root body .app-shell .dex-v2-progress-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+:root body .app-shell .dex-v2-progress-facts > div { display: grid; gap: 4px; min-width: 0; }
+:root body .app-shell .dex-v2-progress-facts dt { color: var(--text-secondary); font-size: .75rem; }
+:root body .app-shell .dex-v2-progress-facts dd { margin: 0; color: var(--text-primary); font-size: .8125rem; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .dex-v2-mode-nav button.active { background: transparent; color: var(--approved-purple-bright); }
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-mode-nav button:hover,
+  .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button:hover {
+    background: rgba(139, 92, 246, 0.07);
+    color: #ded9ea;
+  }
+}
+
+:root body .app-shell .dex-agent-link { background: var(--surface-base); border-color: var(--border-default); color: var(--text-secondary); }
+.app-shell-dex-v2 .dex-v2-mode-nav button.active::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--approved-purple);
+}
+.dex-market-chart-actions button.active { background: rgba(91, 60, 149, 0.78); color: #fff; }
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-mode-nav button.active,
+  .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button.active {
+    background: rgba(105, 61, 174, 0.54);
+    box-shadow:
+      inset 0 0 0 1px rgba(174, 119, 255, 0.56),
+      0 2px 10px rgba(92, 53, 180, 0.18);
+    color: #fff;
+  }
+
+  .app-shell-dex-v2 .dex-v2-mode-nav button:focus-visible,
+  .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs button:focus-visible {
+    outline: 0;
+    outline-offset: 0;
+    box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.78);
+  }
+}
+
+/* Primary actions are flat violet. Secondary and disabled controls stay clear. */
+:root body .app-shell :is(.dex-v2-review-button, .landing-action-btn-primary,
+  .landing-module-card-primary .landing-module-cta, .p2p-create-trade-btn,
+  .standalone-trade-primary-btn, .swap-submit-btn, .modal-primary,
+  .chat-placeholder-card > button, .trade-compose-send, .privacy-locked-notice > button,
+  .wallet-primary-action:not(.p2p-wallet-address)) {
+  background: var(--brand);
+  color: #fff;
+  border: 1px solid var(--brand);
+  box-shadow: none;
+  filter: none;
+}
+:root body .app-shell .wallet-header-panel-disconnected .wallet-primary-action {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+:root body .app-shell .dex-view-navigation .dex-agent-link {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+:root body .app-shell-trades .p2p-trading-shell :is(.trade-compose-asset-field,
+  .trade-compose-advanced-options, .trade-token-select-trigger,
+  .trade-token-select-dropdown) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-amount-max {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--brand-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: .75rem;
+  font-weight: 600;
+}
+
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-mode-nav button.active::after { display: none; }
+}
+
+@media (max-width: 920px) {
+  .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav button.active::after { top: 0; bottom: auto; }
+}
+
+.dex-market-chart {
+  min-width: 0;
+  min-height: 680px;
+  display: grid;
+  grid-template-rows: auto minmax(420px, 1fr);
+  border: 1px solid var(--approved-border);
+  border-radius: 9px;
+  background: radial-gradient(circle at 70% 10%, rgba(79, 45, 150, 0.08), transparent 36%), #0a0d16;
+  padding: 14px 22px 18px;
+}
+.app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart {
+  align-self: start;
+  height: clamp(700px, calc(100dvh - 200px), 840px);
+}
+
+.dex-market-chart > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.dex-market-chart-actions { display: flex; align-items: center; gap: 12px; }
+.dex-market-chart-actions > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(48px, 1fr));
+  border: 1px solid var(--approved-border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dex-market-chart-actions button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #b8b5c4;
+  padding: 0 13px;
+  font-size: 0.75rem;
+}
+.dex-market-chart-actions .dex-market-chart-expand { width: 36px; padding: 0; color: #c9c5d4; }
+
+.dex-market-chart-legend {
+  min-width: 0;
+  min-height: 40px;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 25px;
+  color: #aaa7b8;
+  font-size: 0.78rem;
+}
+.dex-market-chart-legend span { display: inline-flex; align-items: center; gap: 8px; }
+.dex-market-chart-legend i { width: 28px; height: 3px; border-radius: 2px; background: var(--approved-purple); }
+.dex-market-chart-legend .recurring-buy i { height: 2px; background: #23d399; }
+.dex-market-chart-legend .recurring-sell i { height: 2px; background: #ef49c1; }
+.dex-market-chart-legend small {
+  margin-left: auto;
+  color: #b7b3c5;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+.dex-market-chart-plot { min-height: 0; }
+.dex-market-chart-legend .candle-up i {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: #26d6a0;
+}
+.dex-market-chart-tooltip {
+  min-width: 220px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid #313449;
+  border-radius: 9px;
+  background: rgba(13, 16, 26, 0.98);
+  color: #f6f4ff;
+  padding: 12px;
+  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.36);
+}
+.dex-market-chart-tooltip > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+}
+.dex-market-chart-tooltip span,
+.dex-market-chart-tooltip small { color: #918da5; font-size: 0.7rem; }
+.dex-market-chart-tooltip b { color: #f6f4ff; font-variant-numeric: tabular-nums; }
+.dex-market-chart-tooltip small { display: block; }
+.dex-market-chart-empty {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  color: #aaa7b8;
+  text-align: center;
+}
+.dex-market-chart-empty strong { color: #f6f4ff; }
+.dex-market-chart.is-expanded {
+  position: fixed;
+  inset: 16px;
+  z-index: calc(var(--z-header) + 10);
+  min-height: 0;
+  background: #080b13;
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.68);
+}
+.app-shell-dex-v2 .dex-market-chart-host > .dex-market-chart { height: calc(clamp(700px, calc(100dvh - 200px), 840px) + var(--dex-chart-top-extension, 0px)); }
+.dex-market-chart-samples .dex-market-chart-actions > div { grid-template-columns: repeat(3, minmax(44px, 1fr)); }
+.dex-market-chart-samples .dex-market-chart-actions button { min-height: 44px; }
+.dex-market-history-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; color: #aaa7b8; font-size: 0.75rem; }
+.dex-market-history-state strong, .dex-market-history-state > span { flex-basis: 100%; }
+.dex-market-history-state strong { color: #e8e4f3; }
+.dex-market-history-state details { flex-basis: 100%; }
+.dex-market-history-state summary { cursor: pointer; min-height: 28px; display: flex; align-items: center; color: #c9c5d4; }
+.dex-market-history-state summary:focus-visible { outline: 2px solid #a879ff; outline-offset: 2px; }
+.dex-market-history-state button { min-height: 44px; padding: 6px 10px; border: 1px solid var(--approved-border-soft); border-radius: 6px; background: transparent; color: #c9c5d4; }
+.dex-market-history-data { min-width: 0; max-height: 180px; overflow: auto; color: #aaa7b8; font-size: 0.72rem; }
+.dex-market-history-data summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: #c9c5d4; }
+.dex-market-history-data table { min-width: 570px; width: 100%; border-collapse: collapse; }
+.dex-market-history-data th, .dex-market-history-data td { padding: 8px; border-bottom: 1px solid var(--approved-border-soft); text-align: left; }
+.dex-market-history-data caption { text-align: left; padding: 8px; }
+/* Chart data, source disclosures and all chart controls remain available. */
+:root body .app-shell .dex-market-chart {
+  background: var(--surface-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell .dex-market-chart-samples { grid-template-rows: auto minmax(260px, 1fr) auto auto; }
+:root body .app-shell .dex-market-chart-legend { flex-direction: column; align-items: flex-start; gap: 6px; }
+:root body .app-shell .dex-market-chart-legend > .candle-up { color: var(--text-primary); font-weight: 650; font-size: 1.2rem; }
+:root body .app-shell .dex-market-chart-legend > small { margin-left: 0; color: var(--text-secondary); font-size: .875rem; }
+:root body .app-shell .dex-market-chart-actions button {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+:root body .app-shell .dex-market-chart-actions button[aria-pressed="true"] {
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px var(--brand-strong);
+}
+:root body .app-shell .dex-market-chart-tooltip {
+  background: var(--surface-overlay);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+/* Final shared Trading page frame and explicit order inspector. */
+@media (min-width: 920.02px) {
+  .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart {
+    position: relative;
+    z-index: 1;
+    height: clamp(758px, calc(100dvh - 142px), 898px);
+    margin-top: -48px;
+  }
+  :root body .app-shell .dex-market-chart:not(.is-expanded) {
+    height: calc(100dvh - 190px);
+    min-height: 560px;
+    max-height: 980px;
+  }
+}
+
+:root body .app-shell .dex-market-chart.is-expanded { height: auto; min-height: 0; max-height: none; }
+
+@media (max-width: 920px) {
+  .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart { height: auto; }
+  .dex-market-chart { min-height: 330px; grid-template-rows: auto 230px; border-radius: 0; border-inline: 0; padding: 10px 6px 8px; }
+}
+
+.dex-market-chart-samples { grid-template-rows: auto auto minmax(260px, 1fr) auto; }
+
+@media (max-width: 920px) {
+  .dex-market-chart-actions > div { grid-template-columns: repeat(4, 40px); }
+  .dex-market-chart-actions button { min-height: 30px; padding: 0 7px; font-size: 0.65rem; }
+  .dex-market-chart-actions .dex-market-chart-expand { width: 30px; }
+  .dex-market-chart-legend { min-height: 44px; gap: 13px; font-size: 0.65rem; }
+  .dex-market-chart-legend small {
+    display: block;
+    flex-basis: 100%;
+    margin-left: 0;
+    color: #9f9aad;
+  }
+  .dex-market-chart.is-expanded { inset: 0; border: 0; border-radius: 0; }
+  .app-shell-dex-v2 .dex-market-chart-host > .dex-market-chart { height: auto; }
+}
+
+@media (max-width: 680px) {
+  :root body .app-shell .dex-market-chart-legend > .candle-up { font-size: .9rem; }
+  :root body .app-shell .dex-market-chart-legend > small { font-size: .72rem; line-height: 1.5; }
+}
+
+@media (max-width: 430px) {
+  .dex-market-chart > header { align-items: center; }
+  .dex-market-chart-actions .dex-market-chart-expand { display: none; }
+}
+
+.dex-market-chart-legend .ask i { height: 2px; background: #ef49c1; }
+.dex-market-chart-legend .range i { width: 20px; height: 12px; border-radius: 2px; background: rgba(139, 92, 246, 0.26); }
+.dex-market-chart-legend .limit i { height: 2px; background: #a76bff; }
+/* Four-token beta funding panel. */
+.app-shell-dex-v2 .dex-v2-beta-tokens { min-width: 0; color: #e7e2f3; }
+.app-shell-dex-v2 .dex-v2-beta-token-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.app-shell-dex-v2 .dex-v2-beta-tokens button { min-height: 44px; padding: 8px 12px; border: 1px solid #514164; border-radius: 7px; background: #241b34; color: #eee7ff; font: inherit; font-size: 0.8rem; cursor: pointer; }
+.app-shell-dex-v2 .dex-v2-beta-tokens button:disabled { color: #b4a9c6; background: #18131f; border-color: #352d42; cursor: not-allowed; }
+.app-shell-dex-v2 .dex-v2-beta-token-guidance p { color: #c9b4e9; margin: 8px 0; font-size: 0.8rem; line-height: 1.5; }
+.app-shell-dex-v2 .dex-v2-beta-token-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 10px; border: 1px solid #302a45; border-radius: 9px; overflow: hidden; }
+.app-shell-dex-v2 .dex-v2-beta-token-card { min-width: 0; padding: 12px; background: #0d0b16; }
+.app-shell-dex-v2 .dex-v2-beta-token-card + .dex-v2-beta-token-card { border-top: 1px solid #302a45; }
+.app-shell-dex-v2 .dex-v2-beta-token-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.app-shell-dex-v2 .dex-v2-beta-token-card > header strong { color: #f2edff; font-size: 0.95rem; }
+.app-shell-dex-v2 .dex-v2-beta-token-card > header span,
+.app-shell-dex-v2 .dex-v2-beta-token-card p { color: #b7b2c4; font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .dex-v2-beta-token-card p { margin: 6px 0; }
+.app-shell-dex-v2 .dex-v2-beta-token-card .dex-v2-beta-token-status { margin: 5px 0 0; color: #c9b4e9; font-size: 0.8rem; }
+.app-shell-dex-v2 .dex-v2-beta-token-card details { margin-top: 8px; border-top: 1px solid #29263b; padding-top: 7px; }
+.app-shell-dex-v2 .dex-v2-beta-token-card summary { color: #cfc9df; cursor: pointer; font-size: 0.8rem; }
+.app-shell-dex-v2 .dex-v2-beta-token-card dl { display: grid; grid-template-columns: minmax(80px, auto) minmax(0, 1fr); gap: 4px 8px; margin: 8px 0 0; }
+.app-shell-dex-v2 .dex-v2-beta-token-card dt { color: #b7b2c4; font-size: 0.8rem; }
+.app-shell-dex-v2 .dex-v2-beta-token-card dd { min-width: 0; margin: 0; color: #d9d6e7; font-size: 0.8rem; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .dex-v2-beta-tokens button:focus-visible,
+.app-shell-dex-v2 .dex-v2-beta-tokens summary:focus-visible,
+.app-shell-dex-v2 .dex-v2-beta-tokens a:focus-visible { outline: 2px solid #a879ff; outline-offset: 2px; }
+.app-shell-dex-v2 .dex-v2-page :is(button, input, select, summary):focus-visible { outline: 2px solid #c4b5fd; outline-offset: 3px; }
+.app-shell-dex-v2 .dex-v2-beta-token-footer { margin-top: 12px; }
+.app-shell-dex-v2 .dex-v2-beta-token-footer a { color: #c9b4e9; font-size: 0.8rem; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .dex-v2-beta-tokens > p[role="status"] { font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
+/* Get test tokens: one row per token (symbol and balance, status, Claim or Refill with its amount); one Details
+   and one Status and recovery row for the whole panel (owner decision 2026-11-18). */
+:root body .app-shell-dex-v2 .dex-v2-beta-token-grid { border-color: var(--border-subtle); }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  min-height: 56px;
+  padding: 6px 12px;
+  background: var(--surface-base);
+}
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > .dex-v2-beta-token-status { grid-column: 2; margin: 0; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > button { grid-column: 3; white-space: nowrap; }
+:root body .app-shell-dex-v2 :is(.dex-v2-beta-token-details, .dex-v2-beta-token-recovery) { margin-top: 8px; }
+:root body .app-shell-dex-v2 :is(.dex-v2-beta-token-details, .dex-v2-beta-token-recovery) :is(p, dd, dt, label) { color: var(--text-secondary); font-size: .8125rem; overflow-wrap: anywhere; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-details dl { display: grid; gap: 6px; margin: 0; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-details dl > div { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-details dt { color: var(--text-primary); font-weight: 600; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card + .dex-v2-beta-token-card { border-top-color: var(--border-subtle); }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > header { display: grid; gap: 2px; justify-content: start; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > header strong { color: var(--text-primary); font-size: .875rem; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > header span,
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card p { color: var(--text-secondary); font-size: .8125rem; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card > .dex-v2-beta-token-status:empty { display: none; }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-guidance p { color: var(--text-secondary); }
+
+@media (max-width: 920px) {
+  :root body .app-shell :is(.dex-v2-beta-token-footer a, .trade-token-select-state a) { display: inline-block; padding-block: 15px; margin-block: -15px; }
+}
+
+@media (max-width: 520px) {
+ .app-shell-dex-v2 .dex-v2-beta-token-card > header { align-items: flex-start; flex-direction: column; gap: 4px; }
+}
+
+.app-shell-dex-v2 .dex-v2-activity-card { display: grid; gap: 20px; min-height: 320px; }
+.app-shell-dex-v2 .dex-v2-activity-card h2 { margin: 0; font-size: 1.2rem; color: #b886ff; }
+.app-shell-dex-v2 .dex-v2-activity-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.app-shell-dex-v2 .dex-v2-activity-card button { border: 1px solid #6f4fa0; background: #1c142b; color: #eee8f6; border-radius: 7px; padding: 8px 12px; cursor: pointer; }
+.app-shell-dex-v2 .dex-v2-activity-card button:disabled { opacity: .5; cursor: default; }
+.app-shell-dex-v2 .dex-v2-activity-card :is(time, header > span) { color: #b7b2c4; font-size: .8rem; }
+.app-shell-dex-v2 .dex-v2-activity-card dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.app-shell-dex-v2 .dex-v2-activity-card dd { margin: 4px 0; }
+.app-shell-dex-v2 .dex-v2-activity-card :is(p, dd) { color: #b7b2c4; font-size: 0.85rem; line-height: 1.5; }
+.app-shell-dex-v2 .dex-v2-empty-state { align-self: center; text-align: center; padding: 28px 12px; border: 1px dashed var(--approved-border); border-radius: 9px; color: #b7b2c4; }
+.app-shell-dex-v2 .dex-v2-empty-state h3 { font-size: 1rem; color: #eee8f6; }
+.app-shell-dex-v2 .dex-v2-pending-card { border: 1px solid #6f4fa0; padding: 18px; border-radius: 9px; }
+:root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-current-actions + .current-swap-steps { margin-top: -2px; }
+
+@media (max-width: 920px) {
+  :root body .app-shell-dex-v2 .dex-view-navigation > .dex-agent-link {
+    flex: 1 1 0;
+    align-self: center;
+    justify-content: center;
+    min-width: 0;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    font-size: .75rem;
+    font-weight: 700;
+  }
+}

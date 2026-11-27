@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 // so these tests bind the source shape that the local preview check confirmed.
 const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const app = readFileSync(join(SRC_ROOT, 'App.tsx'), 'utf8');
-const tradingCss = readFileSync(join(SRC_ROOT, 'styles/110-approved-trading-design.css'), 'utf8').replace(/\r\n/gu, '\n');
+// CW-158: the P2P side panel rule is in the P2P stylesheet.
+const tradingCss = readFileSync(join(SRC_ROOT, 'styles/p2p.css'), 'utf8').replace(/\r\n/gu, '\n');
 
 const between = (text: string, start: string, end: string) => {
   const from = text.indexOf(start);
