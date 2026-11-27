@@ -401,6 +401,8 @@ export default function useOneOffTradeV2Data({
     setDirectRevealErrorByTradeId({});
     setRefreshRevision((value) => value + 1);
   }, []);
+  // CW-152: an Offers refresh (chain event, focus, timer) reads only the open lists, not the owner history.
+  const refreshPublic = useCallback(() => { requestPublicDiscoveryRef.current?.(); }, []);
   useEffect(() => {
     if (activeDataScopeRef.current === normalizedDataScopeKey) return;
     activeDataScopeRef.current = normalizedDataScopeKey;
@@ -682,28 +684,29 @@ export default function useOneOffTradeV2Data({
         try {
           await Promise.all([
             source('Standard', async () => {
-              const open = await runtime.listStandard('open', 0n, PAGE_LIMIT);
+              // CW-152: read every page; a failed page fails this source and shows its error.
+              const openIds = await readOneOffTradeV2OwnerIds(offset => runtime.listStandard('open', offset, PAGE_LIMIT), publicCurrent);
               if (!publicCurrent()) return;
-              const views = await Promise.all(unique(open.tradeIds).map(id => runtime.readStandard(id)));
+              const views = await Promise.all(unique(openIds).map(id => runtime.readStandard(id)));
               if (!publicCurrent()) return;
               await loadTokens(views, publicCurrent);
               if (!publicCurrent()) return;
               publicStandardViews.clear();
               views.forEach(view => publicStandardViews.set(view.tradeId, view));
-              publish({ openStandardIds: new Set(open.tradeIds), standardViews: Object.freeze(views) }, publicCurrent);
+              publish({ openStandardIds: new Set(openIds), standardViews: Object.freeze(views) }, publicCurrent);
             }, publicCurrent),
             source('Private book', async () => {
               const book = runtime.privateBook;
               if (!book) throw new Error('The current private Book is unavailable.');
-              const open = await book.list('open', 0n, PAGE_LIMIT);
+              const openIds = await readOneOffTradeV2OwnerIds(offset => book.list('open', offset, PAGE_LIMIT), publicCurrent);
               if (!publicCurrent()) return;
-              const views = await Promise.all(unique(open.orderIds).map(id => book.read(id)));
+              const views = await Promise.all(unique(openIds).map(id => book.read(id)));
               if (!publicCurrent()) return;
               await loadTokens(views, publicCurrent);
               if (!publicCurrent()) return;
               publicPrivateViews.clear();
               views.forEach(view => publicPrivateViews.set(view.orderId, view));
-              publish({ openPrivateIds: new Set(open.orderIds), privateBookViews: Object.freeze(views) }, publicCurrent);
+              publish({ openPrivateIds: new Set(openIds), privateBookViews: Object.freeze(views) }, publicCurrent);
             }, publicCurrent)
           ]);
         } finally {
@@ -871,6 +874,7 @@ export default function useOneOffTradeV2Data({
     loadingOneOffV2Trades: loading,
     oneOffV2TradesError: error,
     refreshOneOffV2Trades: refresh,
+    refreshPublicOneOffV2Trades: refreshPublic,
     revealDirectTrade,
     directRevealErrorByTradeId,
     revealingDirectTradeId

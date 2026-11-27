@@ -1153,6 +1153,7 @@ export default function P2PTradingPage({
     myOneOffV2Trades,
     oneOffV2TradesError,
     refreshOneOffV2Trades,
+    refreshPublicOneOffV2Trades,
     referencedTrade,
     referencedTradeError,
     loadingReferencedTrade,
@@ -1429,9 +1430,10 @@ export default function P2PTradingPage({
     refreshOneOffV2Trades();
     refreshOtcTradeHistoryV2();
   }, [refreshOneOffV2Trades, refreshOtcTradeHistoryV2]);
+  // CW-152: Offers refreshes read only the open lists; own actions call refreshMyTrades for the owner history.
   const refreshPublicTrades = useCallback(async () => {
-    refreshOneOffV2Trades();
-  }, [refreshOneOffV2Trades]);
+    refreshPublicOneOffV2Trades();
+  }, [refreshPublicOneOffV2Trades]);
   const readTradeDetail = useCallback(async (tradeId: number, escrowContract?: string) => {
     if (!isSupportedOtcV2Contract(escrowContract) || !chainId) return null;
     return readReferencedTrade({ chainId: String(chainId), contractAddress: escrowContract!, orderId: String(tradeId) });
