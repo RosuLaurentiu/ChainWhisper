@@ -229,7 +229,9 @@ export const handleChatImageCleanupHttpRequest = async (
       if (error) {
         workError = error;
       } else if (Array.isArray(data)) {
-        const confirmedCutoffMs = Date.parse(confirmedCutoffIso);
+        // CW-154: an upload can be confirmed up to PENDING_IMAGE_RETENTION_MINUTES after it is stored, and
+        // its 24 hours count from confirmation; an orphan scan by storage time must allow that delay.
+        const confirmedCutoffMs = Date.parse(confirmedCutoffIso) - PENDING_IMAGE_RETENTION_MINUTES * 60 * 1000;
         for (const entry of data) {
           if (!entry || typeof entry !== 'object') continue;
           const record = entry as Record<string, unknown>;

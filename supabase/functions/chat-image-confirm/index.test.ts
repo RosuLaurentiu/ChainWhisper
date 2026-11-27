@@ -78,90 +78,6 @@ Deno.test('wrong confirmation token is rejected before any COTI RPC request', as
   }
 });
 
-Deno.test('same-wallet transaction to another recipient is rejected before confirmation update', async () => {
-  const blobId = '22345678-abcd-40ef-9234-567890abcdef';
-  const ownerAddress = '0x1111111111111111111111111111111111111111';
-  const expectedRecipient = '0x3333333333333333333333333333333333333333';
-  const wrongRecipient = '0x4444444444444444444444444444444444444444';
-  const confirmationToken = 'd'.repeat(64);
-  const tokenBytes = new Uint8Array(32).fill(0xdd);
-  const confirmationTokenHash = await sha256Hex(tokenBytes);
-  const txHash = `0x${'e'.repeat(64)}`;
-  const selector = [...DIRECT_CHAT_SUBMIT_SELECTORS][0];
-  const input = `${selector}${wrongRecipient.slice(2).padStart(64, '0')}${'00'.repeat(64)}`;
-  const supabaseMutations: string[] = [];
-  const rpcMethods: string[] = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (fetchInput, init) => {
-    const requestInit = init as { body?: unknown; method?: string } | undefined;
-    const url = typeof fetchInput === 'string'
-      ? fetchInput
-      : fetchInput instanceof URL
-        ? fetchInput.href
-        : fetchInput.url;
-    if (url.startsWith(COTI_RPC_URL)) {
-      const requestBody = JSON.parse(String(requestInit?.body ?? '{}')) as { id?: unknown; method?: string };
-      rpcMethods.push(requestBody.method ?? '');
-      const result = requestBody.method === 'eth_chainId'
-        ? CHAT_IMAGE_CHAIN_ID_HEX
-        : requestBody.method === 'eth_getTransactionReceipt'
-          ? { blockNumber: '0x10', status: '0x1' }
-          : requestBody.method === 'eth_getTransactionByHash'
-            ? { from: ownerAddress, input, to: CHAT_CONTRACT_ADDRESS }
-            : null;
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: requestBody.id ?? 1, result }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    if (url.includes('/rest/v1/rpc/claim_chat_image_work')) {
-      return new Response(JSON.stringify([{ allowed: true, retry_after_seconds: 0 }]), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    if (url.includes('/rest/v1/chat_image_uploads') && (requestInit?.method ?? 'GET') === 'GET') {
-      return new Response(JSON.stringify({
-        authorization_version: 1,
-        confirmation_token_hash: confirmationTokenHash,
-        confirmed_at: null,
-        confirmed_tx_hash: null,
-        conversation_kind: 'direct',
-        conversation_target: expectedRecipient,
-        created_at: new Date().toISOString(),
-        owner_address: ownerAddress,
-        protocol_version: 1
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    supabaseMutations.push(`${requestInit?.method ?? 'GET'} ${url}`);
-    throw new Error(`Unexpected request: ${supabaseMutations.at(-1)}`);
-  }) as typeof fetch;
-
-  try {
-    const response = await handleChatImageConfirmHttpRequest(new Request(
-      `${SUPABASE_URL}/functions/v1/chat-image-confirm`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-forwarded-for': '203.0.113.11'
-        },
-        body: JSON.stringify({ blobId, txHash, confirmationToken })
-      }
-    ));
-
-    assert(response.status === 400, await response.text());
-    assert(rpcMethods.includes('eth_getTransactionByHash'));
-    assert(!rpcMethods.includes('eth_getBlockByNumber'));
-    assert(supabaseMutations.length === 0, JSON.stringify(supabaseMutations));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
 Deno.test('Direct V2 confirmation requires the exact participant-indexed MessagePosted event', async () => {
   const blobId = '32345678-abcd-40ef-9234-567890abcdef';
   const ownerAddress = '0x1111111111111111111111111111111111111111';
@@ -332,7 +248,3 @@ Deno.test('Group V2 confirmation requires the exact group and sender indexed eve
   }
 });
 import { sha256Hex } from '../_shared/chat-image-authorization.ts';
-import {
-  CHAT_CONTRACT_ADDRESS,
-  DIRECT_CHAT_SUBMIT_SELECTORS
-} from '../_shared/chat-image.ts';

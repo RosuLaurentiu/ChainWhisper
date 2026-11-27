@@ -2,7 +2,6 @@ import '@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'supabase';
 import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 import {
-  assertChatImageConversationTargetFromCalldata,
   constantTimeEqualHex,
   sha256Hex
 } from '../_shared/chat-image-authorization.ts';
@@ -13,12 +12,8 @@ import {
 } from '../_shared/chat-image-request-security.ts';
 import {
   BLOB_ID_REGEX,
-  CHAT_CONTRACT_ADDRESS,
   CHAT_IMAGE_UPLOADS_TABLE,
   COTI_CHAIN_ID_HEX,
-  DIRECT_CHAT_SUBMIT_SELECTORS,
-  GROUP_CHAT_CONTRACT_ADDRESS,
-  GROUP_CHAT_SUBMIT_SELECTORS,
   PENDING_IMAGE_RETENTION_MINUTES,
   TX_HASH_REGEX,
   jsonResponse
@@ -173,7 +168,7 @@ const rpcCall = async <T>(method: string, params: unknown[]): Promise<T | null> 
         const oldest = rpcCache.keys().next().value;
         if (typeof oldest === 'string') rpcCache.delete(oldest);
       }
-      const ttlMs = result === null ? 10_000 : method === 'eth_chainId' ? 5 * 60_000 : 60_000;
+      const ttlMs = result === null ? 2_000 : method === 'eth_chainId' ? 5 * 60_000 : 60_000;
       rpcCache.set(key, { expiresAt: Date.now() + ttlMs, value: result });
       return result;
     } catch (error) {
@@ -269,25 +264,9 @@ const verifyChatMessageTransaction = async (
     if (matchingEvents.length !== 1) {
       throw new Error(`${conversationKind === 'direct' ? 'Direct' : 'Group'} Chat V2 image message event does not match its scope.`);
     }
-  } else if (protocolVersion !== 1) {
+  } else {
+    // CW-154: the retired legacy-v1 ChatGC/GroupChat confirmation path is removed.
     throw new Error('Image confirmation protocol is unsupported.');
-  }
-  const isDirectMessageTx =
-    toAddress === normalizeAddress(CHAT_CONTRACT_ADDRESS) && DIRECT_CHAT_SUBMIT_SELECTORS.has(selector);
-  const isGroupMessageTx =
-    toAddress === normalizeAddress(GROUP_CHAT_CONTRACT_ADDRESS) && GROUP_CHAT_SUBMIT_SELECTORS.has(selector);
-  if (protocolVersion === 1) {
-    if (
-      (conversationKind === 'direct' && !isDirectMessageTx) ||
-      (conversationKind === 'group' && !isGroupMessageTx)
-    ) {
-      throw new Error('Image confirmation transaction is not a ChainWhisper message.');
-    }
-    assertChatImageConversationTargetFromCalldata(
-      tx.input ?? '',
-      conversationKind,
-      conversationTarget
-    );
   }
 
   const block = await rpcCall<RpcBlock>('eth_getBlockByNumber', [receipt.blockNumber, false]);
@@ -351,19 +330,8 @@ export const handleChatImageConfirmHttpRequest = async (request: Request): Promi
   try {
     const clientHash = await getChatImageClientHash(request, CHAT_IMAGE_RATE_LIMIT_SECRET);
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const admission = await claimConfirmationWork(
-      supabaseAdmin as unknown as WorkAdmissionClient,
-      clientHash
-    );
-    if (!admission.allowed) {
-      const retryAfter = Math.max(1, Math.floor(Number(admission.retry_after_seconds) || 60));
-      return buildErrorResponse(
-        admission.reason || 'Chat image confirmation limit reached.',
-        429,
-        { 'retry-after': String(retryAfter) }
-      );
-    }
-
+    // CW-154: the shared work budget is taken only after the request names a real pending upload
+    // with its confirmation token, just before the RPC check that the budget protects.
     const body = await readJson(request);
     const blobId = normalizeString(body.blobId).toLowerCase();
     const txHash = normalizeString(body.txHash).toLowerCase();
@@ -412,6 +380,19 @@ export const handleChatImageConfirmHttpRequest = async (request: Request): Promi
       Date.now() - createdAtMs > PENDING_IMAGE_RETENTION_MINUTES * 60 * 1000
     ) {
       return buildErrorResponse('Pending image upload expired before confirmation.', 410);
+    }
+
+    const admission = await claimConfirmationWork(
+      supabaseAdmin as unknown as WorkAdmissionClient,
+      clientHash
+    );
+    if (!admission.allowed) {
+      const retryAfter = Math.max(1, Math.floor(Number(admission.retry_after_seconds) || 60));
+      return buildErrorResponse(
+        admission.reason || 'Chat image confirmation limit reached.',
+        429,
+        { 'retry-after': String(retryAfter) }
+      );
     }
 
     try {

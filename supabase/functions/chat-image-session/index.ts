@@ -95,20 +95,8 @@ export const handleChatImageSessionHttpRequest = async (request: Request): Promi
 
   try {
     const clientHash = await getChatImageClientHash(request, CHAT_IMAGE_RATE_LIMIT_SECRET);
-    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const admission = await claimSessionWork(
-      supabaseAdmin as unknown as WorkAdmissionClient,
-      clientHash
-    );
-    if (!admission.allowed) {
-      const retryAfter = Math.max(1, Math.floor(Number(admission.retry_after_seconds) || 60));
-      return buildErrorResponse(
-        admission.reason || 'Chat image session limit reached.',
-        429,
-        { 'retry-after': String(retryAfter) }
-      );
-    }
-
+    // CW-154: check the signed request before it takes shared work budget, so invalid requests
+    // cannot use up the global limit that real image confirmations need.
     const body = await readJson(request);
     const authorization = normalizeChatImageSessionAuthorization({
       audience: SUPABASE_URL,
@@ -131,6 +119,19 @@ export const handleChatImageSessionHttpRequest = async (request: Request): Promi
     });
     if (recoveredAddress.toLowerCase() !== authorization.ownerAddress) {
       throw new ChatImageRequestError('Chat image session was signed by a different wallet.', 403);
+    }
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const admission = await claimSessionWork(
+      supabaseAdmin as unknown as WorkAdmissionClient,
+      clientHash
+    );
+    if (!admission.allowed) {
+      const retryAfter = Math.max(1, Math.floor(Number(admission.retry_after_seconds) || 60));
+      return buildErrorResponse(
+        admission.reason || 'Chat image session limit reached.',
+        429,
+        { 'retry-after': String(retryAfter) }
+      );
     }
     const token = await issueChatImageSessionToken({
       authorization,

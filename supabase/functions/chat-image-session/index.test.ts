@@ -82,6 +82,32 @@ Deno.test('valid wallet authorization issues an exact owner-scoped upload token'
   });
 });
 
+Deno.test('invalid or wrongly signed requests do not take the shared work budget (CW-154)', async () => {
+  const originalFetch = globalThis.fetch;
+  let claims = 0;
+  globalThis.fetch = (async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/rest/v1/rpc/claim_chat_image_work')) claims += 1;
+    throw new Error(`Unexpected privileged request: ${url}`);
+  }) as typeof fetch;
+  try {
+    const owner = privateKeyToAccount(`0x${'44'.repeat(32)}`);
+    const attacker = privateKeyToAccount(`0x${'55'.repeat(32)}`);
+    const authorization = authorizationFor(owner.address);
+    const wrongSignature = await attacker.signMessage({ message: buildChatImageSessionAuthorizationMessage(authorization) });
+    for (const body of ['', '{}', JSON.stringify({ ...authorization, signature: wrongSignature })]) {
+      const response = await handleChatImageSessionHttpRequest(new Request(
+        `${SUPABASE_URL}/functions/v1/chat-image-session`,
+        { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.12' }, body }
+      ));
+      assert(response.status === 400 || response.status === 403, `${response.status} ${await response.text()}`);
+    }
+    assert(claims === 0, `junk requests took ${claims} work claims`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test('a signature from another wallet cannot mint a claimed-owner session', async () => {
   await withAdmission(async () => {
     const owner = privateKeyToAccount(`0x${'22'.repeat(32)}`);

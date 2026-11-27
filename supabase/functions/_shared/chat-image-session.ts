@@ -1,6 +1,9 @@
 export const CHAT_IMAGE_SESSION_VERSION = 1;
 export const CHAT_IMAGE_SESSION_TTL_SECONDS = 15 * 60;
 export const CHAT_IMAGE_SESSION_CLOCK_SKEW_SECONDS = 30;
+// CW-154: issuedAt comes from the browser clock; a PC clock up to 5 minutes fast still gets a session.
+// The 15-minute lifetime check still bounds how long a session lasts.
+export const CHAT_IMAGE_SESSION_FUTURE_SKEW_SECONDS = 5 * 60;
 
 const WALLET_ADDRESS_REGEX = /^0x[a-f0-9]{40}$/;
 const CHAIN_ID_REGEX = /^0x[1-9a-f][0-9a-f]*$/;
@@ -86,7 +89,7 @@ export const assertChatImageSessionFresh = (
   if (!Number.isSafeInteger(issuedAt) || !Number.isSafeInteger(expiresAt)) {
     throw new Error('Invalid chat image session time.');
   }
-  if (issuedAt > nowSeconds + CHAT_IMAGE_SESSION_CLOCK_SKEW_SECONDS) {
+  if (issuedAt > nowSeconds + CHAT_IMAGE_SESSION_FUTURE_SKEW_SECONDS) {
     throw new Error('Chat image session was issued in the future.');
   }
   if (issuedAt < nowSeconds - CHAT_IMAGE_SESSION_TTL_SECONDS - CHAT_IMAGE_SESSION_CLOCK_SKEW_SECONDS) {

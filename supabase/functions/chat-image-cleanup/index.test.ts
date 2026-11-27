@@ -193,7 +193,9 @@ Deno.test('cleanup adds only one bounded page of expired orphan objects', async 
     { admitted: true, leaseToken, blobIds: [tracked] },
     {
       listData: [
-        { name: expiredOrphan, created_at: '2026-08-08T11:59:59.000Z' },
+        // CW-154: an object stored less than 24 h plus the 30-minute confirmation window ago is kept.
+        { name: expiredOrphan, created_at: '2026-08-08T11:29:59.000Z' },
+        { name: makeBlobId(13), created_at: '2026-08-08T11:59:59.000Z' },
         { name: freshOrphan, created_at: '2026-08-09T11:59:59.000Z' },
         { name: 'not-a-blob-id', created_at: '2026-08-08T11:59:59.000Z' }
       ]

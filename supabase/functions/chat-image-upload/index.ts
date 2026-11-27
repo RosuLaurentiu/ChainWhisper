@@ -1,11 +1,7 @@
 import '@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'supabase';
-import { recoverMessageAddress, type Hex } from 'viem';
 import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 import {
-  assertChatImageAuthorizationFresh,
-  assertChatImageAuthorizationSignature,
-  buildChatImageUploadAuthorizationMessage,
   constantTimeEqualHex,
   getChatImageAuthorizationDomain,
   normalizeChatImageUploadAuthorization,
@@ -39,7 +35,7 @@ const CHAT_IMAGE_CHAIN_ID_HEX = (
   Deno.env.get('CHAT_IMAGE_CHAIN_ID_HEX') ?? COTI_CHAIN_ID_HEX
 ).trim().toLowerCase();
 const CONVERSATION_KINDS = new Set(['direct', 'group']);
-const CHAT_IMAGE_PROTOCOLS = new Set(['legacy-v1', 'direct-v2', 'group-v2']);
+const CHAT_IMAGE_PROTOCOLS = new Set(['direct-v2', 'group-v2']);
 
 type WorkAdmissionRow = {
   allowed?: boolean;
@@ -105,7 +101,8 @@ export const handleChatImageUploadHttpRequest = async (request: Request): Promis
     const ownerAddress = normalizeHeader(request, 'x-chat-image-owner').toLowerCase();
     const mime = normalizeMimeType(normalizeHeader(request, 'x-chat-image-mime'));
     const kind = normalizeHeader(request, 'x-chat-image-kind').toLowerCase();
-    const protocol = (normalizeHeader(request, 'x-chat-image-protocol').toLowerCase() || 'legacy-v1');
+    // CW-154: only the current Direct and Group V2 protocols; the retired legacy-v1 default is gone.
+    const protocol = normalizeHeader(request, 'x-chat-image-protocol').toLowerCase();
     const conversationTarget = normalizeHeader(request, 'x-chat-image-target');
     const plaintextSize = parseChatImageInteger(
       normalizeHeader(request, 'x-chat-image-plaintext-size'),
@@ -146,40 +143,24 @@ export const handleChatImageUploadHttpRequest = async (request: Request): Promis
     }
 
     const domain = getChatImageAuthorizationDomain(kind as 'direct' | 'group');
-    let issuedAt: number;
-    let expiresAt: number;
-    let authorizationVersion: 1 | 2;
-    const authorizationChainId = protocol !== 'legacy-v1'
-      ? CHAT_IMAGE_CHAIN_ID_HEX
-      : domain.chainId;
-    if (sessionToken) {
-      if (
-        !/^[a-fA-F0-9]{64}$/u.test(CHAT_IMAGE_SESSION_SECRET) ||
-        !/^0x[1-9a-f][0-9a-f]*$/u.test(authorizationChainId)
-      ) {
-        throw new ChatImageRequestError('Chat image sessions are unavailable.', 503);
-      }
-      const session = await verifyChatImageSessionToken({
-        expectedChainId: authorizationChainId,
-        expectedOwnerAddress: ownerAddress,
-        secretHex: CHAT_IMAGE_SESSION_SECRET,
-        supabaseUrl: SUPABASE_URL,
-        token: sessionToken
-      });
-      issuedAt = session.issuedAt;
-      expiresAt = session.expiresAt;
-      authorizationVersion = 2;
-    } else {
-      issuedAt = parseChatImageInteger(
-        normalizeHeader(request, 'x-chat-image-issued-at'),
-        'image authorization issue time'
-      );
-      expiresAt = parseChatImageInteger(
-        normalizeHeader(request, 'x-chat-image-expires-at'),
-        'image authorization expiry'
-      );
-      authorizationVersion = 1;
+    // CW-154: uploads use the wallet-signed session token only; the per-upload signature mode had no App caller.
+    const authorizationChainId = CHAT_IMAGE_CHAIN_ID_HEX;
+    if (!sessionToken) throw new ChatImageRequestError('A chat image session is required.', 401);
+    if (
+      !/^[a-fA-F0-9]{64}$/u.test(CHAT_IMAGE_SESSION_SECRET) ||
+      !/^0x[1-9a-f][0-9a-f]*$/u.test(authorizationChainId)
+    ) {
+      throw new ChatImageRequestError('Chat image sessions are unavailable.', 503);
     }
+    const session = await verifyChatImageSessionToken({
+      expectedChainId: authorizationChainId,
+      expectedOwnerAddress: ownerAddress,
+      secretHex: CHAT_IMAGE_SESSION_SECRET,
+      supabaseUrl: SUPABASE_URL,
+      token: sessionToken
+    });
+    const { issuedAt, expiresAt } = session;
+    const authorizationVersion = 2;
     const authorization = normalizeChatImageUploadAuthorization({
       audience: SUPABASE_URL,
       blobId,
@@ -196,21 +177,6 @@ export const handleChatImageUploadHttpRequest = async (request: Request): Promis
       ownerAddress,
       plaintextSize
     });
-    if (!sessionToken) {
-      assertChatImageAuthorizationFresh(authorization.issuedAt, authorization.expiresAt);
-      const authorizationSignature = assertChatImageAuthorizationSignature(
-        normalizeHeader(request, 'x-chat-image-authorization-signature')
-      );
-      const authorizationMessage = buildChatImageUploadAuthorizationMessage(authorization);
-      const recoveredAddress = await recoverMessageAddress({
-        message: authorizationMessage,
-        signature: authorizationSignature as Hex
-      });
-      if (recoveredAddress.toLowerCase() !== authorization.ownerAddress) {
-        throw new ChatImageRequestError('Image upload authorization was signed by a different wallet.', 403);
-      }
-    }
-
     const clientHash = await getChatImageClientHash(request, CHAT_IMAGE_RATE_LIMIT_SECRET);
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const admission = await claimUploadWork(
@@ -247,7 +213,7 @@ export const handleChatImageUploadHttpRequest = async (request: Request): Promis
       plaintext_size: authorization.plaintextSize,
       encrypted_size: authorization.encryptedSize,
       authorization_version: authorizationVersion,
-      protocol_version: protocol === 'legacy-v1' ? 1 : 2,
+      protocol_version: 2,
       authorization_issued_at: new Date(authorization.issuedAt * 1000).toISOString(),
       ciphertext_sha256: authorization.ciphertextSha256,
       confirmation_token_hash: authorization.confirmationTokenHash,
