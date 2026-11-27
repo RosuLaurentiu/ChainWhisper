@@ -182,10 +182,10 @@ import {
 } from './tradeTerminalHistoryConfig';
 
 import {
-  CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS,
   EMPTY_STALE_TOKEN_ADDRESSES,
   OPEN_TERMINAL_LABEL,
   resolveTradeComposerEscrowContract,
+  resolveTradeComposerSendContract,
   PendingTradeRecoveryDisclosure,
   buildOtcV2DataScopeKey,
   buildMakerControlsKey,
@@ -1065,20 +1065,6 @@ export default function P2PTradingPage({
     tradeVisibility
   ]);
 
-  const tradeFeeEscrowContractLabel = useMemo(() => {
-    const normalizedContract = tradeFeeEscrowContract.toLowerCase();
-    if (normalizedContract === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
-      return 'Private escrow';
-    }
-    if (normalizedContract === CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
-      return 'Direct escrow';
-    }
-    if (normalizedContract === TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
-      return 'Public escrow';
-    }
-    return 'Escrow';
-  }, [tradeFeeEscrowContract]);
-
   const {
     clearWalletBalances,
     customTradeTokenInfoByAddress,
@@ -1600,6 +1586,14 @@ export default function P2PTradingPage({
     tradeRequiredFeeWei,
     walletAddress
   });
+  const tradeComposerPrivatePair = tradeComposerModel.selectedTradeOfferToken?.kind === 'private-erc20' ||
+    tradeComposerModel.selectedTradeRequestToken?.kind === 'private-erc20';
+  const tradeComposerSendContract = useMemo(() => resolveTradeComposerSendContract({
+    editingEscrowContract: editingTrade?.escrowContract,
+    countering: Boolean(counterParentTrade),
+    visibility: tradeVisibility,
+    privatePair: tradeComposerPrivatePair
+  }), [counterParentTrade, editingTrade, tradeComposerPrivatePair, tradeVisibility]);
   const privateLiquidityTokenOptions = useMemo(
     () => swapTokenOptions.filter((option) => option.kindLabel === 'Private'),
     [swapTokenOptions]
@@ -2536,8 +2530,8 @@ export default function P2PTradingPage({
                 : 'Direct proposal'
               : 'Private link'
       }
-      escrowContractAddress={tradeFeeEscrowContract}
-      escrowContractLabel={tradeFeeEscrowContractLabel}
+      escrowContractAddress={tradeComposerSendContract.address}
+      escrowContractLabel={tradeComposerSendContract.label}
       safetyNote={
         editingTrade
           ? 'Editing creates a new public offer and cancels the original in the same transaction.'
@@ -3117,7 +3111,7 @@ export default function P2PTradingPage({
           {createdTradeId !== null && route.view === 'trade' && createdTradeLink && createdTradeId === route.tradeId ? (
             <TradeTerminalCreatedNotice
               createdTradeId={createdTradeId}
-              escrowContract={routeEscrowContract ?? tradeFeeEscrowContract}
+              escrowContract={routeEscrowContract ?? tradeComposerSendContract.address}
               resolvedRouteAccessSecret={resolvedRouteAccessSecret}
               lastCopiedKey={lastCopiedKey}
               createdTradeCopyKey={createdTradeCopyKey}

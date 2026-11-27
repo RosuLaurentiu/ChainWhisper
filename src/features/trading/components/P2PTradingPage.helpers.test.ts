@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+  TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
   type TradeSnapshot
 } from '../../../lib/appShared';
@@ -16,6 +18,7 @@ import {
   mergeOnboardInfoByAddress,
   renderCarbonPriceReference,
   resolveTradeComposerEscrowContract,
+  resolveTradeComposerSendContract,
   resolveVisibleHiddenTermAmounts,
   selectTerminalBalance,
   type TerminalBalanceSelection
@@ -680,5 +683,30 @@ describe('trade composer escrow header', () => {
     expect(directV2.toLowerCase()).not.toBe(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase());
     expect(resolveTradeComposerEscrowContract({ ...base, editingEscrowContract: '0x3333333333333333333333333333333333333333', countering: true }))
       .toBe('0x3333333333333333333333333333333333333333');
+  });
+
+  it('names the current V2 contract the send uses for each trade type, never a pre-V2 escrow', () => {
+    const v2 = CURRENT_P2P_BINDING.deployments;
+    const send = { countering: false, visibility: 'public' as const, privatePair: false };
+    expect(resolveTradeComposerSendContract(send)).toEqual({ address: v2['standard-v2'].contractAddress, label: 'Public Book escrow' });
+    expect(resolveTradeComposerSendContract({ ...send, privatePair: true }))
+      .toEqual({ address: v2['private-v2'].contractAddress, label: 'Private Book escrow' });
+    expect(resolveTradeComposerSendContract({ ...send, visibility: 'unlisted', privatePair: true }))
+      .toEqual({ address: v2['link-v2'].contractAddress, label: 'Shared-link escrow' });
+    expect(resolveTradeComposerSendContract({ ...send, visibility: 'direct' }))
+      .toEqual({ address: v2['direct-v2'].contractAddress, label: 'Direct escrow' });
+    expect(resolveTradeComposerSendContract({ ...send, countering: true, privatePair: true }))
+      .toEqual({ address: v2['direct-v2'].contractAddress, label: 'Direct escrow' });
+    expect(resolveTradeComposerSendContract({ ...send, editingEscrowContract: v2['private-v2'].contractAddress.toLowerCase() }))
+      .toMatchObject({ label: 'Private Book escrow' });
+    expect(resolveTradeComposerSendContract({ ...send, editingEscrowContract: '0x3333333333333333333333333333333333333333' }))
+      .toEqual({ address: '0x3333333333333333333333333333333333333333', label: 'Escrow' });
+    const retired = [TRADE_ESCROW_CONTRACT_ADDRESS, PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS]
+      .map(address => address.toLowerCase());
+    for (const visibility of ['public', 'unlisted', 'direct'] as const) {
+      for (const privatePair of [false, true]) {
+        expect(retired).not.toContain(resolveTradeComposerSendContract({ ...send, visibility, privatePair }).address.toLowerCase());
+      }
+    }
   });
 });

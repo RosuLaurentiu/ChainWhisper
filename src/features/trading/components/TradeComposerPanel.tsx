@@ -10,11 +10,11 @@ import { flushSync } from 'react-dom';
 import { ChevronDown, SlidersHorizontal } from 'lucide-react';
 import {
   COTI_NETWORK,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   isWalletAddress,
   shortenAddress,
   type TradeFeeModeSelection
 } from '../../../lib/appShared';
+import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { TradePricingField } from '../../../lib/tradePricing';
 import { moveFocusWithin } from '../../../shared/components/a11y';
@@ -590,8 +590,9 @@ export default function TradeComposerPanel({
   canSend,
   title = 'Trade offer',
   metaLabel = 'Private terms, on-chain escrow',
-  escrowContractAddress = TRADE_ESCROW_CONTRACT_ADDRESS,
-  escrowContractLabel = 'Escrow',
+  // Callers without an explicit contract (the Direct chat composer) send to Direct V2.
+  escrowContractAddress = CURRENT_P2P_BINDING.deployments['direct-v2'].contractAddress,
+  escrowContractLabel = 'Direct escrow',
   sendLabel = 'Send Trade',
   sendingLabel = 'Creating...',
   sendTitle = 'Create the escrow trade and send the encrypted offer to this chat.',

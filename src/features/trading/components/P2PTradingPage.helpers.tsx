@@ -854,7 +854,46 @@ export const formatRecurringLiveLiquidityAmount = (
 /** Current Direct OTC V2 escrow: Direct offers and their counters are created here. */
 export const CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS = CURRENT_P2P_BINDING.deployments['direct-v2'].contractAddress;
 
-/** Escrow shown in the create-offer header and used for fee lookup. */
+const TRADE_COMPOSER_SEND_CONTRACT_LABELS = Object.freeze({
+  'standard-v2': 'Public Book escrow',
+  'private-v2': 'Private Book escrow',
+  'direct-v2': 'Direct escrow',
+  'link-v2': 'Shared-link escrow',
+  'counter-v2': 'Counter escrow'
+} as const);
+
+/**
+ * Current V2 contract that the composer send uses, for the header explorer link.
+ * Mirrors the protocol selection in useP2PTradeComposerActions: edits keep their
+ * own contract, counters and Direct offers use Direct V2, shared links use Link V2,
+ * and public offers use the private Book when either token is private, else the public Book.
+ */
+export const resolveTradeComposerSendContract = ({
+  editingEscrowContract,
+  countering,
+  visibility,
+  privatePair
+}: {
+  editingEscrowContract?: string;
+  countering: boolean;
+  visibility: TradeVisibility;
+  privatePair: boolean;
+}): { address: string; label: string } => {
+  const deployments = CURRENT_P2P_BINDING.deployments;
+  if (editingEscrowContract) {
+    const match = (Object.keys(TRADE_COMPOSER_SEND_CONTRACT_LABELS) as (keyof typeof TRADE_COMPOSER_SEND_CONTRACT_LABELS)[])
+      .find(protocol => deployments[protocol].contractAddress.toLowerCase() === editingEscrowContract.toLowerCase());
+    return { address: editingEscrowContract, label: match ? TRADE_COMPOSER_SEND_CONTRACT_LABELS[match] : 'Escrow' };
+  }
+  const protocol = countering || visibility === 'direct'
+    ? 'direct-v2'
+    : visibility === 'unlisted'
+      ? 'link-v2'
+      : privatePair ? 'private-v2' : 'standard-v2';
+  return { address: deployments[protocol].contractAddress, label: TRADE_COMPOSER_SEND_CONTRACT_LABELS[protocol] };
+};
+
+/** Escrow used for the legacy fee lookup only; an active V2 catalog overrides the fee with 0. */
 export const resolveTradeComposerEscrowContract = ({
   editingEscrowContract,
   countering,
