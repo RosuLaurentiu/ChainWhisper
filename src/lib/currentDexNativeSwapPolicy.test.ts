@@ -204,6 +204,20 @@ describe('finite native swap identity and budget', () => {
     expect(()=>validateCurrentNativeSwapCheckpoint(currentNativeSwapCheckpoint(signer),owner,history)).not.toThrow();
     expect(()=>bindCurrentNativeSwapFundingScope(signer,oldScope)).toThrow('confirmed');
   });
+  it('uses the browser wallet\'s editable slippage up to 50%, not the 0.5% engineering cap (CW-148)', () => {
+    const signer = {}, wallet = `0x${'ab'.repeat(20)}`;
+    bindCurrentDexBrowserSigner(signer, wallet, 7082400n, () => {});
+    const intent = { candidate: history, principal: wallet, destination: wallet, profile: 'fast-pool',
+      inputToken: history.pairs[0].tokens[0], outputToken: history.pairs[0].tokens[1],
+      quoteProtocol: 'quote-slippage', toleranceBps: 100, maximumInput: 1_000_000n, minimumInput: 0n,
+      minimumOutput: 0n, rateNumerator: 0n, rateDenominator: 1n, deadline: 200n };
+    const prepared = { intent } as unknown as CurrentCheapDexPreparedQuote;
+    expect(() => assertCurrentNativeSwapIntent(prepared, 100n, false, false, signer)).not.toThrow();
+    intent.toleranceBps = 5000;
+    expect(() => assertCurrentNativeSwapIntent(prepared, 100n, false, false, signer)).not.toThrow();
+    intent.toleranceBps = 5001;
+    expect(() => assertCurrentNativeSwapIntent(prepared, 100n, false, false, signer)).toThrow('above the 50% limit');
+  });
   it('admits only the exact history identity for swaps while the unscoped App gate stays held', () => {
     expect(() => assertCurrentSwapIdentity(history)).not.toThrow();
     expect(() => assertCurrentSwapCandidate(history)).toThrow('signing hold');
@@ -367,7 +381,9 @@ describe('approved tiny partial-refund trial', () => {
         profile,quoteProtocol:'quote-slippage',maximumInput:20_000_000n,minimumInput:1n,minimumOutput:2n,rateNumerator:1n,rateDenominator:2n,toleranceBps:50,deadline:ownerBeta.activation.activatedAt+900n};
       const check=(change:object={})=>assertCurrentNativeSwapIntent({intent:{...intent,...change}} as unknown as CurrentCheapDexPreparedQuote,ownerBeta.activation.activatedAt,false,false,signer);
       expect(()=>check()).not.toThrow();
-      expect(()=>check({toleranceBps:51})).toThrow();
+      // CW-148: the browser wallet's editable slippage reaches 50%; above that the check refuses it.
+      expect(()=>check({toleranceBps:51})).not.toThrow();
+      expect(()=>check({toleranceBps:5001})).toThrow('above the 50% limit');
       expect(()=>check({maximumInput:100_000_000n})).not.toThrow();
       expect(()=>check({maximumInput:1n<<256n})).toThrow();
     }

@@ -154,10 +154,12 @@ describe('new quote-slippage unsigned client codec', () => {
   it('keeps the exact percentage domain and initial 0.5% without floating-point rounding', () => {
     expect(parseCurrentDexSlippagePercent(DEFAULT_CURRENT_DEX_SLIPPAGE_PERCENT)).toBe(50);
     // Exhaustive finite domain; no new random-test dependency is needed.
-    for (let bps = 0; bps <= 10000; bps++) {
+    // CW-148: the editable domain is 0% to 50%; 1% and other values above the old 0.5% trial cap are valid.
+    for (let bps = 0; bps <= 5000; bps++) {
       expect(parseCurrentDexSlippagePercent(`${Math.floor(bps / 100)}.${String(bps % 100).padStart(2, '0')}`)).toBe(bps);
     }
-    for (const invalid of ['', '-0.5', '+0.5', '.5', '00.5', '0.001', '100.01', '1e-2', 'NaN', 'Infinity', '1,5']) {
+    expect(parseCurrentDexSlippagePercent('1')).toBe(100);
+    for (const invalid of ['', '-0.5', '+0.5', '.5', '00.5', '0.001', '50.01', '100', '1e-2', 'NaN', 'Infinity', '1,5']) {
       expect(() => parseCurrentDexSlippagePercent(invalid)).toThrow('Slippage');
     }
   });

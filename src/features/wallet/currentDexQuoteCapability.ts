@@ -6,6 +6,7 @@ import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, encodeCurr
 import { decryptPrivateUint256Output, encryptPrivateUint256Input } from '../../lib/privateUint256';
 import { verifyCurrentDexCanonicalInclusion } from '../../lib/currentDexCanonicalInclusion';
 import { isCurrentDexBrowserSigner } from '../../lib/currentDexBrowserPolicy';
+import { CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS } from '../../lib/currentDexExitSwapPolicy';
 import type { CurrentCheapDexPreparedQuote } from '../../lib/currentDexSubmission';
 import { issueOwnerCotiMetaMaskCapability, type IssueOwnerCotiMetaMaskCapabilityArgs } from './ownerCotiMetaMaskCapability';
 import { currentDexQuoteInputPlan } from '../../lib/currentDexQuoteInputPlan';
@@ -244,7 +245,9 @@ export const issueCurrentDexQuoteCapability = (args: IssueArgs) => issueOwnerCot
           maximumInput: decryptPrivateUint256Output(signer, q.maximumInput.ciphertext), minimumInput: decryptPrivateUint256Output(signer, q.minimumInput.ciphertext),
           minimumOutput: decryptPrivateUint256Output(signer, q.minimumOutput.ciphertext), rateNumerator: packedRate >> 128n,
           rateDenominator: packedRate & ((1n << 128n) - 1n), toleranceBps: Number(q.toleranceBps) });
-        if ((!isCurrentDexBrowserSigner(signer,candidate.graph,ownerAddress) && terms.maximumInput > 20_000_000n) || terms.toleranceBps! > 50) throw new Error('Restored Quote exceeds the current protected domain.');
+        const browser = isCurrentDexBrowserSigner(signer,candidate.graph,ownerAddress);
+        if ((!browser && terms.maximumInput > 20_000_000n) ||
+            terms.toleranceBps! > (browser ? CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS : 50)) throw new Error('Restored Quote exceeds the current protected domain.');
         const [origin,head] = await Promise.all([
           readProvider.send('eth_getBlockByNumber',[toBeHex(receipt.blockNumber),false]),
           readProvider.send('eth_getBlockByNumber',['latest',false])

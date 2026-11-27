@@ -4,7 +4,7 @@ import { rejectUnprovenNativeAdmission,
 import type { CurrentCheapDexPreparedQuote } from './currentDexSubmission';
 import { assertCurrentD06AppAuthority, assertCurrentAppSigningCount, currentAppSigningStartLimit, CURRENT_APP_SWAP_OWNER, CURRENT_APP_HISTORY_REPLACEMENT_TRIAL, CURRENT_APP_HISTORY_ENGINEERING_AUTHORITY, hasCurrentHistoryReplacementProof, CURRENT_APP_HISTORY_FAST_TRIAL, hasCurrentHistoryFastProof, type CurrentAppSwapScope } from './currentDexC1SwapPolicy';
 import { CURRENT_EXIT_SWAP_LIMITS, CURRENT_EXIT_SWAP_GAS_CAPS, usesCurrentSwapAccounting,
-  CURRENT_NATIVE_FIXED_GAS_PRICE } from './currentDexExitSwapPolicy';
+  CURRENT_NATIVE_FIXED_GAS_PRICE, CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS } from './currentDexExitSwapPolicy';
 import {CURRENT_APP_HISTORY_FAST_REPLACEMENT_TRIAL,hasCurrentHistoryFastReplacementProof} from './currentDexC1SwapPolicy';
 import { CURRENT_APP_PARTIAL_REFUND_TRIAL, hasCurrentPartialRefundProof } from './currentDexC1SwapPolicy';
 import { CURRENT_APP_PARTIAL_LEDGER_RECOVERY, currentPartialLedgerRecoveryAllowed } from './currentDexC1SwapPolicy';
@@ -46,8 +46,12 @@ export const assertCurrentNativeSwapIntent = (prepared: CurrentCheapDexPreparedQ
       i.deadline - now <= CURRENT_NATIVE_SWAP_LIMITS.asyncAcceptReserveSeconds) {
     throw new Error('Not enough time for asynchronous settlement. Cancel this Quote and request a new one.');
   }
-  if (i.quoteProtocol !== 'quote-slippage' || !Number.isInteger(i.toleranceBps) || i.toleranceBps! < 0 || i.toleranceBps! > limits.maximumToleranceBps ||
-      i.maximumInput <= 0n || i.maximumInput > (isCurrentDexBrowserSigner(signer,i.candidate!.graph,i.principal) ? (1n << 256n) - 1n : limits.maximumInput) || i.minimumInput < 0n || i.minimumInput > i.maximumInput ||
+  const browser = isCurrentDexBrowserSigner(signer,i.candidate!.graph,i.principal);
+  if (i.quoteProtocol === 'quote-slippage' && Number.isInteger(i.toleranceBps) && i.toleranceBps! > (browser ? CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS : limits.maximumToleranceBps)) {
+    throw new Error(`Slippage ${i.toleranceBps! / 100}% is above the ${(browser ? CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS : limits.maximumToleranceBps) / 100}% limit. Lower it and request a new Quote.`);
+  }
+  if (i.quoteProtocol !== 'quote-slippage' || !Number.isInteger(i.toleranceBps) || i.toleranceBps! < 0 ||
+      i.maximumInput <= 0n || i.maximumInput > (browser ? (1n << 256n) - 1n : limits.maximumInput) || i.minimumInput < 0n || i.minimumInput > i.maximumInput ||
       i.minimumOutput < 0n || i.rateNumerator < 0n || i.rateDenominator <= 0n ||
       (!expired && (now >= i.deadline || i.deadline - now > limits.normalSeconds))) {
     throw new Error('Native swap amount, protection or lifetime exceeds the finite profile.');

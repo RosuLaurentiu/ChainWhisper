@@ -2,6 +2,7 @@ import { Interface, formatUnits, parseUnits } from '@coti-io/coti-ethers';
 import type { issueCurrentDexReceiptCapability } from '../features/wallet/currentDexReceiptCapability';
 import type { TradeActionConfirmModel } from './tradeActionConfirm';
 import type { CurrentCheapDexProfile } from './currentDexOperation';
+import { CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS } from './currentDexExitSwapPolicy';
 import { currentCheapDexCandidateKey, resolveCurrentCheapDexCandidate, currentCheapDexQuoteProtocol, type CurrentCheapDexIdentity } from './dexV2Deployment';
 
 type ReceiptCapability = Awaited<ReturnType<typeof issueCurrentDexReceiptCapability>>;
@@ -22,11 +23,12 @@ export const CURRENT_SLIPPAGE_DEX_ACCEPT_ABI = ['function acceptFastPool(uint256
 const slippageAcceptInterface = new Interface(CURRENT_SLIPPAGE_DEX_ACCEPT_ABI);
 export const DEFAULT_CURRENT_DEX_SLIPPAGE_PERCENT = '0.5';
 export const parseCurrentDexSlippagePercent = (value: string): number => {
+  const maximum = `${CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS / 100}`;
   if (!/^(0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(value.trim())) {
-    throw new Error('Slippage: enter a percentage from 0 to 100, with at most two decimal places.');
+    throw new Error(`Slippage: enter a percentage from 0 to ${maximum}, with at most two decimal places.`);
   }
   const basisPoints = parseUnits(value.trim(), 2);
-  if (basisPoints > 10000n) throw new Error('Slippage: enter a percentage from 0 to 100.');
+  if (basisPoints > BigInt(CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS)) throw new Error(`Slippage: enter a percentage from 0 to ${maximum}.`);
   return Number(basisPoints);
 };
 export class CurrentDexQuoteProtectionError extends Error {

@@ -1,7 +1,10 @@
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from './selectedCurrentDexCandidate';
 import type { CurrentCheapDexIdentity } from './dexV2Deployment';
 
-// Technical bounds for the accepted b2aa test-token cases. These bounds grant
+// CW-148: the user's editable slippage for browser-wallet swaps. The Core and the keeper accept up to
+// 10000 bps; the App stops at 50% so a Quote always keeps a minimum output.
+export const CURRENT_BROWSER_SWAP_MAXIMUM_TOLERANCE_BPS = 5000;
+// Technical bounds for engineering (non-browser) signers. These bounds grant
 // no connected-wallet authority and do not include operator work transactions.
 export const CURRENT_EXIT_SWAP_LIMITS = Object.freeze({
   maximumInput: 20_000_000n, maximumToleranceBps: 50,
