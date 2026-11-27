@@ -3,10 +3,7 @@ import {
   RECURRING_OTC_CONTRACT_ADDRESS,
   type TradeSnapshot
 } from './appShared';
-import { isLegacyPrivateOrderEscrowContractAddress, isPrivateOrderEscrowContractAddress } from './appChain';
-
-export const PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE =
-  'This legacy hidden private order cannot receive counter offers. Fill it, cancel it, or ask the maker to recreate it on the upgraded private escrow.';
+import { isPrivateOrderEscrowContractAddress } from './appChain';
 
 const normalizeAddress = (value?: string | null): string => value?.trim().toLowerCase() ?? '';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -30,8 +27,10 @@ export const getCounterOfferUnavailableReason = (snapshot: TradeSnapshot, wallet
   if (snapshot.status !== 'open') {
     return 'Only open trades can receive counter offers.';
   }
-  if (isLegacyPrivateOrderEscrowContractAddress(snapshot.escrowContract)) {
-    return PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE;
+  // The composer counter path signs only Direct OTC V2 counters. Book offers
+  // (standard-v2, private-v2) use the separate Counter V2 controls.
+  if (snapshot.v2?.protocol !== 'direct-v2') {
+    return 'Use the counter offer panel for book offers.';
   }
   if (snapshot.counterParentTradeId && snapshot.taker.toLowerCase() !== walletKey) {
     return 'Only the recipient of a counter offer can replace it with a new counter.';

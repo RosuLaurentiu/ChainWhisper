@@ -5,6 +5,8 @@ import {
   deriveTradePricingUpdate,
   formatDecimalInput,
   invertPriceInput,
+  invertReversePriceInput,
+  REVERSE_PRICE_TOO_LARGE_ERROR,
   nextTradePricingEditedFields,
   type TradePricingField
 } from './tradePricing';
@@ -87,6 +89,23 @@ describe('tradePricing helpers', () => {
     expect(invertPriceInput('2.5')).toBe('0.4');
     expect(invertPriceInput('')).toBe('');
     expect(invertPriceInput('0')).toBe('');
+  });
+
+  it('derives amounts from the authored reverse price at full precision', () => {
+    const { canonical } = invertReversePriceInput('3');
+    expect(canonical).toBe('0.333333333333333333');
+    const fromBase = deriveTradePricingUpdate({ baseAmountInput: '3', quoteAmountInput: '', priceInput: canonical,
+      baseDecimals: 18, quoteDecimals: 18, editedFields: ['baseAmount', 'price'], reversePriceInput: '3' });
+    expect(fromBase).toEqual({ field: 'quoteAmount', value: '1', sourceFields: ['baseAmount', 'price'] });
+    const fromQuote = deriveTradePricingUpdate({ baseAmountInput: '', quoteAmountInput: '1', priceInput: canonical,
+      baseDecimals: 18, quoteDecimals: 18, editedFields: ['quoteAmount', 'price'], reversePriceInput: '3' });
+    expect(fromQuote).toEqual({ field: 'baseAmount', value: '3', sourceFields: ['quoteAmount', 'price'] });
+  });
+
+  it('refuses a reverse price whose reciprocal rounds to 0', () => {
+    expect(invertReversePriceInput('1000000000000')).toEqual({ canonical: '0.000000000001', error: '' });
+    expect(invertReversePriceInput('2000000000000000000')).toEqual({ canonical: '', error: REVERSE_PRICE_TOO_LARGE_ERROR });
+    expect(invertReversePriceInput('0')).toEqual({ canonical: '', error: '' });
   });
 
   it('derives recurring buy receive amount from quote liquidity and price', () => {

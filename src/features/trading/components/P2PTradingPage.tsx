@@ -4,7 +4,6 @@ import { ArrowLeft, WalletCards } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
 import {
   COTI_NETWORK,
-  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   buildTradeSnapshotKey,
@@ -183,8 +182,10 @@ import {
 } from './tradeTerminalHistoryConfig';
 
 import {
+  CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS,
   EMPTY_STALE_TOKEN_ADDRESSES,
   OPEN_TERMINAL_LABEL,
+  resolveTradeComposerEscrowContract,
   PendingTradeRecoveryDisclosure,
   buildOtcV2DataScopeKey,
   buildMakerControlsKey,
@@ -1050,21 +1051,14 @@ export default function P2PTradingPage({
     [chainId, selectedWalletId, walletHasAes, walletKey]
   );
 
-  const tradeFeeEscrowContract = useMemo(() => {
-    if (editingTrade?.escrowContract) {
-      return editingTrade.escrowContract;
-    }
-    if (counterParentTrade) {
-      return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
-    }
-    if (tradeHidePrivateLiquidity) {
-      return PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
-    }
-    if (tradeVisibility !== 'public') {
-      return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
-    }
-    return TRADE_ESCROW_CONTRACT_ADDRESS;
-  }, [
+  const tradeFeeEscrowContract = useMemo(() => resolveTradeComposerEscrowContract({
+    editingEscrowContract: editingTrade?.escrowContract,
+    countering: Boolean(counterParentTrade),
+    hidePrivateLiquidity: tradeHidePrivateLiquidity,
+    visibility: tradeVisibility,
+    privateEscrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+    publicEscrowContract: TRADE_ESCROW_CONTRACT_ADDRESS
+  }), [
     counterParentTrade,
     editingTrade,
     tradeHidePrivateLiquidity,
@@ -1076,7 +1070,7 @@ export default function P2PTradingPage({
     if (normalizedContract === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
       return 'Private escrow';
     }
-    if (normalizedContract === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    if (normalizedContract === CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
       return 'Direct escrow';
     }
     if (normalizedContract === TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
@@ -1558,6 +1552,8 @@ export default function P2PTradingPage({
     swapSellTokenKey,
     swapTokenOptions,
     tradeComposerModel,
+    tradeAuthoredReversePriceInput,
+    tradeReversePriceError,
     tradeReversePriceInput,
     updateTradeOfferAmountInput,
     updateTradePriceInput,
@@ -1678,6 +1674,7 @@ export default function P2PTradingPage({
     tradeComposerModel,
     tradeOfferAmountInput,
     tradePriceInput,
+    tradeAuthoredReversePriceInput,
     tradePricingEditedFields,
     tradeRequestAmountInput
   });
@@ -2343,7 +2340,6 @@ export default function P2PTradingPage({
     setTradeOfferAmountInput,
     setTradeOfferTokenSelection,
     setTradeHidePrivateLiquidity,
-    setTradePriceInput,
     setTradeRequestAmountInput,
     setTradeRequestTokenSelection,
     setTradeVisibility,
@@ -2601,6 +2597,7 @@ export default function P2PTradingPage({
       pricePlaceholder="0"
       priceReference={tradeComposerCarbonPriceReference}
       priceReverseInput={tradeReversePriceInput}
+      priceError={tradeReversePriceError}
       priceReverseReference={tradeComposerReverseCarbonPriceReference}
       priceReverseSummaryLabel={tradeReversePricePairLabel}
       priceSummaryLabel={tradePricePairLabel}
@@ -2653,7 +2650,7 @@ export default function P2PTradingPage({
       hiddenLiquidityUnavailableMessage={tradeComposerModel.hiddenLiquidityUnavailableMessage}
       onHidePrivateLiquidityChange={setTradeHidePrivateLiquidity}
       sending={creatingTrade}
-      canSend={tradeComposerModel.canSendTradeOffer}
+      canSend={tradeComposerModel.canSendTradeOffer && !tradeReversePriceError}
       settingsSlot={tradeAccessSettings}
       onSendTradeOffer={() => {
         createTrade().catch(() => {});
@@ -2946,7 +2943,7 @@ export default function P2PTradingPage({
           loading={tradeAgentLoading}
           status={tradeAgentStatus}
           messagesEndRef={tradeAgentMessagesEndRef}
-          quickActions={visibleTradeAgentQuickActions.filter((item) => item.action !== 'draft_recurring')}
+          quickActions={visibleTradeAgentQuickActions}
           prompt={tradeAgentPrompt}
           readiness={resolveTradeAgentReadiness({
             error: tradeAgentError,

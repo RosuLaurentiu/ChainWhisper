@@ -67,6 +67,7 @@ type TradeComposerPanelProps = {
   pricePlaceholder?: string;
   priceReference?: CarbonPairReferenceDisplay | null;
   priceReverseInput?: string;
+  priceError?: string;
   priceReverseReference?: CarbonPairReferenceDisplay | null;
   priceReverseSummaryLabel?: string;
   priceSummaryLabel?: string;
@@ -548,6 +549,7 @@ export default function TradeComposerPanel({
   pricePlaceholder = 'quote per base',
   priceReference = null,
   priceReverseInput = '',
+  priceError = '',
   priceReverseReference = null,
   priceReverseSummaryLabel = '',
   priceSummaryLabel = '',
@@ -790,6 +792,7 @@ export default function TradeComposerPanel({
         type="text"
         inputMode="decimal"
         value={displayedPriceInput}
+        aria-invalid={priceError ? 'true' : 'false'}
         aria-describedby={pairTokensLocked ? termsHelpId : undefined}
         onChange={(event) => {
           if (showInvertedPriceDisplay && onPriceReverseInputChange) {
@@ -801,6 +804,7 @@ export default function TradeComposerPanel({
         placeholder={pricePlaceholder}
         disabled={sending}
       />
+      {priceError ? <p className="trade-compose-field-error" role="alert">{priceError}</p> : null}
     </div>
   ) : null;
 

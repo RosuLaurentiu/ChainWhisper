@@ -169,7 +169,6 @@ type UseP2PTradeAgentActionsArgs = {
   setTradeOfferAmountInput: (value: string) => void;
   setTradeOfferTokenSelection: (value: TradeTokenPresetKey) => void;
   setTradeHidePrivateLiquidity: (value: boolean) => void;
-  setTradePriceInput: (value: string) => void;
   setTradeRequestAmountInput: (value: string) => void;
   setTradeRequestTokenSelection: (value: TradeTokenPresetKey) => void;
   setTradeVisibility: (value: TradeVisibility) => void;
@@ -233,7 +232,6 @@ export default function useP2PTradeAgentActions({
   setTradeOfferAmountInput,
   setTradeOfferTokenSelection,
   setTradeHidePrivateLiquidity,
-  setTradePriceInput,
   setTradeRequestAmountInput,
   setTradeRequestTokenSelection,
   setTradeVisibility,
@@ -587,7 +585,7 @@ export default function useP2PTradeAgentActions({
         }
         setTradeOfferAmountInput(action.sellAmount ?? '');
         setTradeRequestAmountInput(action.buyAmount ?? '');
-        setTradePriceInput(action.price ?? '');
+        // startFreshOneOffTrade cleared the price; the sync derives it from these amounts.
         setTradeVisibility(action.accessType);
         setDirectTradeRecipient('');
         setTradeHidePrivateLiquidity(action.amountVisibility === 'private-hidden');
@@ -654,7 +652,6 @@ export default function useP2PTradeAgentActions({
       setTradeHidePrivateLiquidity,
       setTradeOfferAmountInput,
       setTradeOfferTokenSelection,
-      setTradePriceInput,
       setTradeRequestAmountInput,
       setTradeRequestTokenSelection,
       setTradeVisibility,

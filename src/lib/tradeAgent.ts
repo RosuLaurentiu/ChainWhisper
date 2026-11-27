@@ -23,14 +23,12 @@ export type TradeAgentActionType =
   | 'find_price'
   | 'draft_counter'
   | 'draft_limit'
-  | 'draft_recurring'
   | 'review_orders'
   | 'chat_to_trade';
 
 export type TradeAgentResponseActionType =
   | 'prefill_swap'
   | 'prefill_limit'
-  | 'prefill_recurring'
   | 'prefill_counter'
   | 'prefill_message'
   | 'open_order';
@@ -75,19 +73,7 @@ export type TradeAgentPrefillLimitAction = {
   buyToken: string;
   sellAmount: string;
   buyAmount: string;
-  price: string;
   accessType: TradeAgentAccessType;
-  amountVisibility: TradeAgentAmountVisibility;
-};
-
-export type TradeAgentPrefillRecurringAction = {
-  type: 'prefill_recurring';
-  baseToken: string;
-  quoteToken: string;
-  buyPrice: string;
-  sellPrice: string;
-  buyLiquidity: string;
-  sellLiquidity: string;
   amountVisibility: TradeAgentAmountVisibility;
 };
 
@@ -116,7 +102,6 @@ export type TradeAgentOpenOrderAction = {
 export type TradeAgentResponseAction =
   | TradeAgentPrefillSwapAction
   | TradeAgentPrefillLimitAction
-  | TradeAgentPrefillRecurringAction
   | TradeAgentPrefillCounterAction
   | TradeAgentPrefillMessageAction
   | TradeAgentOpenOrderAction;
@@ -164,35 +149,6 @@ export const buildTradeAgentConversationTurns = (
       role: message.role,
       text: message.text.trim().slice(0, 800)
     }));
-
-const formatTradeAgentDecimal = (value: number): string => {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '';
-  }
-  return Number(value.toPrecision(10)).toString();
-};
-
-export const calculateTradeAgentRecurringReferencePrices = ({
-  marketPrice,
-  percentage
-}: {
-  marketPrice: number;
-  percentage: number;
-}): { buyPrice: string; sellPrice: string } | null => {
-  if (
-    !Number.isFinite(marketPrice) ||
-    marketPrice <= 0 ||
-    !Number.isFinite(percentage) ||
-    percentage <= 0 ||
-    percentage >= 100
-  ) {
-    return null;
-  }
-  const spread = percentage / 100;
-  const buyPrice = formatTradeAgentDecimal(marketPrice * (1 - spread));
-  const sellPrice = formatTradeAgentDecimal(marketPrice * (1 + spread));
-  return buyPrice && sellPrice ? { buyPrice, sellPrice } : null;
-};
 
 export type TradeAgentRunInput = {
   action: TradeAgentActionType;
@@ -297,11 +253,6 @@ export const TRADE_AGENT_QUICK_ACTIONS: TradeAgentQuickAction[] = [
     prompt: 'Draft a limit order.'
   },
   {
-    action: 'draft_recurring',
-    label: 'Draft recurring order',
-    prompt: 'Draft a recurring order.'
-  },
-  {
     action: 'explain_order',
     label: 'Explain this order',
     prompt: 'Explain this order.',
@@ -324,7 +275,6 @@ export const TRADE_AGENT_QUICK_ACTIONS: TradeAgentQuickAction[] = [
 const ACTION_TYPES = new Set<TradeAgentResponseActionType>([
   'prefill_swap',
   'prefill_limit',
-  'prefill_recurring',
   'prefill_counter',
   'prefill_message',
   'open_order'
@@ -334,7 +284,6 @@ const REQUEST_ACTION_TYPES = new Set<TradeAgentActionType>([
   'find_price',
   'draft_counter',
   'draft_limit',
-  'draft_recurring',
   'review_orders',
   'chat_to_trade'
 ]);
@@ -442,31 +391,6 @@ const normalizeTradeAgentAction = (
     return identity ? { type, ...identity } : null;
   }
 
-  if (type === 'prefill_recurring') {
-    const pair = normalizeTokenPair(record, 'baseToken', 'quoteToken', options);
-    const amountVisibility = normalizeString(record.amountVisibility);
-    if (!pair || (amountVisibility !== 'visible' && amountVisibility !== 'private-hidden')) {
-      return null;
-    }
-    const buyPrice = normalizePositiveAmountInput(record.buyPrice);
-    const sellPrice = normalizePositiveAmountInput(record.sellPrice);
-    const buyLiquidity = normalizePositiveAmountInput(record.buyLiquidity, pair.second.decimals);
-    const sellLiquidity = normalizePositiveAmountInput(record.sellLiquidity, pair.first.decimals);
-    if (!buyPrice || !sellPrice || !buyLiquidity || !sellLiquidity) {
-      return null;
-    }
-    return {
-      type,
-      baseToken: pair.first.reference,
-      quoteToken: pair.second.reference,
-      buyPrice,
-      sellPrice,
-      buyLiquidity,
-      sellLiquidity,
-      amountVisibility
-    };
-  }
-
   const pair = normalizeTokenPair(record, 'sellToken', 'buyToken', options);
   if (!pair) {
     return null;
@@ -498,11 +422,11 @@ const normalizeTradeAgentAction = (
   }
 
   if (type === 'prefill_limit') {
-    const price = normalizePositiveAmountInput(record.price);
+    // A model-authored price is ignored: the composer derives the price from
+    // the amounts it signs, so the shown price cannot disagree with them.
     const accessType = normalizeString(record.accessType);
     const amountVisibility = normalizeString(record.amountVisibility);
     if (
-      !price ||
       (accessType !== 'public' && accessType !== 'unlisted' && accessType !== 'direct') ||
       (amountVisibility !== 'visible' && amountVisibility !== 'private-hidden')
     ) {
@@ -514,7 +438,6 @@ const normalizeTradeAgentAction = (
       buyToken: pair.second.reference,
       sellAmount,
       buyAmount,
-      price,
       accessType,
       amountVisibility
     };
@@ -573,9 +496,6 @@ export const getTradeAgentActionButtonLabel = (action: TradeAgentResponseAction)
   if (action.type === 'prefill_limit') {
     return 'Prefill limit';
   }
-  if (action.type === 'prefill_recurring') {
-    return 'Prefill recurring';
-  }
   if (action.type === 'prefill_counter') {
     return 'Prefill counter';
   }
@@ -591,7 +511,6 @@ export const getTradeAgentActionButtonLabel = (action: TradeAgentResponseAction)
 export const canUseTradeAgentAction = (action: TradeAgentResponseAction): boolean =>
   action.type === 'prefill_swap' ||
   action.type === 'prefill_limit' ||
-  action.type === 'prefill_recurring' ||
   action.type === 'prefill_counter' ||
   action.type === 'open_order' ||
   action.type === 'prefill_message';
@@ -601,10 +520,7 @@ export const getTradeAgentActionDescription = (action: TradeAgentResponseAction)
     return [action.sellAmount, action.sellToken, 'for', action.buyToken].filter(Boolean).join(' ');
   }
   if (action.type === 'prefill_limit') {
-    return `${action.sellAmount} ${action.sellToken} -> ${action.buyAmount} ${action.buyToken} at ${action.price}`;
-  }
-  if (action.type === 'prefill_recurring') {
-    return `${action.baseToken}/${action.quoteToken} · buy ${action.buyPrice} · sell ${action.sellPrice}`;
+    return `${action.sellAmount} ${action.sellToken} -> ${action.buyAmount} ${action.buyToken}`;
   }
   if (action.type === 'prefill_counter') {
     return `${action.sellAmount} ${action.sellToken} -> ${action.buyAmount} ${action.buyToken}`;
@@ -943,22 +859,6 @@ export const getTradeAgentPreflightError = ({
   const mentions = getPromptKnownTokenMentions(question, knownTokens);
   if (mentions.length > 2) {
     return 'Name one token pair at a time so the Agent can respond clearly.';
-  }
-
-  if (action === 'draft_recurring') {
-    const buyPrice = question.match(/\bbuy\s+price\s*:?\s*(-?\d+(?:\.\d+)?)/i)?.[1] ?? '';
-    const sellPrice = question.match(/\bsell\s+price\s*:?\s*(-?\d+(?:\.\d+)?)/i)?.[1] ?? '';
-    const buyLiquidity = question.match(/\b(?:buy\s+budget|quote\s+liquidity)\s*:?\s*(-?\d+(?:\.\d+)?)/i)?.[1] ?? '';
-    const sellLiquidity = question.match(/\b(?:sell\s+inventory|base\s+liquidity)\s*:?\s*(-?\d+(?:\.\d+)?)/i)?.[1] ?? '';
-    if (
-      (buyPrice && !isPositivePromptAmount(buyPrice)) ||
-      (sellPrice && !isPositivePromptAmount(sellPrice)) ||
-      (buyLiquidity && !isPositivePromptAmount(buyLiquidity, mentions[1]?.decimals ?? 18)) ||
-      (sellLiquidity && !isPositivePromptAmount(sellLiquidity, mentions[0]?.decimals ?? 18))
-    ) {
-      return 'Any recurring prices or liquidity you provide must be positive and use supported precision.';
-    }
-    return '';
   }
 
   const hasBuy = /\bbuy(?:ing)?\b/i.test(question);

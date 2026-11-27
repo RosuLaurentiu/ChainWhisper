@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildTradeAgentConversationTurns,
-  calculateTradeAgentRecurringReferencePrices
-} from './tradeAgent';
+import { buildTradeAgentConversationTurns } from './tradeAgent';
 
 describe('Trade Agent conversation context', () => {
   it('keeps useful conversation turns without intro or status rows', () => {
@@ -15,12 +12,5 @@ describe('Trade Agent conversation context', () => {
       { role: 'user', text: 'Draft recurring private liquidity at 50% around Carbon.' },
       { role: 'assistant', text: 'Which pair direction?' }
     ]);
-  });
-
-  it('calculates recurring buy below and sell above the supplied market price', () => {
-    expect(calculateTradeAgentRecurringReferencePrices({ marketPrice: 0.25, percentage: 50 })).toEqual({
-      buyPrice: '0.125',
-      sellPrice: '0.375'
-    });
   });
 });

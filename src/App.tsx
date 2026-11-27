@@ -40,7 +40,6 @@ import useBlockTimestampCache from './shared/hooks/useBlockTimestampCache';
 import useClipboardFeedback from './shared/hooks/useClipboardFeedback';
 import useAppNavigation from './app/hooks/useAppNavigation';
 import useAppChainLookups from './app/hooks/useAppChainLookups';
-import useAppFeeResolvers from './app/hooks/useAppFeeResolvers';
 import useMobileHeaderLinks from './app/hooks/useMobileHeaderLinks';
 import useAccountFundsSigners from './features/wallet/hooks/useAccountFundsSigners';
 import useOwnerWalletBalances from './features/wallet/hooks/useOwnerWalletBalances';
@@ -370,7 +369,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     setCreatingTrade,
     setProcessingTradeActionId,
     setTradeFeeModeSelection,
-    setTradeRequiredFeeWei,
     setTradeOfferTokenSelection,
     setTradeRequestTokenSelection,
     setTradeOfferCustomTokenAddress,
@@ -3243,10 +3241,6 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
     swapInputDecimals,
     wispRecoveryMaxAmountWei
   ]);
-
-  useAppFeeResolvers({
-    setTradeRequiredFeeWei
-  });
 
   const {
     getNicknameMaxLength,

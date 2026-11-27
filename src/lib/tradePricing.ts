@@ -7,6 +7,9 @@ export type TradePricingInputs = {
   baseDecimals: number;
   quoteDecimals: number;
   editedFields: TradePricingField[];
+  // Authored reverse price (base per quote). When set, it is the exact source
+  // for derived amounts; the canonical price is only its rounded reciprocal.
+  reversePriceInput?: string;
 };
 
 export type TradePricingUpdate = {
@@ -117,6 +120,20 @@ export const invertPriceInput = (priceInput: string): string => {
   return invertedPrice > 0n ? formatDecimalInput(invertedPrice, PRICE_DECIMALS, 12) : '';
 };
 
+export const REVERSE_PRICE_TOO_LARGE_ERROR = 'This reverse price is too large: its price rounds to 0. Enter a smaller value.';
+
+// Canonical price for an authored reverse price, kept at full price precision.
+export const invertReversePriceInput = (reverseInput: string): { canonical: string; error: string } => {
+  const reverseScaled = parseDecimalInput(reverseInput, PRICE_DECIMALS);
+  if (!reverseScaled || reverseScaled <= 0n) {
+    return { canonical: '', error: '' };
+  }
+  const invertedPrice = (PRICE_SCALE * PRICE_SCALE) / reverseScaled;
+  return invertedPrice > 0n
+    ? { canonical: formatDecimalInput(invertedPrice, PRICE_DECIMALS, PRICE_DECIMALS), error: '' }
+    : { canonical: '', error: REVERSE_PRICE_TOO_LARGE_ERROR };
+};
+
 export const nextTradePricingEditedFields = (
   previous: TradePricingField[],
   field: TradePricingField
@@ -128,7 +145,8 @@ export const deriveTradePricingUpdate = ({
   priceInput,
   baseDecimals,
   quoteDecimals,
-  editedFields
+  editedFields,
+  reversePriceInput
 }: TradePricingInputs): TradePricingUpdate | null => {
   const sourceFields = resolveTradePricingSourceFields({
     baseAmountInput,
@@ -148,6 +166,8 @@ export const deriveTradePricingUpdate = ({
   const baseAmountWei = parseDecimalInput(baseAmountInput, baseDecimals);
   const quoteAmountWei = parseDecimalInput(quoteAmountInput, quoteDecimals);
   const priceScaled = parseDecimalInput(priceInput, PRICE_DECIMALS);
+  const reverseScaled = reversePriceInput ? parseDecimalInput(reversePriceInput, PRICE_DECIMALS) : null;
+  const exactReverse = reverseScaled !== null && reverseScaled > 0n ? reverseScaled : null;
   const baseScale = scaleForDecimals(baseDecimals);
   const quoteScale = scaleForDecimals(quoteDecimals);
 
@@ -167,7 +187,9 @@ export const deriveTradePricingUpdate = ({
     if (!baseAmountWei || !priceScaled || baseAmountWei <= 0n || priceScaled <= 0n) {
       return null;
     }
-    const nextQuoteAmount = (baseAmountWei * priceScaled * quoteScale) / (baseScale * PRICE_SCALE);
+    const nextQuoteAmount = exactReverse
+      ? (baseAmountWei * quoteScale * PRICE_SCALE) / (baseScale * exactReverse)
+      : (baseAmountWei * priceScaled * quoteScale) / (baseScale * PRICE_SCALE);
     if (nextQuoteAmount <= 0n) {
       return null;
     }
@@ -178,7 +200,9 @@ export const deriveTradePricingUpdate = ({
   if (!quoteAmountWei || !priceScaled || quoteAmountWei <= 0n || priceScaled <= 0n) {
     return null;
   }
-  const nextBaseAmount = (quoteAmountWei * baseScale * PRICE_SCALE) / (priceScaled * quoteScale);
+  const nextBaseAmount = exactReverse
+    ? (quoteAmountWei * baseScale * exactReverse) / (quoteScale * PRICE_SCALE)
+    : (quoteAmountWei * baseScale * PRICE_SCALE) / (priceScaled * quoteScale);
   if (nextBaseAmount <= 0n) {
     return null;
   }

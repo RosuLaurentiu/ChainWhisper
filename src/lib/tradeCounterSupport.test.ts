@@ -15,6 +15,13 @@ import {
 const maker = '0x1111111111111111111111111111111111111111';
 const taker = '0x2222222222222222222222222222222222222222';
 
+const directV2: NonNullable<TradeSnapshot['v2']> = {
+  protocol: 'direct-v2',
+  chainId: '7082400',
+  contractAddress: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+  amountMode: 'public'
+};
+
 const baseTrade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot => ({
   tradeId: 1,
   escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -41,25 +48,28 @@ const baseTrade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot => ({
 });
 
 describe('trade counter support', () => {
-  it('allows non-maker counters on open standard trades', () => {
-    const trade = baseTrade();
+  it('allows non-maker composer counters only on open Direct V2 offers', () => {
+    const trade = baseTrade({ escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, taker, v2: directV2 });
 
     expect(canCreateCounterOffer(trade, taker.toLowerCase())).toBe(true);
     expect(getCounterOfferUnavailableReason(trade, taker.toLowerCase())).toBe('');
   });
 
-  it('allows hidden private-order counters on the upgraded private escrow', () => {
-    const trade = baseTrade({
-      escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
-      hiddenLiquidity: true
-    });
+  it('refuses the composer counter for book offers, which use Counter V2 controls', () => {
+    const standard = baseTrade({ v2: { ...directV2, protocol: 'standard-v2', contractAddress: TRADE_ESCROW_CONTRACT_ADDRESS } });
+    const privateBook = baseTrade({ escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS, hiddenLiquidity: true,
+      v2: { ...directV2, protocol: 'private-v2', contractAddress: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS } });
 
-    expect(canCreateCounterOffer(trade, taker.toLowerCase())).toBe(true);
-    expect(getCounterOfferUnavailableReason(trade, taker.toLowerCase())).toBe('');
+    expect(canCreateCounterOffer(standard, taker.toLowerCase())).toBe(false);
+    expect(canCreateCounterOffer(privateBook, taker.toLowerCase())).toBe(false);
+    expect(canCreateCounterOffer(baseTrade(), taker.toLowerCase())).toBe(false);
+    expect(getCounterOfferUnavailableReason(standard, taker.toLowerCase())).not.toMatch(/legacy/i);
   });
 
   it('keeps counter replacement restricted to the counter recipient', () => {
     const trade = baseTrade({
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      v2: directV2,
       counterParentTradeId: 4,
       taker
     });

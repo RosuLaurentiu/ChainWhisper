@@ -8,6 +8,7 @@ import {
   type TradeTokenPresetKey
 } from '../../lib/appHelpers';
 import type { TradeFeeModeSelection } from '../../lib/appShared';
+import { OTC_V2_DEPLOYMENT_CATALOG } from '../../lib/otcV2DeploymentCatalog';
 import { resolveStateUpdate, type StateUpdate } from '../../shared/state/storeUtils';
 
 type InChatTradeState = {
@@ -31,7 +32,6 @@ type InChatTradeState = {
   setCreatingTrade: (next: StateUpdate<boolean>) => void;
   setProcessingTradeActionId: (next: StateUpdate<string>) => void;
   setTradeFeeModeSelection: (next: StateUpdate<TradeFeeModeSelection>) => void;
-  setTradeRequiredFeeWei: (next: StateUpdate<bigint | null>) => void;
   setTradeOfferTokenSelection: (next: StateUpdate<TradeTokenPresetKey>) => void;
   setTradeRequestTokenSelection: (next: StateUpdate<TradeTokenPresetKey>) => void;
   setTradeOfferCustomTokenAddress: (next: StateUpdate<string>) => void;
@@ -50,7 +50,9 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
   creatingTrade: false,
   processingTradeActionId: '',
   tradeFeeModeSelection: 'coti',
-  tradeRequiredFeeWei: null,
+  // Current OTC V2 escrows charge no separate trade fee; the P2P page uses the
+  // same rule. Without an active V2 catalog the fee is unknown and sends stay blocked.
+  tradeRequiredFeeWei: OTC_V2_DEPLOYMENT_CATALOG.status === 'active' ? 0n : null,
   tradeOfferTokenSelection: USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
     ? TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS.publicBase
     : 'coti',
@@ -73,8 +75,6 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
     set((state) => ({ processingTradeActionId: resolveStateUpdate(next, state.processingTradeActionId) })),
   setTradeFeeModeSelection: (next) =>
     set((state) => ({ tradeFeeModeSelection: resolveStateUpdate(next, state.tradeFeeModeSelection) })),
-  setTradeRequiredFeeWei: (next) =>
-    set((state) => ({ tradeRequiredFeeWei: resolveStateUpdate(next, state.tradeRequiredFeeWei) })),
   setTradeOfferTokenSelection: (next) =>
     set((state) => ({ tradeOfferTokenSelection: resolveStateUpdate(next, state.tradeOfferTokenSelection) })),
   setTradeRequestTokenSelection: (next) =>

@@ -298,8 +298,6 @@ const normalizeEscrowAddress = (
   addresses: TradingContractAddresses = DEFAULT_TRADING_CONTRACT_ADDRESSES
 ): string => (typeof value === 'string' && isWalletAddress(value) ? value : addresses.standardEscrow);
 
-export const isLegacyPrivateOrderEscrowContractAddress = (_value?: string | null): boolean => false;
-
 export const isPrivateOrderEscrowContractAddress = (
   value?: string | null,
   addresses: TradingContractAddresses = DEFAULT_TRADING_CONTRACT_ADDRESSES

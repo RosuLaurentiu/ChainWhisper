@@ -37,17 +37,15 @@ describe('tradeAgent', () => {
     expect(TRADE_AGENT_QUICK_ACTIONS.map((action) => action.label)).toEqual([
       'Compare prices',
       'Draft limit order',
-      'Draft recurring order',
       'Explain this order',
       'Draft a counter',
       'Review my orders'
     ]);
     expect(TRADE_AGENT_QUICK_ACTIONS[0].prompt).toBe('Compare token prices.');
     expect(TRADE_AGENT_QUICK_ACTIONS[1].prompt).toBe('Draft a limit order.');
-    expect(TRADE_AGENT_QUICK_ACTIONS[2].prompt).toBe('Draft a recurring order.');
-    expect(TRADE_AGENT_QUICK_ACTIONS[3].prompt).toBe('Explain this order.');
-    expect(TRADE_AGENT_QUICK_ACTIONS[4].prompt).toBe('Draft a counter for this order.');
-    expect(TRADE_AGENT_QUICK_ACTIONS[5].prompt).toBe('Review my orders.');
+    expect(TRADE_AGENT_QUICK_ACTIONS[2].prompt).toBe('Explain this order.');
+    expect(TRADE_AGENT_QUICK_ACTIONS[3].prompt).toBe('Draft a counter for this order.');
+    expect(TRADE_AGENT_QUICK_ACTIONS[4].prompt).toBe('Review my orders.');
     expect(TRADE_AGENT_QUICK_ACTIONS[1].prompt).not.toContain('[');
   });
 
@@ -81,7 +79,6 @@ describe('tradeAgent', () => {
           type: 'prefill_limit',
           buyAmount: '33.3',
           buyToken: 'p.gCOTI',
-          price: '3.33',
           sellAmount: '10',
           sellToken: 'p.COTI',
           accessType: 'public',
@@ -91,7 +88,7 @@ describe('tradeAgent', () => {
     });
   });
 
-  it('normalizes strict recurring and direct drafts without model-authored labels, secrets, or recipients', () => {
+  it('drops recurring drafts and model-authored limit prices, labels, secrets, and recipients', () => {
     const response = normalizeTradeAgentResponse(
       {
         answer: 'Drafts ready.',
@@ -132,27 +129,17 @@ describe('tradeAgent', () => {
 
     expect(response.actions).toEqual([
       {
-        type: 'prefill_recurring',
-        baseToken: 'p.COTI',
-        quoteToken: 'p.gCOTI',
-        buyPrice: '2.5',
-        sellPrice: '2.8',
-        buyLiquidity: '100',
-        sellLiquidity: '40',
-        amountVisibility: 'private-hidden'
-      },
-      {
         type: 'prefill_limit',
         sellToken: 'p.COTI',
         buyToken: 'p.gCOTI',
         sellAmount: '10',
         buyAmount: '25',
-        price: '2.5',
         accessType: 'direct',
         amountVisibility: 'visible'
       }
     ]);
-    expect(JSON.stringify(response.actions)).not.toMatch(/label|recipient|accessSecret/i);
+    expect(JSON.stringify(response.actions)).not.toMatch(/label|recipient|accessSecret|recurring|price/i);
+    expect(getTradeAgentActionDescription(response.actions[0])).toBe('10 p.COTI -> 25 p.gCOTI');
   });
 
   it('keeps only open-order actions that match a trusted contract-local identity', () => {
@@ -207,14 +194,6 @@ describe('tradeAgent', () => {
         context: {},
         knownTokens,
         prompt: 'Help me draft a limit order for p.COTI and p.gCOTI.'
-      })
-    ).toBe('');
-    expect(
-      getTradeAgentPreflightError({
-        action: 'draft_recurring',
-        context: {},
-        knownTokens,
-        prompt: 'Help me draft a recurring order for p.COTI and p.gCOTI.'
       })
     ).toBe('');
     expect(

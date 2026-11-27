@@ -28,6 +28,7 @@ import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
 import type { TradeBalanceDisclosureV2Runtime } from '../../../lib/tradeBalanceDisclosureV2';
 import type { ResolvedTradeToken, TradeTokenPresetKey } from '../../../lib/appHelpers';
 import type { TradeComposerModel } from '../../../lib/tradeComposer';
+import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
 export { bytesEqual, mergeOnboardInfoByAddress, onboardInfoEqual } from '../../../lib/appShared';
 export const formatCompactTradeTimestamp = (timestamp?: number): string => {
   if (!timestamp || !Number.isFinite(timestamp)) {
@@ -848,4 +849,30 @@ export const formatRecurringLiveLiquidityAmount = (
     return `Private ${asset.symbol}`;
   }
   return formatRecurringTokenAmount(asset, revealedAmount ?? publicAmount, false);
+};
+
+/** Current Direct OTC V2 escrow: Direct offers and their counters are created here. */
+export const CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS = CURRENT_P2P_BINDING.deployments['direct-v2'].contractAddress;
+
+/** Escrow shown in the create-offer header and used for fee lookup. */
+export const resolveTradeComposerEscrowContract = ({
+  editingEscrowContract,
+  countering,
+  hidePrivateLiquidity,
+  visibility,
+  privateEscrowContract,
+  publicEscrowContract
+}: {
+  editingEscrowContract?: string;
+  countering: boolean;
+  hidePrivateLiquidity: boolean;
+  visibility: TradeVisibility;
+  privateEscrowContract: string;
+  publicEscrowContract: string;
+}): string => {
+  if (editingEscrowContract) return editingEscrowContract;
+  if (countering) return CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS;
+  if (hidePrivateLiquidity) return privateEscrowContract;
+  if (visibility !== 'public') return CURRENT_DIRECT_V2_ESCROW_CONTRACT_ADDRESS;
+  return publicEscrowContract;
 };

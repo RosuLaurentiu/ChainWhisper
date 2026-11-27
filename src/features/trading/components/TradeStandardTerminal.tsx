@@ -15,10 +15,8 @@ import { isCurrentP2PBookBudgetAdmitted, type CurrentP2PBookBudgetAdmission } fr
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { P2PActionNoticeSurface } from '../../../lib/p2pActionNotice';
 import {
-  PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE,
   canCreateCounterOffer,
-  canUseWalletAuthorityForDirectAccess,
-  getCounterOfferUnavailableReason
+  canUseWalletAuthorityForDirectAccess
 } from '../../../lib/tradeCounterSupport';
 import {
   aggregateVisibleTradeTransactionHistoryRows,
@@ -215,14 +213,8 @@ export default function TradeStandardTerminal({
     const amount = role === 'offer' ? visibleHiddenTermAmounts.offerAmount : visibleHiddenTermAmounts.requestAmount;
     return amount > 0n ? { ...asset, amount: amount.toString() } : asset;
   };
-  const counterUnavailableReason = privateBook ? PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE : getCounterOfferUnavailableReason(snapshot, walletKey);
+  // Book offers counter through CounterTradeV2Controls; this button is the Direct V2 composer path.
   const canCounter = !privateBook && canCreateCounterOffer(snapshot, walletKey);
-  const showCounterUnavailable =
-    !canCounter &&
-    walletKey.length > 0 &&
-    !perspective.isMaker &&
-    snapshot.status === 'open' &&
-    counterUnavailableReason === PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE;
   const canEdit = !privateBook && canEditPublicTrade(snapshot, walletKey);
   const completionSummary = getTradeCompletionSummary(snapshot);
   const makerPrivateProgressSummary = perspective.isMaker ? getMakerPrivateProgressSummary(snapshot) : null;
@@ -775,11 +767,6 @@ export default function TradeStandardTerminal({
               {canCounter ? (
                 <button type="button" className="trade-card-action trade-card-action-counter" onClick={() => beginCounterTrade(snapshot)}>
                   Counter
-                </button>
-              ) : null}
-              {showCounterUnavailable ? (
-                <button type="button" className="trade-card-action trade-card-action-counter trade-card-action-disabled" disabled title={counterUnavailableReason}>
-                  Counter unavailable
                 </button>
               ) : null}
               {perspective.isTaker ? (

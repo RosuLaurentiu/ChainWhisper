@@ -18,6 +18,7 @@ import {
 } from '../../../lib/tradeComposer';
 import {
   invertPriceInput,
+  invertReversePriceInput,
   nextTradePricingEditedFields,
   type TradePricingField
 } from '../../../lib/tradePricing';
@@ -115,9 +116,13 @@ export default function useP2PTradeComposerModel({
   tradeRequiredFeeWei,
   walletAddress
 }: UseP2PTradeComposerModelArgs) {
-  const [reversePriceDraft, setReversePriceDraft] = useState<{ value: string; canonical: string } | null>(null);
-  const tradeReversePriceInput = reversePriceDraft?.canonical === tradePriceInput
+  const [reversePriceDraft, setReversePriceDraft] = useState<{ value: string; canonical: string; error: string } | null>(null);
+  const reversePriceDraftActive = reversePriceDraft?.canonical === tradePriceInput;
+  const tradeReversePriceInput = reversePriceDraftActive
     ? reversePriceDraft.value : invertPriceInput(tradePriceInput);
+  // The authored reverse value stays the exact source for derived amounts.
+  const tradeAuthoredReversePriceInput = reversePriceDraftActive ? reversePriceDraft.value : '';
+  const tradeReversePriceError = reversePriceDraftActive ? reversePriceDraft.error : '';
   const tradeComposerModel = useMemo(
     () =>
       deriveTradeComposerModel({
@@ -287,10 +292,10 @@ export default function useP2PTradeComposerModel({
 
   const updateTradeReversePriceInput = useCallback((value: string) => {
     const sanitized = sanitizeTokenAmountInput(value);
-    const canonical = invertPriceInput(sanitized);
+    const { canonical, error } = invertReversePriceInput(sanitized);
     updateTradePriceInput(canonical);
     // Keep authored text; a rounded reciprocal is not an editable draft.
-    setReversePriceDraft({ value: sanitized, canonical });
+    setReversePriceDraft({ value: sanitized, canonical, error });
   }, [updateTradePriceInput]);
 
   return {
@@ -302,6 +307,8 @@ export default function useP2PTradeComposerModel({
     swapSellTokenKey,
     swapTokenOptions,
     tradeComposerModel,
+    tradeAuthoredReversePriceInput,
+    tradeReversePriceError,
     tradeReversePriceInput,
     updateSwapBuyAmountInput,
     updateSwapSellAmountInput,

@@ -23,7 +23,6 @@ const ACTION_TYPES = new Set<TradeAgentPaymentAction>([
   'find_price',
   'draft_counter',
   'draft_limit',
-  'draft_recurring',
   'review_orders',
   'chat_to_trade'
 ]);
@@ -38,7 +37,6 @@ export type TradeAgentPaymentAction =
   | 'find_price'
   | 'draft_counter'
   | 'draft_limit'
-  | 'draft_recurring'
   | 'review_orders'
   | 'chat_to_trade';
 

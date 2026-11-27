@@ -9,11 +9,13 @@ import {
 } from '../../../lib/appShared';
 import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledger';
 import { buildWalletAccountScope } from '../../../lib/walletAccountScope';
+import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
 import {
   buildOtcV2DataScopeKey,
   getVisibleOfferLiquiditySummary,
   mergeOnboardInfoByAddress,
   renderCarbonPriceReference,
+  resolveTradeComposerEscrowContract,
   resolveVisibleHiddenTermAmounts,
   selectTerminalBalance,
   type TerminalBalanceSelection
@@ -665,5 +667,18 @@ describe('TradeStandardOrderCard', () => {
     expect(markup).toContain('1.1 pCOTI');
     expect(markup).not.toContain('0.125 pWISP');
     expect(markup).not.toContain('0.275 pCOTI');
+  });
+});
+
+describe('trade composer escrow header', () => {
+  const base = { countering: false, hidePrivateLiquidity: false, visibility: 'public' as const,
+    privateEscrowContract: '0x1111111111111111111111111111111111111111', publicEscrowContract: '0x2222222222222222222222222222222222222222' };
+  it('points counters and Direct offers to the current Direct V2 escrow, not the retired V1 address', () => {
+    const directV2 = CURRENT_P2P_BINDING.deployments['direct-v2'].contractAddress;
+    expect(resolveTradeComposerEscrowContract({ ...base, countering: true })).toBe(directV2);
+    expect(resolveTradeComposerEscrowContract({ ...base, visibility: 'direct' })).toBe(directV2);
+    expect(directV2.toLowerCase()).not.toBe(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase());
+    expect(resolveTradeComposerEscrowContract({ ...base, editingEscrowContract: '0x3333333333333333333333333333333333333333', countering: true }))
+      .toBe('0x3333333333333333333333333333333333333333');
   });
 });

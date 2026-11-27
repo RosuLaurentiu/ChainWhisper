@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import useP2PTradeComposerModel from './useP2PTradeComposerModel';
-import { invertPriceInput, type TradePricingField } from '../../../lib/tradePricing';
+import { invertPriceInput, invertReversePriceInput, type TradePricingField } from '../../../lib/tradePricing';
 
 const hooks = vi.hoisted(() => ({ index: 0, slots: [] as unknown[] }));
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
@@ -39,7 +39,7 @@ describe('P2P reverse price input text', () => {
   it('keeps the authored inverse price instead of round-tripping its rounded reciprocal', () => {
     const input = fixture();
     input.render().updateTradeReversePriceInput('3');
-    expect(input.canonical()).toBe(invertPriceInput('3'));
+    expect(input.canonical()).toBe(invertReversePriceInput('3').canonical);
     expect(input.display()).toBe('3');
   });
 
@@ -48,7 +48,7 @@ describe('P2P reverse price input text', () => {
     for (const value of ['0', '0.', '0.1', '0.10', '0.105', '3.', '3.50', '']) {
       input.render().updateTradeReversePriceInput(value);
       expect(input.display()).toBe(value);
-      expect(input.canonical()).toBe(invertPriceInput(value));
+      expect(input.canonical()).toBe(invertReversePriceInput(value).canonical);
     }
   });
 
@@ -61,5 +61,20 @@ describe('P2P reverse price input text', () => {
     input.render().updateTradePriceInput('4');
     expect(input.canonical()).toBe('4');
     expect(input.display()).toBe('0.25');
+  });
+});
+
+describe('P2P reverse price precision', () => {
+  it('exposes the authored reverse value for amount derivation and a field error when the price rounds to 0', () => {
+    const input = fixture();
+    input.render().updateTradeReversePriceInput('3');
+    expect(input.render().tradeAuthoredReversePriceInput).toBe('3');
+    expect(input.render().tradeReversePriceError).toBe('');
+    input.render().updateTradeReversePriceInput('2000000000000000000');
+    expect(input.canonical()).toBe('');
+    expect(input.render().tradeReversePriceError).toMatch(/rounds to 0/);
+    input.render().updateTradePriceInput('4');
+    expect(input.render().tradeAuthoredReversePriceInput).toBe('');
+    expect(input.render().tradeReversePriceError).toBe('');
   });
 });

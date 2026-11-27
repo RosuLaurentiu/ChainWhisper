@@ -262,9 +262,6 @@ export default function useP2PTradeAgentSession({
           ? `Draft a limit order to sell ${swapSellTokenSymbol} for ${swapBuyTokenSymbol}.`
           : `Draft a limit order to buy ${swapBuyTokenSymbol} with ${swapSellTokenSymbol}.`;
       }
-      if (item.action === 'draft_recurring') {
-        return `Draft a recurring order for ${swapSellTokenSymbol} and ${swapBuyTokenSymbol}.`;
-      }
       return item.prompt;
     },
     [swapActionMode, swapBuyTokenSymbol, swapSellTokenSymbol]

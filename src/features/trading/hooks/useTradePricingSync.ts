@@ -14,6 +14,7 @@ type UseTradePricingSyncArgs = {
   tradeComposerModel: Pick<TradeComposerModel, 'selectedTradeOfferToken' | 'selectedTradeRequestToken'>;
   tradeOfferAmountInput: string;
   tradePriceInput: string;
+  tradeAuthoredReversePriceInput?: string;
   tradePricingEditedFields: TradePricingField[];
   tradeRequestAmountInput: string;
 };
@@ -26,6 +27,7 @@ export default function useTradePricingSync({
   tradeComposerModel,
   tradeOfferAmountInput,
   tradePriceInput,
+  tradeAuthoredReversePriceInput = '',
   tradePricingEditedFields,
   tradeRequestAmountInput
 }: UseTradePricingSyncArgs) {
@@ -40,7 +42,8 @@ export default function useTradePricingSync({
       priceInput: tradePriceInput,
       baseDecimals: offerToken.decimals,
       quoteDecimals: requestToken.decimals,
-      editedFields: tradePricingEditedFields
+      editedFields: tradePricingEditedFields,
+      reversePriceInput: tradeAuthoredReversePriceInput
     });
     if (!update) return;
 
@@ -63,6 +66,7 @@ export default function useTradePricingSync({
     tradeComposerModel.selectedTradeRequestToken,
     tradeOfferAmountInput,
     tradePriceInput,
+    tradeAuthoredReversePriceInput,
     tradePricingEditedFields,
     tradeRequestAmountInput
   ]);

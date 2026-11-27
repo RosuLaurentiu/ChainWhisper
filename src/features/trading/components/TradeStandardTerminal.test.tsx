@@ -112,6 +112,16 @@ describe('TradeStandardTerminal Direct V2 full-fill ticket', () => {
     expect(render(current, { wallet: maker })).not.toContain('>Counter</button>');
   });
 
+  it('keeps the composer Counter button off open standard-v2 book offers (Counter V2 controls own them)', () => {
+    const deployment = CURRENT_P2P_BINDING.deployments['standard-v2'];
+    const book = { ...directTrade, taker: '0x0000000000000000000000000000000000000000', isPublic: true, hiddenLiquidity: false,
+      escrowContract: deployment.contractAddress,
+      v2: { protocol: 'standard-v2' as const, chainId: deployment.chainId, contractAddress: deployment.contractAddress, amountMode: 'public' as const } };
+    const markup = render(book);
+    expect(markup).not.toContain('>Counter</button>');
+    expect(markup).not.toContain('Counter unavailable');
+  });
+
   it('shows the fixed bilateral amounts and no partial-fill calculator', () => {
     const markup = render();
 
@@ -185,6 +195,7 @@ describe('promoted public-price private book terminal', () => {
     expect(markup).toContain('Buy up to 250 cwTPB'); expect(markup).not.toContain('Amount too high');
     expect(markup).not.toContain('123 cwTPB'); expect(markup).not.toContain('61 cwTPB');
     expect(markup).not.toContain('>Counter</button>');
+    expect(markup).not.toContain('Counter unavailable');
   });
   it('shows only the maker recorded escrow budget without estimated fill or proceeds', () => {
     const markup = render(currentBook, { wallet: maker });
