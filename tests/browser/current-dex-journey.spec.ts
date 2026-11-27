@@ -29,7 +29,8 @@ test.beforeEach(async ({ page },info) => {
   await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.fallback() : route.abort());
   // Explicit test seams; no changed production files or live wallet/RPC.
   await page.route('**/src/features/wallet/ownerCotiMetaMaskCapability.ts', route => route.fulfill({ contentType: 'application/javascript',
-    body: 'export const issueOwnerCotiMetaMaskCapability = async ({bindCapability}) => bindCapability(window.__currentJourney.binding());' }));
+    body: 'export const issueOwnerCotiMetaMaskCapability = async ({bindCapability}) => bindCapability(window.__currentJourney.binding());' +
+      ' export const hasCurrentDexBrowserSigner = () => true; export const releaseOwnerCotiMetaMaskProviderPool = () => {};' }));
   await page.route('**/src/lib/dexV2Chain.ts', async route => {
     const response = await route.fetch(), source = await response.text();
     expect(source).toContain('keccak256(code).toLowerCase()');

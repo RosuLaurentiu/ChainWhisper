@@ -1,13 +1,13 @@
 // LOCAL fixture only: no extension, network, native GC, or transaction signing.
 // Production preparation, brands, graph getters, issue codec, sender and SDK decryption run unchanged.
-// This is the maintained cheap-archived ledger. The bounded historical Vite config
-// supplies matching default imports and a historical-only mock admission seam.
+// It mocks the current build 13 candidate (cheap-history, decision-034); old candidates are not selectable.
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AbiCoder, Interface, toBeHex } from '@coti-io/coti-ethers';
 import { decodeUint, decryptUint, decryptUint256, encodeKey, encrypt } from '@coti-io/coti-sdk-typescript';
 import DexPage from '../../src/features/dex/components/DexV2Page';
-import { ARCHIVED_CHEAP_DEX_CANDIDATE as c, CURRENT_CHEAP_POOL_TOKENS, currentCheapDexQuoteProtocol } from '../../src/lib/dexV2Deployment';
+import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c, currentCheapDexQuoteProtocol } from '../../src/lib/dexV2Deployment';
+const CURRENT_CHEAP_POOL_TOKENS = [c.tokens[1], c.tokens[0]] as const;
 import { CURRENT_POOL_FUNDING_ABI } from '../../src/lib/currentDexPoolFunding';
 import { issueCurrentDexPoolFundingCapability } from '../../src/features/wallet/currentDexPoolFundingCapability';
 import { issueCurrentDexPoolPositionCapability } from '../../src/features/wallet/currentDexPoolPositionCapability';
@@ -137,7 +137,7 @@ const send = async (method: string, params: unknown[]) => {
       BigInt(selector.blockHash) < BigInt(initialNumber)) throw new Error('Unpinned fixture RPC.');
   if (method === 'eth_getCode') return graphDrift ? '0x6001' : codes[String(params[0]).toLowerCase()]??recipientCode;
   if (method === 'eth_getStorageAt') {
-    if([c.core,engine,nft].includes(String(params[0]).toLowerCase()))return toBeHex(limitWords.get(`${String(params[0]).toLowerCase()}:${BigInt(params[1] as string)}`)??0n,32);
+    if(([c.core,engine,nft] as string[]).includes(String(params[0]).toLowerCase()))return toBeHex(limitWords.get(`${String(params[0]).toLowerCase()}:${BigInt(params[1] as string)}`)??0n,32);
     if (String(params[0]).toLowerCase() !== at('ChainWhisperFixedEngineFactory')) throw new Error('Unexpected storage target.');
     return c.factoryStorage.find(([slot]) => BigInt(slot) === BigInt(params[1] as string))![1];
   }
@@ -317,19 +317,19 @@ const readProvider = { send, getTransaction: async (hash: string) => {
 const host = document.getElementById('root')!, root = createRoot(host);
 const browserProvider = { request: ({ method, params }: { method: string; params?: unknown[] }) => send(method, params ?? []) };
 let mountedOwner = owner, priceDisplayInverted = false;
-const render = () => root.render(createElement(DexPage, { priceDisplayInverted, swapCandidate: 'cheap-archived',
+const render = () => root.render(createElement(DexPage, { priceDisplayInverted, swapCandidate: 'cheap-history',
   onPriceDisplayInvertedChange: (value: boolean) => { priceDisplayInverted = value; render(); }, sharedWalletSession: {
   walletAddress: mountedOwner, chainId: 7082400, browserProvider,
   sessionOnboardInfo:privacyUnlocked?{[mountedOwner.toLowerCase()]:{aesKey:aes}}:{},walletAesHealthByAddress:{},
   actions: {
     getCurrentDexQuoteCapability: () => issueCurrentDexQuoteCapability({} as never),
     getCurrentDexReceiptCapability: () => issueCurrentDexReceiptCapability({} as never),
-    getCurrentDexPoolFundingCapability: () => issueCurrentDexPoolFundingCapability({ candidate: 'cheap-archived' } as never),
-    getCurrentDexPoolPositionCapability: () => issueCurrentDexPoolPositionCapability({ candidate: 'cheap-archived' } as never),
-    getCurrentDexLimitCapability: () => issueCurrentDexLimitCapability({ candidate: 'cheap-archived' } as never),
-    getCurrentDexSubmissionCapability: () => issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-archived' } as never)
+    getCurrentDexPoolFundingCapability: () => issueCurrentDexPoolFundingCapability({ candidate: 'cheap-history' } as never),
+    getCurrentDexPoolPositionCapability: () => issueCurrentDexPoolPositionCapability({ candidate: 'cheap-history' } as never),
+    getCurrentDexLimitCapability: () => issueCurrentDexLimitCapability({ candidate: 'cheap-history' } as never),
+    getCurrentDexSubmissionCapability: () => issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never)
   }
-} }));
+} as never }));
 const control = {
   runtimeHashes,
   seedFunding: () => { limitBalances = [0n, 0n]; tokenAllowances = [0n, 0n]; tokenClaimed = [false, false]; },
@@ -400,7 +400,7 @@ const control = {
   },
   remount: () => { signer = newSigner(); root.render(null); setTimeout(render, 0); },
   forgedCopyRejected: async () => {
-    const capability = await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-archived' } as never);
+    const capability = await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never);
     try { await capability.submitCurrentCheapQuote({} as never); return false; } catch { return true; }
   }
 };

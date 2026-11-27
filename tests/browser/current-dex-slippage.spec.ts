@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { Interface } from '@coti-io/coti-ethers';
-import { CURRENT_SLIPPAGE_DEX_QUOTE_ABI } from '../../src/lib/currentDexOperation';
+// The ABI is read in the page: src modules read import.meta.env, which only Vite supplies.
+const slippageQuoteAbi = (page: Page) => page.evaluate(async () =>
+  (await import('/src/lib/currentDexOperation.ts' as string)).CURRENT_SLIPPAGE_DEX_QUOTE_ABI as string[]);
 
 // LOCAL ONLY: exact staged metadata, production owner/receipt/submission path,
 // synthetic runtime preimages and private SDK seals. No extension or live RPC.
@@ -17,13 +19,9 @@ const control = (page: Page) => ({
 test.beforeEach(async ({ page }) => {
   await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.fallback() : route.abort());
   await page.route('**/src/features/wallet/ownerCotiMetaMaskCapability.ts', route => route.fulfill({ contentType: 'application/javascript',
-    body: 'export const issueOwnerCotiMetaMaskCapability = async ({bindCapability}) => bindCapability(window.__currentJourney.binding());' }));
-  await page.route('**/src/lib/dexV2Deployment.ts', async route => {
-    const response = await route.fetch(), source = await response.text();
-    expect(source).toContain('const CURRENT_CHEAP_DEX_CANDIDATE = ARCHIVED_CHEAP_DEX_CANDIDATE;');
-    await route.fulfill({ response, body: source.replace('const CURRENT_CHEAP_DEX_CANDIDATE = ARCHIVED_CHEAP_DEX_CANDIDATE;',
-      'const CURRENT_CHEAP_DEX_CANDIDATE = STAGED_QUOTE_SLIPPAGE_CANDIDATE;') });
-  });
+    body: 'export const issueOwnerCotiMetaMaskCapability = async ({bindCapability}) => bindCapability(window.__currentJourney.binding());' +
+      ' export const hasCurrentDexBrowserSigner = () => true; export const releaseOwnerCotiMetaMaskProviderPool = () => {};' }));
+  // The current build 13 candidate uses the quote-slippage protocol, so no candidate rewrite is necessary.
   await page.route('**/src/lib/dexV2Chain.ts', async route => {
     const response = await route.fetch(), source = await response.text();
     expect(source).toContain('keccak256(code).toLowerCase()');
@@ -82,7 +80,7 @@ for (const asyncMode of [false, true]) test(`${asyncMode ? 'async' : 'Fast'} def
   await expect(swap).toContainText('refunded 0.000000000000000005 Test token 1');
   const sent = (await control(page).snapshot()).sends, name = asyncMode ? 'quoteCheapAsync' : 'quoteFastPool';
   expect(sent.map(row => row.name)).toEqual([name, asyncMode ? 'acceptPrivateSwapV1' : 'acceptFastPool']);
-  const decoded = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI).decodeFunctionData(name, sent[0].data);
+  const decoded = new Interface(await slippageQuoteAbi(page)).decodeFunctionData(name, sent[0].data);
   expect((asyncMode ? decoded.request : decoded).toleranceBps).toBe(50n);
   await page.screenshot({ path: info.outputPath('protected-partial.png'), fullPage: true });
 });
@@ -91,7 +89,7 @@ test('custom tolerance and inverse hard limit preserve the economic input/output
   await expect(swap.locator('.dex-v2-current-amounts > label')).toContainText('Test token 1');
   await expect(swap.locator('.dex-v2-quote-output')).toContainText('Test token 0');
   const sent = (await control(page).snapshot()).sends[0];
-  const decoded = new Interface(CURRENT_SLIPPAGE_DEX_QUOTE_ABI).decodeFunctionData('quoteFastPool', sent.data);
+  const decoded = new Interface(await slippageQuoteAbi(page)).decodeFunctionData('quoteFastPool', sent.data);
   expect(decoded.toleranceBps).toBe(125n);
   expect(decoded.inputToken.toLowerCase()).toBe('0x96d97450d36eb65804ce2f84d0fe6c9ef52f264a');
   await expect(swap.getByLabel('Slippage percent')).toBeDisabled();

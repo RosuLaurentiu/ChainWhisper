@@ -133,7 +133,7 @@ test.describe('shared Trading Agent workspace', () => {
       const domUrl = '/node_modules/.vite/deps/react-dom_client.js';
       const pageUrl = '/src/features/dex/components/DexV2Page.tsx';
       const candidateUrl = '/src/lib/dexV2Deployment.ts';
-      const [{ default: { createElement } }, { default: { createRoot } }, { default: DexPage }, { CURRENT_CHEAP_DEX_CANDIDATE: candidate }] =
+      const [{ default: { createElement } }, { default: { createRoot } }, { default: DexPage }, { STAGED_SHARED_HISTORY_DEX_CANDIDATE: candidate }] =
         await Promise.all([import(reactUrl), import(domUrl), import(pageUrl), import(candidateUrl)]);
       const host = document.createElement('div');
       host.id = 'current-readiness-fixture';
