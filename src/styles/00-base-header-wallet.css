@@ -18,35 +18,25 @@
   --brand-strong: #9469e3;
   --brand-soft: rgba(124, 77, 203, 0.12);
   --success: #22c55e;
-  --success-soft: rgba(34, 197, 94, 0.14);
   --warning: #f59e0b;
   --warning-soft: rgba(245, 158, 11, 0.14);
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, 0.14);
   --info: #38bdf8;
-  --info-soft: rgba(56, 189, 248, 0.14);
-  --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 10px;
   --shadow-raised: 0 6px 20px rgba(0, 0, 0, 0.2);
   --shadow-overlay: 0 20px 60px rgba(0, 0, 0, 0.5);
-  --focus-ring: 0 0 0 3px rgba(139, 92, 246, 0.28);
   --motion-fast: 150ms;
   --motion-standard: 200ms;
   --z-header: 100;
-  --z-navigation: 300;
   --z-popover: 600;
   --z-dialog: 1200;
-  --z-toast: 1400;
   --bg: var(--surface-canvas);
   --bg-elev-1: var(--surface-base);
   --bg-elev-2: var(--surface-raised);
@@ -69,15 +59,12 @@
 body {
   margin: 0;
   font-family: "Inter", "Segoe UI", Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
 }
 
 .app-root {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -91,14 +78,12 @@ body {
 
 .top-header {
   min-height: var(--header-height);
-  background: var(--bg);
   border-bottom: 1px solid var(--border);
   position: relative;
 }
 
 .top-header-bar {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
   min-height: var(--header-height);
   align-items: stretch;
 }
@@ -107,8 +92,6 @@ body {
   display: flex;
   align-items: center;
   min-width: 0;
-  padding: 7px 20px;
-  background: var(--bg-elev-1);
   border-right: 1px solid var(--border);
 }
 
@@ -116,7 +99,6 @@ body {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
   flex: 1 1 auto;
 }
 
@@ -128,9 +110,6 @@ body {
 }
 
 .top-header-brand-logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
   object-fit: cover;
   display: block;
 }
@@ -145,17 +124,12 @@ body {
 
 .top-header-brand-title {
   font-family: "Space Grotesk", sans-serif;
-  font-size: 0.96rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
   line-height: 1.1;
 }
 
 .top-header-brand-subtitle {
-  font-size: 0.68rem;
   font-weight: 500;
-  color: var(--muted);
-  letter-spacing: 0.04em;
   line-height: 1.1;
 }
 
@@ -207,9 +181,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 7px 20px;
-  background: var(--bg-elev-2);
 }
 
 .top-header-links {
@@ -252,13 +223,11 @@ body {
   min-width: 0;
   display: flex;
   align-items: stretch;
-  justify-content: flex-start;
 }
 
 .app-header-nav {
   display: flex;
   align-items: stretch;
-  gap: 18px;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -273,12 +242,9 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 42px;
   border: 0;
   background: transparent;
-  color: var(--muted);
   cursor: pointer;
-  font-size: 0.9rem;
   font-weight: 700;
   line-height: 1;
   padding: 0 2px;
@@ -289,21 +255,9 @@ body {
   content: "";
   position: absolute;
   right: 0;
-  bottom: -7px;
   left: 0;
-  height: 2px;
   border-radius: 999px 999px 0 0;
   background: transparent;
-}
-
-.app-header-nav button:hover,
-.app-header-nav button.active {
-  color: #f6f2ff;
-}
-
-.app-header-nav button.active::after {
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.95), rgba(139, 92, 246, 0.2));
-  box-shadow: 0 -4px 18px rgba(139, 92, 246, 0.36);
 }
 
 .top-header-nav .p2p-trade-tabs {
@@ -349,11 +303,8 @@ body {
 
 .contacts-sidebar {
   border-right: 1px solid var(--border);
-  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  background: var(--bg-elev-2);
   min-height: 0;
   height: 100%;
   max-height: none;
@@ -408,20 +359,6 @@ body {
 .wallet-primary-action:hover {
   background: linear-gradient(140deg, #6d28d9, #7c3aed);
   border-color: #5a4a8e;
-}
-
-.wallet-action-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.wallet-action-grid .connect-btn {
-  width: 100%;
-}
-
-.wallet-action-span-2 {
-  grid-column: 1 / -1;
 }
 
 .wallet-inline-btn {
@@ -547,18 +484,5 @@ input,
 select,
 textarea {
   font: inherit;
-}
-
-@keyframes status-dot-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.22);
-  }
-
-  50% {
-    transform: scale(1.15);
-    box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.16);
-  }
 }
 

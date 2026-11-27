@@ -59,11 +59,12 @@ describe('Limit entry and main button', () => {
 });
 
 describe('compact Liquidity panel', () => {
-  it('uses one frame per amount field and a 12 px section rhythm', () => {
+  // The CW-097 compact Pool form (owner decision 2026-11-21) replaced the CW-095 12 px rhythm with 10 px.
+  it('uses one frame per amount field and the 10 px compact section rhythm', () => {
     const field = rule('.dex-v2-pool-amounts-section .dex-v2-current-fields label {');
     expect(field).toContain('padding: 0;');
     expect(field).toContain('border: 0;');
-    expect(rule('section.dex-v2-current-pool .dex-v2-pool-section {')).toContain('padding: 12px 0;');
+    expect(rule('section.dex-v2-current-pool .dex-v2-pool-section {')).toContain('padding: 10px 0;');
     expect(rule('section.dex-v2-current-pool .dex-v2-composer-heading h2 {')).toContain('font-size: 1.1rem;');
   });
 

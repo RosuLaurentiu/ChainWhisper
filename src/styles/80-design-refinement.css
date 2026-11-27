@@ -1277,46 +1277,9 @@ body {
   box-shadow: var(--shadow-raised);
 }
 
-.modal-backdrop {
-  z-index: var(--z-dialog);
-  padding: 16px;
-  background: rgba(3, 4, 10, 0.8);
-  backdrop-filter: blur(8px);
-}
-
-.modal-card {
-  width: min(560px, 100%);
-  max-height: min(760px, calc(100dvh - 32px));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border-color: var(--border-default);
-  border-radius: var(--radius-lg);
-  background: rgba(18, 20, 32, 0.98);
-  box-shadow: var(--shadow-overlay);
-  padding: 20px;
-  scrollbar-gutter: stable;
-}
-
 .modal-card h3 {
   font-family: "Space Grotesk", sans-serif;
-  font-size: 1.125rem;
   letter-spacing: -0.02em;
-}
-
-.modal-copy {
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.modal-actions {
-  position: sticky;
-  bottom: -20px;
-  z-index: 1;
-  margin: 4px -20px -20px;
-  border-top: 1px solid var(--border-subtle);
-  background: rgba(18, 20, 32, 0.98);
-  padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
 }
 
 .error {
@@ -1332,8 +1295,6 @@ body {
 
 .quick-actions-tabs button {
   min-height: 42px;
-  border-radius: 9px;
-  font-size: 0.8125rem;
 }
 
 .quick-actions-checkbox-row {

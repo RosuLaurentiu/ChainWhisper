@@ -1732,11 +1732,6 @@
   min-height: 0;
 }
 
-.p2p-trading-shell .standalone-trade-create-panel .trade-compose-section-buy:not(.p2p-recurring-side-panel) .trade-compose-amount-field .trade-compose-input {
-  min-height: 42px;
-  font-size: 1.05rem;
-}
-
 .p2p-trading-shell .standalone-trade-create-panel .trade-compose-section-buy:not(.p2p-recurring-side-panel) .trade-compose-amount-field {
   margin-top: 8px;
   border-top: 1px solid rgba(74, 64, 112, 0.48);
@@ -1916,8 +1911,7 @@
   padding: 10px 12px;
 }
 
-.standalone-trade-create-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input,
-.p2p-counter-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input {
+.standalone-trade-create-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input {
   font-family: "Space Grotesk", sans-serif;
   font-size: 1.18rem;
   font-weight: 700;
@@ -2873,8 +2867,7 @@
     padding: 8px 10px;
   }
 
-  .standalone-trade-create-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input,
-  .p2p-counter-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input {
+  .standalone-trade-create-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input {
     font-size: 1rem;
   }
 

@@ -8,8 +8,6 @@
 .app-shell-trades,
 .app-shell-dex-v2 {
   --approved-bg: #080a12;
-  --approved-panel: #0d101a;
-  --approved-panel-raised: #111522;
   --approved-border: rgba(128, 136, 166, 0.25);
   --approved-border-soft: rgba(128, 136, 166, 0.14);
   --approved-muted: #9895aa;
@@ -159,7 +157,7 @@
 .app-shell-dex-v2 .dex-v2-current-advanced > summary strong { font-size: 0.72rem; }
 .app-shell-dex-v2 .dex-v2-current-advanced > summary span { color: #a879ff; font-size: 0.65rem; }
 .app-shell-dex-v2 .dex-v2-current-advanced > div { display: grid; gap: 10px; border-top: 1px solid var(--approved-border-soft); padding: 12px; }
-.app-shell-dex-v2 .dex-v2-current-advanced p { margin: 0; color: #8f8a9f; font-size: 0.64rem; line-height: 1.45; }
+.app-shell-dex-v2 .dex-v2-current-advanced p { margin: 0; }
 .app-shell-dex-v2 .dex-v2-current-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .app-shell-dex-v2 .dex-v2-current-fields label {
   min-width: 0;
@@ -223,7 +221,7 @@
 .app-shell-dex-v2 .dex-v2-current-warning details { margin-top: 3px; color: #a99abb; font-size: 0.61rem; }
 .app-shell-dex-v2 .dex-v2-current-warning summary { cursor: pointer; }
 .app-shell-dex-v2 .dex-v2-current-warning p { overflow-wrap: anywhere; margin: 8px 0 0; line-height: 1.45; }
-.app-shell-dex-v2 .dex-v2-current-status { margin: 0; color: #908a9f; font-size: 0.65rem; line-height: 1.45; text-align: center; }
+.app-shell-dex-v2 .dex-v2-current-status { margin: 0; text-align: center; }
 
 @media (max-width: 820px) {
   .app-shell-dex-v2 .dex-v2-current-fields { grid-template-columns: 1fr; }
@@ -274,16 +272,11 @@
 }
 
 .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel {
-  width: min(100%, 980px);
   margin-block: 12px 28px;
 }
 
 .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head {
   min-height: 52px;
-}
-
-.app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head h2 {
-  font-size: 1.08rem;
 }
 
 .app-shell-trades .p2p-trading-shell-create .trade-compose-settings-slot-primary {
@@ -292,7 +285,6 @@
 
 .app-shell-trades .p2p-trading-shell-create .p2p-trade-access-workspace {
   display: grid;
-  gap: 7px;
 }
 
 .app-shell-trades .p2p-trading-shell-create .p2p-trade-access-heading {
@@ -304,26 +296,10 @@
   font-size: 0.78rem;
 }
 
-.app-shell-trades .p2p-trading-shell-create .p2p-trade-access-settings .standalone-trade-visibility {
-  gap: 7px;
-}
-
-.app-shell-trades .p2p-trading-shell-create .p2p-trade-access-settings .standalone-trade-visibility button {
-  min-height: 56px;
-  padding: 8px 10px;
-}
-
-.app-shell-trades .p2p-trading-shell-create .p2p-create-terms {
-  gap: 10px;
-  margin: 10px 16px 0;
-  padding: 12px;
-}
-
 .app-shell-trades .p2p-trading-shell-create .p2p-create-section-heading {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
   gap: 8px;
-  padding-bottom: 9px;
 }
 
 .app-shell-trades .p2p-trading-shell-create .p2p-create-section-heading > strong {
@@ -334,29 +310,12 @@
   font-size: 0.63rem;
 }
 
-.app-shell-trades .p2p-trading-shell-create .p2p-create-terms .trade-compose-direction-control {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .app-shell-trades .p2p-trading-shell-create .p2p-create-terms .trade-compose-direction-control > span {
   display: none;
 }
 
-.app-shell-trades .p2p-trading-shell-create .p2p-create-terms .trade-compose-limit-price {
-  padding: 8px 10px;
-}
-
-.app-shell-trades .p2p-trading-shell-create .p2p-create-terms .trade-compose-section {
-  min-height: 98px;
-}
-
 .app-shell-trades .p2p-trading-shell-create .trade-compose-advanced-options {
   margin-inline: 16px;
-}
-
-.app-shell-trades .p2p-trading-shell-create .trade-compose-footer {
-  margin-top: 12px;
-  padding: 12px 16px 16px;
 }
 
 @media (max-width: 920px) {
@@ -366,24 +325,14 @@
 
   .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head {
     min-height: 46px;
-    padding: 4px 10px 6px;
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-settings-slot-primary {
     padding: 8px 10px 0;
   }
 
-  .app-shell-trades .p2p-trading-shell-create .p2p-create-terms {
-    margin: 8px 10px 0;
-    padding: 10px;
-  }
-
   .app-shell-trades .p2p-trading-shell-create .trade-compose-advanced-options {
     margin-inline: 10px;
-  }
-
-  .app-shell-trades .p2p-trading-shell-create .trade-compose-footer {
-    padding: 10px 10px 14px;
   }
 }
 
@@ -472,13 +421,10 @@
   z-index: calc(var(--z-header) + 4);
   top: calc(100% + 8px);
   left: 0;
-  width: min(620px, calc(100vw - 44px));
   display: grid;
-  gap: 14px;
   border: 1px solid var(--approved-border);
   border-radius: 10px;
   background: #0a0c15;
-  padding: 16px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.48);
 }
 
@@ -667,10 +613,6 @@
   padding: 0 18px 32px;
 }
 
-.app-shell-dex-v2 :is(.dex-v2-heading, .dex-v2-mobile-modes, .dex-v2-market-summary, .dex-v2-test-journey) {
-  display: none;
-}
-
 .app-shell-dex-v2 .dex-v2-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(380px, 0.95fr);
@@ -746,7 +688,7 @@
   font-weight: 650;
 }
 .dex-market-chart-plot { min-height: 0; }
-.dex-market-chart-legend :is(.candle-up, .candle-down) i {
+.dex-market-chart-legend .candle-up i {
   width: 12px;
   height: 12px;
   border-radius: 2px;
@@ -816,36 +758,6 @@
   box-shadow: none;
   padding: 6px 0 0;
 }
-.app-shell-dex-v2 :is(.dex-v2-field-tools, .dex-v2-recurring-inventory, .dex-v2-pool-amount-tools) button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.app-shell-dex-v2 .dex-v2-token-field-row:has(input[aria-invalid='true']) {
-  border-color: rgba(241, 138, 155, 0.72);
-  box-shadow: inset 0 0 0 1px rgba(241, 138, 155, 0.12);
-}
-.app-shell-dex-v2 :is(.dex-v2-token-field input, .dex-v2-amount-output) {
-  min-width: 0;
-  grid-column: 1;
-  grid-row: 1;
-  border: 0;
-  background: transparent;
-  color: #faf9ff;
-  font: 600 1.75rem "Space Grotesk", sans-serif;
-  text-align: left;
-}
-.app-shell-dex-v2 :is(.dex-v2-trade-settings, .dex-v2-advanced-market) > summary {
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  list-style: none;
-  color: #dedbea;
-  padding: 0 14px;
-  font-size: 0.78rem;
-  font-weight: 650;
-}
 
 .app-shell-dex-v2 .dex-v2-review-button {
   min-height: 55px;
@@ -857,7 +769,7 @@
   font-size: 0.9rem;
 }
 .app-shell-dex-v2 .dex-v2-review-button:disabled { background: rgba(91, 55, 161, 0.38); }
-.app-shell-dex-v2 .dex-v2-activation-note { margin: 0; color: #777489; font-size: 0.64rem; line-height: 1.45; }
+.app-shell-dex-v2 .dex-v2-activation-note { margin: 0; }
 
 /* Strategies and positions use the same chart-led visual system. */
 .app-shell-dex-v2 .dex-v2-test-form,
@@ -865,10 +777,6 @@
   border-color: var(--approved-border);
   background: rgba(13, 16, 26, 0.76);
   box-shadow: none;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-composer :is(.dex-v2-token-field input, .dex-v2-amount-output) {
-  font-size: 1.45rem;
 }
 
 .app-shell-dex-v2 .dex-v2-limit-price-field {
@@ -901,21 +809,6 @@
 .app-shell-dex-v2 .dex-v2-limit-price-field > input[aria-invalid='true'] {
   border-color: rgba(241, 138, 155, 0.72);
   box-shadow: inset 0 0 0 1px rgba(241, 138, 155, 0.12);
-}
-.app-shell-dex-v2 .dex-v2-recurring-inventory-input:has(input[aria-invalid='true']) {
-  border-color: rgba(240, 181, 102, 0.72);
-  box-shadow: 0 0 0 2px rgba(240, 181, 102, 0.08);
-}
-.app-shell-dex-v2 .dex-v2-recurring-side :is(select, input) {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  border: 1px solid var(--approved-border);
-  border-radius: 7px;
-  background: rgba(8, 10, 18, 0.9);
-  color: #f5f2fb;
-  padding: 0 10px;
-  font: 650 0.78rem "Space Grotesk", sans-serif;
 }
 
 .app-shell-dex-v2 .dex-v2-pool-composer {
@@ -1172,7 +1065,6 @@
   background: rgba(9, 12, 20, 0.72);
   box-shadow: none;
 }
-.app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel { width: min(100%, 1120px); margin: 18px auto 34px; }
 .app-shell-trades .p2p-trading-shell-create .trade-compose-panel { width: 100%; max-width: none; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .app-shell-trades .p2p-my-trades-section { margin: 18px 28px 34px; }
 
@@ -1182,55 +1074,6 @@
   .standalone-trade-create-panel
   > .standalone-trades-section-head:not(:has(.standalone-trade-secondary-btn)):not(:has(.standalone-trade-section-actions)) {
   display: flex;
-}
-
-@media (min-width: 920.02px) {
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot) {
-    grid-template-columns: minmax(0, 1fr) minmax(420px, 0.82fr);
-    grid-template-rows: auto auto;
-    align-items: stretch;
-    column-gap: 18px;
-    padding-top: 14px;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > .standalone-trades-section-head {
-    width: auto;
-    justify-self: stretch;
-    grid-column: 1;
-    grid-row: 1;
-    align-self: start;
-    padding: 0 0 0 20px;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > .p2p-trade-entry-mode-slot {
-    width: auto;
-    max-width: none;
-    justify-self: stretch;
-    grid-column: 2;
-    grid-row: 1;
-    align-self: center;
-    padding-right: 20px;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > :is(.trade-compose-panel, .p2p-recurring-builder, .standalone-trade-created, .standalone-trade-error) {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > .p2p-recurring-builder {
-    height: max-content;
-    align-self: start;
-  }
 }
 
 .app-shell-trades .trade-compose-header {
@@ -1271,15 +1114,6 @@
   line-height: 1.4;
 }
 
-@media (min-width: 920.02px) {
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > .standalone-trades-section-head {
-    padding-top: 3px;
-  }
-}
-
 @media (max-width: 920px) {
   .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head {
     padding: 4px 10px 8px;
@@ -1306,7 +1140,6 @@
 
   .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head h2 {
     overflow: visible;
-    font-size: 1.08rem;
     line-height: 1.15;
     text-overflow: clip;
     white-space: normal;
@@ -1432,12 +1265,9 @@
 /* P2P creation follows the same type → intent → terms → details → review rhythm as DEX strategies. */
 .app-shell-trades .p2p-trading-shell-create .p2p-create-terms {
   display: grid;
-  gap: 12px;
-  margin: 14px 20px 0;
   border: 1px solid var(--approved-border-soft);
   border-radius: 9px;
   background: rgba(10, 13, 22, 0.58);
-  padding: 14px;
 }
 .app-shell-trades .p2p-create-section-heading {
   display: grid;
@@ -1581,8 +1411,6 @@
 }
 
 @media (min-width: 920.02px) {
-  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel,
-  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel { width: min(100%, 1040px); max-width: 1040px; }
   .app-shell-trades .p2p-trading-shell-create .trade-compose-grid,
   .app-shell-trades .p2p-trading-shell-create .trade-compose-panel:not(.p2p-recurring-builder) .trade-compose-grid { grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr); gap: 10px; }
   .app-shell-trades .p2p-trading-shell-create .trade-compose-grid-fixed-pair,
@@ -1622,18 +1450,6 @@
 .app-shell-trades .p2p-wallet-trade-empty button { margin-inline: auto; }
 
 /* P2P recurring creation uses the shared pair and ratio context above the form. */
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input {
-  width: 100%;
-  min-height: 46px;
-  border: 1px solid rgba(91, 76, 134, 0.62);
-  border-radius: 7px;
-  background: rgba(4, 6, 13, 0.76);
-  padding: 9px 10px;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input:focus {
-  border-color: var(--approved-purple-bright);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.16);
-}
 .app-shell-trades .p2p-my-trades-empty-workspace { padding: 24px 20px; }
 .app-shell-trades .p2p-my-trades-wallet-card,
 .app-shell-trades .p2p-my-trades-empty-slot { border-color: var(--approved-border-soft); background: rgba(10, 13, 22, 0.62); box-shadow: none; }
@@ -1773,7 +1589,7 @@
   .trading-market-pair > svg { display: none; }
   .trading-market-pair-picker { grid-column: 1; grid-row: 2; border-right: 1px solid var(--approved-border-soft); }
   .trading-market-pair-picker .trading-market-pair { grid-column: auto; grid-row: auto; border-right: 0; }
-  .trading-market-token-menu { position: absolute; top: 100%; right: auto; left: 0; width: calc(100vw - 16px); max-height: calc(100dvh - 190px); overflow: auto; }
+  .trading-market-token-menu { position: absolute; top: 100%; right: auto; left: 0; max-height: calc(100dvh - 190px); overflow: auto; }
   .trading-market-ratio {
     grid-column: 2;
     grid-row: 2;
@@ -1784,7 +1600,6 @@
   }
   .trading-market-ratio > span { display: none; }
   .trading-market-ratio > div {
-    display: grid;
     grid-template-columns: minmax(0, 1fr) 30px;
     gap: 5px;
   }
@@ -1982,7 +1797,6 @@
   .dex-market-chart.is-expanded { inset: 0; border: 0; border-radius: 0; }
   .app-shell-dex-v2 .dex-v2-form-column { border-left: 0; padding: 20px 6px 10px; }
   .app-shell-dex-v2 .dex-v2-composer-heading h1 { font-size: 1.15rem; }
-  .app-shell-dex-v2 :is(.dex-v2-token-field input, .dex-v2-amount-output) { font-size: 1.35rem; }
   .app-shell-dex-v2 .dex-v2-pool-composer {
     grid-row: auto;
     border-left: 0;
@@ -2069,11 +1883,6 @@
   .app-shell-trades .trade-compose-settings-slot-primary { padding: 12px 10px 0; }
   .app-shell-trades .trade-compose-direction-control { grid-template-columns: 1fr; gap: 7px; padding: 10px 10px 0; }
   .app-shell-trades .trade-compose-direction-control > span { display: none; }
-  .app-shell-trades .p2p-trading-shell-create .p2p-create-terms {
-    gap: 10px;
-    margin: 10px 10px 0;
-    padding: 10px;
-  }
   .app-shell-trades .p2p-create-section-heading { padding-bottom: 9px; }
   .app-shell-trades .p2p-create-section-heading > p {
     display: block;
@@ -2574,26 +2383,6 @@
 .p2p-wallet-menu:has(.wallet-utility-menu) > .p2p-wallet-disconnect-action:hover { background: rgba(255, 87, 111, 0.07); }
 
 /* One attached terminal owns both the selected order overview and its activity. */
-.app-shell-dex-v2 :is(.dex-v2-position-lifecycle-tabs, .dex-v2-position-terminal-tabs) button {
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #9891a5;
-  font: 700 0.72rem Inter, sans-serif;
-}
-.app-shell-dex-v2 :is(.dex-v2-position-lifecycle-tabs, .dex-v2-position-terminal-tabs) button.active {
-  background: rgba(112, 61, 180, 0.34);
-  color: #f3effa;
-  box-shadow: inset 0 0 0 1px rgba(177, 116, 255, 0.3);
-}
-.app-shell-dex-v2 :is(.dex-v2-position-history-empty, .dex-v2-position-terminal-empty) strong { color: #e8e3ef; }
-.app-shell-dex-v2 :is(.dex-v2-position-history-empty, .dex-v2-position-terminal-empty) p { max-width: 360px; margin: 0; font-size: 0.72rem; line-height: 1.5; }
-.app-shell-dex-v2 .dex-v2-position-terminal :is(.dex-v2-position-owner-actions, .dex-v2-position-private) { grid-column: auto; }
 
 .app-shell-trades .p2p-terminal-view-tabs {
   width: 100%;
@@ -2772,9 +2561,6 @@
 
 @media (max-width: 920px) {
   .app-shell-trades .p2p-trading-shell-create .p2p-trade-access-heading { gap: 2px; }
-  .app-shell-trades .p2p-trading-shell-create .p2p-trade-access-settings .standalone-trade-visibility button {
-    min-height: 52px;
-  }
   .app-shell-trades .p2p-trading-shell-create .trade-compose-advanced-options[open] .trade-compose-warning {
     display: block;
   }
@@ -2822,8 +2608,6 @@
 @media (max-width: 920px) {
   .app-shell-trades .p2p-my-trades-section-head {
     min-height: 64px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
@@ -2866,31 +2650,10 @@
   margin: 18px auto 34px;
   padding: 0;
 }
-.app-shell-trades
-  .p2p-trading-shell-create
-  .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot) {
-  grid-template-columns: minmax(0, 1fr) 280px;
-  column-gap: 12px;
-  padding-top: 0;
-}
-.app-shell-trades
-  .p2p-trading-shell-create
-  .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-  > .standalone-trades-section-head {
-  min-height: 50px;
-  align-self: center;
-  padding: 0 4px;
-}
-.app-shell-trades
-  .p2p-trading-shell-create
-  .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-  > .p2p-trade-entry-mode-slot {
-  padding: 0;
-}
 .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head h2 {
   font-size: 1.05rem;
 }
-.app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > :is(.trade-compose-panel, .p2p-recurring-builder) {
+.app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel {
   width: 100%;
   max-width: 780px;
   gap: 10px;
@@ -2971,41 +2734,7 @@
     width: min(calc(100% - 16px), 780px);
     margin-top: 10px;
   }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot) {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > :is(.standalone-trades-section-head, .p2p-trade-entry-mode-slot) {
-    grid-column: 1;
-    width: 100%;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > .standalone-trades-section-head {
-    grid-row: 1;
-    min-height: 38px;
-    padding: 0 2px;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > .p2p-trade-entry-mode-slot {
-    grid-row: 2;
-  }
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > :is(.trade-compose-panel, .p2p-recurring-builder) {
-    grid-column: 1;
-    grid-row: 3;
-  }
-  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > :is(.trade-compose-panel, .p2p-recurring-builder) {
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel {
     padding: 9px;
   }
 }
@@ -3336,7 +3065,6 @@
 @media (max-width: 520px) { .app-shell-dex-v2 .dex-v2-beta-token-card > header { align-items: flex-start; flex-direction: column; gap: 4px; } }
 /* Agent tools are three distinct destinations, exposed once. */
 .app-shell-trades .p2p-agent-mode-toggle {
-  width: min(100%, 560px);
   margin: 0;
 }
 
@@ -3364,12 +3092,8 @@
 }
 
 @media (max-width: 920px) {
-  .app-shell-trades .p2p-agent-mode-toggle {
-    width: 100%;
-  }
 
   .app-shell-trades .p2p-agent-mode-toggle button {
-    min-height: 42px;
     padding-inline: 5px;
     font-size: 0.7rem;
   }
@@ -3542,7 +3266,7 @@
   }
   .app-shell-trades .p2p-trading-shell { padding: 0; }
 
-  .app-shell-dex-v2 :is(.dex-v2-content-grid, .dex-v2-strategies-shell, .dex-v2-positions-shell) {
+  .app-shell-dex-v2 .dex-v2-content-grid {
     width: 100%;
     max-width: none;
     margin-inline: 0;
@@ -3566,7 +3290,6 @@
 
   .app-shell-dex-v2 .dex-v2-mode-nav > .p2p-trade-tabs,
   .app-shell-trades :is(.p2p-market-tabs, .p2p-create-tabs) .p2p-trade-tabs {
-    width: min(720px, calc(100vw - 56px));
     min-height: 46px;
     display: flex;
     gap: 4px;
@@ -3642,7 +3365,7 @@
     --dex-workspace-columns: minmax(0, 1fr) clamp(560px, 42vw, 720px);
     --dex-workspace-column-gap: 10px;
   }
-  .app-shell-dex-v2 :is(.dex-v2-content-grid, .dex-v2-strategies-shell, .dex-v2-positions-shell) {
+  .app-shell-dex-v2 .dex-v2-content-grid {
     grid-template-columns: var(--dex-workspace-columns);
     column-gap: 10px;
   }
@@ -3699,24 +3422,12 @@
 
 /* Final shared Trading page frame and explicit order inspector. */
 @media (min-width: 920.02px) {
-  .app-shell-dex-v2 :is(.dex-v2-strategies-shell, .dex-v2-positions-shell) {
-    padding-top: 0;
-  }
 
-  .app-shell-dex-v2 :is(.dex-v2-content-grid, .dex-v2-strategies-shell, .dex-v2-positions-shell) > .dex-market-chart {
+  .app-shell-dex-v2 .dex-v2-content-grid > .dex-market-chart {
     position: relative;
     z-index: 1;
     height: clamp(758px, calc(100dvh - 142px), 898px);
     margin-top: -48px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-strategy-form-column > :is(
-    .dex-v2-limit-composer,
-    .dex-v2-recurring-composer,
-    .dex-v2-pool-composer
-  ) {
-    border-left: 0;
-    padding-inline: 0;
   }
 
   .app-shell-trades .p2p-trading-shell:not(.p2p-trading-shell-drawer-open) {
@@ -3746,22 +3457,8 @@
     margin: 0 var(--trading-content-gutter) 34px auto;
   }
 
-  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > :is(.trade-compose-panel, .p2p-recurring-builder) {
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel {
     max-width: none;
-  }
-
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot) {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto;
-  }
-
-  .app-shell-trades
-    .p2p-trading-shell-create
-    .standalone-trade-create-panel:has(> .p2p-trade-entry-mode-slot)
-    > :is(.standalone-trades-section-head, .p2p-trade-entry-mode-slot, .trade-compose-panel, .p2p-recurring-builder) {
-    grid-column: 1;
   }
 
   .app-shell-trades .p2p-trading-shell-create :is(.trade-compose-grid, .trade-compose-grid-fixed-pair) {
@@ -3835,9 +3532,7 @@
     grid-column: 2;
     grid-row: 2;
     width: auto;
-    min-height: calc(100dvh - 220px);
     margin-right: var(--trading-content-gutter);
-    border-radius: 0;
   }
 
   .app-shell-trades .p2p-trading-shell-drawer-open :is(
@@ -4028,7 +3723,6 @@ html {
       calc(clamp(560px, 42vw, 720px) + var(--trading-content-gutter));
     grid-template-rows: auto minmax(0, 1fr) auto;
     column-gap: 0;
-    overflow: hidden;
   }
 
   .app-shell-trades .p2p-trading-shell-mine > .p2p-market-overview {
@@ -4067,13 +3761,6 @@ html {
 
 }
 
-@media (max-width: 920px) {
-
-  .app-shell-dex-v2 .dex-v2-positions-workspace.detail-open :is(.dex-v2-positions-toolbar, .dex-v2-position-index) {
-    display: none;
-  }
-}
-
 /* Keep Trading route changes on fixed tracks and use the open P2P navigation row. */
 @media (min-width: 920.02px) {
   .app-shell-dex-v2 .trading-market-pair-picker {
@@ -4092,7 +3779,6 @@ html {
     top: -58px;
     left: 0;
     z-index: 3;
-    width: 100%;
     height: 58px;
     display: flex;
     align-items: center;
@@ -4194,10 +3880,8 @@ html {
   .app-shell-trades :is(
     .p2p-offers-orderbook,
     .standalone-trade-create-panel,
-    .p2p-my-trades-lists,
     .standalone-trade-detail-section
-  ),
-  .app-shell-dex-v2 :is(.dex-v2-position-index, .dex-v2-position-terminal) {
+  ) {
     animation: trading-workspace-enter 140ms ease-out both;
   }
 }
@@ -4211,10 +3895,8 @@ html {
   .app-shell-trades :is(
     .p2p-offers-orderbook,
     .standalone-trade-create-panel,
-    .p2p-my-trades-lists,
     .standalone-trade-detail-section
-  ),
-  .app-shell-dex-v2 :is(.dex-v2-position-index, .dex-v2-position-terminal) {
+  ) {
     animation: none;
   }
 }
@@ -4359,7 +4041,6 @@ html {
 .app-shell-dex-v2 .dex-v2-pending-card { border: 1px solid #6f4fa0; padding: 18px; border-radius: 9px; }
 .dex-token-identity { display: grid; gap: 6px; padding: 10px 12px; font-size: 0.82rem; }
 .dex-token-identity small { font-size: 0.7rem; overflow-wrap: anywhere; }
-.app-shell-dex-v2 .trading-product-market :is(.trading-market-price, .trading-market-seed) { min-width: 0; }
 .app-shell-dex-v2 .dex-v2-page :is(button, input, select, summary):focus-visible { outline: 2px solid #c4b5fd; outline-offset: 3px; }
 @media (max-width: 760px) {
   .app-shell-dex-v2 .dex-v2-section-tabs { margin-bottom: 16px; }

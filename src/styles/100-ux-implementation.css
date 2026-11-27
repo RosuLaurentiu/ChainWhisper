@@ -7,14 +7,9 @@
   --ux-mobile-pair-context: 46px;
   --ux-mobile-workspace-nav: 50px;
   --ux-focus-ring: #c4b5fd;
-  --ux-whisper-line: linear-gradient(90deg, #a855f7, #8b5cf6 48%, #22d3ee);
 }
 
 /* The semantic market divider is the restrained ChainWhisper signature line. */
-.app-shell-trades .p2p-offers-market-row::before,
-.app-shell-trades .p2p-offers-market-row::after {
-  background: var(--ux-whisper-line);
-}
 
 .app-shell-trades .p2p-offers-market-row::after {
   transform: scaleX(-1);
@@ -39,10 +34,6 @@
 }
 
 /* Trading adds a product switch between the global header and its workspace. */
-.app-shell.app-shell-trades,
-.app-shell.app-shell-dex-v2 {
-  grid-template-rows: auto 42px minmax(0, 1fr);
-}
 
 .wallet-header-panel-connected {
   display: grid;
@@ -242,7 +233,6 @@
   z-index: 4;
   width: 100%;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(10, 9, 18, 0.96);
 }
 
 .app-shell-trades .standalone-trade-detail-section > .standalone-trades-section-head .standalone-trade-secondary-btn {
@@ -300,12 +290,6 @@
   padding: 2px 0 2px 9px;
 }
 
-.app-shell-trades .p2p-terminal-market,
-.app-shell-trades .p2p-terminal-ticket {
-  border-color: rgba(148, 163, 184, 0.14);
-  background: rgba(7, 8, 15, 0.66);
-}
-
 .app-shell-trades .p2p-terminal-price-card {
   min-height: 88px;
 }
@@ -351,11 +335,9 @@
 
 .app-shell-trades .p2p-trade-access-heading {
   display: grid;
-  gap: 2px;
 }
 
 .app-shell-trades .p2p-trade-access-heading > span {
-  color: #a78bfa;
   font-size: 0.66rem;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -364,7 +346,6 @@
 
 .app-shell-trades .p2p-trade-access-heading > strong {
   color: #f8f7ff;
-  font-size: 0.86rem;
 }
 
 .app-shell-trades .p2p-trade-access-heading > p {
@@ -386,9 +367,6 @@
 
 .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility {
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -396,16 +374,12 @@
 
 .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button {
   min-width: 0;
-  min-height: 62px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 7px;
   border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 9px;
-  background: rgba(8, 9, 16, 0.7);
   color: #aea7c4;
-  padding: 8px;
   text-align: left;
 }
 
@@ -432,10 +406,7 @@
 }
 
 .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button.active {
-  border-color: rgba(168, 85, 247, 0.72);
-  background: rgba(124, 58, 237, 0.16);
   color: #f5f3ff;
-  box-shadow: inset 0 -2px 0 rgba(34, 211, 238, 0.55);
 }
 
 .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button:disabled {
@@ -461,7 +432,6 @@
 .app-shell-trades .trade-compose-advanced-options {
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 9px;
-  background: rgba(7, 8, 15, 0.62);
 }
 
 .app-shell-trades .trade-compose-advanced-options > summary {
@@ -530,11 +500,6 @@
 }
 
 @media (min-width: 920.02px) {
-  .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open):has(> .p2p-advanced-tools),
-  .app-shell-trades .p2p-trading-shell-create:not(.p2p-trading-shell-drawer-open):has(> .p2p-advanced-tools),
-  .app-shell-trades .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine):has(> .p2p-advanced-tools) {
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-  }
 
   .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-section-disconnected {
     align-self: start;
@@ -543,10 +508,6 @@
   .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-section-disconnected {
     grid-template-rows: auto;
     align-items: start;
-  }
-
-  .app-shell-trades .p2p-trading-shell-drawer-open {
-    grid-template-columns: minmax(0, 1fr) minmax(420px, 480px);
   }
 
   .app-shell-trades .p2p-trading-shell-drawer-open .p2p-offers-workspace {
@@ -578,7 +539,6 @@
   }
 
   .app-shell.app-shell-trades {
-    grid-template-rows: auto calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context)) minmax(0, 1fr);
     align-content: stretch;
   }
 
@@ -683,19 +643,6 @@
     display: none;
   }
 
-  .app-shell-trades .p2p-offers-workspace {
-    padding: 0 7px calc(var(--ux-mobile-workspace-nav) + 10px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .app-shell-trades .p2p-offers-panel {
-    gap: 9px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-    padding: 5px 0 8px;
-  }
-
   .app-shell-trades .standalone-trades-shell {
     overflow-x: hidden !important;
     scrollbar-width: none;
@@ -706,13 +653,6 @@
     height: 0;
   }
 
-  .app-shell-trades .p2p-offer-rate-row {
-    display: grid;
-    grid-template-columns: minmax(88px, 0.8fr) minmax(92px, 0.8fr) minmax(105px, 1fr);
-    gap: 8px;
-    padding: 9px 8px;
-  }
-
   .app-shell-trades .p2p-trading-shell-drawer-open {
     padding: 0;
   }
@@ -720,11 +660,8 @@
   .app-shell-trades .p2p-trading-shell-drawer-open > :is(
     .p2p-market-overview,
     .p2p-offers-workspace,
-    .p2p-public-trades-section,
     .p2p-my-trades-section,
-    .p2p-agent-section,
-    .p2p-footer-links,
-    .p2p-mobile-balance-fab
+    .p2p-agent-section
   ) {
     display: none !important;
   }
@@ -736,7 +673,6 @@
     min-height: 100%;
     overflow-y: auto;
     border: 0;
-    border-radius: 0;
     padding: 0 8px calc(var(--ux-mobile-workspace-nav) + 14px + env(safe-area-inset-bottom, 0px));
   }
 
@@ -773,11 +709,9 @@
   }
 
   .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button {
-    min-height: 54px;
     grid-template-columns: 1fr;
     justify-items: center;
     gap: 4px;
-    padding: 7px 4px;
     text-align: center;
   }
 
@@ -810,11 +744,6 @@
     line-height: 1.05;
   }
 
-  .app-shell-trades .p2p-offer-rate-row {
-    grid-template-columns: minmax(80px, 0.75fr) minmax(82px, 0.8fr) minmax(96px, 1fr);
-    gap: 5px;
-  }
-
   .app-shell-trades .p2p-offer-rate-source > span > strong,
   .app-shell-trades .p2p-offer-rate-price > strong {
     font-size: 0.74rem;
@@ -823,10 +752,6 @@
   .app-shell-trades .p2p-trade-access-heading > p,
   .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button small {
     display: none;
-  }
-
-  .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button {
-    min-height: 48px;
   }
 
   .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button strong {

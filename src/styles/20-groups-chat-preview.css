@@ -354,11 +354,7 @@
 
 .sound-toggle-btn {
   border: 1px solid var(--border);
-  background: var(--bg-elev-2);
   color: var(--text);
-  border-radius: 6px;
-  width: 32px;
-  height: 32px;
   display: inline-grid;
   place-items: center;
   cursor: pointer;
@@ -408,16 +404,11 @@
 
 .error {
   margin: 0;
-  color: #ff9fb2;
   font-size: 0.85rem;
 }
 
 .chat-panel {
-  display: block;
-  min-height: 0;
   height: 100%;
-  padding: 24px 20px;
-  background: radial-gradient(1200px 480px at 75% -60px, rgba(139, 92, 246, 0.1), transparent 62%);
   overflow: hidden;
 }
 

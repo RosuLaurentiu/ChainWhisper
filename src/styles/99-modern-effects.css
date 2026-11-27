@@ -13,9 +13,6 @@
   --ease-tactile: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
-  --scrollbar-thumb: rgba(139, 92, 246, 0.58);
-  --scrollbar-thumb-hover: rgba(167, 139, 250, 0.78);
-  --scrollbar-track: rgba(10, 10, 18, 0.34);
 }
 
 @keyframes cw-route-enter {
@@ -137,35 +134,6 @@
 
   100% {
     box-shadow: 0 0 0 rgba(56, 189, 248, 0);
-    scale: 1;
-  }
-}
-
-@keyframes cw-chart-crossfade {
-  from {
-    opacity: 0.18;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes cw-treasury-live-halo {
-  0% {
-    box-shadow: 0 0 0 rgba(var(--treasury-live-halo), 0);
-    scale: 0.998;
-  }
-
-  46% {
-    border-color: rgba(var(--treasury-live-halo), 0.72);
-    box-shadow:
-      0 0 0 1px rgba(var(--treasury-live-halo), 0.34),
-      0 0 24px rgba(var(--treasury-live-halo), 0.16);
-    scale: 1.008;
-  }
-
-  100% {
     scale: 1;
   }
 }
@@ -363,13 +331,10 @@ button:not(:disabled):active,
 :is(
   button.copied,
   .contact-copy.copied,
-  .p2p-wallet-mode-copy.copied,
-  .p2p-wallet-menu-address-button.copied,
   .trade-card-link-button.copied,
   .p2p-terminal-share.copied,
   .p2p-offer-share-btn.copied,
   .privacy-action-progress.is-complete,
-  .p2p-wallet-onboarding-step.complete,
   .standalone-trade-created,
   .p2p-action-notice-success
 ) {
@@ -428,7 +393,6 @@ button:not(:disabled):active,
 :is(
   .contact-card,
   .treasury-meta-card-link,
-  .p2p-wallet-account-card,
   .app-shell-trades .p2p-order-card
 ) {
   transition:
@@ -445,7 +409,6 @@ button:not(:disabled):active,
   > :is(
     .p2p-swap-section,
     .p2p-agent-section,
-    .p2p-public-trades-section,
     .standalone-trade-create-panel,
     .p2p-my-trades-section
   ),
@@ -456,7 +419,7 @@ button:not(:disabled):active,
 @media (max-width: 920px) {
   .app-shell-trades
     .p2p-trading-shell
-    > :is(.p2p-public-trades-section, .p2p-my-trades-section) {
+    > .p2p-my-trades-section {
     animation-name: cw-route-chrome-enter;
   }
 }
@@ -473,7 +436,7 @@ button:not(:disabled):active,
   animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
 }
 
-.app-shell-trades :is(.p2p-swap-token-flip, .trade-compose-swap-indicator, .p2p-recurring-cycle-indicator) svg {
+.app-shell-trades :is(.p2p-swap-token-flip, .trade-compose-swap-indicator) svg {
   transition: transform var(--motion-enter) var(--ease-settle);
 }
 
@@ -877,18 +840,6 @@ button:not(:disabled):active,
 
 .treasury-pill-button.active {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 5px 14px rgba(2, 3, 10, 0.16);
-}
-
-.treasury-stat-card {
-  --treasury-live-halo: 139, 92, 246;
-}
-
-.treasury-stat-card-coti {
-  --treasury-live-halo: 56, 189, 248;
-}
-
-.treasury-stat-card-gcoti {
-  --treasury-live-halo: 52, 211, 153;
 }
 
 /* Chat rows stay static; controls and state colors receive the feedback. */

@@ -14,7 +14,6 @@
 .p2p-trading-shell {
   --p2p-shell-gap: 10px;
   --p2p-shell-border: rgba(92, 75, 138, 0.58);
-  --p2p-shell-border-soft: rgba(148, 163, 184, 0.16);
   height: 100%;
   gap: var(--p2p-shell-gap);
   background:
@@ -166,13 +165,11 @@
 @media (max-width: 920px) {
   .swap-page-panel {
     max-width: 778px;
-    gap: 14px;
   }
 
   .swap-page-hero {
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
-    gap: 16px;
   }
 
   .swap-page-title {
@@ -182,11 +179,9 @@
   .swap-page-heading p {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px 0;
   }
 
   .swap-privacy-portal-link {
-    width: 100%;
     margin-left: 0;
   }
 }

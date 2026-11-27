@@ -4,8 +4,6 @@
  */
 :root {
   --approved-bg: var(--surface-canvas);
-  --approved-panel: var(--surface-base);
-  --approved-panel-raised: var(--surface-raised);
   --approved-border: var(--border-default);
   --approved-border-soft: var(--border-subtle);
   --approved-muted: var(--text-secondary);
@@ -14,14 +12,11 @@
   --scrollbar-thumb: #42454f;
   --scrollbar-thumb-hover: #606471;
   --scrollbar-track: var(--surface-canvas);
-  --ux-whisper-line: var(--border-default);
 }
 
 /* Neutral foundations, including routes that predate the shared tokens. */
 :root body .app-shell {
   --approved-bg: var(--surface-canvas);
-  --approved-panel: var(--surface-base);
-  --approved-panel-raised: var(--surface-raised);
   --approved-border: var(--border-default);
   --approved-border-soft: var(--border-subtle);
   --approved-muted: var(--text-secondary);
@@ -41,10 +36,8 @@
   white-space: nowrap;
   border: 0;
 }
-:root body .app-shell :is(.top-header, .top-header-brand, .top-header-main,
-  .top-header-actions, .top-header-bar, .trading-product-bar, .trading-market-context,
-  .app-root, .chat-panel, .chat-shell, .swap-page-shell, .treasury-page-shell,
-  .landing-shell, .standalone-trades-page, .p2p-dashboard, .dex-v2-page) {
+:root body .app-shell :is(.top-header, .top-header-brand, .top-header-actions, .top-header-bar, .trading-product-bar, .trading-market-context,
+  .app-root, .chat-panel, .chat-shell, .swap-page-shell, .landing-shell, .dex-v2-page) {
   background: var(--surface-canvas);
   border-color: var(--border-subtle);
   box-shadow: none;
@@ -65,25 +58,19 @@
 :root body .app-shell [aria-invalid="true"] { border-color: var(--danger); }
 
 /* A single quiet header. Each selected item keeps its visible purple cue. */
-:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch,
-  .p2p-trading-desk-tabs, .dex-v2-primary-tabs, .dex-v2-mode-tabs,
-  .dex-v2-desk-tabs, .dex-v2-sub-tabs, .trade-product-tabs) {
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch) {
   background: transparent;
   border-color: var(--border-subtle);
   border-radius: 4px;
   box-shadow: none;
 }
-:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch,
-  .p2p-trading-desk-tabs, .dex-v2-primary-tabs, .dex-v2-mode-tabs,
-  .dex-v2-desk-tabs, .dex-v2-sub-tabs, .trade-product-tabs) button {
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch) button {
   background: transparent;
   color: var(--text-secondary);
   border-color: transparent;
   box-shadow: none;
 }
-:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch,
-  .p2p-trading-desk-tabs, .dex-v2-primary-tabs, .dex-v2-mode-tabs,
-  .dex-v2-desk-tabs, .dex-v2-sub-tabs, .trade-product-tabs) :is(button.active, button[aria-current="page"], button[aria-selected="true"]) {
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch) :is(button.active, button[aria-current="page"], button[aria-selected="true"]) {
   background: var(--surface-raised);
   color: var(--text-primary);
   border-color: transparent;
@@ -108,9 +95,7 @@
   .dex-v2-current-pool, .dex-v2-current-pool-positions, .dex-owner-workspace,
   .dex-owner-summary, .dex-owner-list, .dex-v2-activity-card,
   .standalone-trades-section, .standalone-trade-detail-section,
-  .p2p-my-trades-section, .p2p-trade-composer, .trade-composer-panel,
-  .p2p-compose-panel, .p2p-compose-section, .p2p-composer-section,
-  .trade-compose-panel, .trade-compose-section, .trade-compose-header,
+  .p2p-my-trades-section, .trade-compose-panel, .trade-compose-section, .trade-compose-header,
   .trade-compose-footer, .trade-compose-quote-dock) {
   background: transparent;
   border-color: var(--border-subtle);
@@ -120,7 +105,6 @@
 :root body .app-shell :is(.dex-v2-current-amounts > label, .dex-v2-quote-output,
   .dex-v2-current-advanced, .dex-owner-workspace input,
   .dex-owner-workspace select, .dex-v2-limit-price-field,
-  .p2p-compose-amount, .p2p-composer-amount-field, .swap-amount-box,
   .trade-compose-asset-field, .trade-compose-advanced-options,
   .trade-token-select-dropdown) {
   background: var(--surface-base);
@@ -132,7 +116,7 @@
 :root body .app-shell .dex-v2-quote-output :is(strong, small) { color: var(--text-secondary); }
 :root body .app-shell .dex-v2-current-amounts :is(input, output) { color: var(--text-primary); }
 :root body .app-shell :is(.dex-v2-current-direction, .dex-v2-swap-mode-toggle,
-  .dex-v2-current-side-toggle, .dex-v2-setting-presets, .p2p-trade-action-switch) {
+  .dex-v2-current-side-toggle, .dex-v2-setting-presets) {
   background: var(--surface-base);
   border-color: var(--border-default);
   box-shadow: none;
@@ -150,15 +134,13 @@
 }
 :root body .app-shell .dex-v2-current-advanced > summary { color: var(--text-primary); }
 :root body .app-shell .dex-v2-current-advanced > summary > span { color: var(--text-secondary); }
-:root body .app-shell :is(.dex-v2-extra-settings, .dex-v2-current-details,
-  .dex-owner-action, .dex-owner-footer, .dex-owner-actions, .dex-history-detail) {
+:root body .app-shell :is(.dex-v2-extra-settings, .dex-owner-action, .dex-owner-footer, .dex-owner-actions, .dex-history-detail) {
   background: transparent;
   border-color: var(--border-subtle);
   box-shadow: none;
 }
 :root body .app-shell .dex-owner-workspace { border: 0; padding: 0; }
-:root body .app-shell :is(.dex-v2-extra-settings, .dex-v2-current-details,
-  .dex-owner-action, .dex-owner-footer) > summary { color: var(--text-secondary); }
+:root body .app-shell :is(.dex-v2-extra-settings, .dex-owner-action, .dex-owner-footer) > summary { color: var(--text-secondary); }
 :root body .app-shell .dex-v2-current-swap .dex-v2-current-swap-heading { margin: 0; }
 
 /* Trading forms share compact fields; wallet details stay in one disclosure. */
@@ -190,7 +172,7 @@
   filter: none;
 }
 :root body .app-shell :is(.dex-v2-review-button, .landing-action-btn-primary,
-  .standalone-trade-primary-btn, .p2p-create-trade-btn, .privacy-locked-notice > button):hover:not(:disabled) {
+  .privacy-locked-notice > button):hover:not(:disabled) {
   background: #8859d5;
   border-color: #a17bdf;
   box-shadow: none;
@@ -221,7 +203,7 @@
 }
 :root body .app-shell .dex-market-chart-samples { grid-template-rows: auto minmax(260px, 1fr) auto auto; }
 :root body .app-shell .dex-market-chart-legend { flex-direction: column; align-items: flex-start; gap: 6px; }
-:root body .app-shell .dex-market-chart-legend > .candle-up { color: var(--text-primary); font-size: 1rem; font-weight: 650; }
+:root body .app-shell .dex-market-chart-legend > .candle-up { color: var(--text-primary); font-weight: 650; }
 :root body .app-shell .dex-market-chart-legend > small { margin-left: 0; color: var(--text-secondary); font-size: .875rem; }
 :root body .app-shell .dex-market-chart-actions button {
   background: var(--surface-base);
@@ -234,7 +216,7 @@
   color: var(--text-primary);
   box-shadow: inset 0 -2px var(--brand-strong);
 }
-:root body .app-shell :is(.dex-market-chart-tooltip, .dex-market-chart-hover-card) {
+:root body .app-shell .dex-market-chart-tooltip {
   background: var(--surface-overlay);
   border-color: var(--border-default);
   color: var(--text-primary);
@@ -269,21 +251,19 @@
 :root body .app-shell .landing-brand-mark { background: var(--surface-base); border-color: var(--border-default); box-shadow: none; }
 
 /* Chat/profile/group controls retain their place, sizing and enabled states. */
-:root body .app-shell :is(.contacts-sidebar, .contact-profile-card, .contact-list-panel,
-  .group-list-panel, .chat-header, .chat-toolbar, .chat-composer,
-  .chat-placeholder-card, .chat-readiness-state, .group-header, .group-admin-panel) {
+:root body .app-shell :is(.contacts-sidebar, .contact-profile-card, .chat-header, .chat-placeholder-card, .chat-readiness-state) {
   background: var(--surface-base);
   border-color: var(--border-subtle);
   border-radius: 4px;
   box-shadow: none;
 }
-:root body .app-shell :is(.contact-profile-editor, .chat-compose-input, .message-input) {
+:root body .app-shell .contact-profile-editor {
   background: var(--surface-canvas);
   border-color: var(--border-default);
   color: var(--text-primary);
   border-radius: 4px;
 }
-:root body .app-shell :is(.contact-item, .group-item, .message-bubble) {
+:root body .app-shell .message-bubble {
   border-color: var(--border-subtle);
   box-shadow: none;
 }
@@ -312,13 +292,8 @@
 :root body .home-legal-dialog-actions { background: var(--surface-overlay); border-color: var(--border-subtle); }
 :root body .home-legal-dialog-summary { background: var(--surface-raised); color: var(--text-secondary); }
 :root body .home-legal-dialog-actions button { background: var(--surface-base); border-color: var(--border-default); border-radius: 4px; box-shadow: none; }
-:root body .app-shell :is(.swap-card, .swap-panel, .swap-workspace, .swap-summary,
-  .swap-form, .token-swap-card, .treasury-card, .private-tvl-card,
-  .private-tvl-section, .tvl-card, .tvl-stat-card, .treasury-section,
-  .modal-card, .modal-section, .modal-copy, .wallet-picker,
-  .p2p-wallet-menu, .p2p-wallet-network-menu, .trading-market-token-menu,
-  .p2p-terminal-drawer, .p2p-terminal-sheet, .p2p-balances-sheet,
-  .p2p-trade-confirm-modal, .trade-action-confirm-modal, .chat-quick-actions) {
+:root body .app-shell :is(.swap-card, .modal-card, .modal-copy, .p2p-wallet-menu, .trading-market-token-menu,
+  .trade-action-confirm-modal) {
   background: var(--surface-base);
   color: var(--text-primary);
   border-color: var(--border-default);
@@ -331,12 +306,12 @@
 :root body .app-shell .p2p-offers-market-row::after { background: var(--border-default); }
 :root body .app-shell :is(.p2p-terminal-selection-empty p, .standalone-trades-section-head p) { color: var(--text-secondary); }
 :root body .app-shell .trading-market-token-details { margin-top: 12px; border-top: 1px solid var(--border-subtle); }
-:root body .app-shell .trading-market-token-details > summary { min-height: 40px; padding-block: 10px; color: var(--text-secondary); cursor: pointer; }
+:root body .app-shell .trading-market-token-details > summary { min-height: 40px; padding-block: 10px; }
 :root body .app-shell .p2p-inline-diagnostics { margin-top: 8px; color: var(--text-secondary); }
 :root body .app-shell .p2p-inline-diagnostics p { overflow-wrap: anywhere; font-size: .78rem; }
 :root body .app-shell-trades .p2p-trading-shell :is(.p2p-trade-workspace-panel,
   .trade-compose-panel, .trade-compose-section, .p2p-create-terms,
-  .p2p-terminal-selection-empty, .p2p-terminal-header, .p2p-swap-side-switch,
+  .p2p-terminal-selection-empty, .p2p-swap-side-switch,
   .trade-compose-header, .trade-compose-footer, .trade-compose-quote-dock,
   .trade-compose-limit-price, .p2p-agent-chat-window, .p2p-agent-messages,
   .p2p-agent-mode-toggle) {
@@ -347,7 +322,7 @@
 }
 :root body .app-shell-trades .p2p-trading-shell :is(.trade-compose-asset-field,
   .trade-compose-advanced-options, .trade-token-select-trigger,
-  .trade-token-select-dropdown, .p2p-trade-access-option) {
+  .trade-token-select-dropdown) {
   background: var(--surface-base);
   border-color: var(--border-default);
   border-radius: 4px;
@@ -370,8 +345,7 @@
 :root body .app-shell .dex-v2-current-direction { border-radius: 50%; color: var(--text-secondary); }
 :root body .app-shell :is(.swap-page-panel, .swap-page-hero, .swap-asset-panel,
   .swap-asset-panel-output, .swap-pill-switch, .swap-token-chip,
-  .privacy-token-rail, .privacy-connection-context,
-  .treasury-panel, .treasury-stat-card, .treasury-state-card, .treasury-hero,
+  .privacy-token-rail, .treasury-panel, .treasury-stat-card, .treasury-state-card, .treasury-hero,
   .treasury-meta-card, .treasury-readiness-grid article) {
   background: var(--surface-base);
   border-color: var(--border-default);
@@ -643,7 +617,7 @@
     min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px);
   }
   :root body .app-shell-dex-v2 .trading-market-context { grid-template-rows: var(--ux-mobile-trading-nav) var(--ux-mobile-pair-context) 36px; }
-  :root body .app-shell-dex-v2 .trading-market-change { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  :root body .app-shell-dex-v2 .trading-market-change { display: flex; align-items: center; justify-content: space-between; }
 }
 @media (max-width: 680px) {
   :root body .app-shell .landing-hero { padding: 24px 18px; }
@@ -1053,7 +1027,6 @@
 :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-execution-choice > .dex-v2-swap-mode-toggle { grid-template-columns: auto auto; }
 /* On a phone the row has no room beside the toggle: the hint takes its own line under it in both modes. */
 @media (max-width: 920px) {
-  :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice { flex-wrap: wrap; }
   :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-execution-choice > span { flex-basis: 100%; }
 }
 :root body .app-shell-dex-v2 .dex-v2-current-swap .dex-v2-swap-settings > .dex-v2-current-advanced {
@@ -1173,10 +1146,9 @@
 }
 :root body .app-shell-dex-v2 .dex-v2-current-limit[aria-label="Create limit order"] .dex-v2-limit-entry input { min-height: 44px; font-size: 1.75rem; line-height: 1.25; }
 
-/* Liquidity: CW-095 panel title, one frame per amount field, 12 px section rhythm. The main button is in
+/* Liquidity: CW-095 panel title, one frame per amount field (section rhythm: CW-097 Pool form compact). The main button is in
    view at 1280 x 800. Recovery buttons with no class use the secondary style. */
 :root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-composer-heading h2 { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
-:root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-section { padding: 12px 0; }
 :root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-amounts-section .dex-v2-current-fields label {
   display: grid;
   gap: 6px;
@@ -1290,7 +1262,7 @@
 /* CW-097. P2P: the CW-096 segmented style for Buy / Sell in Create, the DEX disabled look for the main
    button, one disclosure chevron on plain-text summaries, the CW-095 title on My trades, a neutral
    "Wallet needed" note instead of the error colour, and the 12 px text floor in the offer filter. */
-:root body .app-shell-trades .p2p-trading-shell :is(.standalone-trade-create-panel, .p2p-counter-panel) .trade-compose-direction-control > [role="tablist"] {
+:root body .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .trade-compose-direction-control > [role="tablist"] {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
@@ -1301,7 +1273,7 @@
   background: var(--surface-base);
   box-shadow: none;
 }
-:root body .app-shell-trades .p2p-trading-shell :is(.standalone-trade-create-panel, .p2p-counter-panel) .trade-compose-direction-control > [role="tablist"] > button {
+:root body .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .trade-compose-direction-control > [role="tablist"] > button {
   min-height: 44px;
   height: auto;
   padding: 0 12px;
@@ -1313,7 +1285,7 @@
   font-weight: 600;
   box-shadow: none;
 }
-:root body .app-shell-trades .p2p-trading-shell :is(.standalone-trade-create-panel, .p2p-counter-panel) .trade-compose-direction-control > [role="tablist"] > button[aria-selected="true"] {
+:root body .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .trade-compose-direction-control > [role="tablist"] > button[aria-selected="true"] {
   background: var(--surface-interactive);
   color: var(--text-primary);
   box-shadow: inset 0 -2px var(--brand-strong);

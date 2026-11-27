@@ -21,7 +21,7 @@ const rule = (selectorPart: string, source = block()) => {
   expect(at, selectorPart).toBeGreaterThan(-1);
   return source.slice(at, source.indexOf('}', at));
 };
-const TABS = ':is(.standalone-trade-create-panel, .p2p-counter-panel) .trade-compose-direction-control > [role="tablist"]';
+const TABS = '.standalone-trade-create-panel .trade-compose-direction-control > [role="tablist"]';
 
 describe('P2P Create Buy / Sell', () => {
   it('uses the CW-096 segmented style with the 6 px corner and 44 px buttons', () => {
