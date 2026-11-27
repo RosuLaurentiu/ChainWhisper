@@ -6,6 +6,7 @@ import {
   type JsonRpcSigner
 } from '@coti-io/coti-ethers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ChatTransactionUnconfirmedError } from './chatSubmittedTransaction';
 import reviewedRuntime from './__fixtures__/reviewed-group-chat-v2-runtime.json';
 
 const coreMocks = vi.hoisted(() => ({ loadCotiEthersModule: vi.fn(), loadCotiStartupReadProvider: vi.fn() }));
@@ -555,6 +556,38 @@ describe('groupChatV2Chain', () => {
     await expect(submitted.wait()).resolves.toBe(publicReceipt);
     expect(readProvider.getTransactionReceipt).toHaveBeenCalledWith(TX_HASH);
     expect(nativeWait).not.toHaveBeenCalled();
+  });
+
+  it('reports a Group broadcast whose public receipt read keeps failing as submitted with its hash', async () => {
+    const walletProvider = makeProvider();
+    const readProvider = makeProvider();
+    readProvider.getTransactionReceipt = vi.fn(async () => {
+      throw new Error('403 Forbidden');
+    }) as never;
+    const nativeWait = vi.fn(async () => ({ status: 1 }));
+    install({ createGroup: vi.fn(async () => ({ hash: TX_HASH, wait: nativeWait })) });
+    const capability = await bindGroupChatV2MetaMaskCapability({
+      signer: makeSigner({ provider: walletProvider }),
+      browserProvider: walletProvider,
+      readProvider,
+      ownerAddress: ALICE,
+      chainId: CHAIN_ID,
+      assertCurrent: vi.fn(async () => undefined)
+    });
+    const deployment = await verifyGroupChatV2Deployment({ manifest: MANIFEST, capability });
+    const submitted = await createGroupChatV2Group({ deployment, capability, initialInvitees: [] });
+
+    vi.useFakeTimers();
+    try {
+      const outcome = submitted.wait().then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(301_000);
+      const error = await outcome;
+      expect(error).toBeInstanceOf(ChatTransactionUnconfirmedError);
+      expect((error as ChatTransactionUnconfirmedError).txHash).toBe(TX_HASH);
+      expect(nativeWait).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('invalidates a capability without destroying the shared BrowserProvider', async () => {

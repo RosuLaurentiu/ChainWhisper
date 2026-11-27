@@ -4,6 +4,10 @@ import {
   sanitizeOutgoingMessagePlainText
 } from '../../../lib/appHelpers';
 import { sendChatImageAttachment } from '../../../lib/chatImageAttachment';
+import {
+  CHAT_MESSAGE_SUBMITTED_NOTICE,
+  getSubmittedChatTransactionHash
+} from '../../../lib/chatSubmittedTransaction';
 import { getChatReplySourceAnchor } from '../../../lib/chatReplySourceAnchor';
 import type { DirectChatV2WriteCoordinator } from '../../../lib/directChatV2WriteCoordinator';
 import { buildTradeMessageReferenceFromContext, type LinkedTradeContext } from '../../../lib/linkedTradeContext';
@@ -126,6 +130,10 @@ export default function useDirectMessageActions({
     });
   };
 
+  /**
+   * Returns the transaction hash when the message is confirmed or was broadcast
+   * with an unknown receipt ('submitted'). Callers must not resend in either case.
+   */
   const sendMessage = async (
     overrideMessageText?: string,
     overrideReplyTarget?: ChatMessage | null,
@@ -227,6 +235,16 @@ export default function useDirectMessageActions({
       }
       return result.transactionHash || undefined;
     } catch (sendError) {
+      const submittedTransactionHash = getSubmittedChatTransactionHash(sendError);
+      if (submittedTransactionHash) {
+        // Broadcast happened. Clear the composer so the same text and tip are not sent twice.
+        if (scopeCurrent()) {
+          if (typeof overrideMessageText === 'undefined') setMessageInput('');
+          setReplyingToMessage(null);
+          setError(CHAT_MESSAGE_SUBMITTED_NOTICE);
+        }
+        return submittedTransactionHash;
+      }
       if (scopeCurrent()) {
         const message = getOnChainFailureMessage(
           sendError,

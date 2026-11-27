@@ -9,6 +9,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CotiEventHintSubscription } from './appShared/cotiEventHints';
 import * as walletFlow from './walletTransactionFlow';
+import { ChatTransactionUnconfirmedError } from './chatSubmittedTransaction';
 import reviewedRuntime from './__fixtures__/reviewed-direct-chat-v2-runtime.json';
 
 const coreMocks = vi.hoisted(() => ({
@@ -32,7 +33,6 @@ import {
   DIRECT_CHAT_V2_WITHDRAW_SELECTOR,
   buildDirectChatV2MessageKey,
   bindDirectChatV2MetaMaskCapability,
-  canReactToDirectChatV2Message,
   clearDirectChatV2ContactSettings,
   createDirectChatV2Conversation,
   decryptDirectChatV2SeedEnvelope,
@@ -47,7 +47,6 @@ import {
   readDirectChatV2Nickname,
   readDirectChatV2Conversation,
   readDirectChatV2ConversationMessageCountAtBlock,
-  readDirectChatV2EpochMetadata,
   readDirectChatV2EpochKey,
   readDirectChatV2IncomingMessageLogPage,
   readDirectChatV2LatestBlockNumber,
@@ -1077,6 +1076,75 @@ describe('directChatV2Chain', () => {
     expect(rotated.transaction.txHash).toBe('0xrotate');
   });
 
+  it('reports a broadcast whose public receipt read keeps failing as submitted with its hash', async () => {
+    const txHash = `0x${'5a'.repeat(32)}`;
+    const readProvider = makeBrowserProvider();
+    readProvider.getTransactionReceipt = vi.fn(async () => {
+      throw new Error('403 Forbidden');
+    }) as never;
+    let exists = false;
+    const chat = {
+      conversationIdFor: vi.fn(async () => CONVERSATION_ID),
+      isParticipant: vi.fn(async () => exists),
+      getConversation: vi.fn(async () => existingConversation),
+      createConversation: vi.fn(async () => {
+        exists = true;
+        return { hash: txHash, wait: vi.fn(async () => ({ status: 1 })) };
+      })
+    };
+    const { capability, deployment } = await installVerifiedContract(chat, makeSigner(), readProvider);
+    const created = await createDirectChatV2Conversation({ capability, deployment, peer: BOB });
+
+    vi.useFakeTimers();
+    try {
+      const outcome = created.transaction.wait().then(
+        () => null,
+        (error: unknown) => error
+      );
+      await vi.advanceTimersByTimeAsync(181_000);
+      const error = await outcome;
+      expect(error).toBeInstanceOf(ChatTransactionUnconfirmedError);
+      expect((error as ChatTransactionUnconfirmedError).txHash).toBe(txHash);
+      expect((error as Error).message).toContain('submitted, but COTI confirmation timed out');
+      expect(readProvider.getTransactionReceipt).toHaveBeenCalledWith(txHash);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a reverted native receipt as a failure but marks other native wait errors as submitted', async () => {
+    const txHash = `0x${'6b'.repeat(32)}`;
+    const reverted = Object.assign(new Error('transaction reverted'), { code: 'CALL_EXCEPTION' });
+    const waits = [
+      vi.fn(async () => {
+        throw reverted;
+      }),
+      vi.fn(async () => {
+        throw new Error('HTTP 403');
+      })
+    ];
+    let exists = false;
+    let call = 0;
+    const chat = {
+      conversationIdFor: vi.fn(async () => CONVERSATION_ID),
+      isParticipant: vi.fn(async () => exists),
+      getConversation: vi.fn(async () => existingConversation),
+      createConversation: vi.fn(async () => {
+        exists = true;
+        return { hash: txHash, wait: waits[call++] };
+      })
+    };
+    const { capability, deployment } = await installVerifiedContract(chat);
+
+    const first = await createDirectChatV2Conversation({ capability, deployment, peer: BOB });
+    await expect(first.transaction.wait()).rejects.toBe(reverted);
+    exists = false;
+    const second = await createDirectChatV2Conversation({ capability, deployment, peer: BOB });
+    const error = await second.transaction.wait().catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ChatTransactionUnconfirmedError);
+    expect((error as ChatTransactionUnconfirmedError).txHash).toBe(txHash);
+  });
+
   it('pins a post-receipt conversation read to the confirmed block', async () => {
     const chat = {
       conversationIdFor: vi.fn(async () => CONVERSATION_ID),
@@ -1121,48 +1189,6 @@ describe('directChatV2Chain', () => {
       { from: ALICE }
     );
     expect(signer.encryptValue).not.toHaveBeenCalled();
-  });
-
-  it('reads attested historical epoch metadata without decrypting or submitting a transaction', async () => {
-    const chat = {
-      conversationIdFor: vi.fn(async () => CONVERSATION_ID),
-      isParticipant: vi.fn(async () => true),
-      getConversation: vi.fn(async () => existingConversation),
-      getEpochMetadata: vi.fn(async () => ({
-        exists: true,
-        rotatedBy: BOB,
-        createdAt: 123n
-      }))
-    };
-    const { capability, signer, deployment } = await installVerifiedContract(chat);
-
-    await expect(
-      readDirectChatV2EpochMetadata({ capability, deployment, peer: BOB, epoch: 2n })
-    ).resolves.toEqual({
-      chainId: CHAIN_ID,
-      contractAddress: CHAT,
-      conversationId: CONVERSATION_ID,
-      epoch: 2n,
-      rotatedBy: BOB,
-      createdAt: 123n
-    });
-    expect(chat.getEpochMetadata).toHaveBeenCalledWith(CONVERSATION_ID, 2n);
-    expect(signer.decryptValue).not.toHaveBeenCalled();
-  });
-
-  it('checks the deployed reaction authorization surface with the stable message ID', async () => {
-    const chat = {
-      conversationIdFor: vi.fn(async () => CONVERSATION_ID),
-      isParticipant: vi.fn(async () => true),
-      getConversation: vi.fn(async () => existingConversation),
-      canReact: vi.fn(async () => true)
-    };
-    const { capability, deployment } = await installVerifiedContract(chat);
-
-    await expect(
-      canReactToDirectChatV2Message({ capability, deployment, peer: BOB, messageId: 7n })
-    ).resolves.toBe(true);
-    expect(chat.canReact).toHaveBeenCalledWith(CONVERSATION_ID, 7n, ALICE);
   });
 
   it('reads and withdraws pull-based native tips without bypassing deployment verification', async () => {

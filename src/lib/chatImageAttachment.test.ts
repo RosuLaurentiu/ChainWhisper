@@ -44,8 +44,9 @@ const makeOptions = (overrides: Partial<Parameters<typeof sendChatImageAttachmen
   sendImageTag: vi.fn(async () => txHash),
   senderAddress: ownerAddress,
   uploadAuthorization: {
-    mode: 'signature' as const,
-    sign: vi.fn(async () => `0x${'c'.repeat(130)}`)
+    mode: 'session' as const,
+    protocol: 'direct-v2' as const,
+    token: vi.fn(async () => 'test-session-token')
   },
   setError: vi.fn(),
   setUploadingImage: vi.fn(),
@@ -121,6 +122,80 @@ describe('sendChatImageAttachment', () => {
       })
     );
     expect(vi.mocked(options.showImageAttachmentStatus).mock.lastCall?.[0]).not.toHaveProperty('retryFile');
+  });
+
+  const retryableConfirmError = () => Object.assign(
+    new Error('Image message was sent, but the server could not confirm image retention.'),
+    { retryable: true, reason: 'not-confirmed' }
+  );
+
+  it('retries retention confirmation while the server has not seen the receipt, then succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(confirmChatImageUpload)
+        .mockRejectedValueOnce(retryableConfirmError())
+        .mockRejectedValueOnce(retryableConfirmError())
+        .mockResolvedValueOnce(undefined);
+      const options = makeOptions();
+
+      const pending = sendChatImageAttachment(options);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(confirmChatImageUpload).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(confirmChatImageUpload).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await pending;
+
+      expect(confirmChatImageUpload).toHaveBeenCalledTimes(3);
+      expect(options.sendImageTag).toHaveBeenCalledOnce();
+      expect(options.clearImageAttachmentStatus).toHaveBeenCalled();
+      expect(options.setError).not.toHaveBeenCalledWith(expect.stringContaining('could not confirm'));
+      expect(options.showImageAttachmentStatus).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Confirming image storage',
+        detail: expect.stringContaining('has not seen the COTI confirmation yet')
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retention retries after about two minutes and reports the image as sent', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(confirmChatImageUpload).mockRejectedValue(retryableConfirmError());
+      const options = makeOptions();
+
+      const pending = sendChatImageAttachment(options);
+      await vi.advanceTimersByTimeAsync(125_000);
+      await pending;
+
+      expect(confirmChatImageUpload).toHaveBeenCalledTimes(8);
+      expect(options.sendImageTag).toHaveBeenCalledOnce();
+      expect(options.showImageAttachmentStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: 'Image was sent', tone: 'error' })
+      );
+      expect(vi.mocked(options.showImageAttachmentStatus).mock.lastCall?.[0]).not.toHaveProperty('retryFile');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry a final 403 retention answer', async () => {
+    vi.mocked(confirmChatImageUpload).mockRejectedValue(Object.assign(
+      new Error('Image message was sent, but the server could not confirm image retention.'),
+      { retryable: false, reason: 'rejected', status: 403 }
+    ));
+    const options = makeOptions();
+
+    await sendChatImageAttachment(options);
+
+    expect(confirmChatImageUpload).toHaveBeenCalledTimes(1);
+    expect(options.setError).toHaveBeenLastCalledWith(
+      'Image message was sent, but the server could not confirm image retention.'
+    );
+    expect(options.showImageAttachmentStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: 'Image was sent', tone: 'error' })
+    );
   });
 
   it.each(['resolve', 'reject'] as const)('ignores a stale retention %s after changing the target', async (outcome) => {

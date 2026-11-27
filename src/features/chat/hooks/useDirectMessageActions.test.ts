@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getChatReplySourceAnchor } from '../../../lib/chatReplySourceAnchor';
 import type { DirectChatV2WriteCoordinator } from '../../../lib/directChatV2WriteCoordinator';
+import { ChatTransactionUnconfirmedError } from '../../../lib/chatSubmittedTransaction';
 
 const mocks = vi.hoisted(() => ({
   sendChatImageAttachment: vi.fn()
@@ -242,6 +243,31 @@ describe('useDirectMessageActions Direct Chat V2 routing', () => {
       'Direct Chat V2 currently supports native COTI tips only.'
     );
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('clears the composer and returns the hash when a broadcast send is not yet confirmed', async () => {
+    const send = vi.fn(async (_write: unknown) => {
+      throw new ChatTransactionUnconfirmedError('COTI confirmation timed out.', TX_HASH);
+    });
+    const state = createArgs(coordinator(send));
+    const actions = useDirectMessageActions(state.args);
+
+    await expect(actions.sendMessage()).resolves.toBe(TX_HASH);
+    expect(send).toHaveBeenCalledOnce();
+    expect(state.setMessageInput).toHaveBeenCalledWith('');
+    expect(state.setReplyingToMessage).toHaveBeenCalledWith(null);
+    expect(state.setError).toHaveBeenLastCalledWith(expect.stringContaining('Do not send it again'));
+  });
+
+  it('keeps the composer text after a pre-broadcast rejection', async () => {
+    const send = vi.fn(async (_write: unknown) => {
+      throw Object.assign(new Error('user rejected transaction'), { code: 'ACTION_REJECTED' });
+    });
+    const state = createArgs(coordinator(send));
+    const actions = useDirectMessageActions(state.args);
+
+    await expect(actions.sendMessage()).resolves.toBeUndefined();
+    expect(state.setMessageInput).not.toHaveBeenCalled();
   });
 });
 

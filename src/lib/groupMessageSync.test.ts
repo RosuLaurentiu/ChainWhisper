@@ -120,4 +120,41 @@ describe('mergeGroupMessageEntries', () => {
     expect(merged[0]?.groupV2?.finality).toBe('finalized');
     expect(merged[0]?.deliveryState).toBeUndefined();
   });
+
+  it('replaces a submitted local copy when history brings the same transaction hash', () => {
+    const submittedHash = `0x${'ab'.repeat(32)}`;
+    const failedLocal: ChatMessage = {
+      id: 'local-group-v2-failed',
+      direction: 'outgoing',
+      text: 'never sent',
+      deliveryState: 'failed',
+      timestamp: 1
+    };
+    const existing: ChatMessage[] = [
+      failedLocal,
+      {
+        id: 'local-group-v2-submitted',
+        direction: 'outgoing',
+        text: 'hello',
+        deliveryState: 'submitted',
+        txHash: submittedHash.toUpperCase().replace('0X', '0x'),
+        timestamp: 2
+      }
+    ];
+    const entries: GroupMessageEntry[] = [{
+      id: 'group-v2:7082400:0x2222222222222222222222222222222222222222:7:3',
+      groupId: 7,
+      direction: 'outgoing',
+      text: 'hello',
+      senderAddress: '0x0000000000000000000000000000000000000001',
+      txHash: submittedHash,
+      blockNumber: 20,
+      logIndex: 0
+    }];
+
+    const merged = mergeGroupMessageEntries(existing, entries);
+
+    expect(merged.map(({ id }) => id).sort()).toEqual([entries[0].id, failedLocal.id].sort());
+    expect(merged.find(({ id }) => id === entries[0].id)?.deliveryState).toBeUndefined();
+  });
 });

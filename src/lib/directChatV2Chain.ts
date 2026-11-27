@@ -4,6 +4,7 @@ import { loadCotiEthersModule, type CotiReadProvider } from './appShared/core';
 import { extractUserCiphertext, parseSubmitMemoPayload } from './appShared/parsers';
 import type { CotiEventHintSubscriber } from './appShared/cotiEventHints';
 import { isWalletTransactionFlowActive } from './walletTransactionFlow';
+import { ChatTransactionUnconfirmedError, wrapNativeChatTransactionWait } from './chatSubmittedTransaction';
 import {
   decodeDirectChatV2ContactSettings,
   encodeDirectChatV2ContactSettings,
@@ -99,6 +100,8 @@ const UINT128_MAX = (1n << 128n) - 1n;
 const UINT256_MAX = (1n << 256n) - 1n;
 const PUBLIC_RECEIPT_POLL_MS = 1_500;
 const PUBLIC_RECEIPT_TIMEOUT_MS = 180_000;
+const DIRECT_CHAT_V2_UNCONFIRMED_MESSAGE =
+  'The chat transaction was submitted, but COTI confirmation timed out. Check wallet activity before retrying.';
 const MESSAGE_HINT_POLL_MS = 4_000;
 
 declare const DIRECT_CHAT_V2_METAMASK_CAPABILITY_BRAND: unique symbol;
@@ -216,11 +219,6 @@ export type DirectChatV2NonceAttemptRetirer = (
 ) => Promise<void>;
 
 export type DirectChatV2EpochKey = DirectChatV2Seed & DirectChatV2EpochReference;
-
-export type DirectChatV2EpochMetadata = DirectChatV2EpochReference & {
-  rotatedBy: string;
-  createdAt: bigint;
-};
 
 export type DirectChatV2ConversationSnapshot = {
   exists: true;
@@ -658,7 +656,7 @@ const toTransaction = (
   return {
     txHash: transactionHash,
     wait: readProvider === browserProvider
-      ? nativeWait
+      ? wrapNativeChatTransactionWait(nativeWait, transactionHash, DIRECT_CHAT_V2_UNCONFIRMED_MESSAGE)
       : async () => {
           const deadline = Date.now() + PUBLIC_RECEIPT_TIMEOUT_MS;
           while (Date.now() < deadline) {
@@ -672,9 +670,8 @@ const toTransaction = (
               globalThis.setTimeout(resolve, PUBLIC_RECEIPT_POLL_MS);
             });
           }
-          throw new Error(
-            'The chat transaction was submitted, but COTI confirmation timed out. Check wallet activity before retrying.'
-          );
+          // The hash is known: the caller keeps the message as submitted, never failed.
+          throw new ChatTransactionUnconfirmedError(DIRECT_CHAT_V2_UNCONFIRMED_MESSAGE, transactionHash);
         }
   };
 };
@@ -1396,67 +1393,6 @@ export const rotateDirectChatV2ConversationKey = async ({
   };
 };
 
-export const refreshDirectChatV2EpochEnvelope = async ({
-  capability,
-  deployment,
-  peer,
-  epoch
-}: {
-  capability: DirectChatV2MetaMaskCapability;
-  deployment: VerifiedDirectChatV2Deployment;
-  peer: string;
-  epoch: bigint;
-}): Promise<DirectChatV2Transaction> => {
-  await resolveDirectChatV2MetaMaskCapability(capability);
-  const conversation = await readDirectChatV2Conversation({ capability, deployment, peer });
-  if (!conversation.exists) {
-    throw new Error('This direct-chat conversation has not been created.');
-  }
-  const selectedEpoch = normalizeUint64(epoch, 'Requested chat epoch');
-  if (selectedEpoch > conversation.currentEpoch) {
-    throw new Error('Requested chat epoch does not exist yet.');
-  }
-  const contract = await loadContract(conversation.contractAddress, capability);
-  const submitted = await contract.refreshMyEpochEnvelope(conversation.conversationId, selectedEpoch);
-  return toTransaction(submitted, capability);
-};
-
-export const readDirectChatV2EpochMetadata = async ({
-  capability,
-  deployment,
-  peer,
-  epoch
-}: {
-  capability: DirectChatV2MetaMaskCapability;
-  deployment: VerifiedDirectChatV2Deployment;
-  peer: string;
-  epoch: bigint;
-}): Promise<DirectChatV2EpochMetadata> => {
-  const conversation = await readDirectChatV2Conversation({ capability, deployment, peer });
-  if (!conversation.exists) {
-    throw new Error('This direct-chat conversation has not been created.');
-  }
-  const selectedEpoch = normalizeUint64(epoch, 'Requested chat epoch');
-  if (selectedEpoch > conversation.currentEpoch) {
-    throw new Error('Requested chat epoch does not exist yet.');
-  }
-  const contract = await loadReadContract(conversation.contractAddress, capability);
-  const raw = await contract.getEpochMetadata(conversation.conversationId, selectedEpoch);
-  if (tupleField(raw, 'exists', 0) !== true) {
-    throw new Error('Chat contract did not return the requested epoch metadata.');
-  }
-  const metadata = {
-    chainId: conversation.chainId,
-    contractAddress: conversation.contractAddress,
-    conversationId: conversation.conversationId,
-    epoch: selectedEpoch,
-    rotatedBy: normalizeAddress(String(tupleField(raw, 'rotatedBy', 1)), 'Epoch rotator'),
-    createdAt: normalizeUint64(tupleField(raw, 'createdAt', 2), 'Epoch creation time')
-  } satisfies DirectChatV2EpochMetadata;
-  resolveDirectChatV2ReadCapability(capability);
-  return metadata;
-};
-
 export const readDirectChatV2EpochKey = async ({
   capability,
   deployment,
@@ -1497,27 +1433,6 @@ export const readDirectChatV2EpochKey = async ({
     epoch: selectedEpoch
   } satisfies DirectChatV2EpochKey;
   return key;
-};
-
-export const canReactToDirectChatV2Message = async ({
-  capability,
-  deployment,
-  peer,
-  messageId
-}: {
-  capability: DirectChatV2MetaMaskCapability;
-  deployment: VerifiedDirectChatV2Deployment;
-  peer: string;
-  messageId: bigint;
-}): Promise<boolean> => {
-  const conversation = await readDirectChatV2Conversation({ capability, deployment, peer });
-  if (!conversation.exists) return false;
-  const selectedMessageId = normalizeUint64(messageId, 'Reaction message ID');
-  const actor = resolveDirectChatV2ReadCapability(capability).ownerAddress;
-  const contract = await loadReadContract(conversation.contractAddress, capability);
-  const allowed = Boolean(await contract.canReact(conversation.conversationId, selectedMessageId, actor));
-  resolveDirectChatV2ReadCapability(capability);
-  return allowed;
 };
 
 export const readDirectChatV2NativeCredit = async ({

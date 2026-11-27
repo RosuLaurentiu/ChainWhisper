@@ -95,8 +95,7 @@ export const applyDirectChatV2SyncMutation = (
   return mergeDirectHistoryEntries(
     baseMessages,
     [...mutation.entries],
-    mutation.viewerAddress,
-    { pruneOptimisticOutgoing: false }
+    mutation.viewerAddress
   );
 };
 

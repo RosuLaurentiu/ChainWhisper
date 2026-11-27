@@ -51,15 +51,6 @@ describe('actual encrypted image upload boundary; Supabase invoke mocked', () =>
     const corrupted = new Uint8Array(encrypted.slice(0)); corrupted[0] ^= 1;
     await expect(crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes(parsed.ivHex) }, key, corrupted)).rejects.toThrow();
   });
-  it('binds signature authorization to the actual ciphertext and the uploaded metadata', async () => {
-    const sign = vi.fn(async (_message: string) => `0x${'ab'.repeat(65)}`);
-    const result = await createEncryptedImageTagFromFile(file(), 'direct', owner, target, { mode: 'signature', sign });
-    const request = mocks.invoke.mock.calls[0][1] as { body: Blob; headers: Record<string, string> };
-    const message = sign.mock.calls[0][0];
-    for (const [label, header] of [['blobId', 'blob-id'], ['ciphertextSha256', 'ciphertext-sha256'], ['confirmationTokenHash', 'confirmation-token-hash'], ['plaintextSize', 'plaintext-size'], ['encryptedSize', 'encrypted-size'], ['owner', 'owner'], ['target', 'target'], ['issuedAt', 'issued-at'], ['expiresAt', 'expires-at']] as const) expect(message).toContain(`${label}:${request.headers[`x-chat-image-${header}`]}`);
-    expect(request.headers['x-chat-image-protocol']).toBe('legacy-v1'); expect(request.headers['x-chat-image-authorization-signature']).toBe(`0x${'ab'.repeat(65)}`);
-    expect(message).not.toContain(result.confirmationToken); expect(message).not.toContain(parseImageTag(result.imageTag)!.keyHex);
-  });
   it.each(['', 'x'.repeat(4097)])('rejects an invalid session token before upload', async token => {
     await expect(createEncryptedImageTagFromFile(file(), 'direct', owner, target, { ...session(), token: async () => token })).rejects.toThrow(/session is invalid/);
     expect(mocks.invoke).not.toHaveBeenCalled();
@@ -78,15 +69,11 @@ describe('actual encrypted image upload boundary; Supabase invoke mocked', () =>
     await expect(createEncryptedImageTagFromFile(file(), kind, owner, conversation, session(kind === 'group' ? 'group-v2' : 'direct-v2'))).rejects.toThrow(/target/);
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
-  it('uses a canonical target and owner in both session headers and signed terms', async () => {
+  it('uses a canonical target and owner in session headers', async () => {
     const mixedOwner = ` ${owner.toUpperCase().replace('0X', '0x')} `;
     const mixedTarget = ` ${target.toUpperCase().replace('0X', '0x')} `;
     await createEncryptedImageTagFromFile(file(), 'direct', mixedOwner, mixedTarget, session());
     expect(mocks.invoke.mock.calls[0][1].headers).toMatchObject({ 'x-chat-image-owner': owner, 'x-chat-image-target': target });
-    const sign = vi.fn(async (_message: string) => `0x${'ab'.repeat(65)}`);
-    await createEncryptedImageTagFromFile(file(), 'direct', mixedOwner, mixedTarget, { mode: 'signature', sign });
-    expect(sign.mock.calls[0][0]).toContain(`target:${target}`); expect(sign.mock.calls[0][0]).toContain(`owner:${owner}`);
-    expect(mocks.invoke.mock.calls[1][1].headers).toMatchObject({ 'x-chat-image-owner': owner, 'x-chat-image-target': target });
   });
   it.each([['direct', 'group-v2'], ['group', 'direct-v2']] as const)('rejects %s session protocol mismatch before encryption/upload', async (kind, protocol) => {
     const attachment = file(); const read = vi.spyOn(attachment, 'arrayBuffer');

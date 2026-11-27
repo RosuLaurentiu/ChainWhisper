@@ -13,6 +13,7 @@ import {
   type CotiReadProvider
 } from './appShared/core';
 import type { GroupChatV2DeploymentManifest } from './groupChatV2Deployment';
+import { ChatTransactionUnconfirmedError, wrapNativeChatTransactionWait } from './chatSubmittedTransaction';
 import {
   decryptGroupChatV2Metadata,
   decryptGroupChatV2Message,
@@ -116,6 +117,8 @@ export const GROUP_CHAT_V2_WALLET_LIFECYCLE_TOPICS = Object.freeze([
 export const GROUP_CHAT_V2_MAX_LOG_BLOCK_SPAN = 2_048n;
 export const GROUP_CHAT_V2_MAX_WALLET_LIFECYCLE_BLOCK_SPAN = 100_000n;
 const GROUP_CHAT_V2_RECEIPT_TIMEOUT_MS = 300_000;
+const GROUP_CHAT_V2_UNCONFIRMED_MESSAGE =
+  'The group transaction was submitted, but COTI confirmation timed out. Check wallet activity before retrying.';
 const GROUP_CHAT_V2_RECEIPT_POLL_MS = 2_000;
 const GROUP_CHAT_V2_EPOCH_ENVELOPE_NOT_SYNCHRONIZED_SELECTOR = '0xa70f12a4';
 
@@ -462,7 +465,7 @@ const transaction = (
   return Object.freeze({
     txHash: transactionHash,
     wait: readProvider === browserProvider
-      ? nativeWait
+      ? wrapNativeChatTransactionWait(nativeWait, transactionHash, GROUP_CHAT_V2_UNCONFIRMED_MESSAGE)
       : async () => {
           const deadline = Date.now() + GROUP_CHAT_V2_RECEIPT_TIMEOUT_MS;
           while (Date.now() < deadline) {
@@ -476,9 +479,8 @@ const transaction = (
               globalThis.setTimeout(resolve, GROUP_CHAT_V2_RECEIPT_POLL_MS);
             });
           }
-          throw new Error(
-            'The group transaction was submitted, but COTI confirmation timed out. Check wallet activity before retrying.'
-          );
+          // The hash is known: the caller keeps the message as submitted, never failed.
+          throw new ChatTransactionUnconfirmedError(GROUP_CHAT_V2_UNCONFIRMED_MESSAGE, transactionHash);
         }
   });
 };

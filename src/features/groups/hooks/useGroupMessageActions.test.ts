@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getChatReplySourceAnchor } from '../../../lib/chatReplySourceAnchor';
 import type { GroupChatV2SessionController } from '../../../lib/groupChatV2Session';
+import { ChatTransactionUnconfirmedError } from '../../../lib/chatSubmittedTransaction';
+import type { ChatMessage } from '../../../lib/appShared';
 
 const mocks = vi.hoisted(() => ({ sendChatImageAttachment: vi.fn() }));
 
@@ -198,5 +200,54 @@ describe('useGroupMessageActions Group Chat V2 routing', () => {
     expect(state.setError).toHaveBeenCalledWith(
       'Group Chat V2 replies can target only messages from the new group protocol.'
     );
+  });
+
+  const applyUpdates = (setMessagesByGroup: unknown, initial: Record<string, ChatMessage[]> = {}) =>
+    vi.mocked(setMessagesByGroup as (next: unknown) => void).mock.calls.reduce<Record<string, ChatMessage[]>>(
+      (state, [update]) => (typeof update === 'function' ? update(state) : update as Record<string, ChatMessage[]>),
+      initial
+    );
+
+  it('keeps a broadcast message as submitted with its txHash when the receipt wait times out', async () => {
+    const state = createArgs();
+    state.send.mockRejectedValueOnce(new ChatTransactionUnconfirmedError('confirmation timed out', TX_HASH));
+
+    await expect(useGroupMessageActions(state.args).sendGroupMessage()).resolves.toBe(TX_HASH);
+
+    const messages = applyUpdates(state.args.setMessagesByGroup)['7'];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ deliveryState: 'submitted', txHash: TX_HASH, text: 'hello' });
+    expect(messages[0].id.startsWith('local-group-v2-')).toBe(true);
+    expect(state.args.setMessageInput).toHaveBeenCalledWith('');
+    expect(state.setError).toHaveBeenLastCalledWith(expect.stringContaining('Do not send it again'));
+    expect(state.send).toHaveBeenCalledOnce();
+  });
+
+  it('drops the submitted local copy when history already holds the same transaction', async () => {
+    const state = createArgs();
+    const confirmed: ChatMessage = {
+      id: `group-v2:7082400:${CONTRACT}:7:1`,
+      direction: 'outgoing',
+      text: 'hello',
+      txHash: TX_HASH
+    };
+    state.send.mockRejectedValueOnce(new ChatTransactionUnconfirmedError('confirmation timed out', TX_HASH));
+
+    await useGroupMessageActions(state.args).sendGroupMessage();
+
+    expect(applyUpdates(state.args.setMessagesByGroup, { '7': [confirmed] })['7']).toEqual([confirmed]);
+  });
+
+  it('still marks a pre-broadcast wallet rejection as failed and keeps the composer text', async () => {
+    const state = createArgs();
+    state.send.mockRejectedValueOnce(Object.assign(new Error('user rejected transaction'), { code: 'ACTION_REJECTED' }));
+
+    await expect(useGroupMessageActions(state.args).sendGroupMessage()).resolves.toBeUndefined();
+
+    const messages = applyUpdates(state.args.setMessagesByGroup)['7'];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ deliveryState: 'failed' });
+    expect(messages[0].txHash).toBeUndefined();
+    expect(state.args.setMessageInput).not.toHaveBeenCalled();
   });
 });

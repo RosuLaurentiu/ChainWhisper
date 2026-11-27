@@ -568,15 +568,20 @@ function DirectChatPanel({
             const deliveryLabel =
               message.deliveryState === 'pending'
                 ? 'Sending...'
-                : message.deliveryState === 'sent'
-                  ? directChatV2Finalizing
-                    ? 'Sent · finalizing (about 25s)'
-                    : 'Sent'
-                  : message.deliveryState === 'failed'
-                    ? 'Failed'
-                    : '';
+                : message.deliveryState === 'submitted'
+                  ? 'Submitted · waiting for COTI confirmation'
+                  : message.deliveryState === 'sent'
+                    ? directChatV2Finalizing
+                      ? 'Sent · finalizing (about 25s)'
+                      : 'Sent'
+                    : message.deliveryState === 'failed'
+                      ? 'Failed'
+                      : '';
             const showMessageMeta =
-              !parsedTradeOffer || message.deliveryState === 'pending' || message.deliveryState === 'failed';
+              !parsedTradeOffer ||
+              message.deliveryState === 'pending' ||
+              message.deliveryState === 'submitted' ||
+              message.deliveryState === 'failed';
             const replyAction = getDirectReplyActionPolicy({
               directChatV2RepliesEnabled,
               message,
@@ -806,7 +811,7 @@ function DirectChatPanel({
                           className={
                             message.deliveryState === 'failed'
                               ? 'message-delivery failed'
-                              : message.deliveryState === 'pending'
+                              : message.deliveryState === 'pending' || message.deliveryState === 'submitted'
                                 ? 'message-delivery pending'
                                 : 'message-delivery sent'
                           }

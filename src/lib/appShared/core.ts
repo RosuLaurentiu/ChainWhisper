@@ -200,7 +200,8 @@ export type ChatMessage = {
   blockNumber?: number;
   logIndex?: number;
   txHash?: string;
-  deliveryState?: 'pending' | 'sent' | 'failed';
+  /** 'submitted': broadcast with a known txHash, receipt not yet read. Never resend it. */
+  deliveryState?: 'pending' | 'submitted' | 'sent' | 'failed';
   directV2?: DirectChatV2MessageIdentity;
   groupV2?: GroupChatV2MessageIdentity;
   directTradeV2?: DirectTradeV2ChatIdentity;

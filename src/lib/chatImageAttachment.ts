@@ -34,6 +34,14 @@ const createImagePreviewUrl = (file: File): string | undefined => {
   }
 };
 
+/**
+ * Waits between retention-confirm checks, about 2 minutes in total. The server
+ * deletes an unconfirmed upload after 30 minutes, so this stays well inside it.
+ */
+export const CHAT_IMAGE_CONFIRM_RETRY_DELAYS_MS: readonly number[] = Object.freeze([
+  2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000
+]);
+
 // Direct and Group share this preview controller; only its latest upload owns cleanup.
 const activeImageUploads = new WeakMap<() => void, symbol>();
 
@@ -127,17 +135,41 @@ export async function sendChatImageAttachment({
           file,
           'pending',
           'Confirming image storage',
-          'Message confirmed on COTI. Marking the encrypted upload as retained.',
+          'Message transaction sent on COTI. Marking the encrypted upload as retained.',
           previewUrl
         )
       );
     }
     try {
-      await confirmChatImageUpload(
-        preparedImage.blobId,
-        txHash,
-        preparedImage.confirmationToken
-      );
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await confirmChatImageUpload(
+            preparedImage.blobId,
+            txHash,
+            preparedImage.confirmationToken
+          );
+          break;
+        } catch (confirmError) {
+          // Retry only answers that can change: receipt not yet visible to the server, busy, or network.
+          const retryable = (confirmError as { retryable?: unknown } | null)?.retryable === true;
+          const delayMs = CHAT_IMAGE_CONFIRM_RETRY_DELAYS_MS[attempt];
+          if (!retryable || delayMs === undefined) throw confirmError;
+          if (canUpdateStatus()) {
+            showImageAttachmentStatus(
+              buildImageAttachmentStatus(
+                file,
+                'pending',
+                'Confirming image storage',
+                `The image server has not seen the COTI confirmation yet. Checking again in ${Math.round(delayMs / 1000)} s (check ${attempt + 2} of ${CHAT_IMAGE_CONFIRM_RETRY_DELAYS_MS.length + 1}).`,
+                previewUrl
+              )
+            );
+          }
+          await new Promise<void>((resolve) => {
+            globalThis.setTimeout(resolve, delayMs);
+          });
+        }
+      }
     } catch (confirmError) {
       if (!canUpdateStatus()) return;
       const message = confirmError instanceof Error ? confirmError.message : 'Image retention confirmation failed.';

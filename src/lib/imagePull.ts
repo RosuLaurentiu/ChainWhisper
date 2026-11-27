@@ -1,9 +1,6 @@
 import { bytesToHex, hexToBytes } from './byteEncoding';
 import {
-  assertChatImageAuthorizationSignature,
-  buildChatImageUploadAuthorizationMessage,
   CHAT_IMAGE_AUTHORIZATION_TTL_SECONDS,
-  getChatImageAuthorizationDomain,
   normalizeChatImageConversationTarget,
   sha256Hex
 } from '../../supabase/functions/_shared/chat-image-authorization';
@@ -17,19 +14,13 @@ export type ParsedImageTag = {
 };
 
 export type ChatImageConversationKind = 'direct' | 'group';
-export type ChatImageProtocol = 'legacy-v1' | 'direct-v2' | 'group-v2';
+export type ChatImageProtocol = 'direct-v2' | 'group-v2';
 
-export type ChatImageUploadAuthorizationSigner = (message: string) => Promise<string>;
-export type ChatImageUploadAuthorization =
-  | Readonly<{
-      mode: 'signature';
-      sign: ChatImageUploadAuthorizationSigner;
-    }>
-  | Readonly<{
-      mode: 'session';
-      protocol: ChatImageProtocol;
-      token: () => Promise<string>;
-    }>;
+export type ChatImageUploadAuthorization = Readonly<{
+  mode: 'session';
+  protocol: ChatImageProtocol;
+  token: () => Promise<string>;
+}>;
 
 export type PreparedChatImageUpload = {
   blobId: string;
@@ -261,9 +252,7 @@ async function uploadEncryptedBlob(
   confirmationTokenHash: string,
   issuedAt: number,
   expiresAt: number,
-  authorization:
-    | Readonly<{ mode: 'signature'; signature: string }>
-    | Readonly<{ mode: 'session'; protocol: ChatImageProtocol; token: string }>
+  authorization: Readonly<{ protocol: ChatImageProtocol; token: string }>
 ): Promise<void> {
   const normalizedOwnerAddress = ownerAddress.trim().toLowerCase();
   if (!WALLET_ADDRESS_REGEX.test(normalizedOwnerAddress)) {
@@ -284,15 +273,10 @@ async function uploadEncryptedBlob(
     'x-chat-image-encrypted-size': String(encrypted.byteLength),
     'x-chat-image-target': conversationTarget,
     'x-chat-image-issued-at': String(issuedAt),
-    'x-chat-image-expires-at': String(expiresAt)
+    'x-chat-image-expires-at': String(expiresAt),
+    'x-chat-image-protocol': authorization.protocol,
+    'x-chat-image-session-token': authorization.token
   };
-  if (authorization.mode === 'session') {
-    headers['x-chat-image-protocol'] = authorization.protocol;
-    headers['x-chat-image-session-token'] = authorization.token;
-  } else {
-    headers['x-chat-image-protocol'] = 'legacy-v1';
-    headers['x-chat-image-authorization-signature'] = authorization.signature;
-  }
   const { error } = await supabase.functions.invoke('chat-image-upload', {
     body: encryptedBlob,
     headers
@@ -315,17 +299,83 @@ export async function confirmChatImageUpload(
   }
 
   const { getSupabaseBrowserClient } = await import('./supabaseClient');
-  const { error } = await getSupabaseBrowserClient().functions.invoke('chat-image-confirm', {
-    body: {
-      blobId: normalizedBlobId,
-      txHash: normalizedTxHash,
-      confirmationToken: normalizedConfirmationToken
-    }
-  });
+  const client = getSupabaseBrowserClient();
+  let error: unknown;
+  try {
+    ({ error } = await client.functions.invoke('chat-image-confirm', {
+      body: {
+        blobId: normalizedBlobId,
+        txHash: normalizedTxHash,
+        confirmationToken: normalizedConfirmationToken
+      }
+    }));
+  } catch (invokeError) {
+    error = invokeError;
+  }
   if (error) {
-    throw new Error('Image message was sent, but the server could not confirm image retention.');
+    throw new ChatImageConfirmError(
+      'Image message was sent, but the server could not confirm image retention.',
+      await classifyChatImageConfirmFailure(error)
+    );
   }
 }
+
+/** The confirm server answers this text while its RPC has not seen the receipt yet. */
+const CHAT_IMAGE_NOT_CONFIRMED_ANSWER = 'Image message transaction is not confirmed.';
+const RETRYABLE_CHAT_IMAGE_CONFIRM_STATUSES = new Set([429, 502, 503, 504]);
+
+export type ChatImageConfirmFailure = Readonly<{
+  retryable: boolean;
+  reason: 'not-confirmed' | 'busy' | 'network' | 'rejected';
+  status?: number;
+}>;
+
+export class ChatImageConfirmError extends Error {
+  readonly retryable: boolean;
+  readonly reason: ChatImageConfirmFailure['reason'];
+  readonly status?: number;
+
+  constructor(message: string, failure: ChatImageConfirmFailure) {
+    super(message);
+    this.name = 'ChatImageConfirmError';
+    this.retryable = failure.retryable;
+    this.reason = failure.reason;
+    if (failure.status !== undefined) this.status = failure.status;
+  }
+}
+
+const readConfirmErrorAnswer = async (response: Response): Promise<string> => {
+  try {
+    const body = (await response.clone().json()) as { error?: unknown } | null;
+    return typeof body?.error === 'string' ? body.error : '';
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * Retry only when the answer can change without a new upload: the server RPC
+ * has not seen the receipt yet, the server is busy, or the request did not
+ * reach it. Every other answer (for example 403 token, 404, 409, 410) is final.
+ */
+const classifyChatImageConfirmFailure = async (error: unknown): Promise<ChatImageConfirmFailure> => {
+  const name = (error as { name?: unknown } | null)?.name;
+  if (name === 'FunctionsFetchError' || name === 'FunctionsRelayError' || name === 'TypeError') {
+    return { retryable: true, reason: 'network' };
+  }
+  const context = (error as { context?: unknown } | null)?.context;
+  if (name === 'FunctionsHttpError' && typeof Response !== 'undefined' && context instanceof Response) {
+    const status = context.status;
+    if (RETRYABLE_CHAT_IMAGE_CONFIRM_STATUSES.has(status)) {
+      return { retryable: true, reason: 'busy', status };
+    }
+    if (status === 400 && (await readConfirmErrorAnswer(context)) === CHAT_IMAGE_NOT_CONFIRMED_ANSWER) {
+      return { retryable: true, reason: 'not-confirmed', status };
+    }
+    return { retryable: false, reason: 'rejected', status };
+  }
+  return { retryable: false, reason: 'rejected' };
+};
 
 async function encryptImageToBlob(file: File): Promise<{ blobId: string; encrypted: ArrayBuffer; keyHex: string; ivHex: string }> {
   const { webCrypto, subtle } = getSecureWebCrypto();
@@ -374,7 +424,7 @@ export async function createEncryptedImageTagFromFile(
   const normalizedTarget = normalizeChatImageConversationTarget(kind, conversationTarget);
   const normalizedOwner = ownerAddress.trim().toLowerCase();
   if (!WALLET_ADDRESS_REGEX.test(normalizedOwner)) throw new Error('Connect a wallet before sending an image.');
-  if (uploadAuthorization.mode === 'session' && uploadAuthorization.protocol !== 'legacy-v1' &&
+  if (uploadAuthorization.mode !== 'session' ||
       uploadAuthorization.protocol !== (kind === 'direct' ? 'direct-v2' : 'group-v2')) {
     throw new Error('Chat image session protocol does not match its conversation kind.');
   }
@@ -388,43 +438,12 @@ export async function createEncryptedImageTagFromFile(
   ]);
   const issuedAt = Math.floor(Date.now() / 1000);
   const expiresAt = issuedAt + CHAT_IMAGE_AUTHORIZATION_TTL_SECONDS;
-  let resolvedAuthorization:
-    | Readonly<{ mode: 'signature'; signature: string }>
-    | Readonly<{ mode: 'session'; protocol: ChatImageProtocol; token: string }>;
-  if (uploadAuthorization.mode === 'session') {
-    const token = (await uploadAuthorization.token()).trim();
-    if (!token || token.length > 4_096) throw new Error('Chat image upload session is invalid.');
-    resolvedAuthorization = Object.freeze({
-      mode: 'session' as const,
-      protocol: uploadAuthorization.protocol,
-      token
-    });
-  } else {
-    const { getSupabaseUrl } = await import('./supabaseClient');
-    const domain = getChatImageAuthorizationDomain(kind);
-    const authorizationMessage = buildChatImageUploadAuthorizationMessage({
-      audience: getSupabaseUrl(),
-      blobId,
-      chainId: domain.chainId,
-      ciphertextSha256,
-      confirmationTokenHash,
-      contractAddress: domain.contractAddress,
-      conversationKind: kind,
-      conversationTarget: normalizedTarget,
-      encryptedSize: encrypted.byteLength,
-      expiresAt,
-      issuedAt,
-      mime,
-      ownerAddress: normalizedOwner,
-      plaintextSize: sizeBytes
-    });
-    resolvedAuthorization = Object.freeze({
-      mode: 'signature' as const,
-      signature: assertChatImageAuthorizationSignature(
-        await uploadAuthorization.sign(authorizationMessage)
-      )
-    });
-  }
+  const token = (await uploadAuthorization.token()).trim();
+  if (!token || token.length > 4_096) throw new Error('Chat image upload session is invalid.');
+  const resolvedAuthorization = Object.freeze({
+    protocol: uploadAuthorization.protocol,
+    token
+  });
 
   await uploadEncryptedBlob(
     blobId,

@@ -1,6 +1,7 @@
 import { getAddress } from '@coti-io/coti-ethers';
 import { historyEntryToChatMessage } from './directConversationSyncHelpers';
 import { buildDirectChatV2MessageKey } from './directChatV2Chain';
+import { getSubmittedChatTransactionHash } from './chatSubmittedTransaction';
 import { deriveDirectChatV2ConversationId } from './directChatV2Crypto';
 import { mapDecodedDirectChatV2HistoryEvent } from './directChatV2History';
 import {
@@ -43,6 +44,8 @@ export type DirectChatV2FailureUpdate = {
   contactKey: string;
   optimisticId: string;
   error: unknown;
+  /** Set when the wallet broadcast the message but its receipt is unknown. */
+  submittedTransactionHash?: string;
 };
 
 export type DirectChatV2PreparedWrite = {
@@ -229,8 +232,8 @@ export const appendDirectChatV2OptimisticMessage = (
 
 /**
  * Applies the only supported V2 optimistic replacement: one explicit local ID
- * to one receipt-authenticated stable message ID. V2 history sync must use
- * `pruneOptimisticOutgoing: false`; the legacy content matcher is not exact.
+ * to one receipt-authenticated stable message ID. History sync merges by stable
+ * ID only and never prunes optimistic messages by content.
  */
 export const applyDirectChatV2ReceiptUpdate = (
   previous: Record<string, ChatMessage[]>,
@@ -282,17 +285,39 @@ export const applyDirectChatV2ReceiptUpdate = (
   };
 };
 
+const confirmedTransactionHash = (message: ChatMessage): string =>
+  (message.directV2?.transactionHash ?? '').toLowerCase();
+
+/**
+ * Marks a local send that did not confirm. A failure before broadcast becomes
+ * 'failed'. A broadcast whose receipt could not be read becomes 'submitted'
+ * with its txHash, so it is not offered for resend; history then replaces it by
+ * that hash. If history already holds that transaction, the local copy goes.
+ */
 export const failDirectChatV2OptimisticMessage = (
   previous: Record<string, ChatMessage[]>,
-  update: Pick<DirectChatV2FailureUpdate, 'contactKey' | 'optimisticId'>
+  update: Pick<DirectChatV2FailureUpdate, 'contactKey' | 'optimisticId'> &
+    Partial<Pick<DirectChatV2FailureUpdate, 'error' | 'submittedTransactionHash'>>
 ): Record<string, ChatMessage[]> => {
   const contactKey = normalizeContactKey(update.contactKey);
   const existing = previous[contactKey] ?? [];
+  const submittedHash = (
+    update.submittedTransactionHash ?? getSubmittedChatTransactionHash(update.error)
+  )?.toLowerCase();
+  if (
+    submittedHash &&
+    existing.some((message) => message.id !== update.optimisticId && confirmedTransactionHash(message) === submittedHash)
+  ) {
+    const next = existing.filter((message) => message.id !== update.optimisticId || Boolean(message.directV2));
+    return next.length === existing.length ? previous : { ...previous, [contactKey]: next };
+  }
   let changed = false;
   const next = existing.map((message) => {
     if (message.id !== update.optimisticId || message.directV2) return message;
     changed = true;
-    return { ...message, deliveryState: 'failed' as const };
+    return submittedHash
+      ? { ...message, deliveryState: 'submitted' as const, txHash: submittedHash }
+      : { ...message, deliveryState: 'failed' as const };
   });
   return changed ? { ...previous, [contactKey]: next } : previous;
 };
@@ -404,11 +429,16 @@ export const createDirectChatV2WriteCoordinator = (
         };
         assertConfirmedMatchesOptimistic(confirmedMessage, optimisticMessage);
       } catch (error) {
-        if (optimisticInserted && (!shouldContinue || shouldContinue())) {
+        const submittedTransactionHash = getSubmittedChatTransactionHash(error);
+        // A broadcast message must leave 'pending' even after the user changed the open
+        // conversation; otherwise its local copy can never be matched by txHash. The
+        // lifecycle owner still rejects a replaced wallet or privacy scope.
+        if (optimisticInserted && (submittedTransactionHash || !shouldContinue || shouldContinue())) {
           await lifecycle.onFailure({
             contactKey,
             optimisticId: optimisticMessage.id,
-            error
+            error,
+            ...(submittedTransactionHash ? { submittedTransactionHash } : {})
           });
         }
         throw error;

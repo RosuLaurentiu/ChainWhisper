@@ -42,6 +42,7 @@ import {
   type DirectChatV2SessionController
 } from './directChatV2Session';
 import { deriveDirectChatV2ConversationId } from './directChatV2Crypto';
+import { ChatTransactionUnconfirmedError } from './chatSubmittedTransaction';
 import {
   DIRECT_CHAT_V2_WRITE_DISABLED,
   applyDirectChatV2ReceiptUpdate,
@@ -543,5 +544,131 @@ describe('directChatV2WriteCoordinator', () => {
     expect(next[BOB.toLowerCase()]).toEqual([
       { ...confirmed, directV2: { ...confirmed.directV2, finality: 'finalized' } }
     ]);
+  });
+
+  const SUBMITTED_TX_HASH = messageEvent().transactionHash;
+
+  const mockSubmittedButUnconfirmedSend = (beforeTimeout: () => void = () => undefined) => {
+    const event = messageEvent();
+    sessionChainMocks.sendMessage.mockResolvedValueOnce({
+      encrypted: event.encrypted,
+      context: event.context,
+      transaction: {
+        txHash: SUBMITTED_TX_HASH,
+        wait: vi.fn(async () => {
+          beforeTimeout();
+          throw new ChatTransactionUnconfirmedError('COTI confirmation timed out.', SUBMITTED_TX_HASH);
+        })
+      }
+    });
+  };
+
+  it('keeps a broadcast message as submitted with its txHash when the receipt wait times out', async () => {
+    const state = stateLifecycle();
+    const session = await createBoundSession();
+    mockSubmittedButUnconfirmedSend();
+    const coordinator = createDirectChatV2WriteCoordinator({
+      enabled: true,
+      mode: 'metamask-owner',
+      ownerAddress: ALICE,
+      session,
+      lifecycle: state.lifecycle
+    });
+
+    await expect(coordinator.send(write())).rejects.toBeInstanceOf(ChatTransactionUnconfirmedError);
+
+    expect(state.read()[BOB.toLowerCase()]).toMatchObject([
+      { id: optimisticMessage().id, deliveryState: 'submitted', txHash: SUBMITTED_TX_HASH }
+    ]);
+    expect(state.lifecycle.onFailure).toHaveBeenCalledWith(expect.objectContaining({
+      submittedTransactionHash: SUBMITTED_TX_HASH
+    }));
+    expect(state.lifecycle.onReceipt).not.toHaveBeenCalled();
+    expect(sessionChainMocks.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it('records a submitted send even after the user opened another conversation', async () => {
+    const state = stateLifecycle();
+    const session = await createBoundSession();
+    const pendingWrite = write();
+    let current = true;
+    pendingWrite.shouldContinue = () => current;
+    mockSubmittedButUnconfirmedSend(() => {
+      current = false;
+    });
+    const coordinator = createDirectChatV2WriteCoordinator({
+      enabled: true,
+      mode: 'metamask-owner',
+      ownerAddress: ALICE,
+      session,
+      lifecycle: state.lifecycle
+    });
+
+    await expect(coordinator.send(pendingWrite)).rejects.toThrow();
+
+    expect(state.read()[BOB.toLowerCase()]).toMatchObject([
+      { deliveryState: 'submitted', txHash: SUBMITTED_TX_HASH }
+    ]);
+  });
+
+  it('still marks a pre-broadcast wallet rejection as failed without a txHash', async () => {
+    const state = stateLifecycle();
+    const session = await createBoundSession();
+    sessionChainMocks.sendMessage.mockRejectedValueOnce(
+      Object.assign(new Error('user rejected transaction'), { code: 'ACTION_REJECTED' })
+    );
+    const coordinator = createDirectChatV2WriteCoordinator({
+      enabled: true,
+      mode: 'metamask-owner',
+      ownerAddress: ALICE,
+      session,
+      lifecycle: state.lifecycle
+    });
+
+    await expect(coordinator.send(write())).rejects.toThrow('user rejected');
+
+    const [message] = state.read()[BOB.toLowerCase()];
+    expect(message).toMatchObject({ id: optimisticMessage().id, deliveryState: 'failed' });
+    expect(message.txHash).toBeUndefined();
+    expect(state.lifecycle.onFailure).toHaveBeenCalledWith(
+      expect.not.objectContaining({ submittedTransactionHash: expect.anything() })
+    );
+  });
+
+  it('drops the submitted local copy when history already holds the same transaction', () => {
+    const optimistic = optimisticMessage();
+    const confirmed = {
+      id: messageEvent().key,
+      direction: 'outgoing',
+      text: 'hello',
+      txHash: SUBMITTED_TX_HASH,
+      directV2: {
+        protocol: 'direct-v2',
+        contentState: 'available',
+        chainId: CHAIN_ID.toString(),
+        contractAddress: CHAT,
+        conversationId: CONVERSATION_ID,
+        messageId: '2',
+        epoch: '1',
+        senderSequence: '2',
+        nonce: messageEvent().nonce,
+        transactionHash: SUBMITTED_TX_HASH,
+        blockNumber: '100',
+        blockHash: messageEvent().blockHash,
+        logIndex: 4,
+        finality: 'confirmed'
+      }
+    } satisfies ChatMessage;
+
+    const next = failDirectChatV2OptimisticMessage(
+      { [BOB.toLowerCase()]: [confirmed, optimistic] },
+      {
+        contactKey: BOB,
+        optimisticId: optimistic.id,
+        error: new ChatTransactionUnconfirmedError('COTI confirmation timed out.', SUBMITTED_TX_HASH)
+      }
+    );
+
+    expect(next[BOB.toLowerCase()]).toEqual([confirmed]);
   });
 });

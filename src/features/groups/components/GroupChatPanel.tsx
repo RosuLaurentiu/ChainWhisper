@@ -545,13 +545,15 @@ export default function GroupChatPanel({
             const deliveryLabel =
               message.deliveryState === 'pending'
                 ? 'Sending...'
-                : message.deliveryState === 'sent'
-                  ? groupChatV2Finalizing
-                    ? 'Sent · finalizing (about 25s)'
-                    : 'Sent'
-                  : message.deliveryState === 'failed'
-                    ? 'Failed'
-                    : '';
+                : message.deliveryState === 'submitted'
+                  ? 'Submitted · waiting for COTI confirmation'
+                  : message.deliveryState === 'sent'
+                    ? groupChatV2Finalizing
+                      ? 'Sent · finalizing (about 25s)'
+                      : 'Sent'
+                    : message.deliveryState === 'failed'
+                      ? 'Failed'
+                      : '';
             const normalizedSender = message.senderAddress?.trim().toLowerCase() ?? '';
             const isSelfSender =
               normalizedSender.length > 0 &&
@@ -729,7 +731,7 @@ export default function GroupChatPanel({
                           className={
                             message.deliveryState === 'failed'
                               ? 'message-delivery failed'
-                              : message.deliveryState === 'pending'
+                              : message.deliveryState === 'pending' || message.deliveryState === 'submitted'
                                 ? 'message-delivery pending'
                                 : 'message-delivery sent'
                           }

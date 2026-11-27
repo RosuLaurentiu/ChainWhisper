@@ -1,6 +1,10 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { getOnChainFailureMessage, sanitizeOutgoingMessagePlainText } from '../../../lib/appHelpers';
 import { sendChatImageAttachment } from '../../../lib/chatImageAttachment';
+import {
+  CHAT_MESSAGE_SUBMITTED_NOTICE,
+  getSubmittedChatTransactionHash
+} from '../../../lib/chatSubmittedTransaction';
 import { getChatReplySourceAnchor } from '../../../lib/chatReplySourceAnchor';
 import type { GroupChatV2SessionController } from '../../../lib/groupChatV2Session';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
@@ -228,7 +232,36 @@ export default function useGroupMessageActions({
       setWalletBalanceRefreshNonce((previous) => previous + 1);
       return result.transactionHash || undefined;
     } catch (sendError) {
+      const submittedTransactionHash = getSubmittedChatTransactionHash(sendError);
       if (!isGroupChatV2ScopeCurrent() || currentWalletKeyRef.current !== requestedWalletKey) return;
+      if (submittedTransactionHash) {
+        // Broadcast happened: keep the local copy as submitted with its txHash so history
+        // replaces it, and clear the composer so the same text is not sent twice.
+        setMessagesByGroup((previous) => {
+          const existing = previous[groupKey] ?? [];
+          const alreadyConfirmed = existing.some((message) =>
+            message.id !== localMessageId &&
+            (message.groupV2?.transactionHash ?? message.txHash ?? '').toLowerCase() === submittedTransactionHash
+          );
+          return {
+            ...previous,
+            [groupKey]: alreadyConfirmed
+              ? existing.filter((message) => message.id !== localMessageId)
+              : existing.map((message) =>
+                  message.id === localMessageId
+                    ? { ...message, deliveryState: 'submitted', txHash: submittedTransactionHash }
+                    : message
+                )
+          };
+        });
+        if (activeGroupIdRef.current === groupId) {
+          if (typeof overrideMessageText === 'undefined') setMessageInput('');
+          setReplyingToMessage(null);
+        }
+        setError(CHAT_MESSAGE_SUBMITTED_NOTICE);
+        setWalletBalanceRefreshNonce((previous) => previous + 1);
+        return submittedTransactionHash;
+      }
       setError(getGroupActionErrorMessage(
         sendError,
         getOnChainFailureMessage(sendError, 'Failed to send group message.')
