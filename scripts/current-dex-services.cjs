@@ -91,6 +91,54 @@ const serverServices = Object.freeze(Object.fromEntries(names.map(name => [name,
 const standingServices = Object.freeze(Object.fromEntries(names.map(name => [name,
   Object.freeze({ ...operatingServices[name], maximumRuns: null })])));
 
+// CW-151: group.json keeps the last `retainedRuns` runs of each service. A run leaves `runs` only
+// after the next run of the same service starts, so it is final. `evictedRuns` keeps exact totals
+// of the removed runs, including the first watchdog issue in run order. Run numbers stay monotonic.
+const retainedRuns = 50;
+const groupSendMethod = 'eth_sendRawTransaction';
+const evictedRunTotals = () => ({ runs: 0, sends: 0, missingTraffic: 0, accountingErrors: 0, openTraffic: 0,
+  firstIssue: null, settledFeeWei: '0', committedFeeWei: '0', statuses: {} });
+function recordRun(state, name, record, limit = retainedRuns) {
+  assert(Number.isSafeInteger(limit) && limit > 0, 'DEX_SERVICES_RUN_HISTORY');
+  const runs = state.runs[name], evicted = state.evictedRuns[name];
+  runs.push(record);
+  while (runs.length > limit) {
+    const row = runs.shift(), t = row?.traffic;
+    // Same order as the watchdog: traffic shape, then accounting, then the send count.
+    const shaped = Boolean(t && t.methods && typeof t.methods === 'object');
+    const count = shaped ? t.methods[groupSendMethod] ?? 0 : undefined;
+    const counted = Number.isSafeInteger(count) && count >= 0;
+    const issue = !shaped ? 'WATCHDOG_TRAFFIC_MISSING' : row.accountingError ? 'WATCHDOG_RUN_ACCOUNTING' :
+      !counted ? 'WATCHDOG_TRAFFIC_MISSING' : null;
+    evicted.runs++;
+    if (counted) evicted.sends += count;
+    if (!counted) evicted.missingTraffic++;
+    if (row?.accountingError) evicted.accountingErrors++;
+    evicted.firstIssue ??= issue;
+    if (t?.physicalPending !== 0 || t?.unresolvedOccupancy !== 0) evicted.openTraffic++;
+    evicted.settledFeeWei = String(BigInt(evicted.settledFeeWei) + BigInt(row?.actualFeeWei ?? '0'));
+    evicted.committedFeeWei = String(BigInt(evicted.committedFeeWei) + BigInt(row?.actualFeeWei ?? row?.feeLimitWei ?? '0'));
+    const status = String(row?.status);
+    evicted.statuses[status] = (evicted.statuses[status] ?? 0) + 1;
+  }
+}
+
+// CW-151: RPC counter changes write group.json at most once per interval; the 250 ms stop poll
+// writes the rest. Status changes call save() and write at once. Writes replace the file by rename.
+const stateWriteIntervalMs = 1000;
+function createStateWriter(file, render, { intervalMs = stateWriteIntervalMs, now = Date.now, write } = {}) {
+  const replace = write ?? (text => { const temp = file + '.tmp'; fs.writeFileSync(temp, text); fs.renameSync(temp, file); });
+  let dirty = false, closed = false, writtenAt = -Infinity;
+  // After close only counter changes stop; a late status save still writes.
+  const save = () => { dirty = false; writtenAt = now(); replace(render()); };
+  return {
+    save,
+    changed() { if (closed) return; dirty = true; if (now() - writtenAt >= intervalMs) save(); },
+    flush() { if (dirty && now() - writtenAt >= intervalMs) save(); },
+    close() { if (dirty) save(); closed = true; }
+  };
+}
+
 function readServerPeriod(directory, now = Date.now(), manifestFile = path.resolve(app, '../runtime-public.json'), selector = process.env.CW_LOW_RPC_TRIAL) {
   const file = path.join(directory, 'period-policy.json');
   for (const target of [file, manifestFile]) {
@@ -625,7 +673,8 @@ async function main(args, { spawn = fork, signals = process, readPeriod, feeSnap
   if (operating) Object.assign(state, {
     operatingPolicy: { services: policy, maximumFeeCommitmentWei: maximumFeeWei,
       ...(standing ? { oneOffFundingFeeReserveWei: standingFundingFeeReserveWei } : {}) },
-    serviceSourcePins: servicePins, runs: Object.fromEntries(names.map(name => [name, []])), feeCommitmentWei: '0'
+    serviceSourcePins: servicePins, runs: Object.fromEntries(names.map(name => [name, []])), retainedRunsPerService: retainedRuns,
+    evictedRuns: Object.fromEntries(names.map(name => [name, evictedRunTotals()])), feeCommitmentWei: '0'
   });
   if (serving) Object.assign(state, { period, settledFeeWei: standing ? period.priorSpentFeeWei : '0' });
   if (replacementC1) state.rehearsalBaseline = {};
@@ -642,7 +691,8 @@ async function main(args, { spawn = fork, signals = process, readPeriod, feeSnap
     const tick = () => { const left = end - performance.now(); if (stopped || left <= 0) resolve(); else setTimeout(tick, Math.min(250, Math.ceil(left))); };
     tick();
   });
-  const save = () => { if (admission) state.rpc = admission.stats(); fs.writeFileSync(file, JSON.stringify(state, null, 2) + '\n'); };
+  const writer = createStateWriter(file, () => { if (admission) state.rpc = admission.stats(); return JSON.stringify(state, null, 2) + '\n'; });
+  const save = writer.save;
   const stop = reason => {
     if (stopped) return;
     stopped ??= reason; admission?.stop(reason); state.status = 'STOP_REQUESTED'; state.stopReason = stopped; save();
@@ -655,11 +705,11 @@ async function main(args, { spawn = fork, signals = process, readPeriod, feeSnap
     checkPins();
     if (serving && deadline !== null && performance.now() >= deadline) { stop('TIME_BOUND'); throw Error('DEX_SERVER_PERIOD_EXPIRED'); }
   };
-  admission = createRpcAdmission({ onStop: stop, onChange: save, checkSource });
+  admission = createRpcAdmission({ onStop: stop, onChange: writer.changed, checkSource });
   const interrupted = () => stop('OPERATOR_STOP');
   signals.on('SIGINT', interrupted); signals.on('SIGTERM', interrupted);
   const timer = standing ? null : setTimeout(() => stop('TIME_BOUND'), newWorkMs);
-  const stopPoll = setInterval(() => { if (fs.existsSync(stopFile)) stop('OPERATOR_STOP'); }, 250);
+  const stopPoll = setInterval(() => { if (fs.existsSync(stopFile)) stop('OPERATOR_STOP'); writer.flush(); }, 250);
   save();
   const runService = async name => {
     try {
@@ -679,14 +729,14 @@ async function main(args, { spawn = fork, signals = process, readPeriod, feeSnap
         const record={status:'HELD',holdReason:cutover?'C1_STANDING_BASELINE_UNSETTLED':'C1_REHEARSAL_BASELINE_UNSETTLED',feeLimitWei,
           unsettledFeeLimitWei:feeLimitWei,accountingError:'DEX_SERVER_ACCOUNTING',noAutomaticRestart:true};
         state.services.c1=record;
-        state.runs.c1.push(record);
+        recordRun(state, 'c1', record);
         state.feeCommitmentWei=String(BigInt(state.feeCommitmentWei)+BigInt(feeLimitWei));
         save();return;
       }
       if (serving) checkSource();
       if (fs.existsSync(stopFile)) stop('OPERATOR_STOP');
       if (stopped) return;
-      const run = operating ? state.runs[name].length + 1 : 1;
+      const run = operating ? state.evictedRuns[name].runs + state.runs[name].length + 1 : 1;
       if (replacementC1 && run === 1) state.rehearsalBaseline[name] = baseline;
       if (cutover && run === 1) state.standingBaseline[name] = baseline;
       let nextFeeCommitmentWei;
@@ -735,7 +785,7 @@ async function main(args, { spawn = fork, signals = process, readPeriod, feeSnap
       const record = { status: 'STARTED', pid: child.pid, stdout, stderr };
       if (operating) {
         record.run = run; record.feeLimitWei = policy[name].feeLimitWei;
-        state.runs[name].push(record);
+        recordRun(state, name, record);
         state.feeCommitmentWei = nextFeeCommitmentWei;
       }
       children.add(child); state.services[name] = record; save();
@@ -898,11 +948,11 @@ async function main(args, { spawn = fork, signals = process, readPeriod, feeSnap
     stop(error.code ?? 'DEX_SERVICES_START_FAILED'); await Promise.all(jobs);
     state.status = 'STOPPED'; state.finishedAt = new Date().toISOString(); save(); throw error;
   } finally {
-    clearTimeout(timer); clearInterval(stopPoll); signals.removeListener('SIGINT', interrupted); signals.removeListener('SIGTERM', interrupted);
+    clearTimeout(timer); clearInterval(stopPoll); writer.close(); signals.removeListener('SIGINT', interrupted); signals.removeListener('SIGTERM', interrupted);
   }
 }
 
-module.exports = { main, maximumNewWorkMs, createRpcAdmission, readServerPeriod, checkRuntimeFiles, checkInstalledPeerRuntime, refusalCoolDown, rehearsalWorkerFile };
+module.exports = { main, maximumNewWorkMs, createRpcAdmission, createStateWriter, recordRun, evictedRunTotals, retainedRuns, readServerPeriod, checkRuntimeFiles, checkInstalledPeerRuntime, refusalCoolDown, rehearsalWorkerFile };
 if (require.main === module) main(process.argv.slice(2)).then(result => {
   console.log(JSON.stringify(result)); if (!['COMPLETE', 'DEX_SERVICES_STOP_REQUESTED', 'DEX_SERVICES_REPLACEMENT_CHECKED'].includes(result.status)) process.exitCode = 1;
 }).catch(error => {

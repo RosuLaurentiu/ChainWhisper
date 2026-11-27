@@ -533,7 +533,8 @@ test('closing accounting yields to keeper RPC and prevents premature C1 replacem
     assert.equal(JSON.parse(fs.readFileSync(path.join(f.directory,'group.json'))).stopReason,undefined);
     const keeper=fixture.calls.find(row=>row.name==='keeper');
     await keeper.complete({requests:1,close:false});keeperCompleted=true;
-    const g=JSON.parse(fs.readFileSync(path.join(f.directory,'group.json')));
+    // CW-151: RPC counters reach group.json within about one second, not on every message.
+    const g=await groupWhen(f,group=>group.rpc.perService.keeper.responses===1);
     assert.equal(g.rpc.perService.keeper.responses,1);assert.equal(g.stopReason,undefined);
     assert.equal(fixture.calls.filter(row=>row.name==='c1').length,1);
     assert.equal(g.runs.c1[0].actualFeeWei,undefined);
@@ -560,17 +561,26 @@ test('standing service renews beyond 24 hours and the old 48-run keeper limit wi
  const fixture=operatingChildren(row=>{
   if(row.name!=='keeper')return;
   if(row.run===1)clock=2*86400000;
-  if(row.run===49)signals.emit('SIGINT');else void row.complete();
+  if(row.run===61)signals.emit('SIGINT');else void row.complete();
  });
  const result=await main(['--serve',f.directory],{spawn:(...args)=>{initial??=JSON.parse(fs.readFileSync(path.join(f.directory,'group.json')));return fixture.spawn(...args);},signals,readPeriod:f.read,feeSnapshot:name=>({service:name,feeWei:'0'}),feeDelta:()=> '100000000000000000'});
- assert.equal(result.stopReason,'OPERATOR_STOP');assert.equal(result.maximumNewWorkMs,null);assert.equal(result.runs.keeper.length,49);
+ assert.equal(result.stopReason,'OPERATOR_STOP');assert.equal(result.maximumNewWorkMs,null);assert.equal(result.runs.keeper.length,50);
+ // CW-151: 61 keeper runs keep the last 50, exact totals of the first 11 and monotonic run numbers.
+ assert.deepEqual(result.runs.keeper.map(row=>row.run),Array.from({length:50},(_,index)=>index+12));
+ assert.equal(path.basename(result.runs.keeper.at(-1).stdout),'keeper.run-61.stdout.log');
+ // The fixture summaries carry no method counts, so the watchdog would hold these runs as missing traffic, as in a full history.
+ assert.deepEqual(result.evictedRuns.keeper,{runs:11,sends:0,missingTraffic:11,accountingErrors:0,openTraffic:0,firstIssue:'WATCHDOG_TRAFFIC_MISSING',
+  settledFeeWei:'1100000000000000000',committedFeeWei:'1100000000000000000',statuses:{RETURNED:11}});
+ assert.equal(result.retainedRunsPerService,50);
+ assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.directory,'group.json'),'utf8')),JSON.parse(JSON.stringify(result)),'the final state is written');
  assert(Object.values(result.operatingPolicy.services).every(policy=>policy.maximumRuns===null));
  assert.equal(result.operatingPolicy.maximumFeeCommitmentWei,null);
- assert.equal(BigInt(result.settledFeeWei),BigInt(f.policy.priorSpentFeeWei)+4800000000000000000n);
+ assert.equal(BigInt(result.settledFeeWei),BigInt(f.policy.priorSpentFeeWei)+6000000000000000000n);
  assert.equal(result.operatingPolicy.oneOffFundingFeeReserveWei,'1500000000000');
  assert.equal(initial.feeCommitmentWei,String(BigInt(f.policy.priorSpentFeeWei)+1500000000000n));
  assert.equal(initial.settledFeeWei,f.policy.priorSpentFeeWei);
- assert.equal(BigInt(result.feeCommitmentWei),Object.values(result.runs).flat().reduce((total,row)=>total+BigInt(row.actualFeeWei??row.feeLimitWei),BigInt(f.policy.priorSpentFeeWei)+1500000000000n));
+ assert.equal(BigInt(result.feeCommitmentWei),Object.values(result.runs).flat().reduce((total,row)=>total+BigInt(row.actualFeeWei??row.feeLimitWei),BigInt(f.policy.priorSpentFeeWei)+1500000000000n+
+  Object.values(result.evictedRuns).reduce((total,row)=>total+BigInt(row.committedFeeWei),0n)));
  assert(BigInt(result.feeCommitmentWei)>3000000000000000000n);
  assert.deepEqual(timeouts,[]);
 });
@@ -2367,4 +2377,106 @@ test('a supervised c1 process retries a 503 read through real IPC without stoppi
   const stats = group.stats();
   assert.equal(stats.retried, 1); assert.deepEqual(stats.statuses, { 200: 2 }); assert.equal(stats.physicalStarts, 3);
   assert.equal(stats.physicalSettled, 3); assert.equal(stats.occupiedSlots, 0); group.stop('TEST_COMPLETE');
+});
+
+// CW-151: bounded group state writes and run history.
+const { createStateWriter, recordRun, evictedRunTotals, retainedRuns } = require('./current-dex-services.cjs');
+test('CW-151: RPC counter changes write the group state at most once per second; saves and close write at once', () => {
+  let clock = 0, value = 0; const writes = [];
+  const writer = createStateWriter('unused', () => String(value), { now: () => clock, write: text => writes.push(text) });
+  writer.save(); assert.deepEqual(writes, ['0']);
+  for (let index = 1; index <= 200; index++) { value = index; clock = index * 4; writer.changed(); }
+  assert.equal(writes.length, 1, '200 counter changes within 800 ms write nothing more');
+  writer.flush(); assert.equal(writes.length, 1);
+  clock = 1000; writer.flush(); assert.deepEqual(writes, ['0', '200'], 'the stop poll writes the latest state once');
+  clock = 2500; writer.flush(); assert.equal(writes.length, 2, 'no write without a change');
+  value = 201; writer.changed(); assert.deepEqual(writes.at(-1), '201', 'a change after a quiet second writes at once');
+  value = 202; clock = 2600; writer.changed(); assert.equal(writes.length, 3);
+  value = 203; writer.save(); assert.deepEqual(writes.at(-1), '203', 'a status save writes at once inside the interval');
+  clock = 3700; writer.flush(); assert.equal(writes.length, 4, 'the status save cleared the pending change');
+  value = 204; clock = 3800; writer.save(); assert.equal(writes.length, 5);
+  value = 205; clock = 3900; writer.changed(); assert.equal(writes.length, 5);
+  writer.close(); assert.deepEqual(writes.at(-1), '205', 'close writes the pending change');
+  value = 206; clock = 9000; writer.changed(); writer.flush(); assert.equal(writes.length, 6, 'no counter write after close');
+  writer.save(); assert.deepEqual(writes.at(-1), '206', 'a late status save still writes');
+});
+
+test('CW-151: the default group state write replaces the whole file by rename', t => {
+  const directory = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'cw151-'));
+  t.after(() => fs.rmSync(directory, { recursive: true }));
+  const file = path.join(directory, 'group.json'); let value = { status: 'STARTING' };
+  const writer = createStateWriter(file, () => JSON.stringify(value) + '\n');
+  writer.save(); value = { status: 'RUNNING', pad: 'x'.repeat(10000) }; writer.save(); value = { status: 'STOPPED' }; writer.save();
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { status: 'STOPPED' });
+  assert.deepEqual(fs.readdirSync(directory), ['group.json']);
+});
+
+const cw151Row = (index, extra = {}) => ({ run: index, status: index % 7 ? 'RETURNED' : 'FAILED', feeLimitWei: '100',
+  ...(index % 7 ? { actualFeeWei: String(index) } : {}),
+  traffic: { methods: { eth_call: 1, ...(index % 3 ? {} : { eth_sendRawTransaction: 2 }) }, physicalPending: 0, unresolvedOccupancy: 0 }, ...extra });
+test('CW-151: group runs stay bounded with exact totals of the evicted runs and monotonic run numbers', () => {
+  assert.equal(retainedRuns, 50);
+  const state = { runs: { keeper: [] }, evictedRuns: { keeper: evictedRunTotals() } }, all = [];
+  for (let index = 1; index <= 130; index++) {
+    assert.equal(state.evictedRuns.keeper.runs + state.runs.keeper.length + 1, index, 'next run number');
+    const row = cw151Row(index); all.push(row); recordRun(state, 'keeper', row);
+    assert(state.runs.keeper.length <= 50);
+  }
+  assert.deepEqual(state.runs.keeper.map(row => row.run), all.slice(80).map(row => row.run));
+  const gone = all.slice(0, 80);
+  assert.deepEqual(state.evictedRuns.keeper, { runs: 80, missingTraffic: 0, accountingErrors: 0, openTraffic: 0, firstIssue: null,
+    sends: gone.reduce((total, row) => total + (row.traffic.methods.eth_sendRawTransaction ?? 0), 0),
+    settledFeeWei: String(gone.reduce((total, row) => total + BigInt(row.actualFeeWei ?? 0), 0n)),
+    committedFeeWei: String(gone.reduce((total, row) => total + BigInt(row.actualFeeWei ?? row.feeLimitWei), 0n)),
+    statuses: { RETURNED: gone.filter(row => row.status === 'RETURNED').length, FAILED: gone.filter(row => row.status === 'FAILED').length } });
+  const issues = { runs: { c1: [] }, evictedRuns: { c1: evictedRunTotals() } };
+  recordRun(issues, 'c1', cw151Row(1, { accountingError: 'DEX_SERVER_ACCOUNTING' }), 1);
+  recordRun(issues, 'c1', { status: 'HELD', feeLimitWei: '5' }, 1);
+  recordRun(issues, 'c1', cw151Row(3, { traffic: { methods: { eth_sendRawTransaction: -1 }, physicalPending: 1, unresolvedOccupancy: 0 } }), 1);
+  recordRun(issues, 'c1', cw151Row(4), 1);
+  assert.deepEqual(issues.evictedRuns.c1, { runs: 3, sends: 0, missingTraffic: 2, accountingErrors: 1, openTraffic: 2,
+    firstIssue: 'WATCHDOG_RUN_ACCOUNTING', settledFeeWei: '4', committedFeeWei: '9', statuses: { RETURNED: 2, HELD: 1 } });
+  assert.throws(() => recordRun(issues, 'c1', cw151Row(5), 0), /DEX_SERVICES_RUN_HISTORY/);
+});
+
+test('CW-151: the watchdog decides the same on a bounded group as on its full run history', () => {
+  const { CONFIG, checkGroupTraffic, allRunsSettled } = require('./current-dex-service-watchdog.cjs');
+  const full = mutate => {
+    const runs = Object.fromEntries(CONFIG.services.map(name => [name, Array.from({ length: 120 }, (_, index) => ({ status: 'RETURNED',
+      feeLimitWei: '10', actualFeeWei: '1', traffic: { methods: { eth_call: 3, eth_sendRawTransaction: index % 4 ? 0 : 1 },
+        physicalPending: 0, unresolvedOccupancy: 0 } }))]));
+    mutate(runs);
+    return { status: 'STOPPED', stopReason: 'OPERATOR_STOP', rpc: { physicalInFlight: 0, unknownInFlight: 0, unresolvedOccupancy: 0, statuses: { 200: 9 } }, runs };
+  };
+  const bounded = group => {
+    const state = { ...group, runs: {}, evictedRuns: {} };
+    for (const name of CONFIG.services) {
+      state.runs[name] = []; state.evictedRuns[name] = evictedRunTotals();
+      for (const row of group.runs[name]) recordRun(state, name, structuredClone(row));
+    }
+    return JSON.parse(JSON.stringify(state));
+  };
+  const decide = group => { try { return { traffic: checkGroupTraffic(group), settled: allRunsSettled(group) }; } catch (error) { return { guard: error.guard ?? error.message }; } };
+  const cases = {
+    clean: () => {},
+    'old accounting error': runs => { runs.prices[3].accountingError = 'DEX_SERVER_ACCOUNTING'; },
+    'old missing traffic': runs => { runs.c1[5].traffic = undefined; },
+    'old accounting error before old missing traffic': runs => { runs.prices[2].accountingError = 'X'; runs.prices[10].traffic = undefined; },
+    'old missing traffic before old accounting error': runs => { runs.prices[2].traffic = null; runs.prices[10].accountingError = 'X'; },
+    'old unsafe send count': runs => { runs.matching[1].traffic.methods.eth_sendRawTransaction = -1; },
+    'old accounting error with an unsafe send count': runs => { runs.matching[1].accountingError = 'X'; runs.matching[1].traffic.methods.eth_sendRawTransaction = -1; },
+    'old held record without traffic': runs => { runs.c1[0] = { status: 'HELD', feeLimitWei: '10', accountingError: 'DEX_SERVER_ACCOUNTING', noAutomaticRestart: true }; },
+    'old open traffic': runs => { runs.keeper[7].traffic.physicalPending = 1; },
+    'old unresolved occupancy': runs => { runs.c1[0].traffic.unresolvedOccupancy = 1; },
+    'retained accounting error': runs => { runs.c1[119].accountingError = 'X'; },
+    'old accounting error before retained missing traffic': runs => { runs.keeper[0].accountingError = 'X'; runs.keeper[100].traffic = undefined; },
+    'last run held': runs => { runs.matching[119].status = 'HELD'; }
+  };
+  for (const [label, mutate] of Object.entries(cases)) {
+    const group = full(mutate), small = bounded(group);
+    assert(CONFIG.services.every(name => small.runs[name].length === 50 && small.evictedRuns[name].runs === 70), label);
+    assert.deepEqual(decide(small), decide(group), label);
+  }
+  const clean = decide(bounded(full(() => {})));
+  assert.deepEqual(clean.traffic.sends, { keeper: 30, prices: 30, matching: 30, c1: 30 }); assert.equal(clean.settled, true);
 });

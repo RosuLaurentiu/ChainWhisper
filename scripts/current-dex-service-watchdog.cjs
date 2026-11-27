@@ -102,6 +102,24 @@ function installRestart(io, group, runName) {
 
 // The supervisor keeps one request in flight for the whole group. After an RPC stop at most the
 // originating request is unresolved; it must be a read. Any missing evidence counts as an unknown send.
+// CW-151: the supervisor keeps only recent runs and exact totals of the older runs in `evictedRuns`.
+// A group without the field (older supervisor) kept every run. Malformed totals count as missing traffic.
+function evictedRuns(group, name) {
+  if (group.evictedRuns === undefined) return { runs: 0, sends: 0, firstIssue: null, openTraffic: 0 };
+  const e = group.evictedRuns?.[name], count = value => Number.isSafeInteger(value) && value >= 0;
+  hold(e && typeof e === 'object' && ['runs', 'sends', 'missingTraffic', 'accountingErrors', 'openTraffic'].every(key => count(e[key])) &&
+    [null, 'WATCHDOG_TRAFFIC_MISSING', 'WATCHDOG_RUN_ACCOUNTING'].includes(e.firstIssue) &&
+    (e.firstIssue === null) === (e.missingTraffic + e.accountingErrors === 0) &&
+    e.missingTraffic <= e.runs && e.accountingErrors <= e.runs && e.openTraffic <= e.runs, 'WATCHDOG_TRAFFIC_MISSING', name);
+  return e;
+}
+
+// True when every run, retained or evicted, has settled traffic with no unresolved occupancy.
+function allRunsSettled(group) {
+  return CONFIG.services.every(name => evictedRuns(group, name).openTraffic === 0 && group.runs[name].every(({ traffic }) =>
+    traffic.physicalPending === 0 && traffic.unresolvedOccupancy === 0));
+}
+
 function checkGroupTraffic(group) {
   const rpc = group.rpc ?? {};
   hold(rpc.physicalInFlight === 0, 'WATCHDOG_IN_FLIGHT');
@@ -112,7 +130,10 @@ function checkGroupTraffic(group) {
   for (const name of CONFIG.services) {
     const runs = group.runs?.[name];
     hold(Array.isArray(runs) && runs.length > 0, 'WATCHDOG_TRAFFIC_MISSING', name);
-    sends[name] = 0;
+    // Evicted runs precede the retained runs, so their first issue holds first, as in a full history.
+    const evicted = evictedRuns(group, name);
+    if (evicted.firstIssue) hold(false, evicted.firstIssue, name);
+    sends[name] = evicted.sends;
     for (const row of runs) {
       const t = row?.traffic;
       hold(t && t.methods && typeof t.methods === 'object', 'WATCHDOG_TRAFFIC_MISSING', name);
@@ -230,8 +251,7 @@ function checkRehearsalStopRecords({ approval, groupBytes, proofBytes, now }) {
     reconciledAt >= finishedAt && reconciledAt <= now && Math.floor(reconciledAt / 1000) <= issuedAt,
     'C1_REHEARSAL_RECONCILIATION_STATE');
   const { sends, failedFeeLimitWei } = checkGroupTraffic(group);
-  hold(isDeepStrictEqual(proof.sends, sends) && CONFIG.services.every(name => group.runs[name].every(({traffic}) =>
-    traffic.physicalPending === 0 && traffic.unresolvedOccupancy === 0)), 'C1_REHEARSAL_RECONCILIATION_SENDS');
+  hold(isDeepStrictEqual(proof.sends, sends) && allRunsSettled(group), 'C1_REHEARSAL_RECONCILIATION_SENDS');
   const baselineCarry = group.period.priorSpentFeeWei;
   const legacyCarry = feeCarry({ baselineCarry, deltas: proof.deltas, settledFeeWei: group.settledFeeWei, failedFeeLimitWei });
   const completed = proof.completedRehearsal;
@@ -305,8 +325,7 @@ function reconcileRehearsalStop({ priorRun, nextRun, priorGroupSha256, priorAppr
     group.period.c1RehearsalSha256 === undefined, 'REHEARSAL_STOP_GROUP');
   hold(group.period.priorSpentFeeWei === baseline.carry && approval.priorSpentFeeWei === baseline.carry, 'WATCHDOG_BASELINE_CARRY');
   const { sends, failedFeeLimitWei } = checkGroupTraffic(group);
-  hold(group.rpc.unknownInFlight === 0 && group.rpc.unresolvedOccupancy === 0 && CONFIG.services.every(name => group.runs[name].every(
-    ({ traffic }) => traffic.physicalPending === 0 && traffic.unresolvedOccupancy === 0)), 'REHEARSAL_STOP_TRAFFIC');
+  hold(group.rpc.unknownInFlight === 0 && group.rpc.unresolvedOccupancy === 0 && allRunsSettled(group), 'REHEARSAL_STOP_TRAFFIC');
   for (const name of CONFIG.services) uint(baseline.nonces[name]);
   const facts = io.facts({ feesAfter: baseline.feesAfter });
   hold(Array.isArray(facts.locks) && facts.locks.length === 0, 'WATCHDOG_STALE_LOCK');
@@ -701,7 +720,7 @@ function cli() {
   tick(hostIo()).then(result => { console.log(JSON.stringify(result)); })
     .catch(error => { console.error(JSON.stringify({ status: 'WATCHDOG_ERROR', message: String(error?.message ?? error).slice(0, 200), noAutomaticRetryOfStart: true })); process.exitCode = 1; });
 }
-return { CONFIG, Hold, classifyStop, checkGroupTraffic, restartDecision, feeCarry, buildApproval, seedState, installRestart, tick, selfCheck, hostIo, findLocks, reconcileRehearsalStop, checkRehearsalStopRecords, cli };
+return { CONFIG, Hold, classifyStop, checkGroupTraffic, evictedRuns, allRunsSettled, restartDecision, feeCarry, buildApproval, seedState, installRestart, tick, selfCheck, hostIo, findLocks, reconcileRehearsalStop, checkRehearsalStopRecords, cli };
 }
 module.exports = {...createWatchdog(), createWatchdog};
 if (require.main === module) createWatchdog(process.argv[3] === '--build13' ? 'build13' : process.argv[3] === '--standing').cli();

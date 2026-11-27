@@ -571,3 +571,35 @@ test('an owner approval that names another task holds', async () => {
   const { h, io } = harness({ owner: { task: 'CW-999', approvedByOwner: true, watchdogSha256: 'watchdog-sha' } });
   const result = await tick(io); assert.equal(result.status, 'WATCHDOG_HOLD'); assert.equal(result.guard, 'WATCHDOG_OWNER_APPROVAL'); assert(!started(h));
 });
+
+// CW-151: the supervisor keeps recent runs and exact totals of older runs.
+test('checkGroupTraffic adds evicted run totals and holds on their first issue or malformed totals', () => {
+  const { evictedRuns, allRunsSettled } = require('./current-dex-service-watchdog.cjs');
+  const totals = (extra = {}) => ({ runs: 70, sends: 0, missingTraffic: 0, accountingErrors: 0, openTraffic: 0, firstIssue: null,
+    settledFeeWei: '0', committedFeeWei: '0', statuses: { RETURNED: 70 }, ...extra });
+  const bounded = (change = {}) => {
+    const g = stoppedGroup(); g.rpc = { physicalInFlight: 0, unknownInFlight: 0, unresolvedOccupancy: 0, statuses: { 200: 99 } };
+    g.runs.keeper[0].traffic.unresolvedOccupancy = 0; delete g.runs.keeper[0].traffic.lastFailure;
+    g.evictedRuns = Object.fromEntries(CONFIG.services.map(name => [name, totals(change[name])])); return g;
+  };
+  assert.deepEqual(evictedRuns(stoppedGroup(), 'c1'), { runs: 0, sends: 0, firstIssue: null, openTraffic: 0 }, 'an older group kept every run');
+  const g = bounded({ prices: { sends: 5 }, c1: { sends: 7 } });
+  assert.deepEqual(checkGroupTraffic(g), { sends: { keeper: 0, prices: 8, matching: 0, c1: 11 }, failedFeeLimitWei: 1325n });
+  assert.equal(allRunsSettled(g), true);
+  assert.equal(allRunsSettled(bounded({ matching: { openTraffic: 1 } })), false, 'an evicted unsettled run still blocks');
+  const cases = [
+    ['WATCHDOG_RUN_ACCOUNTING', { prices: { accountingErrors: 1, firstIssue: 'WATCHDOG_RUN_ACCOUNTING' } }],
+    ['WATCHDOG_TRAFFIC_MISSING', { c1: { missingTraffic: 1, accountingErrors: 1, firstIssue: 'WATCHDOG_TRAFFIC_MISSING' } }],
+    ['WATCHDOG_TRAFFIC_MISSING', { keeper: { accountingErrors: 1 } }],
+    ['WATCHDOG_TRAFFIC_MISSING', { keeper: { firstIssue: 'WATCHDOG_RUN_ACCOUNTING' } }],
+    ['WATCHDOG_TRAFFIC_MISSING', { matching: { sends: -1 } }],
+    ['WATCHDOG_TRAFFIC_MISSING', { matching: { runs: 1.5 } }],
+    ['WATCHDOG_TRAFFIC_MISSING', { matching: { openTraffic: 71 } }],
+    ['WATCHDOG_TRAFFIC_MISSING', { matching: { firstIssue: 'OTHER', missingTraffic: 1 } }]
+  ];
+  for (const [guard, change] of cases) assert.throws(() => checkGroupTraffic(bounded(change)), { guard }, JSON.stringify(change));
+  const missing = bounded(); delete missing.evictedRuns.c1;
+  assert.throws(() => checkGroupTraffic(missing), { guard: 'WATCHDOG_TRAFFIC_MISSING' });
+  const notObject = bounded(); notObject.evictedRuns = null;
+  assert.throws(() => checkGroupTraffic(notObject), { guard: 'WATCHDOG_TRAFFIC_MISSING' });
+});
