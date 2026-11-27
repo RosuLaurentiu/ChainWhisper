@@ -176,6 +176,42 @@ describe('archived Group view', () => {
   });
 });
 
+describe('Group submitted-send hold', () => {
+  const holdReason = 'Your previous message here is waiting for COTI confirmation. You can send again after it confirms.';
+  const submittedMessage: ChatMessage = {
+    id: 'local-group-v2-submitted',
+    direction: 'outgoing',
+    text: 'waiting for receipt',
+    deliveryState: 'submitted',
+    txHash: `0x${'88'.repeat(32)}`
+  };
+  const buttonWithClass = (markup: string, className: string) =>
+    markup.match(new RegExp(`<button[^>]*class="${className}"[^>]*>`, 'u'))?.[0] ?? '';
+
+  it('disables Send and image sends with a reason while an outgoing group message is submitted', () => {
+    const props = panelProps(false);
+    const html = renderToStaticMarkup(
+      <GroupChatPanel {...props} activeGroupMessages={[...props.activeGroupMessages, submittedMessage]} />
+    );
+    const send = buttonWithClass(html, 'group-compose-send chat-compose-send');
+    expect(send).toContain('disabled=""');
+    expect(send).toContain(`title="${holdReason}"`);
+    expect(buttonWithClass(html, 'chat-compose-attach chat-compose-attach-icon')).toContain('disabled=""');
+    expect(html).toContain(`role="status">${holdReason}<`);
+  });
+
+  it('keeps Send available when the group has no submitted outgoing message', () => {
+    const props = panelProps(false);
+    const html = renderToStaticMarkup(
+      <GroupChatPanel {...props} activeGroupMessages={[...props.activeGroupMessages, { ...submittedMessage, deliveryState: 'failed' }]} />
+    );
+    const send = buttonWithClass(html, 'group-compose-send chat-compose-send');
+    expect(send).not.toContain('disabled=""');
+    expect(send).toContain('title="Send group message"');
+    expect(html).not.toContain(holdReason);
+  });
+});
+
 describe('former Group member history', () => {
   it.each([false, true])('keeps history and paging but removes membership actions (mobile=%s)', mobile => {
     const props = panelProps(false, mobile);

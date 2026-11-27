@@ -1,3 +1,5 @@
+import type { ChatMessage } from './appShared';
+
 /**
  * A chat transaction that the wallet broadcast, but whose receipt the App could
  * not read. The message can still confirm on COTI, so callers must not mark it
@@ -47,3 +49,19 @@ export const wrapNativeChatTransactionWait = (
 
 export const CHAT_MESSAGE_SUBMITTED_NOTICE =
   'Message submitted. COTI has not confirmed it yet. It will appear when history shows the transaction. Do not send it again.';
+
+export const CHAT_SEND_HELD_FOR_SUBMITTED_REASON =
+  'Your previous message here is waiting for COTI confirmation. You can send again after it confirms.';
+
+/**
+ * A send reads the next sender sequence from confirmed chain state. While an
+ * outgoing message of this conversation is 'submitted' (broadcast, not yet
+ * confirmed), a new send reads the same sequence and reverts on COTI. Hold new
+ * sends to this conversation until history confirms or replaces that message.
+ */
+export const getChatSendHoldReason = (
+  messages: readonly Pick<ChatMessage, 'direction' | 'deliveryState'>[]
+): string | null =>
+  messages.some((message) => message.direction === 'outgoing' && message.deliveryState === 'submitted')
+    ? CHAT_SEND_HELD_FOR_SUBMITTED_REASON
+    : null;

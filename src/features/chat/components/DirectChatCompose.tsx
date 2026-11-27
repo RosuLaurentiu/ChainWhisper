@@ -48,6 +48,8 @@ type DirectChatComposeProps = {
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
   promptEstimate?: ChatComposerPromptEstimate | null;
+  /** Set while this conversation has a submitted, unconfirmed outgoing message. */
+  sendHoldReason?: string | null;
   sending: boolean;
   tipToggleDisabled: boolean;
   tipToggleTitle: string;
@@ -91,6 +93,7 @@ export default function DirectChatCompose({
   maxMessageLength,
   onMessageInputChange,
   promptEstimate,
+  sendHoldReason = null,
   sending,
   tipToggleDisabled,
   tipToggleTitle,
@@ -99,6 +102,8 @@ export default function DirectChatCompose({
 }: DirectChatComposeProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [msgLength, setMsgLength] = useState(0);
+  const sendHeld = Boolean(sendHoldReason);
+  const attachDisabled = imageAttachDisabled || sendHeld;
 
   return (
     <div className={tradeComposerOpen ? 'chat-compose trade-compose-active' : 'chat-compose'}>
@@ -156,9 +161,11 @@ export default function DirectChatCompose({
               className="chat-tip-send"
               type="button"
               onClick={onSendTip}
-              disabled={!canSendTipFromComposer}
+              disabled={!canSendTipFromComposer || sendHeld}
               title={
-                tipAmountWeiFromInput <= 0n
+                sendHoldReason
+                  ? sendHoldReason
+                  : tipAmountWeiFromInput <= 0n
                   ? 'Enter a tip amount'
                   : tipAmountExceedsBalance
                     ? `Amount exceeds your ${activeTipTokenSymbol} balance`
@@ -189,7 +196,7 @@ export default function DirectChatCompose({
           status={imageAttachmentStatus}
           onDismiss={onDismissImageAttachmentStatus}
           onRetry={onSendImage}
-          retryDisabled={imageAttachDisabled}
+          retryDisabled={attachDisabled}
         />
       ) : null}
       <div className="chat-compose-main">
@@ -199,7 +206,7 @@ export default function DirectChatCompose({
             type="file"
             accept={CHAT_IMAGE_FILE_ACCEPT}
             hidden
-            disabled={imageAttachDisabled}
+            disabled={attachDisabled}
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.currentTarget.value = '';
@@ -215,9 +222,9 @@ export default function DirectChatCompose({
             onClick={() => {
               imageInputRef.current?.click();
             }}
-            disabled={imageAttachDisabled}
+            disabled={attachDisabled}
             aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
-            title={imageAttachTitle}
+            title={sendHoldReason ?? imageAttachTitle}
           >
             <ChatImageIcon />
           </button>
@@ -245,7 +252,7 @@ export default function DirectChatCompose({
 
               if (!isMobileNav) {
                 event.preventDefault();
-                onSendMessage();
+                if (!sendHeld) onSendMessage();
               }
             }}
             onInput={(event) => {
@@ -261,7 +268,7 @@ export default function DirectChatCompose({
                 return;
               }
               event.preventDefault();
-              if (imageAttachDisabled) {
+              if (attachDisabled) {
                 return;
               }
               const file = imageItem.getAsFile();
@@ -274,9 +281,11 @@ export default function DirectChatCompose({
             type="button"
             className="chat-compose-send"
             onClick={onSendMessage}
-            disabled={sending || tipping || uploadingImage}
+            disabled={sending || tipping || uploadingImage || sendHeld}
             aria-label={sending ? 'Sending message' : uploadingImage ? 'Preparing image' : 'Send message'}
-            title={sending ? 'Sending...' : uploadingImage ? 'Preparing image...' : 'Send message'}
+            title={
+              sending ? 'Sending...' : uploadingImage ? 'Preparing image...' : sendHoldReason ?? 'Send message'
+            }
           >
             <ChatSendIcon />
           </button>
@@ -296,7 +305,11 @@ export default function DirectChatCompose({
             </span>
           </div>
         ) : null}
-        {promptEstimate ? (
+        {sendHoldReason ? (
+          <div className="chat-compose-prompt-estimate warning" role="status">
+            {sendHoldReason}
+          </div>
+        ) : promptEstimate ? (
           <div className={`chat-compose-prompt-estimate ${promptEstimate.tone}`}>
             {promptEstimate.label}
           </div>

@@ -119,6 +119,41 @@ describe('DirectChatPanel history state', () => {
   });
 });
 
+describe('DirectChatPanel submitted-send hold', () => {
+  const submittedMessage: ChatMessage = {
+    id: 'local-direct-v2-submitted',
+    direction: 'outgoing',
+    text: 'waiting for receipt',
+    deliveryState: 'submitted',
+    txHash: `0x${'88'.repeat(32)}`
+  };
+  const holdReason = 'Your previous message here is waiting for COTI confirmation. You can send again after it confirms.';
+  const buttonWithClass = (markup: string, className: string) =>
+    markup.match(new RegExp(`<button[^>]*class="${className}"[^>]*>`, 'u'))?.[0] ?? '';
+
+  it('disables Send, image and tip sends with a reason while an outgoing message is submitted', () => {
+    const markup = renderDirectHistory(false, [directV2Message, submittedMessage], false, true, {
+      tipComposerOpen: true,
+      canSendTipFromComposer: true,
+      tipAmountWeiFromInput: 1n
+    });
+    const send = buttonWithClass(markup, 'chat-compose-send');
+    expect(send).toContain('disabled=""');
+    expect(send).toContain(`title="${holdReason}"`);
+    expect(buttonWithClass(markup, 'chat-compose-attach chat-compose-attach-icon')).toContain('disabled=""');
+    expect(buttonWithClass(markup, 'chat-tip-send')).toContain('disabled=""');
+    expect(markup).toContain(`role="status">${holdReason}<`);
+  });
+
+  it('keeps Send available when the conversation has no submitted outgoing message', () => {
+    const markup = renderDirectHistory(false, [directV2Message, { ...submittedMessage, deliveryState: 'sent' }]);
+    const send = buttonWithClass(markup, 'chat-compose-send');
+    expect(send).not.toContain('disabled=""');
+    expect(send).toContain('title="Send message"');
+    expect(markup).not.toContain(holdReason);
+  });
+});
+
 describe('DirectChatPanel reply policy', () => {
   it('enables MetaMask replies only for stable Direct Chat V2 targets', () => {
     expect(getDirectReplyActionPolicy({

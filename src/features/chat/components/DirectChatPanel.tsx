@@ -8,6 +8,7 @@ import LinkedTradeContextPanel from '../../trading/components/LinkedTradeContext
 import TradeOfferCard from '../../trading/components/TradeOfferCard';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
 import { parseImageTag } from '../../../lib/imagePull';
+import { getChatSendHoldReason } from '../../../lib/chatSubmittedTransaction';
 import useVirtualizedPrependScrollAnchor from '../../../shared/hooks/useVirtualizedPrependScrollAnchor';
 import { buildTradeTerminalPath } from '../../trading/hooks/useP2PTradeRoute';
 import {
@@ -349,6 +350,7 @@ function DirectChatPanel({
       latestTradeId: nextLatestTradeId
     };
   }, [activeMessages]);
+  const sendHoldReason = useMemo(() => getChatSendHoldReason(activeMessages), [activeMessages]);
   const renderableMessages = useMemo(
     () =>
       activeMessages.filter((message) => {
@@ -865,6 +867,7 @@ function DirectChatPanel({
         maxMessageLength={maxMessageLength}
         onMessageInputChange={onMessageInputChange}
         promptEstimate={promptEstimate}
+        sendHoldReason={sendHoldReason}
         sending={sending}
         tipToggleDisabled={tipToggleDisabled}
         tipToggleTitle={tipToggleTitle}

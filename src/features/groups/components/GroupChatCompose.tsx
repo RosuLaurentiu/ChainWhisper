@@ -51,6 +51,8 @@ type GroupChatComposeProps = {
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
   promptEstimate?: Readonly<{ tone: 'ok' | 'warning'; label: string }> | null;
+  /** Set while this group has a submitted, unconfirmed outgoing message. */
+  sendHoldReason?: string | null;
 };
 
 export default function GroupChatCompose({
@@ -89,10 +91,13 @@ export default function GroupChatCompose({
   onSendMessage,
   maxMessageLength,
   onMessageInputChange,
-  promptEstimate
+  promptEstimate,
+  sendHoldReason = null
 }: GroupChatComposeProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [msgLength, setMsgLength] = useState(0);
+  const sendHeld = Boolean(sendHoldReason);
+  const attachDisabled = imageAttachDisabled || sendHeld;
 
   return (
     <div className="chat-compose group-chat-compose">
@@ -206,7 +211,7 @@ export default function GroupChatCompose({
           status={imageAttachmentStatus}
           onDismiss={onDismissImageAttachmentStatus}
           onRetry={onSendImage}
-          retryDisabled={imageAttachDisabled}
+          retryDisabled={attachDisabled}
         />
       ) : null}
       <div className="group-compose-main">
@@ -216,7 +221,7 @@ export default function GroupChatCompose({
             type="file"
             accept={CHAT_IMAGE_FILE_ACCEPT}
             hidden
-            disabled={imageAttachDisabled}
+            disabled={attachDisabled}
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.currentTarget.value = '';
@@ -232,9 +237,9 @@ export default function GroupChatCompose({
             onClick={() => {
               imageInputRef.current?.click();
             }}
-            disabled={imageAttachDisabled}
+            disabled={attachDisabled}
             aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
-            title={imageAttachTitle}
+            title={sendHoldReason ?? imageAttachTitle}
           >
             <ChatImageIcon />
           </button>
@@ -263,7 +268,7 @@ export default function GroupChatCompose({
 
               if (!isMobileNav) {
                 event.preventDefault();
-                onSendMessage();
+                if (!sendHeld) onSendMessage();
               }
             }}
             onInput={(event) => {
@@ -279,7 +284,7 @@ export default function GroupChatCompose({
                 return;
               }
               event.preventDefault();
-              if (imageAttachDisabled) {
+              if (attachDisabled) {
                 return;
               }
               const file = imageItem.getAsFile();
@@ -292,11 +297,17 @@ export default function GroupChatCompose({
             className="group-compose-send chat-compose-send"
             type="button"
             onClick={onSendMessage}
-            disabled={sendingGroupMessage || processingGroupAction || uploadingImage}
+            disabled={sendingGroupMessage || processingGroupAction || uploadingImage || sendHeld}
             aria-label={
               sendingGroupMessage ? 'Sending group message' : uploadingImage ? 'Preparing image' : 'Send group message'
             }
-            title={sendingGroupMessage ? 'Sending...' : uploadingImage ? 'Preparing image...' : 'Send group message'}
+            title={
+              sendingGroupMessage
+                ? 'Sending...'
+                : uploadingImage
+                  ? 'Preparing image...'
+                  : sendHoldReason ?? 'Send group message'
+            }
           >
             <ChatSendIcon />
           </button>
@@ -316,7 +327,11 @@ export default function GroupChatCompose({
             </span>
           </div>
         ) : null}
-        {promptEstimate ? (
+        {sendHoldReason ? (
+          <div className="chat-compose-prompt-estimate warning" role="status">
+            {sendHoldReason}
+          </div>
+        ) : promptEstimate ? (
           <div className={`chat-compose-prompt-estimate ${promptEstimate.tone}`}>
             {promptEstimate.label}
           </div>

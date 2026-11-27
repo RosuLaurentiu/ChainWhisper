@@ -7,6 +7,7 @@ import MessageTextWithLinks from '../../../shared/components/chat/MessageTextWit
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
 import { closeDetailsOnEscape } from '../../../shared/components/a11y';
 import { parseImageTag } from '../../../lib/imagePull';
+import { getChatSendHoldReason } from '../../../lib/chatSubmittedTransaction';
 import useVirtualizedPrependScrollAnchor from '../../../shared/hooks/useVirtualizedPrependScrollAnchor';
 import {
   formatMessageTimestamp,
@@ -261,6 +262,7 @@ export default function GroupChatPanel({
     () => activeGroupMessages.filter((message) => !isReactionOnlyMessage(message)),
     [activeGroupMessages, isReactionOnlyMessage]
   );
+  const sendHoldReason = useMemo(() => getChatSendHoldReason(activeGroupMessages), [activeGroupMessages]);
   const showInitialMessageSkeleton =
     !groupEpochSyncRequired && messageLoadPhase !== null && renderableMessages.length === 0;
   const showHistorySyncIndicator = messageLoadPhase !== null && renderableMessages.length > 0;
@@ -786,6 +788,7 @@ export default function GroupChatPanel({
         maxMessageLength={maxMessageLength}
         onMessageInputChange={onMessageInputChange}
         promptEstimate={promptEstimate}
+        sendHoldReason={sendHoldReason}
       /> : null}
     </div>
   );
