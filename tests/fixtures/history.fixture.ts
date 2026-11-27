@@ -4,7 +4,7 @@
 import { afterEach, vi } from 'vitest';
 import { AbiCoder, Interface, keccak256, toUtf8Bytes, type Eip1193Provider } from '@coti-io/coti-ethers';
 import { PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT } from '../../src/lib/packedInputDexDailyPriceArtifact';
-import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE, type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceManifest } from '../../src/lib/currentDexDailyPrice';
+import { PACKED_INPUT_DEX_DAILY_PRICE_SOURCE, clearCurrentDexCompletedDayCacheForTests, type CurrentDexDailyPriceConfig, type CurrentDexDailyPriceManifest } from '../../src/lib/currentDexDailyPrice';
 import { makeCurrentReferenceStorage } from './currentReferenceSource.fixture';
 const coder=AbiCoder.defaultAbiCoder(),id=(s:string)=>keccak256(toUtf8Bytes(s));
 // The source emits this event for each sample; the completed-day chart reads it (CW-040.05).
@@ -13,8 +13,9 @@ export type FixtureMode='ready'|'empty'|'stale'|'suppressed'|'unobserved'|'rpc'|
 export const HISTORY_FIXTURE_DAY=20729n;
 const day=HISTORY_FIXTURE_DAY,hex=(n:bigint|number)=>`0x${BigInt(n).toString(16)}`;
 const observationTypes=['bytes32','bytes32','uint256','address','bytes32','bytes32','bytes32','bytes32','uint256','uint256','uint256','address','address','uint8','uint8','uint256','uint256','uint256','uint256','bytes32','bool'];
-afterEach(()=>vi.restoreAllMocks());
+afterEach(()=>{vi.restoreAllMocks();clearCurrentDexCompletedDayCacheForTests();});
 export function makeHistoryFixture(initial:FixtureMode='ready',currentPrice=2n*10n**18n,decimals=18){
+  clearCurrentDexCompletedDayCacheForTests();
   vi.spyOn(Date,'now').mockReturnValue(Number(day*86400n+100n)*1000);
   const priceSource=PACKED_INPUT_DEX_DAILY_PRICE_SOURCE,artifact=PACKED_INPUT_DEX_DAILY_PRICE_ARTIFACT,api=new Interface(artifact.abi);
   const token0=`0x${'33'.repeat(20)}`,token1=`0x${'44'.repeat(20)}`,source=`0x${'22'.repeat(20)}`,address=`0x${'11'.repeat(20)}`,tokenCode='0x60026000',sourceCode='0x60016000',recorderCode=artifact.deployedBytecode;

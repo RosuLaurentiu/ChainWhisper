@@ -26,6 +26,18 @@ describe('Current DEX daily history request scope',()=>{
   it.each(['ready','empty','rpc','reorg','mismatch'] as const)('returns the exact %s state through appChain',async mode=>{
     const f=makeHistoryFixture(mode),view=await loadCurrentDexDailyPrice({config:f.config,pair:f.manifest.symbols,provider:f.provider});expect(view.status).toBe(['rpc','reorg','mismatch'].includes(mode)?'error':mode);if(view.status==='error')expect(view.kind).toBe(mode);
   });
+  it('reuses completed-day logs already read in this tab and still checks the cached head (CW-153)',async()=>{
+    const f=makeHistoryFixture();let logReads=0;
+    const provider={request:async(args:{method:string;params?:unknown[]})=>{if(args.method==='eth_getLogs')logReads++;return f.provider.request(args as never);}};
+    const first=await loadCurrentDexDailyPrice({config:f.config,pair:f.manifest.symbols,provider,includeCompletedDays:true});
+    expect(first.status).toBe('ready');expect(logReads).toBeGreaterThan(0);
+    const firstReads=logReads;
+    const second=await loadCurrentDexDailyPrice({config:f.config,pair:f.manifest.symbols,provider,includeCompletedDays:true});
+    expect(second.status).toBe('ready');expect(logReads).toBe(firstReads);
+    if(first.status!=='ready'||second.status!=='ready')throw Error('Missing verified history');
+    expect(second.snapshot.completedDays).toEqual(first.snapshot.completedDays);
+    expect(first.snapshot.completedDays?.length).toBeGreaterThan(0);
+  });
   it('rejects a superseded read before a settled page can be exposed',async()=>{
     const f=makeHistoryFixture();let calls=0;const view=await loadCurrentDexDailyPrice({config:f.config,pair:f.manifest.symbols,provider:f.provider,assertCurrent:()=>{if(++calls>4)throw Error('superseded');}});expect(view.status).toBe('error');
   });

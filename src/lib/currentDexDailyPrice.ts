@@ -160,11 +160,25 @@ const referenceUpdates = new Interface(['event PoolReferenceUpdated(bytes32 inde
 const updateTopic = referenceUpdates.getEvent('PoolReferenceUpdated')!.topicHash;
 const hex = (n: bigint) => `0x${n.toString(16)}`;
 
+type CompletedDaySample = { price: bigint; sampledAt: bigint; number: bigint; blockHash: string };
+// CW-153: completed days do not change, so one tab keeps the logs it already scanned per recorder binding.
+// A later read scans only blocks after the cached head, after checking that head is still canonical
+// (an unchanged block hash keeps every earlier block). Bounded: one entry per recorder, at most the window's days.
+const COMPLETED_DAY_SCANS = new Map<string, { fromDay: bigint; through: Block; latest: Map<bigint, CompletedDaySample> }>();
+export const clearCurrentDexCompletedDayCacheForTests = () => COMPLETED_DAY_SCANS.clear();
 async function readCompletedDayPrices(m: CurrentDexDailyPriceManifest, start: bigint, today: bigint, deployment: Block, head: Block,
-  canonicalBlock: (n: bigint) => Promise<Block>, rpc: (method: string, params: unknown[]) => Promise<unknown>) {
+  canonicalBlock: (n: bigint) => Promise<Block>, rpc: (method: string, params: unknown[]) => Promise<unknown>, cacheKey: string) {
   if (start === today || deployment.timestamp / 86400n >= today) return [];
+  const cached = COMPLETED_DAY_SCANS.get(cacheKey);
   let first = deployment.number;
-  if (deployment.timestamp < start * 86400n) {
+  const latest = new Map<bigint, CompletedDaySample>();
+  // The cached scan covers every block from the first block of fromDay through its head.
+  const reuse = Boolean(cached && cached.fromDay <= start && cached.through.number <= head.number &&
+    (await canonicalBlock(cached.through.number)).hash === cached.through.hash);
+  if (reuse) {
+    for (const [day, sample] of cached!.latest) if (day >= start) latest.set(day, sample);
+    first = cached!.through.number + 1n;
+  } else if (deployment.timestamp < start * 86400n) {
     let last = head.number;
     while (first < last) {
       const mid = (first + last) / 2n;
@@ -172,9 +186,10 @@ async function readCompletedDayPrices(m: CurrentDexDailyPriceManifest, start: bi
       else last = mid;
     }
   }
+  const fromDay = reuse ? cached!.fromDay : start;
   const pageSize = 20000n;
   if (head.number - first >= pageSize * 40n) fail('Completed-day price history exceeds its read bound.', 'rpc');
-  const latest = new Map<bigint, { price: bigint; sampledAt: bigint; number: bigint; blockHash: string }>();
+  const fresh = new Set<bigint>();
   for (let from = first; from <= head.number; from += pageSize) {
     const through = from + pageSize - 1n < head.number ? from + pageSize - 1n : head.number;
     const logs = await rpc('eth_getLogs',[{address:m.source,fromBlock:hex(from),toBlock:hex(through),topics:[updateTopic,m.market,m.pair]}]);
@@ -191,18 +206,23 @@ async function readCompletedDayPrices(m: CurrentDexDailyPriceManifest, start: bi
       const blockHash = hash(log.blockHash);
       if (number < from || number > through || sampledBlock !== number || sampledAt > head.timestamp || revision === 0n)
         fail('Completed-day price provenance does not match.');
-      if (!available || price === 0n || day < start || day >= today) continue;
+      // Today's samples are kept for the cache; only days before today are shown as completed.
+      if (!available || price === 0n || day < start) continue;
       hash(sourceState);
       const prior = latest.get(day);
-      if (!prior || number > prior.number) latest.set(day,{price,sampledAt,number,blockHash});
+      if (!prior || number > prior.number) { latest.set(day,{price,sampledAt,number,blockHash}); fresh.add(day); }
     }
   }
   const points: CurrentDexCompletedDayPrice[] = [];
   for (const [day,{price,sampledAt,number,blockHash}] of latest) {
-    const b = await canonicalBlock(number);
-    if (b.hash !== blockHash || b.timestamp !== sampledAt) fail('Completed-day price event is no longer canonical.', 'reorg');
+    if (day >= today) continue;
+    if (fresh.has(day)) {
+      const b = await canonicalBlock(number);
+      if (b.hash !== blockHash || b.timestamp !== sampledAt) fail('Completed-day price event is no longer canonical.', 'reorg');
+    }
     points.push(Object.freeze({day:String(day),priceE18:String(price),sampledAt:String(sampledAt),sampledBlock:String(number)}));
   }
+  COMPLETED_DAY_SCANS.set(cacheKey, { fromDay: fromDay > start ? fromDay : start, through: head, latest });
   return points.sort((a,b)=>Number(a.day)-Number(b.day));
 }
 const checkedReference = async(current:Observation,identity:ReferenceIdentity,head:Block,pin:{blockHash:string;requireCanonical:true},rpc:(method:string,params:unknown[])=>Promise<unknown>) => {
@@ -331,7 +351,7 @@ export async function readCurrentDexDailyPrice({ provider, manifest: suppliedMan
     priorRevision=o.revision; priorTime=o.sampledAt; priorBlock=o.sampledBlock;
     slots.push({day:String(day),point:Object.freeze({day:String(day),priceE18:String(o.priceE18),sampledAt:String(o.sampledAt),sampledBlock:String(o.sampledBlock),sourceRevision:String(o.revision),sourceState:hash(o.sourceState),registryRevision:String(o.registryRevision),marketRevision:String(o.marketRevision),recordedAt:String(s.recordedAt),recordedBlock:String(s.recordedBlock),sourceBlockHash:sourceBlock.hash,recordBlockHash:recordBlock.hash})});
   }
-  const completedDays = includeCompletedDays ? Object.freeze(await readCompletedDayPrices(m,start,currentDay,deployment,head,getBlock,rpc)) : undefined;
+  const completedDays = includeCompletedDays ? Object.freeze(await readCompletedDayPrices(m,start,currentDay,deployment,head,getBlock,rpc,bindingKey)) : undefined;
   const sourceApi = new Interface(['function poolReference(bytes32) view returns(bytes)']);
   const raw = sourceApi.decodeFunctionResult('poolReference',await rpc('eth_call',[{to:m.source,data:sourceApi.encodeFunctionData('poolReference',[m.market])},pin]) as string)[0];
   const current = decodeReference(raw,m), verified = await checkedReference(current,m,head,pin,rpc);

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe,expect,it,vi } from 'vitest';
 import { AbiCoder, Interface } from '@coti-io/coti-ethers';
-import { readCurrentDexDailyPrice,type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
+import { clearCurrentDexCompletedDayCacheForTests,readCurrentDexDailyPrice,type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { makeHistoryFixture } from '../../../../tests/fixtures/history.fixture';
 import { currentDexMarketReference } from '../../../lib/currentDexMarketReference';
 import DexMarketChart,{CandleMark,SampleTooltip,buildCurrentDexChartLivePoint,buildCurrentDexChartCandles,buildCurrentDexChartCarryPoints,buildCurrentDexChartLiveCandle,wrapExpandedChartFocus} from './DexMarketChart';
@@ -35,6 +35,8 @@ describe('DexMarketChart actual daily sample display',()=>{
     expect(buildCurrentDexChartLiveCandle({price:0.17,timestamp:1000},{timestamp:2000,price:0.21,recorded:true},20)).toMatchObject({recorded:true,body:[0.17,0.21]});
     expect(buildCurrentDexChartLiveCandle(undefined,{timestamp:2000,price:0.21,recorded:true},20)).not.toHaveProperty('live');
     logs[0]={...logs[0],blockHash:f.header(90n).hash};
+    // CW-153: a tab reuses logs below an unchanged head; a fresh tab reads them again and finds the changed event.
+    clearCurrentDexCompletedDayCacheForTests();
     await expect(readCurrentDexDailyPrice({provider,manifest:f.manifest,finalityLagBlocks:0,includeCompletedDays:true})).rejects.toMatchObject({kind:'reorg'});
   });
   it('adds only a verified, fresh, matching live point after the last saved sample',async()=>{
