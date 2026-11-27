@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   advanceGroupChatV2ReadCursor,
   createGroupChatV2ReadCursor,
-  hasUnreadGroupChatV2Message,
   mergeGroupChatV2ReadCursors
 } from './groupChatV2ReadCursor';
 
@@ -42,8 +41,6 @@ describe('groupChatV2ReadCursor', () => {
       }
     });
     expect(advanced.lastReadMessageId).toBe('8');
-    expect(hasUnreadGroupChatV2Message({ cursor: advanced, latestIncomingMessageId: 9n })).toBe(true);
-    expect(hasUnreadGroupChatV2Message({ cursor: advanced, latestIncomingMessageId: 8n })).toBe(false);
   });
 
   it('validates exact canonical anchors and lets a reset generation defeat stale cursors', async () => {

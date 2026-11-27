@@ -83,34 +83,11 @@ describe('browser-wallet-only architecture boundary', () => {
     }
   });
 
-  it('keeps retired chat contracts read-only and behind an explicit compatibility boundary', () => {
-    const expectedLegacyReaders = [
-      'src/lib/chatGc.ts'
-    ];
-    const legacyImporters = productionSources
-      .filter(({ relativePath }) => relativePath !== 'src/lib/legacyChatContracts.ts')
-      .filter(({ content }) => content.includes('legacyChatContracts'))
-      .map(({ relativePath }) => relativePath)
-      .sort();
-    const compatibilitySource = readFileSync(
-      join(SRC_ROOT, 'lib/legacyChatContracts.ts'),
-      'utf8'
-    );
+  it('keeps the retired chat contracts out of production source (CW-147 deleted their read-only ABI module)', () => {
+    expect(existsSync(join(SRC_ROOT, 'lib/legacyChatContracts.ts'))).toBe(false);
+    expect(productionSources.filter(({ content }) => content.includes('legacyChatContracts')).map(({ relativePath }) => relativePath)).toEqual([]);
     const sharedContracts = readFileSync(join(SRC_ROOT, 'lib/appShared/contracts.ts'), 'utf8');
-    const functionFragments = [...compatibilitySource.matchAll(/'function ([^']+)'/gu)]
-      .map((match) => match[1] ?? '');
-
-    expect(legacyImporters).toEqual(expectedLegacyReaders);
-    expect(functionFragments.length).toBeGreaterThan(0);
-    for (const fragment of functionFragments) {
-      expect(fragment, `legacy ABI reintroduced a write selector: ${fragment}`).toMatch(
-        /\bview\s+returns\b|\bpure\s+returns\b/u
-      );
-    }
     expect(sharedContracts).not.toMatch(/CHAT_CONTRACT_(?:ADDRESS|ABI)/u);
-    expect(compatibilitySource).not.toMatch(
-      /submit(?:Multipart|GroupMessage)?\(|setMyNickname\(|createGroup\(|addMembers\(|inviteMembers\(|approve\(/u
-    );
   });
 
   it('does not import or render retired wallet controls from production source', () => {
@@ -553,7 +530,6 @@ describe('browser-wallet-only architecture boundary', () => {
   it('does not poll MetaMask for active chat, trading, token, or liquidity receipts after broadcast', () => {
     const faucet = readFileSync(join(SRC_ROOT, 'lib/chainWhisperTestnetFaucet.ts'), 'utf8');
     const admission = readFileSync(join(SRC_ROOT, 'lib/chainWhisperTestnetTokenAdmission.ts'), 'utf8');
-    const appLookup = readFileSync(join(SRC_ROOT, 'lib/appLookup.ts'), 'utf8');
     const appChain = readFileSync(join(SRC_ROOT, 'lib/appChain.ts'), 'utf8');
     const ownerCapability = readFileSync(join(SRC_ROOT, 'features/wallet/ownerCotiMetaMaskCapability.ts'), 'utf8');
     const directChat = readFileSync(join(SRC_ROOT, 'lib/directChatV2Chain.ts'), 'utf8');
@@ -575,8 +551,6 @@ describe('browser-wallet-only architecture boundary', () => {
     expect(admission).not.toMatch(/transaction\.wait\(/u);
     expect(admission).toContain('binding.readProvider.getTransactionReceipt(transaction.hash)');
     expect(admission).toMatch(/reader\.readApproval\(operation\.targetAddress, operation\.getter, operation\.tokenAddress\)/u);
-    expect(appLookup).not.toMatch(/tx\.wait\(/u);
-    expect(appLookup).not.toMatch(/waitForPublicTransactionReceipt|waitForTransaction|\.setMyNickname\(/u);
     expect(appChain).not.toMatch(/\.wait\(\)/u);
     expect(appChain).toMatch(/waitForAppChainReceipt\(transaction, 'Privacy conversion'\)/u);
     expect(ownerCapability).toMatch(

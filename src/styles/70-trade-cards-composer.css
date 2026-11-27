@@ -136,8 +136,7 @@
   color: #dcfce7;
 }
 
-.trade-card-status.open,
-.trade-card-status.pending-sync {
+.trade-card-status.open {
   border-color: rgba(34, 197, 94, 0.54);
   background: rgba(34, 197, 94, 0.15);
   color: #dcfce7;
@@ -360,16 +359,14 @@
   border: 1px solid rgba(250, 204, 21, 0.35);
 }
 
-.trade-card-inline-private-input,
-.trade-card-inline-private-quote {
+.trade-card-inline-private-input {
   display: grid;
   gap: 4px;
   min-width: 0;
   margin-top: 1px;
 }
 
-.trade-card-inline-private-input span,
-.trade-card-inline-private-quote span {
+.trade-card-inline-private-input span {
   color: rgba(235, 230, 255, 0.66);
   font-size: 0.72rem;
   font-weight: 700;
@@ -397,22 +394,6 @@
 
 .trade-card-inline-private-input input::placeholder {
   color: rgba(245, 245, 251, 0.42);
-}
-
-.trade-card-inline-private-quote {
-  min-height: 42px;
-  align-content: center;
-  padding: 10px 11px;
-  border: 1px solid rgba(52, 211, 153, 0.16);
-  border-radius: 7px;
-  background: rgba(7, 18, 14, 0.34);
-}
-
-.trade-card-inline-private-quote strong {
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: 0.98rem;
-  line-height: 1.25;
 }
 
 .trade-card-note,
@@ -541,12 +522,6 @@
   font-size: 0.76rem;
 }
 
-.trade-card-links {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .trade-card-link-button {
   display: inline-flex;
   align-items: center;
@@ -620,120 +595,6 @@
   box-shadow: none;
 }
 
-.trade-card-partial-fill {
-  display: grid;
-  flex: 1 1 100%;
-  gap: 0.65rem;
-  min-width: min(100%, 22rem);
-  padding: 0.7rem;
-  border: 1px solid rgba(185, 163, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(13, 10, 28, 0.5);
-}
-
-.trade-card-partial-fill-head,
-.trade-card-partial-fill-terms,
-.trade-card-partial-fill-presets {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.trade-card-partial-fill-head {
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.trade-card-partial-fill-head strong {
-  color: var(--text);
-}
-
-.trade-card-partial-fill-terms {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-}
-
-.trade-card-partial-fill-term {
-  min-width: 0;
-  border-radius: 8px;
-  padding: 0.62rem 0.7rem;
-  border: 1px solid rgba(185, 163, 255, 0.14);
-  background: rgba(255, 255, 255, 0.045);
-}
-
-.trade-card-partial-fill-term span {
-  display: block;
-  margin-bottom: 0.25rem;
-  color: var(--muted);
-  font-size: 0.72rem;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.trade-card-partial-fill-term strong {
-  display: block;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: 0.82rem;
-}
-
-.trade-card-partial-fill-send {
-  border-color: rgba(244, 114, 182, 0.18);
-}
-
-.trade-card-partial-fill-receive {
-  border-color: rgba(52, 211, 153, 0.18);
-}
-
-.trade-card-partial-fill-link {
-  align-self: center;
-  color: rgba(235, 230, 255, 0.58);
-  font-size: 0.76rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.trade-card-partial-fill input[type='range'] {
-  width: 100%;
-  accent-color: #a78bfa;
-}
-
-.trade-card-private-fill-input {
-  display: grid;
-  gap: 0.42rem;
-  cursor: text;
-}
-
-.trade-card-private-fill-input span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: none;
-}
-
-.trade-card-private-fill-input input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  border-radius: 6px;
-  background: rgba(8, 8, 14, 0.3);
-  color: var(--text);
-  padding: 0.5rem 0.58rem;
-  font: inherit;
-  font-size: 0.92rem;
-  font-weight: 800;
-}
-
-.trade-card-private-fill-input input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.42), 0 0 0 2px rgba(124, 58, 237, 0.14);
-}
-
-.trade-card-private-fill-input input::placeholder {
-  color: rgba(245, 245, 251, 0.44);
-}
-
 .trade-card-private-fill-note {
   margin: 0;
   padding: 7px 9px;
@@ -769,77 +630,6 @@
 .trade-card-private-fill-actions .trade-card-partial-fill-submit {
   width: 100%;
   justify-self: stretch;
-}
-
-.trade-card-private-fill {
-  gap: 0.72rem;
-}
-
-.trade-card-private-fill-head {
-  align-items: baseline;
-}
-
-.trade-card-private-fill .trade-card-partial-fill-terms {
-  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr);
-  align-items: stretch;
-  gap: 0.56rem;
-}
-
-.trade-card-private-fill .trade-card-partial-fill-term {
-  display: grid;
-  align-content: start;
-  min-height: 76px;
-}
-
-.trade-card-private-fill .trade-card-partial-fill-send {
-  border-color: rgba(244, 63, 94, 0.34);
-  background: rgba(42, 19, 29, 0.48);
-}
-
-.trade-card-private-fill .trade-card-partial-fill-receive {
-  border-color: rgba(34, 197, 94, 0.34);
-  background: rgba(18, 32, 26, 0.48);
-}
-
-.trade-card-private-fill .trade-card-partial-fill-receive strong {
-  margin-top: 0.5rem;
-  font-size: 0.92rem;
-}
-
-.trade-card-private-fill .trade-card-partial-fill-link {
-  justify-self: center;
-  min-width: 30px;
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  align-self: center;
-  border: 1px solid rgba(121, 95, 184, 0.58);
-  border-radius: 999px;
-  background: rgba(17, 17, 27, 0.86);
-  color: #c4b5fd;
-  font-size: 0.62rem;
-}
-
-.trade-card-private-fill .trade-card-partial-fill-submit {
-  width: 100%;
-}
-
-.trade-card-partial-fill-presets {
-  flex-wrap: wrap;
-}
-
-.trade-card-actions .trade-card-partial-fill-presets button {
-  min-width: 54px;
-  padding: 6px 9px;
-  border-radius: 7px;
-  font-size: 0.72rem;
-  box-shadow: none;
-}
-
-.trade-card-actions .trade-card-partial-fill-presets button.active {
-  border-color: rgba(167, 139, 250, 0.62);
-  background: rgba(124, 58, 237, 0.34);
 }
 
 .trade-card-partial-fill-submit {
@@ -880,66 +670,6 @@
 .trade-card-action-refuse:hover:not(:disabled) {
   border-color: rgba(244, 63, 94, 0.52);
   background: linear-gradient(180deg, rgba(112, 29, 52, 0.66) 0%, rgba(67, 18, 33, 0.9) 100%);
-}
-
-.trade-response-card {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.trade-response-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.trade-response-card-kicker {
-  font-size: 0.74rem;
-  font-weight: 700;
-  color: var(--muted);
-}
-
-.trade-response-card-badge {
-  width: fit-content;
-  border-radius: 999px;
-  border: 1px solid rgba(167, 139, 250, 0.38);
-  background: rgba(139, 92, 246, 0.14);
-  color: var(--text);
-  padding: 2px 8px;
-  font-size: 0.68rem;
-  font-weight: 700;
-}
-
-.trade-response-card-badge.accepted {
-  border-color: rgba(34, 197, 94, 0.45);
-  background: rgba(34, 197, 94, 0.14);
-  color: #dcfce7;
-}
-
-.trade-response-card-badge.declined,
-.trade-response-card-badge.cancelled {
-  border-color: rgba(244, 63, 94, 0.38);
-  background: rgba(244, 63, 94, 0.12);
-  color: #fecdd3;
-}
-
-.trade-response-card-badge.countered {
-  border-color: rgba(250, 204, 21, 0.34);
-  background: rgba(250, 204, 21, 0.12);
-  color: #fde68a;
-}
-
-.trade-response-card-title {
-  font-size: 0.95rem;
-  line-height: 1.35;
-}
-
-.trade-response-card-detail {
-  font-size: 0.76rem;
-  color: var(--muted);
 }
 
 .chat-compose {
@@ -1147,13 +877,6 @@
 
 .chat-replying button:hover {
   background: rgba(139, 92, 246, 0.16);
-}
-
-.chat-image-attach {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto auto;
-  gap: 8px;
 }
 
 .chat-image-attachment-preview {
@@ -1686,8 +1409,7 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
-.standalone-trade-create-panel .trade-compose-panel,
-.p2p-counter-panel .trade-compose-panel {
+.standalone-trade-create-panel .trade-compose-panel {
   gap: 12px;
   border-color: rgba(74, 64, 112, 0.72);
   border-radius: 8px;
@@ -1870,8 +1592,7 @@
   align-items: start;
 }
 
-.standalone-trade-create-panel .trade-compose-grid,
-.p2p-counter-panel .trade-compose-grid {
+.standalone-trade-create-panel .trade-compose-grid {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
   align-items: stretch;
@@ -1906,8 +1627,7 @@
   background: rgba(18, 32, 26, 0.42);
 }
 
-.standalone-trade-create-panel .trade-compose-section,
-.p2p-counter-panel .trade-compose-section {
+.standalone-trade-create-panel .trade-compose-section {
   gap: 10px;
   padding: 12px;
   border-radius: 10px;
@@ -1977,8 +1697,7 @@
   line-height: 1.35;
 }
 
-.standalone-trade-create-panel .trade-compose-section-sell,
-.p2p-counter-panel .trade-compose-section-sell {
+.standalone-trade-create-panel .trade-compose-section-sell {
   grid-column: 1;
   border-color: rgba(244, 63, 94, 0.36);
   border-bottom-left-radius: 8px;
@@ -1986,8 +1705,7 @@
   background: rgba(42, 19, 29, 0.5);
 }
 
-.standalone-trade-create-panel .trade-compose-section-buy,
-.p2p-counter-panel .trade-compose-section-buy {
+.standalone-trade-create-panel .trade-compose-section-buy {
   grid-column: 1;
   border-color: rgba(34, 197, 94, 0.36);
   border-top-left-radius: 8px;
@@ -2014,25 +1732,6 @@
   min-height: 0;
 }
 
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-buy {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-cycle-indicator {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-sell {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .p2p-trading-shell .standalone-trade-create-panel .trade-compose-section-buy:not(.p2p-recurring-side-panel) .trade-compose-amount-field .trade-compose-input {
   min-height: 42px;
   font-size: 1.05rem;
@@ -2044,31 +1743,6 @@
   border-radius: 8px;
   background: rgba(5, 5, 12, 0.16);
   padding: 10px 10px 0;
-}
-
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-primary-field .trade-compose-input,
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-price-field .trade-compose-input {
-  min-height: 44px;
-  font-size: 1.12rem;
-}
-
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-derived-field .trade-compose-input {
-  min-height: 38px;
-  font-size: 0.96rem;
-  color: rgba(245, 243, 255, 0.86);
-}
-
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-derived-field .trade-compose-field-label {
-  color: rgba(196, 181, 253, 0.82);
-}
-
-@media (max-width: 760px) {
-  .p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-buy,
-  .p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-cycle-indicator,
-  .p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-sell {
-    grid-column: 1;
-    grid-row: auto;
-  }
 }
 
 .trade-compose-section-sell .trade-compose-section-header strong {
@@ -2109,8 +1783,7 @@
   font-size: 0.88rem;
 }
 
-.standalone-trade-create-panel .trade-compose-section-header strong,
-.p2p-counter-panel .trade-compose-section-header strong {
+.standalone-trade-create-panel .trade-compose-section-header strong {
   font-size: 1rem;
 }
 
@@ -2206,8 +1879,7 @@
 }
 
 .trade-compose-inline-price .p2p-carbon-price-reference,
-.trade-compose-pricing-row .p2p-carbon-price-reference,
-.p2p-recurring-price-field .p2p-carbon-price-reference {
+.trade-compose-pricing-row .p2p-carbon-price-reference {
   display: inline-block;
   margin-top: 2px;
   max-width: 100%;
@@ -2224,7 +1896,6 @@
   color: rgba(248, 245, 255, 0.78);
 }
 
-.trade-compose-select,
 .trade-compose-input {
   width: 100%;
   border: 1px solid var(--border);
@@ -2236,10 +1907,7 @@
   min-height: 36px;
 }
 
-.standalone-trade-create-panel .trade-compose-select,
-.standalone-trade-create-panel .trade-compose-input,
-.p2p-counter-panel .trade-compose-select,
-.p2p-counter-panel .trade-compose-input {
+.standalone-trade-create-panel .trade-compose-input {
   min-height: 44px;
   border-color: rgba(74, 64, 112, 0.74);
   border-radius: 11px;
@@ -2266,19 +1934,6 @@
   font-size: 1.12rem;
 }
 
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-primary-field .trade-compose-input,
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-price-field .trade-compose-input {
-  min-height: 44px;
-  font-size: 1.12rem;
-}
-
-.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-derived-field .trade-compose-input {
-  min-height: 38px;
-  font-size: 0.96rem;
-  color: rgba(245, 243, 255, 0.86);
-}
-
-.trade-compose-select:focus,
 .trade-compose-input:focus {
   outline: 1px solid var(--accent);
 }
@@ -2289,7 +1944,6 @@
   min-width: 0;
 }
 
-.trade-compose-select[aria-invalid='true'],
 .trade-compose-input[aria-invalid='true'] {
   border-color: rgba(244, 63, 94, 0.42);
 }
@@ -2312,8 +1966,7 @@
   line-height: 1.35;
 }
 
-.standalone-trade-create-panel .trade-compose-price-field .trade-compose-input,
-.p2p-counter-panel .trade-compose-price-field .trade-compose-input {
+.standalone-trade-create-panel .trade-compose-price-field .trade-compose-input {
   min-height: 42px;
   font-size: 1rem;
 }
@@ -2606,8 +2259,7 @@
   line-height: 1.35;
 }
 
-.standalone-trade-create-panel .trade-token-select-trigger,
-.p2p-counter-panel .trade-token-select-trigger {
+.standalone-trade-create-panel .trade-token-select-trigger {
   min-height: 44px;
   border-color: rgba(74, 64, 112, 0.74);
   border-radius: 11px;
@@ -2616,8 +2268,7 @@
   padding: 10px 12px;
 }
 
-.standalone-trade-create-panel .trade-token-select-dropdown,
-.p2p-counter-panel .trade-token-select-dropdown {
+.standalone-trade-create-panel .trade-token-select-dropdown {
   font-size: 0.96rem;
 }
 
@@ -2724,8 +2375,7 @@
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
 }
 
-.standalone-trade-create-panel .trade-compose-swap-indicator,
-.p2p-counter-panel .trade-compose-swap-indicator {
+.standalone-trade-create-panel .trade-compose-swap-indicator {
   grid-column: 1;
   width: 42px;
   min-width: 42px;
@@ -2743,8 +2393,7 @@
   margin: 0;
 }
 
-.standalone-trade-create-panel .trade-compose-swap-indicator svg,
-.p2p-counter-panel .trade-compose-swap-indicator svg {
+.standalone-trade-create-panel .trade-compose-swap-indicator svg {
   width: 23px;
   height: 23px;
   transform: rotate(90deg);
@@ -2770,8 +2419,7 @@
   gap: 6px;
 }
 
-.standalone-trade-create-panel .trade-compose-bottom,
-.p2p-counter-panel .trade-compose-bottom {
+.standalone-trade-create-panel .trade-compose-bottom {
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -2793,8 +2441,7 @@
   grid-column: 1 / -1;
 }
 
-.standalone-trade-create-panel .trade-compose-preview,
-.p2p-counter-panel .trade-compose-preview {
+.standalone-trade-create-panel .trade-compose-preview {
   width: 100%;
   justify-content: flex-start;
   border: 1px solid rgba(121, 95, 184, 0.58);
@@ -2972,16 +2619,14 @@
   width: auto;
 }
 
-.standalone-trade-create-panel .trade-compose-footer,
-.p2p-counter-panel .trade-compose-footer {
+.standalone-trade-create-panel .trade-compose-footer {
   width: 100%;
   grid-template-columns: minmax(8rem, auto) minmax(0, 1fr) minmax(170px, auto);
   gap: 10px;
   justify-self: stretch;
 }
 
-.standalone-trade-create-panel .trade-compose-fee-row-inline,
-.p2p-counter-panel .trade-compose-fee-row-inline {
+.standalone-trade-create-panel .trade-compose-fee-row-inline {
   grid-column: auto;
   border: 1px solid rgba(74, 64, 112, 0.46);
   border-radius: 10px;
@@ -2989,8 +2634,7 @@
   padding: 8px 10px;
 }
 
-.standalone-trade-create-panel .trade-compose-fee-row-inline .trade-compose-fee-segmented,
-.p2p-counter-panel .trade-compose-fee-row-inline .trade-compose-fee-segmented {
+.standalone-trade-create-panel .trade-compose-fee-row-inline .trade-compose-fee-segmented {
   display: none;
 }
 
@@ -3012,8 +2656,7 @@
   min-width: 0;
 }
 
-.standalone-trade-create-panel .trade-compose-expiry,
-.p2p-counter-panel .trade-compose-expiry {
+.standalone-trade-create-panel .trade-compose-expiry {
   grid-template-columns: auto minmax(0, 1fr);
   border: 1px solid rgba(74, 64, 112, 0.46);
   border-radius: 10px;
@@ -3140,8 +2783,7 @@
   box-shadow: 0 10px 20px rgba(76, 29, 149, 0.24);
 }
 
-.standalone-trade-create-panel .trade-compose-send,
-.p2p-counter-panel .trade-compose-send {
+.standalone-trade-create-panel .trade-compose-send {
   min-height: 46px;
   border-radius: 12px;
   font-size: 0.96rem;
@@ -3202,16 +2844,13 @@
 }
 
 .standalone-trade-create-panel .trade-compose-send-disabled,
-.standalone-trade-create-panel .trade-compose-send-disabled:hover,
-.p2p-counter-panel .trade-compose-send-disabled,
-.p2p-counter-panel .trade-compose-send-disabled:hover {
+.standalone-trade-create-panel .trade-compose-send-disabled:hover {
   opacity: 1;
   filter: none;
 }
 
 @media (max-width: 760px) {
-  .standalone-trade-create-panel .trade-compose-panel,
-  .p2p-counter-panel .trade-compose-panel {
+  .standalone-trade-create-panel .trade-compose-panel {
     gap: 8px;
     padding: 9px;
   }
@@ -3226,12 +2865,8 @@
     min-height: 0;
   }
 
-  .standalone-trade-create-panel .trade-compose-select,
   .standalone-trade-create-panel .trade-compose-input,
-  .p2p-counter-panel .trade-compose-select,
-  .p2p-counter-panel .trade-compose-input,
-  .standalone-trade-create-panel .trade-token-select-trigger,
-  .p2p-counter-panel .trade-token-select-trigger {
+  .standalone-trade-create-panel .trade-token-select-trigger {
     min-height: 38px;
     border-radius: 9px;
     font-size: 0.9rem;
@@ -3244,8 +2879,7 @@
   }
 
   .p2p-trading-shell .standalone-trade-create-panel .trade-compose-bottom,
-  .standalone-trade-create-panel .trade-compose-footer,
-  .p2p-counter-panel .trade-compose-footer {
+  .standalone-trade-create-panel .trade-compose-footer {
     grid-template-columns: 1fr;
   }
 
@@ -3261,14 +2895,12 @@
   }
 
   .standalone-trade-create-panel .trade-compose-preview,
-  .p2p-counter-panel .trade-compose-preview,
   .trade-compose-privacy-panel {
     padding: 8px 9px;
     border-radius: 9px;
   }
 
-  .standalone-trade-create-panel .trade-compose-footer,
-  .p2p-counter-panel .trade-compose-footer {
+  .standalone-trade-create-panel .trade-compose-footer {
     position: sticky;
     bottom: calc(var(--mobile-nav-reserve, 52px) + 6px);
     z-index: 35;
@@ -3283,15 +2915,12 @@
   }
 
   .standalone-trade-create-panel .trade-compose-fee-row-inline,
-  .p2p-counter-panel .trade-compose-fee-row-inline,
-  .standalone-trade-create-panel .trade-compose-expiry,
-  .p2p-counter-panel .trade-compose-expiry {
+  .standalone-trade-create-panel .trade-compose-expiry {
     padding: 7px 9px;
     border-radius: 9px;
   }
 
-  .standalone-trade-create-panel .trade-compose-expiry,
-  .p2p-counter-panel .trade-compose-expiry {
+  .standalone-trade-create-panel .trade-compose-expiry {
     grid-template-columns: 1fr;
     align-items: stretch;
   }
@@ -3305,8 +2934,7 @@
     min-width: 108px;
   }
 
-  .standalone-trade-create-panel .trade-compose-send,
-  .p2p-counter-panel .trade-compose-send {
+  .standalone-trade-create-panel .trade-compose-send {
     width: 100%;
     min-height: 38px;
     border-radius: 9px;

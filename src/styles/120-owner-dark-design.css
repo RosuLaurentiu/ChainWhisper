@@ -159,7 +159,6 @@
 :root body .app-shell .dex-owner-workspace { border: 0; padding: 0; }
 :root body .app-shell :is(.dex-v2-extra-settings, .dex-v2-current-details,
   .dex-owner-action, .dex-owner-footer) > summary { color: var(--text-secondary); }
-:root body .app-shell .dex-v2-current-unlock-note { margin: 4px 0 0; color: var(--text-secondary); font-size: .82rem; line-height: 1.5; }
 :root body .app-shell .dex-v2-current-swap .dex-v2-current-swap-heading { margin: 0; }
 
 /* Trading forms share compact fields; wallet details stay in one disclosure. */
@@ -1177,7 +1176,6 @@
 /* Liquidity: CW-095 panel title, one frame per amount field, 12 px section rhythm. The main button is in
    view at 1280 x 800. Recovery buttons with no class use the secondary style. */
 :root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-composer-heading h2 { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
-:root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-steps { margin: 16px 0 4px; }
 :root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-section { padding: 12px 0; }
 :root body .app-shell-dex-v2 section.dex-v2-current-pool .dex-v2-pool-amounts-section .dex-v2-current-fields label {
   display: grid;
@@ -1224,10 +1222,7 @@
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > header { display: grid; gap: 2px; justify-content: start; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > header strong { color: var(--text-primary); font-size: .875rem; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > header span,
-:root body .app-shell-dex-v2 .dex-v2-beta-token-card p,
-:root body .app-shell-dex-v2 .dex-v2-beta-token-action > span { color: var(--text-secondary); font-size: .8125rem; }
-:root body .app-shell-dex-v2 .dex-v2-beta-token-action { margin-top: 0; }
-:root body .app-shell-dex-v2 .dex-v2-beta-token-action > span strong { color: var(--text-primary); }
+:root body .app-shell-dex-v2 .dex-v2-beta-token-card p { color: var(--text-secondary); font-size: .8125rem; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > .dex-v2-beta-token-status { margin: 0; }
 :root body .app-shell-dex-v2 .dex-v2-beta-token-card > .dex-v2-beta-token-status:empty { display: none; }
 

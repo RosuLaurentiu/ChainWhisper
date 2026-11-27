@@ -1,14 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   canStoreCotiSnapAesKeyFromCurrentOrigin,
-  deleteCotiSnapAesKeyResult,
   detectWalletSnapCapability,
-  getCotiSnapAesKey,
   getCotiSnapAesKeyResult,
   getCotiSnapAesStatus,
   getCotiSnapOwnerAesKeyResult,
   getCotiSnapOwnerAesStatusMessage,
-  storeCotiSnapAesKey,
   storeCotiSnapAesKeyResult
 } from './cotiSnap';
 import type { Eip1193Provider } from './appShared';
@@ -262,19 +259,6 @@ describe('getCotiSnapAesKey', () => {
     expect(aesKey).toEqual({ status: 'wrong-network' });
   });
 
-  it('keeps the legacy null wrapper for existing callers', async () => {
-    await expect(
-      getCotiSnapAesKey(
-        provider(({ method, params }) => {
-          if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
-          if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
-          if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return false;
-          return null;
-        })
-      )
-    ).resolves.toBeNull();
-  });
-
   it('reports unsupported when MetaMask Snap RPCs are unavailable', async () => {
     await expect(
       getCotiSnapAesKeyResult(
@@ -427,7 +411,7 @@ describe('storeCotiSnapAesKey', () => {
 
   it('connects the Snap to the active wallet before storing AES', async () => {
     const invokedMethods: string[] = [];
-    await storeCotiSnapAesKey(
+    await storeCotiSnapAesKeyResult(
       provider(({ method, params }) => {
         if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
         if (method === 'wallet_invokeSnap') {
@@ -441,27 +425,6 @@ describe('storeCotiSnapAesKey', () => {
     );
 
     expect(invokedMethods).toEqual(['connect-to-wallet', 'set-aes-key']);
-  });
-});
-
-describe('deleteCotiSnapAesKeyResult', () => {
-  it('connects the Snap to the active wallet before deleting AES', async () => {
-    const invokedMethods: string[] = [];
-    await expect(
-      deleteCotiSnapAesKeyResult(
-        provider(({ method, params }) => {
-        if (method === 'wallet_getSnaps') return { [snapId]: currentSnap };
-        if (method === 'wallet_invokeSnap') {
-          invokedMethods.push(params?.request?.method ?? '');
-          return true;
-        }
-        return null;
-      }),
-      { walletAddress: '0x1111111111111111111111111111111111111111' }
-    )
-    ).resolves.toBe('ready');
-
-    expect(invokedMethods).toEqual(['connect-to-wallet', 'delete-aes-key']);
   });
 });
 
@@ -592,28 +555,14 @@ describe('COTI Snap version and account binding', () => {
     expect(getCotiSnapOwnerAesStatusMessage('snap-account-mismatch')).toContain('does not use this wallet account');
   });
 
-  it('passes the App wallet address when storing and deleting AES', async () => {
+  it('passes the App wallet address when storing AES', async () => {
     const requests: Array<{ method: string; params?: unknown }> = [];
     const store = snapProvider(currentSnap, [wallet], requests);
     await storeCotiSnapAesKeyResult(store, 'aes-key', { expectedChainId: 2632500, walletAddress: wallet });
-    await deleteCotiSnapAesKeyResult(store, { expectedChainId: 2632500, walletAddress: wallet });
 
     expect(invoked(requests).map((request) => request.params)).toEqual([
       undefined,
-      { newUserAesKey: 'aes-key', address: wallet, chainId: '2632500' },
-      undefined,
-      { address: wallet, chainId: '2632500' }
+      { newUserAesKey: 'aes-key', address: wallet, chainId: '2632500' }
     ]);
-  });
-
-  it('does not delete AES from an older Snap that uses a different account', async () => {
-    const requests: Array<{ method: string; params?: unknown }> = [];
-    const result = await deleteCotiSnapAesKeyResult(snapProvider(olderSnap, [otherWallet], requests), {
-      expectedChainId: 2632500,
-      walletAddress: wallet
-    });
-
-    expect(result).toBe('snap-account-mismatch');
-    expect(invoked(requests).map((request) => request.method)).not.toContain('delete-aes-key');
   });
 });

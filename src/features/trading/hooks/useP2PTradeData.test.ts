@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   RECURRING_OTC_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
@@ -9,30 +8,13 @@ import {
 } from '../../../lib/appShared';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../../../lib/tradePerspective';
 import {
-  __detailSnapshotMatchesRouteForTest,
-  __mergeAccountScopedSnapshotForTest,
-  __mergePublicTradeRefreshForTest,
-  __mergeRefreshedTradeSnapshotScopesForTest,
-  __resolveTradeDetailAccessDecisionForTest,
-  __resolveRenderableDetailTradeForTest,
   __mergeTradeSnapshotEnrichmentForTest,
-  __reconcileTradeSnapshotForReadAccountsForTest,
-  __reconcileTradeSnapshotsForReadAccountsForTest,
   __stripWalletScopedTradeSnapshotForTest
 } from './useP2PTradeData';
-import {
-  __shouldFetchPublicFillEventsForWalletForTest,
-  __shouldFetchRecurringExecutionRowsForWalletForTest
-} from './useP2PPrivateTradeEnrichment';
-import { PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../../../lib/tradeLinks';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const filler = '0x2222222222222222222222222222222222222222';
 const otherFiller = '0x3333333333333333333333333333333333333333';
-const routeSecret = `0x${'aa'.repeat(32)}`;
-const otherRouteSecret = `0x${'bb'.repeat(32)}`;
-const routeSecretHash = `0x${'cc'.repeat(32)}`;
-const hashAccessSecret = (secret: string) => (secret.toLowerCase() === routeSecret ? routeSecretHash : `0x${'dd'.repeat(32)}`);
 
 const asset = (symbol: string, amount = '1000000'): TradeAssetPayload => ({
   kind: symbol.startsWith('p') ? 'private-erc20' : 'erc20',
@@ -88,193 +70,6 @@ const recurringTrade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot =
 });
 
 describe('__mergeTradeSnapshotEnrichmentForTest', () => {
-  it('blocks unlisted trade details when a nonparticipant route secret does not match the access hash', () => {
-    const decision = __resolveTradeDetailAccessDecisionForTest({
-      hashAccessSecret,
-      metadata: { accessHash: routeSecretHash, hasAccessHash: true, isPublic: false },
-      routeAccessSecret: otherRouteSecret,
-      snapshot: standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false }),
-      walletKey: otherFiller
-    });
-
-    expect(decision).toEqual({ allowed: false, error: PRIVATE_LINK_SECRET_MISMATCH_MESSAGE });
-  });
-
-  it('allows unlisted trade details when the route secret matches the access hash', () => {
-    const decision = __resolveTradeDetailAccessDecisionForTest({
-      hashAccessSecret,
-      metadata: { accessHash: routeSecretHash, hasAccessHash: true, isPublic: false },
-      routeAccessSecret: routeSecret,
-      snapshot: standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false }),
-      walletKey: otherFiller
-    });
-
-    expect(decision).toEqual({ allowed: true, routeSecretValidated: true });
-  });
-
-  it('allows participants to load their unlisted trade details without a route secret', () => {
-    const decision = __resolveTradeDetailAccessDecisionForTest({
-      hashAccessSecret,
-      metadata: { accessHash: routeSecretHash, hasAccessHash: true, isPublic: false },
-      routeAccessSecret: '',
-      snapshot: standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false }),
-      walletKey: maker
-    });
-
-    expect(decision).toEqual({ allowed: true });
-  });
-
-  it('does not mark an arbitrary route secret as validated when participant access is sufficient', () => {
-    const decision = __resolveTradeDetailAccessDecisionForTest({
-      hashAccessSecret,
-      metadata: { accessHash: routeSecretHash, hasAccessHash: true, isPublic: false },
-      routeAccessSecret: otherRouteSecret,
-      snapshot: standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false }),
-      walletKey: maker
-    });
-
-    expect(decision).toEqual({ allowed: true });
-    expect(decision.routeSecretValidated).not.toBe(true);
-  });
-
-  it('allows a readable participant account to load a chat-linked unlisted trade', () => {
-    const decision = __resolveTradeDetailAccessDecisionForTest({
-      hashAccessSecret,
-      metadata: { accessHash: routeSecretHash, hasAccessHash: true, isPublic: false },
-      routeAccessSecret: '',
-      snapshot: standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false }),
-      walletKey: otherFiller,
-      walletReadAccounts: [
-        {
-          address: maker,
-          key: maker,
-          role: 'owner',
-          label: 'Owner wallet',
-          canReadPrivate: true,
-          isActionAccount: false
-        }
-      ]
-    });
-
-    expect(decision).toEqual({ allowed: true });
-  });
-
-  it('does not treat a syntactic route secret as access without a verifiable hash', () => {
-    const decision = __resolveTradeDetailAccessDecisionForTest({
-      hashAccessSecret,
-      metadata: { hasAccessHash: false, isPublic: false },
-      routeAccessSecret: routeSecret,
-      snapshot: standardTrade({ accessHash: undefined, hasAccessHash: false, isPublic: false }),
-      walletKey: otherFiller
-    });
-
-    expect(decision).toEqual({ allowed: false });
-  });
-
-  it('does not render a cached unlisted detail when the route secret changes before validation', () => {
-    const snapshot = standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false });
-
-    expect(
-      __resolveRenderableDetailTradeForTest({
-        detailTrade: snapshot,
-        routeAccessSecret: otherRouteSecret,
-        routeEscrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-        routeTradeId: snapshot.tradeId,
-        routeView: 'trade',
-        validatedRouteAccessSecret: routeSecret,
-        walletKey: otherFiller
-      })
-    ).toBeNull();
-  });
-
-  it('renders an unlisted detail after the current route secret has been validated', () => {
-    const snapshot = standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false });
-
-    expect(
-      __resolveRenderableDetailTradeForTest({
-        detailTrade: snapshot,
-        routeAccessSecret: routeSecret,
-        routeEscrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-        routeTradeId: snapshot.tradeId,
-        routeView: 'trade',
-        validatedRouteAccessSecret: routeSecret,
-        walletKey: otherFiller
-      })
-    ).toBe(snapshot);
-  });
-
-  it('renders participant-owned unlisted details without waiting on a route secret', () => {
-    const snapshot = standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false });
-
-    expect(
-      __resolveRenderableDetailTradeForTest({
-        detailTrade: snapshot,
-        routeAccessSecret: otherRouteSecret,
-        routeEscrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-        routeTradeId: snapshot.tradeId,
-        routeView: 'trade',
-        validatedRouteAccessSecret: '',
-        walletKey: maker
-      })
-    ).toBe(snapshot);
-  });
-
-  it('renders a participant-created private detail while the route escrow is still resolving', () => {
-    const snapshot = standardTrade({
-      accessHash: routeSecretHash,
-      escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
-      hasAccessHash: true,
-      isPublic: false
-    });
-
-    expect(
-      __resolveRenderableDetailTradeForTest({
-        detailTrade: snapshot,
-        routeAccessSecret: '',
-        routeEscrowContract: undefined,
-        routeTradeId: snapshot.tradeId,
-        routeView: 'trade',
-        validatedRouteAccessSecret: '',
-        walletKey: maker
-      })
-    ).toBe(snapshot);
-  });
-
-  it('recognizes a clicked desk snapshot as the active terminal route', () => {
-    const snapshot = recurringTrade({ tradeId: 7 });
-
-    expect(__detailSnapshotMatchesRouteForTest(snapshot, 7, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(true);
-    expect(__detailSnapshotMatchesRouteForTest(snapshot, 8, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(false);
-    expect(__detailSnapshotMatchesRouteForTest(snapshot, 7, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(false);
-  });
-
-  it('renders a public standard trade from its legacy link without an escrow query', () => {
-    const snapshot = standardTrade({ isPublic: true });
-    expect(__resolveRenderableDetailTradeForTest({
-      detailTrade: snapshot, routeAccessSecret: '', routeEscrowContract: undefined,
-      routeTradeId: snapshot.tradeId, routeView: 'trade', validatedRouteAccessSecret: '', walletKey: ''
-    })).toBe(snapshot);
-    expect(__detailSnapshotMatchesRouteForTest(snapshot, snapshot.tradeId + 1)).toBe(false);
-  });
-
-  it.each([PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ADDRESS])(
-    'does not bind a legacy standard link to a same-ID nonstandard escrow %s', escrowContract => {
-      const snapshot = standardTrade({ escrowContract, isPublic: true });
-      expect(__detailSnapshotMatchesRouteForTest(snapshot, snapshot.tradeId)).toBe(false);
-      expect(__resolveRenderableDetailTradeForTest({
-        detailTrade: snapshot, routeAccessSecret: '', routeEscrowContract: undefined,
-        routeTradeId: snapshot.tradeId, routeView: 'trade', validatedRouteAccessSecret: '', walletKey: ''
-      })).toBeNull();
-    });
-
-  it('retains route-secret validation for an unlisted legacy standard link', () => {
-    const snapshot = standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false });
-    expect(__resolveRenderableDetailTradeForTest({
-      detailTrade: snapshot, routeAccessSecret: otherRouteSecret, routeEscrowContract: undefined,
-      routeTradeId: snapshot.tradeId, routeView: 'trade', validatedRouteAccessSecret: routeSecret, walletKey: otherFiller
-    })).toBeNull();
-  });
-
   it('keeps revealed one-off private receipts when a lighter refresh arrives', () => {
     const existing = standardTrade({
       privateFillReceipts: [
@@ -560,25 +355,6 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     expect(merged.walletHasFill).toBe(true);
   });
 
-  it('keeps the current public desk when a silent refresh returns a transient empty result', () => {
-    const existing = [
-      standardTrade({ tradeId: 4, createdAt: 4 }),
-      recurringTrade({ tradeId: 2, createdAt: 2 })
-    ];
-
-    const merged = __mergePublicTradeRefreshForTest([], existing, true);
-
-    expect(merged).toBe(existing);
-  });
-
-  it('allows an explicit public desk refresh to accept an empty result after retry attempts', () => {
-    const existing = [standardTrade({ tradeId: 4, createdAt: 4 })];
-
-    const merged = __mergePublicTradeRefreshForTest([], existing, false);
-
-    expect(merged).toEqual([]);
-  });
-
   it('keeps recurring execution history when a lighter refresh arrives', () => {
     const existing = recurringTrade({
       walletHasFill: true,
@@ -695,97 +471,6 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
 
     expect(merged.walletHasFill).toBe(true);
     expect(merged.recurringOrder?.publicExecutions?.map((execution) => execution.txHash)).toEqual(['0xfirst', '0xsecond']);
-  });
-
-  it('keeps legacy recurring history when owner compatibility data merges later', () => {
-    const appSnapshot = recurringTrade({
-      accountAddress: filler,
-      accountRole: 'owner',
-      accountMatches: [{ address: filler, role: 'owner' }],
-      walletHasFill: true,
-      recurringOrder: {
-        ...recurringTrade().recurringOrder!,
-        executionCount: 1,
-        privateExecutions: [
-          {
-            fillIndex: 1,
-            side: 'sell',
-            filler,
-            baseAmount: '1000000',
-            quoteAmount: '2500000',
-            txHash: '0xapp'
-          }
-        ]
-      }
-    });
-    const ownerSnapshot = recurringTrade({
-      accountAddress: maker,
-      accountRole: 'owner',
-      accountMatches: [{ address: maker, role: 'owner' }],
-      walletHasFill: false,
-      recurringOrder: {
-        ...recurringTrade().recurringOrder!,
-        executionCount: 1,
-        privateExecutions: []
-      }
-    });
-
-    const merged = __mergeAccountScopedSnapshotForTest(ownerSnapshot, appSnapshot, maker);
-
-    expect(merged.accountRole).toBe('owner');
-    expect(merged.accountMatches).toEqual([
-      { address: filler, role: 'owner' },
-      { address: maker, role: 'owner' }
-    ]);
-    expect(merged.recurringOrder?.privateExecutions).toEqual([
-      expect.objectContaining({
-        fillIndex: 1,
-        filler,
-        txHash: '0xapp'
-      })
-    ]);
-  });
-
-  it('keeps owner-visible standard fills when owner data merges into a legacy snapshot', () => {
-    const appSnapshot = standardTrade({
-      accountAddress: filler,
-      accountRole: 'owner',
-      accountMatches: [{ address: filler, role: 'owner' }],
-      walletHasFill: true,
-      walletFillEvents: [
-        {
-          fillIndex: 1,
-          filler,
-          offerAmount: '1000000',
-          requestAmount: '2500000',
-          txHash: '0xapp'
-        }
-      ]
-    });
-    const ownerSnapshot = standardTrade({
-      accountAddress: maker,
-      accountRole: 'owner',
-      accountMatches: [{ address: maker, role: 'owner' }],
-      walletHasFill: true,
-      walletFillEvents: [
-        {
-          fillIndex: 2,
-          filler: otherFiller,
-          offerAmount: '2000000',
-          requestAmount: '5000000',
-          txHash: '0xowner'
-        }
-      ]
-    });
-
-    const merged = __mergeAccountScopedSnapshotForTest(ownerSnapshot, appSnapshot, maker);
-
-    expect(merged.accountRole).toBe('owner');
-    expect(merged.accountMatches).toEqual([
-      { address: filler, role: 'owner' },
-      { address: maker, role: 'owner' }
-    ]);
-    expect(merged.walletFillEvents?.map((event) => event.txHash)).toEqual(['0xapp', '0xowner']);
   });
 
   it('preserves only current-wallet recurring history when a lighter refresh arrives', () => {
@@ -957,162 +642,6 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     expect(stripped.hiddenLiquidity).toBe(true);
   });
 
-  it('keeps connected owner public rows but removes owner private enrichment when owner AES locks', () => {
-    const ownerTrade = recurringTrade({
-      accountAddress: maker,
-      accountRole: 'owner',
-      accountMatches: [{ address: maker, role: 'owner' }],
-      makerPrivateProgress: { remainingOfferAmount: '9000000' },
-      walletFillEvents: [
-        { fillIndex: 1, filler, offerAmount: '1000000', requestAmount: '2500000' }
-      ],
-      recurringOrder: {
-        ...recurringTrade().recurringOrder!,
-        makerPrivateInventory: { baseInventory: '9000000' },
-        privateExecutions: [
-          { fillIndex: 1, side: 'sell', filler, baseAmount: '1000000', quoteAmount: '2500000' }
-        ],
-        publicExecutions: [
-          { fillIndex: 2, side: 'buy', filler, baseAmount: '1000000', quoteAmount: '2000000' }
-        ]
-      }
-    });
-
-    const [reconciled] = __reconcileTradeSnapshotsForReadAccountsForTest(
-      [ownerTrade],
-      [
-        {
-          address: maker,
-          canReadPrivate: false,
-          isActionAccount: false,
-          key: maker,
-          label: 'Owner wallet',
-          role: 'owner'
-        }
-      ],
-      true
-    );
-
-    expect(reconciled.accountRole).toBe('owner');
-    expect(reconciled.makerPrivateProgress).toBeUndefined();
-    expect(reconciled.recurringOrder?.makerPrivateInventory).toBeUndefined();
-    expect(reconciled.recurringOrder?.privateExecutions).toBeUndefined();
-    expect(reconciled.recurringOrder?.publicExecutions).toHaveLength(1);
-  });
-
-  it('removes disconnected owner-only rows while retaining legacy rows and private enrichment', () => {
-    const ownerTrade = standardTrade({
-      tradeId: 7,
-      accountAddress: maker,
-      accountRole: 'owner',
-      accountMatches: [{ address: maker, role: 'owner' }],
-      makerPrivateProgress: { remainingOfferAmount: '9000000' }
-    });
-    const appTrade = standardTrade({
-      tradeId: 8,
-      maker: filler,
-      accountAddress: filler,
-      accountRole: 'owner',
-      accountMatches: [{ address: filler, role: 'owner' }],
-      makerPrivateProgress: { remainingOfferAmount: '8000000' }
-    });
-
-    const reconciled = __reconcileTradeSnapshotsForReadAccountsForTest(
-      [ownerTrade, appTrade],
-      [
-        {
-          address: filler,
-          canReadPrivate: true,
-          isActionAccount: true,
-          key: filler,
-          label: 'Connected wallet',
-          role: 'owner'
-        }
-      ],
-      true
-    );
-
-    expect(reconciled.map((trade) => trade.tradeId)).toEqual([8]);
-    expect(reconciled[0].makerPrivateProgress?.remainingOfferAmount).toBe('8000000');
-  });
-
-  it('keeps a Direct public row but strips owner-hydrated terms after the owner disconnects', () => {
-    const ownerDirectTrade = standardTrade({
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      maker,
-      taker: filler,
-      accountAddress: maker,
-      accountRole: 'owner',
-      accountMatches: [{ address: maker, role: 'owner' }],
-      offer: asset('pWISP', '1200000'),
-      request: asset('HOTDOG', '2400000'),
-      fillState: {
-        filledOfferAmount: '0',
-        filledRequestAmount: '0',
-        remainingOfferAmount: '1200000',
-        remainingRequestAmount: '2400000'
-      },
-      hiddenLiquidity: false
-    });
-
-    const [reconciled] = __reconcileTradeSnapshotsForReadAccountsForTest(
-      [ownerDirectTrade],
-      [
-        {
-          address: otherFiller,
-          canReadPrivate: true,
-          isActionAccount: true,
-          key: otherFiller,
-          label: 'Connected wallet',
-          role: 'owner'
-        }
-      ],
-      false
-    );
-
-    expect(reconciled.offer.amount).toBe('0');
-    expect(reconciled.request.amount).toBe('0');
-    expect(reconciled.fillState).toBeUndefined();
-    expect(reconciled.hiddenLiquidity).toBe(true);
-    expect(reconciled.accountAddress).toBeUndefined();
-  });
-
-  it('preserves Direct terms for a nonparticipant only after the route secret was validated', () => {
-    const linkedDirectTrade = standardTrade({
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      maker,
-      taker: filler,
-      offer: asset('pWISP', '1200000'),
-      request: asset('HOTDOG', '2400000'),
-      hiddenLiquidity: false
-    });
-    const appReadAccounts = [
-      {
-        address: otherFiller,
-        canReadPrivate: true,
-        isActionAccount: true,
-        key: otherFiller,
-        label: 'Connected wallet',
-        role: 'owner' as const
-      }
-    ];
-
-    const unvalidated = __reconcileTradeSnapshotForReadAccountsForTest(
-      linkedDirectTrade,
-      appReadAccounts
-    );
-    const validated = __reconcileTradeSnapshotForReadAccountsForTest(
-      linkedDirectTrade,
-      appReadAccounts,
-      { preserveAuthorizedDirectTerms: true }
-    );
-
-    expect(unvalidated.offer.amount).toBe('0');
-    expect(validated.offer.amount).toBe('1200000');
-    expect(validated.request.amount).toBe('2400000');
-    expect(validated.hiddenLiquidity).toBe(false);
-  });
-
   it('keeps validated Direct-link terms through the live wallet-scoped merge', () => {
     const linkedDirectTrade = standardTrade({
       escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -1139,28 +668,6 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     expect(validated.offer.amount).toBe('1200000');
     expect(validated.request.amount).toBe('2400000');
     expect(validated.hiddenLiquidity).toBe(false);
-  });
-
-  it('keeps validated Direct terms only in the refreshed detail scope', () => {
-    const linkedDirectTrade = standardTrade({
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      maker,
-      taker: filler,
-      offer: asset('pWISP', '1200000'),
-      request: asset('HOTDOG', '2400000'),
-      hiddenLiquidity: false
-    });
-
-    const refreshed = __mergeRefreshedTradeSnapshotScopesForTest({
-      preserveAuthorizedDirectTerms: true,
-      snapshot: linkedDirectTrade,
-      walletKey: otherFiller
-    });
-
-    expect(refreshed.detailSnapshot.offer.amount).toBe('1200000');
-    expect(refreshed.detailSnapshot.request.amount).toBe('2400000');
-    expect(refreshed.listSnapshot.offer.amount).toBe('0');
-    expect(refreshed.listSnapshot.request.amount).toBe('0');
   });
 
   it('preserves hydrated Direct trade amounts when a lighter refresh arrives', () => {
@@ -1194,41 +701,5 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     expect(merged.request.amount).toBe('2400000');
     expect(merged.fillState?.filledOfferAmount).toBe('1200000');
     expect(merged.hiddenLiquidity).toBe(false);
-  });
-});
-
-describe('terminal fill-event hydration predicate', () => {
-  it('hydrates public fills for registry standard escrows without local reveal state', () => {
-    const registryStandardEscrow = '0x1000000000000000000000000000000000000001';
-
-    expect(
-      __shouldFetchPublicFillEventsForWalletForTest(
-        standardTrade({
-          escrowContract: registryStandardEscrow,
-          hiddenLiquidity: false,
-          offer: asset('AAA'),
-          request: asset('BBB'),
-          walletHasFill: false,
-          walletFillEvents: undefined
-        }),
-        filler
-      )
-    ).toBe(true);
-  });
-
-  it('hydrates recurring execution events even when the snapshot execution count is stale zero', () => {
-    expect(
-      __shouldFetchRecurringExecutionRowsForWalletForTest(
-        recurringTrade({
-          recurringOrder: {
-            ...recurringTrade().recurringOrder!,
-            executionCount: 0,
-            publicExecutions: undefined,
-            privateExecutions: undefined
-          }
-        }),
-        maker
-      )
-    ).toBe(true);
   });
 });

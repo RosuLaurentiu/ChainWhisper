@@ -1,5 +1,41 @@
 import { TEXT_ENCODER } from './appShared';
-import { CHAT_GC_MAX_SINGLE_MESSAGE_CELLS, splitUtf8SafeChunks } from './chatGc';
+
+export const CHAT_GC_MAX_SINGLE_MESSAGE_CELLS = 64;
+const CHAT_GC_CHUNK_PLAINTEXT_BYTES = 16;
+
+export const splitUtf8SafeChunks = (value: string, maxBytes = CHAT_GC_CHUNK_PLAINTEXT_BYTES): string[] => {
+  const chunks: string[] = [];
+  let current = '';
+  let currentBytes = 0;
+
+  for (const char of Array.from(value)) {
+    const charBytes = TEXT_ENCODER.encode(char).length;
+    if (charBytes > maxBytes) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+        currentBytes = 0;
+      }
+      chunks.push(char);
+      continue;
+    }
+
+    if (current && currentBytes + charBytes > maxBytes) {
+      chunks.push(current);
+      current = '';
+      currentBytes = 0;
+    }
+
+    current += char;
+    currentBytes += charBytes;
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks.length > 0 ? chunks : [''];
+};
 
 export const METAMASK_SINGLE_SEND_MAX_ESTIMATED_CHUNKS = 4;
 export const ESTIMATED_BYTES_PER_ENCRYPTION_PROMPT = 8;

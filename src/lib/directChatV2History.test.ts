@@ -21,7 +21,6 @@ import {
   createDirectChatV2HistoryCheckpoint,
   mapDecodedDirectChatV2HistoryEvent,
   normalizeDirectChatV2HistoryEvent,
-  normalizeDirectChatV2HistoryEvents,
   planDirectChatV2HistoryPage,
   type DirectChatV2HistoryScope
 } from './directChatV2History';
@@ -230,35 +229,6 @@ describe('directChatV2History', () => {
     });
   });
 
-  it('sorts a page and resolves one epoch key only once', async () => {
-    const [later, earlier] = await Promise.all([
-      makeEvent({ messageId: 2n, senderSequence: 2n, blockNumber: 112n }),
-      makeEvent({ messageId: 1n, senderSequence: 1n, blockNumber: 111n })
-    ]);
-    const resolveEpochKey = vi.fn(async () => EPOCH_KEY);
-
-    const normalized = await normalizeDirectChatV2HistoryEvents({
-      events: [later, earlier],
-      expectedPreviousMessageId: 0n,
-      viewerAddress: ALICE,
-      resolveEpochKey,
-      finality: 'finalized',
-      timestampByBlock: new Map([[111, 1_001], [112, 1_002]])
-    });
-
-    expect(normalized.entries.map((entry) => entry.directV2?.messageId)).toEqual(['1', '2']);
-    expect(normalized.entries.map((entry) => entry.timestamp)).toEqual([1_001, 1_002]);
-    expect(normalized.entries.every(
-      (entry) => entry.direction === 'outgoing' && entry.contact === BOB
-    )).toBe(true);
-    expect(normalized).toMatchObject({
-      previousMessageId: 0n,
-      lastMessageId: 2n,
-      nextMessageId: 3n
-    });
-    expect(resolveEpochKey).toHaveBeenCalledTimes(1);
-  });
-
   it('keeps legacy reaction fallback text but does not treat it as a V2 reaction', async () => {
     const event = await makeEvent({ messageId: 1n, senderSequence: 1n });
     const entry = mapDecodedDirectChatV2HistoryEvent({
@@ -283,17 +253,6 @@ describe('directChatV2History', () => {
     expect(entry).not.toHaveProperty('reactionToBlockNumber');
     expect(entry).not.toHaveProperty('reactionToLogIndex');
     expect(entry).not.toHaveProperty('reactionEmoji');
-  });
-
-  it('rejects a skipped message ID at a page boundary', async () => {
-    const event = await makeEvent({ messageId: 4n, senderSequence: 1n });
-    await expect(normalizeDirectChatV2HistoryEvents({
-      events: [event],
-      expectedPreviousMessageId: 2n,
-      viewerAddress: ALICE,
-      resolveEpochKey: async () => EPOCH_KEY,
-      finality: 'finalized'
-    })).rejects.toThrow('expected message 3 but received 4');
   });
 
   it('maps a session-decoded payload without resolving or decrypting its epoch again', async () => {

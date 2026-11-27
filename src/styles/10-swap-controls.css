@@ -25,14 +25,8 @@
   background: rgba(11, 11, 20, 0.88);
 }
 
-.swap-account-switch,
 .privacy-direction-switch {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.swap-account-switch {
-  width: 260px;
-  justify-self: end;
 }
 
 .swap-pill-option {
@@ -866,199 +860,6 @@ button.swap-token-chip {
   cursor: pointer;
 }
 
-.privacy-legacy-recovery {
-  margin-top: 2px;
-  border: 0;
-  border-top: 1px solid rgba(76, 72, 105, 0.42);
-  border-radius: 0;
-  background: transparent;
-}
-
-.privacy-legacy-recovery > summary {
-  min-height: 58px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 3px 0;
-  list-style: none;
-  cursor: pointer;
-}
-
-.privacy-legacy-recovery > summary::-webkit-details-marker {
-  display: none;
-}
-
-.privacy-legacy-recovery > summary:focus-visible {
-  border-radius: 9px;
-  outline: 2px solid rgba(177, 132, 255, 0.86);
-  outline-offset: 3px;
-}
-
-.privacy-legacy-summary-icon {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(139, 92, 246, 0.34);
-  border-radius: 10px;
-  background: rgba(124, 58, 237, 0.09);
-  color: #b98aff;
-}
-
-.privacy-legacy-summary-copy {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: grid;
-  gap: 3px;
-}
-
-.privacy-legacy-summary-copy strong {
-  color: #dcd7e7;
-  font-size: 0.82rem;
-}
-
-.privacy-legacy-summary-copy small {
-  color: #8f8a9e;
-  font-size: 0.72rem;
-}
-
-.privacy-legacy-summary-tag {
-  flex: 0 0 auto;
-  border: 1px solid rgba(76, 72, 105, 0.44);
-  border-radius: 999px;
-  background: rgba(12, 12, 21, 0.62);
-  color: #9892a8;
-  padding: 5px 8px;
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.privacy-legacy-recovery > summary > svg {
-  flex: 0 0 auto;
-  color: #a7a1b4;
-  transition: transform 150ms ease, color 150ms ease;
-}
-
-.privacy-legacy-recovery > summary:hover > svg {
-  color: #d7c1ff;
-}
-
-.privacy-legacy-recovery[open] > summary > svg {
-  transform: rotate(180deg);
-}
-
-.privacy-recovery-body {
-  display: grid;
-  gap: 12px;
-  margin-top: 10px;
-  border: 1px solid rgba(76, 72, 105, 0.42);
-  border-radius: 12px;
-  background: rgba(9, 9, 17, 0.58);
-  padding: 14px;
-}
-
-.privacy-recovery-body > p {
-  margin: 0;
-  color: #9691a3;
-  font-size: 0.76rem;
-  line-height: 1.45;
-}
-
-.privacy-recovery-route {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.privacy-recovery-route button {
-  border: 1px solid rgba(76, 72, 105, 0.5);
-  border-radius: 8px;
-  background: #0b0b14;
-  color: #9691a3;
-  padding: 9px 10px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.privacy-recovery-route button.active {
-  border-color: rgba(139, 92, 246, 0.62);
-  color: #f2efff;
-  background: rgba(124, 58, 237, 0.14);
-}
-
-.privacy-recovery-route button:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
-.privacy-recovery-input {
-  display: grid;
-  gap: 6px;
-}
-
-.privacy-recovery-input > label,
-.privacy-recovery-input > small {
-  color: #918ca2;
-  font-size: 0.72rem;
-}
-
-.privacy-recovery-input > div {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid rgba(76, 72, 105, 0.5);
-  border-radius: 9px;
-  background: #090911;
-  padding: 10px 12px;
-}
-
-.privacy-recovery-input input {
-  width: 0;
-  min-width: 0;
-  flex: 1 1 auto;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #f6f4fc;
-  font-family: inherit;
-  font-size: 1.2rem;
-}
-
-.privacy-recovery-input strong {
-  color: #d5cfdf;
-  font-size: 0.8rem;
-}
-
-.privacy-recovery-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #918ca2;
-  font-size: 0.75rem;
-}
-
-.privacy-recovery-meta strong {
-  color: #c5bfce;
-  font-weight: 600;
-}
-
-.privacy-recovery-meta a {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  color: #b184ff;
-}
-
-.privacy-recovery-action {
-  min-height: 44px;
-  font-family: inherit;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .privacy-status-dot.is-loading,
   .privacy-action-progress > i {
@@ -1067,9 +868,6 @@ button.swap-token-chip {
 }
 
 @media (max-width: 920px) {
-  .swap-account-switch {
-    width: 100%;
-  }
 
   .privacy-portal-workspace {
     display: block;
@@ -1259,22 +1057,5 @@ button.swap-token-chip {
 
   .swap-error-row > button {
     min-height: 38px;
-  }
-
-  .privacy-recovery-route {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .privacy-legacy-recovery > summary {
-    min-height: 54px;
-    padding-top: 10px;
-  }
-
-  .privacy-legacy-summary-tag {
-    display: none;
-  }
-
-  .privacy-recovery-body {
-    padding: 12px;
   }
 }

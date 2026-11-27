@@ -393,8 +393,7 @@ button:not(:disabled):active,
   }
 
   .contact-card[role='button']:hover,
-  .treasury-meta-card-link:hover,
-  .p2p-wallet-account-card:hover {
+  .treasury-meta-card-link:hover {
     border-color: rgba(167, 139, 250, 0.5);
     box-shadow: 0 10px 26px rgba(2, 3, 10, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.08);
     translate: 0 -1px;
@@ -412,8 +411,7 @@ button:not(:disabled):active,
 
 .app-shell-home .landing-module-card:focus-within,
 .contact-card[role='button']:focus-within,
-.treasury-meta-card-link:focus-visible,
-.p2p-wallet-account-card:focus-within {
+.treasury-meta-card-link:focus-visible {
   border-color: rgba(196, 181, 253, 0.58);
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.14);
 }
@@ -479,12 +477,7 @@ button:not(:disabled):active,
   transition: transform var(--motion-enter) var(--ease-settle);
 }
 
-.app-shell-trades .p2p-swap-token-flip:not(:disabled):active svg {
-  transform: rotate(270deg) scale(0.92);
-}
-
-.app-shell-trades .trade-compose-swap-indicator:not(:disabled):active svg,
-.app-shell-trades .p2p-recurring-cycle-indicator:not(:disabled):active svg {
+.app-shell-trades .trade-compose-swap-indicator:not(:disabled):active svg {
   transform: rotate(180deg) scale(0.92);
 }
 
@@ -886,12 +879,6 @@ button:not(:disabled):active,
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 5px 14px rgba(2, 3, 10, 0.16);
 }
 
-.treasury-chart-content {
-  width: 100%;
-  min-width: 0;
-  animation: cw-chart-crossfade var(--motion-enter) ease-out;
-}
-
 .treasury-stat-card {
   --treasury-live-halo: 139, 92, 246;
 }
@@ -902,10 +889,6 @@ button:not(:disabled):active,
 
 .treasury-stat-card-gcoti {
   --treasury-live-halo: 52, 211, 153;
-}
-
-.treasury-stat-card-live-update {
-  animation: cw-treasury-live-halo var(--motion-feedback) var(--ease-settle);
 }
 
 /* Chat rows stay static; controls and state colors receive the feedback. */

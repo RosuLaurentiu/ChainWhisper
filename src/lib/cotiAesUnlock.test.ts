@@ -6,24 +6,35 @@ import {
   clearCotiAesUnlockRequest,
   clearSignerAesKey,
   createWalletScopedSnapAesState,
-  getOrRecoverValidatedAesForWallet,
   getCotiAesWalletSessionKey,
-  getOrRecoverAesForWallet,
   getOrRecoverAesForWalletResult,
   readFallbackAesSessionOnboardInfo,
-  isWalletScopedPrivateTokenSnapStale,
-  repairCotiAesForWallet,
   resetSignerOnboardInfoForFreshAes,
   resolveWalletScopedSnapAesState,
   storeFallbackAesSessionOnboardInfo
 } from './cotiAesUnlock';
-import { deleteCotiSnapAesKeyResult, getCotiSnapAesKeyResult, storeCotiSnapAesKeyResult } from './cotiSnap';
+import { getCotiSnapAesKeyResult, storeCotiSnapAesKeyResult } from './cotiSnap';
 
 vi.mock('./cotiSnap', () => ({
-  deleteCotiSnapAesKeyResult: vi.fn(),
   getCotiSnapAesKeyResult: vi.fn(),
   storeCotiSnapAesKeyResult: vi.fn()
 }));
+
+// Test-local equivalent of the retired throwing wrapper: the App calls
+// getOrRecoverAesForWalletResult directly; these cases cover its lifecycle.
+const getOrRecoverAesForWallet = async (
+  args: Parameters<typeof getOrRecoverAesForWalletResult>[0]
+): Promise<OnboardInfo> => {
+  const result = await getOrRecoverAesForWalletResult(args);
+  if (result.status === 'ready') {
+    const assertion = args.assertCurrent?.();
+    if (assertion) {
+      await assertion;
+    }
+    return result.onboardInfo;
+  }
+  throw new Error(`Privacy unlock fallback is unavailable: ${result.reason}.`);
+};
 
 const walletAddress = '0x1111111111111111111111111111111111111111';
 const snapContext = {
@@ -119,29 +130,12 @@ describe('wallet-scoped Snap AES state', () => {
 
     expect(resolveWalletScopedSnapAesState(staleState, walletAddress, activeProvider)).toBe(staleState);
     expect(
-      isWalletScopedPrivateTokenSnapStale(
-        staleState,
-        walletAddress,
-        '0x2222222222222222222222222222222222222222',
-        activeProvider
-      )
-    ).toBe(true);
-    expect(
-      isWalletScopedPrivateTokenSnapStale(
+      resolveWalletScopedSnapAesState(
         staleState,
         '0x3333333333333333333333333333333333333333',
-        '0x2222222222222222222222222222222222222222',
         activeProvider
       )
-    ).toBe(false);
-    expect(
-      isWalletScopedPrivateTokenSnapStale(
-        staleState,
-        walletAddress,
-        '0x4444444444444444444444444444444444444444',
-        activeProvider
-      )
-    ).toBe(false);
+    ).toBeNull();
   });
 
   it('normalizes an in-memory state preserved from before stale-token tracking', () => {
@@ -1140,7 +1134,6 @@ describe('getOrRecoverAesForWallet', () => {
       source: 'fallback'
     });
 
-    expect(deleteCotiSnapAesKeyResult).not.toHaveBeenCalled();
     expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
   });
@@ -1189,7 +1182,6 @@ describe('getOrRecoverAesForWallet', () => {
       txHash: null
     });
     expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
-    expect(deleteCotiSnapAesKeyResult).not.toHaveBeenCalled();
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
   });
 
@@ -1207,33 +1199,6 @@ describe('getOrRecoverAesForWallet', () => {
     ).resolves.toMatchObject({ status: 'fallback-unavailable', reason: 'wallet-mismatch' });
 
     expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
-    expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
-  });
-
-  it('repairs a mismatched wallet through the explicit repair helper', async () => {
-    const activeProvider = provider();
-    const activeSigner = signer('wrong-aes');
-    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'wrong-snap-aes' });
-
-    await expect(
-      repairCotiAesForWallet({
-        provider: activeProvider,
-        signer: activeSigner as never,
-        validationProbes: [
-          {
-            name: 'private-token-balance',
-            validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fallback-aes'
-          }
-        ],
-        walletAddress
-      })
-    ).resolves.toMatchObject({
-      status: 'ready',
-      validation: { passedProbes: ['private-token-balance'] }
-    });
-
-    expect(getCotiSnapAesKeyResult).toHaveBeenCalledWith(activeProvider, snapContext);
-    expect(deleteCotiSnapAesKeyResult).not.toHaveBeenCalled();
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
   });
 
@@ -1259,89 +1224,6 @@ describe('getOrRecoverAesForWallet', () => {
       rsaKey,
       txHash: '0xabc'
     });
-  });
-
-  it('can repair recovery AES without allowing a fresh unrecoverable AES reset', async () => {
-    const activeProvider = provider();
-    const activeSigner = signer('wrong-aes', true);
-    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'wrong-snap-aes' });
-
-    await expect(
-      repairCotiAesForWallet({
-        allowUnrecoverableReset: false,
-        provider: activeProvider,
-        signer: activeSigner as never,
-        validationProbes: [
-          {
-            name: 'privacy-key-recovery',
-            validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fallback-aes'
-          }
-        ],
-        walletAddress
-      })
-    ).resolves.toMatchObject({
-      source: 'fallback',
-      status: 'ready',
-      validation: { passedProbes: ['privacy-key-recovery'] }
-    });
-
-    expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
-    expect(activeSigner.getUserOnboardInfo()).toMatchObject({
-      aesKey: 'fallback-aes',
-      rsaKey,
-      txHash: '0xabc'
-    });
-  });
-
-  it('does not create a fresh AES during recovery repair when metadata is unrecoverable', async () => {
-    const activeProvider = provider();
-    const activeSigner = signer('wrong-aes');
-    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'wrong-snap-aes' });
-
-    await expect(
-      repairCotiAesForWallet({
-        allowUnrecoverableReset: false,
-        provider: activeProvider,
-        signer: activeSigner as never,
-        validationProbes: [
-          {
-            name: 'privacy-key-recovery',
-            validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fallback-aes'
-          }
-        ],
-        walletAddress
-      })
-    ).resolves.toMatchObject({ status: 'fallback-unavailable', reason: 'unrecoverable' });
-
-    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
-  });
-
-  it('stops repair after a fresh Snap AES validates', async () => {
-    const activeProvider = provider();
-    const activeSigner = signer('wrong-aes');
-    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'fresh-snap-aes' });
-
-    await expect(
-      repairCotiAesForWallet({
-        provider: activeProvider,
-        signer: activeSigner as never,
-        validationProbes: [
-          {
-            name: 'private-token-balance',
-            validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fresh-snap-aes'
-          }
-        ],
-        walletAddress
-      })
-    ).resolves.toMatchObject({
-      source: 'snap',
-      status: 'ready',
-      validation: { passedProbes: ['private-token-balance'] }
-    });
-
-    expect(deleteCotiSnapAesKeyResult).not.toHaveBeenCalled();
-    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
-    expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
   });
 
   it('resetSignerOnboardInfoForFreshAes removes AES and recoverable metadata', () => {
@@ -1386,44 +1268,6 @@ describe('getOrRecoverAesForWallet', () => {
     });
     expect(activeSigner.getUserOnboardInfo()).not.toHaveProperty('rsaKey');
     expect(activeSigner.getUserOnboardInfo()).not.toHaveProperty('txHash');
-    expect(deleteCotiSnapAesKeyResult).not.toHaveBeenCalled();
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
-  });
-
-  it('marks Snap AES as mismatched when validation probes fail and clears the signer AES', async () => {
-    const activeSigner = signer();
-    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'wrong-aes' });
-
-    await expect(
-      getOrRecoverValidatedAesForWallet({
-        provider: provider(),
-        signer: activeSigner as never,
-        validationProbes: [{ name: 'chat', validate: () => false }],
-        walletAddress
-      })
-    ).resolves.toMatchObject({
-      source: 'snap',
-      status: 'key-mismatch',
-      validation: { failedProbes: ['chat'] }
-    });
-
-    expect(activeSigner.getUserOnboardInfo()).toMatchObject({ aesKey: null });
-  });
-
-  it('reports ready-unverified when no validation probe exists yet', async () => {
-    const activeSigner = signer();
-    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'snap-aes' });
-
-    await expect(
-      getOrRecoverValidatedAesForWallet({
-        provider: provider(),
-        signer: activeSigner as never,
-        walletAddress
-      })
-    ).resolves.toMatchObject({
-      source: 'snap',
-      status: 'ready-unverified',
-      validation: { status: 'ready-unverified' }
-    });
   });
 });

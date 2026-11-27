@@ -10,10 +10,21 @@ import {
   buildDirectTradeV2PromptEstimateMessage,
   buildGroupChatV2PromptEstimateMessage,
   buildMetaMaskPromptEstimateMessage,
-  estimateChatWalletPromptLoad
+  estimateChatWalletPromptLoad,
+  splitUtf8SafeChunks
 } from './chatWalletPromptEstimate';
 
 describe('chatWalletPromptEstimate', () => {
+  it('splits multipart plaintext without cutting UTF-8 characters', () => {
+    const value = 'hello 😈 privacy desk';
+    const chunks = splitUtf8SafeChunks(value, 8);
+
+    expect(chunks.join('')).toBe(value);
+    for (const chunk of chunks) {
+      expect(new TextEncoder().encode(chunk).length).toBeLessThanOrEqual(8);
+    }
+  });
+
   it('reports the Direct Chat V2 steady-state count for a known conversation', () => {
     const message = buildDirectChatV2PromptEstimateMessage('this message', 'existing');
 

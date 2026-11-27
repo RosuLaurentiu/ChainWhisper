@@ -13,15 +13,6 @@ export const SUCCESSOR_TESTNET_PAIRS: readonly TradingPair[] = Object.freeze([
   Object.freeze(['HBR', 'ORBT'] as const),
   Object.freeze(['EMBR', 'ORBT'] as const)
 ]);
-const SUCCESSOR_REFERENCE_VALUES: Readonly<Record<string, number>> = Object.freeze({
-  BCN: 1,
-  HBR: 2,
-  EMBR: 6,
-  ORBT: 24
-});
-
-export const successorPairReferencePrice = ([base, quote]: TradingPair): number =>
-  SUCCESSOR_REFERENCE_VALUES[quote] / SUCCESSOR_REFERENCE_VALUES[base];
 
 // Owner decision 2026-11-18: one lettered circle per token in its own colour (CSS tones), on the pair button and in
 // each pair row. Other symbols (P2P tokens) use the neutral tone.

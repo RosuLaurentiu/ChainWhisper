@@ -215,11 +215,3 @@ export const advanceGroupChatV2ReadCursor = ({
     blockHash: identity.blockHash
   });
 };
-
-export const hasUnreadGroupChatV2Message = ({
-  cursor,
-  latestIncomingMessageId
-}: {
-  cursor: GroupChatV2ReadCursor;
-  latestIncomingMessageId: bigint;
-}): boolean => latestIncomingMessageId > BigInt(cursor.lastReadMessageId);

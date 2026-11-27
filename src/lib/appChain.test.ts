@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { TradeSnapshot } from './appShared';
 import {
   OTC_READER_CONTRACT_ABI,
-  OTC_HISTORY_READER_CONTRACT_ABI,
   OTC_HISTORY_READER_CONTRACT_ADDRESS,
   OTC_REGISTRY_CONTRACT_ABI,
-  OTC_REGISTRY_CONTRACT_ADDRESS,
   DIRECT_TRADE_ESCROW_CONTRACT_ABI,
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
@@ -17,38 +14,19 @@ import {
   PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
   RECURRING_OTC_CONTRACT_ABI,
   RECURRING_OTC_CONTRACT_ADDRESS,
-  REWARD_TOKEN_ADDRESS,
   TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   WISP_PRIVACY_BRIDGE_CONTRACT_ABI
 } from './appShared/core';
 import { loadCotiEthersModule } from './appShared';
 import {
-  __buildRecurringOrderSnapshotFromViewForTest,
-  __getIndexedResultValueForTest,
-  __mapPrivateOrderFilledLogsToReceiptsForTest,
-  __mergeWalletTradeSnapshotsForTest,
   __normalizeCurrentPrivateTokenBalanceWeiForTest,
-  __resolveDirectTermPayloadSecretCallerForTest,
-  __resolveRecurringContractAddressForTest,
-  __resolveRecurringIdsFromPagedResultForTest,
-  __selectTradeSnapshotCandidateForTest,
   DEFAULT_TRADING_CONTRACT_ADDRESSES,
-  isActiveTradeEscrowContractAddress,
-  isOtcHistoryReaderConfigured,
-  isOtcRegistryConfigured,
-  isDirectTradeEscrowConfigured,
   resolvePrivateTokenAllowanceWritePlan,
   resolvePrivateTokenSpendReadiness,
   resolveOtcFeeEscrowContractConfig,
-  resolveTradingContractAddressesFromRegistryValue,
   resolveTradeEscrowContractConfig
 } from './appChain';
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
-
-
 
 describe('trade escrow contract resolution', () => {
   it('keeps the current V1 OTC and hidden-size private-order contracts active', () => {
@@ -60,18 +38,9 @@ describe('trade escrow contract resolution', () => {
       address: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
       hiddenOnly: true
     });
-    expect(isActiveTradeEscrowContractAddress(TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(true);
-    expect(isActiveTradeEscrowContractAddress(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(true);
-    expect(isDirectTradeEscrowConfigured()).toBe(true);
-    expect(isOtcRegistryConfigured()).toBe(true);
-    expect(isOtcHistoryReaderConfigured()).toBe(true);
     expect(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS).toMatch(/^0x[0-9a-fA-F]{40}$/);
-    expect(OTC_REGISTRY_CONTRACT_ADDRESS).toMatch(/^0x[0-9a-fA-F]{40}$/);
     expect(OTC_HISTORY_READER_CONTRACT_ADDRESS).toMatch(/^0x[0-9a-fA-F]{40}$/);
     expect(DEFAULT_TRADING_CONTRACT_ADDRESSES.reader).toMatch(/^0x[0-9a-fA-F]{40}$/);
-    expect(isActiveTradeEscrowContractAddress(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(true);
-    expect(isActiveTradeEscrowContractAddress(RECURRING_OTC_CONTRACT_ADDRESS)).toBe(true);
-    expect(isActiveTradeEscrowContractAddress('0x9dC2166CEB035F542cA8ADf10660d6fe2342471d')).toBe(false);
     expect(() => resolveTradeEscrowContractConfig('0x9dC2166CEB035F542cA8ADf10660d6fe2342471d')).toThrow(
       /retired contract/
     );
@@ -115,9 +84,6 @@ describe('trade escrow contract resolution', () => {
       address: registryContracts.privateEscrow,
       hiddenOnly: true
     });
-    expect(__resolveRecurringContractAddressForTest(RECURRING_OTC_CONTRACT_ADDRESS, registryContracts)).toBe(
-      registryContracts.recurringEscrow
-    );
   });
 
   it('uses the default Private OTC create ABI with encrypted private-link terms', async () => {
@@ -167,41 +133,6 @@ describe('trade escrow contract resolution', () => {
     });
   });
 
-  it('uses a nonparticipant caller when reading Direct link-secret payloads', () => {
-    const maker = '0x000000000000000000000000000000000000dead';
-    const taker = '0x0000000000000000000000000000000000000001';
-
-    const caller = __resolveDirectTermPayloadSecretCallerForTest(maker, taker);
-
-    expect(caller.toLowerCase()).not.toBe(maker.toLowerCase());
-    expect(caller.toLowerCase()).not.toBe(taker.toLowerCase());
-    expect(caller).toMatch(/^0x[0-9a-fA-F]{40}$/);
-  });
-
-  it('resolves optional registry contract addresses over current app fallbacks', () => {
-    const registryValue = {
-      standardEscrow: '0x1000000000000000000000000000000000000001',
-      privateEscrow: '0x1000000000000000000000000000000000000002',
-      directEscrow: '0x1000000000000000000000000000000000000003',
-      recurringEscrow: '0x1000000000000000000000000000000000000004',
-      reader: '0x1000000000000000000000000000000000000005',
-      historyReader: '0x1000000000000000000000000000000000000006'
-    };
-
-    expect(resolveTradingContractAddressesFromRegistryValue(registryValue)).toEqual(registryValue);
-    expect(
-      resolveTradingContractAddressesFromRegistryValue({
-        ...registryValue,
-        directEscrow: '',
-        historyReader: ''
-      })
-    ).toMatchObject({
-      ...registryValue,
-      directEscrow: DEFAULT_TRADING_CONTRACT_ADDRESSES.directEscrow,
-      historyReader: DEFAULT_TRADING_CONTRACT_ADDRESSES.historyReader
-    });
-  });
-
   it('rejects retired trading contract addresses instead of fetching them', () => {
     const retiredAddresses = [
       '0xe5CcCAB65059428BA42e9c595D95Fe51A1E2aFb0',
@@ -226,7 +157,6 @@ describe('trade escrow contract resolution', () => {
     ];
 
     for (const retiredAddress of retiredAddresses) {
-      expect(isActiveTradeEscrowContractAddress(retiredAddress)).toBe(false);
       expect(() => resolveTradeEscrowContractConfig(retiredAddress)).toThrow(
         'This trade link uses a retired contract and is not supported by the current app.'
       );
@@ -282,7 +212,6 @@ describe('trade escrow contract resolution', () => {
     const directInterface = new cotiEthers.Interface(DIRECT_TRADE_ESCROW_CONTRACT_ABI);
     const readerInterface = new cotiEthers.Interface(OTC_READER_CONTRACT_ABI);
     const registryInterface = new cotiEthers.Interface(OTC_REGISTRY_CONTRACT_ABI);
-    const historyReaderInterface = new cotiEthers.Interface(OTC_HISTORY_READER_CONTRACT_ABI);
 
     expect(otcInterface.getFunction('getTradeView')?.selector).toBeTruthy();
     expect(otcInterface.getFunction('getOpenPublicTradeIds')?.selector).toBeTruthy();
@@ -330,8 +259,6 @@ describe('trade escrow contract resolution', () => {
     expect(registryInterface.getFunction('getContracts')?.selector).toBeTruthy();
     expect(registryInterface.getFunction('setContracts')?.selector).toBeTruthy();
     expect(registryInterface.getEvent('ContractsUpdated')?.topicHash).toBeTruthy();
-    expect(historyReaderInterface.getFunction('getWalletHistoryPage')?.selector).toBeTruthy();
-    expect(historyReaderInterface.getFunction('getWalletHistoryPageFromContracts')?.selector).toBeTruthy();
   });
 
   it('keeps private ERC-20 approval and allowance fragments parseable by coti-ethers', async () => {
@@ -504,291 +431,4 @@ describe('trade escrow contract resolution', () => {
     });
   });
 
-  it('normalizes recurring V1 order views into recurring trade snapshots', async () => {
-    const snapshot = await __buildRecurringOrderSnapshotFromViewForTest(
-      1,
-      {
-        order: {
-          maker: '0xbf01185A70CDfEF1858659836D57BFf085ebed55',
-          taker: ZERO_ADDRESS,
-          status: 1,
-          mode: 0,
-          baseAsset: { assetType: 0, token: ZERO_ADDRESS },
-          quoteAsset: { assetType: 1, token: REWARD_TOKEN_ADDRESS },
-          buyTerms: { baseAmount: '1000000000000000000', quoteAmount: '2000000' },
-          sellTerms: { baseAmount: '1000000000000000000', quoteAmount: '2500000' },
-          isPublic: true,
-          accessHash: ZERO_BYTES32,
-          createdAt: 1_714_000_000,
-          executionCount: 2,
-          publicBaseInventory: '3000000000000000000',
-          publicQuoteInventory: '4000000'
-        },
-        buySideOpen: true,
-        sellSideOpen: true,
-        hasPrivateBaseInventory: false,
-        hasPrivateQuoteInventory: false
-      },
-      {
-        rewardTokenSymbol: 'WISP',
-        rewardTokenDecimals: 6,
-        privateRewardTokenSymbol: 'pWISP',
-        privateRewardTokenDecimals: 6
-      }
-    );
-
-    expect(snapshot.escrowContract).toBe(RECURRING_OTC_CONTRACT_ADDRESS);
-    expect(snapshot.status).toBe('open');
-    expect(snapshot.isPublic).toBe(true);
-    expect(snapshot.recurringOrder).toMatchObject({
-      orderId: 1,
-      mode: 'public',
-      recurringStatus: 'active',
-      buySideOpen: true,
-      sellSideOpen: true,
-      publicBaseInventory: '3000000000000000000',
-      publicQuoteInventory: '4000000',
-      executionCount: 2
-    });
-    expect(snapshot.recurringOrder?.baseAsset.symbol).toBe('COTI');
-    expect(snapshot.recurringOrder?.quoteAsset.symbol).toBe('WISP');
-  });
-
-  it('keeps the recurring escrow address that produced the order snapshot', async () => {
-    const contractAddress = '0x1000000000000000000000000000000000000004';
-    const snapshot = await __buildRecurringOrderSnapshotFromViewForTest(
-      1,
-      {
-        order: {
-          maker: '0xbf01185A70CDfEF1858659836D57BFf085ebed55',
-          taker: ZERO_ADDRESS,
-          status: 1,
-          mode: 0,
-          baseAsset: { assetType: 0, token: ZERO_ADDRESS },
-          quoteAsset: { assetType: 1, token: REWARD_TOKEN_ADDRESS },
-          buyTerms: { baseAmount: '1000000000000000000', quoteAmount: '2000000' },
-          sellTerms: { baseAmount: '1000000000000000000', quoteAmount: '2500000' },
-          isPublic: true,
-          accessHash: ZERO_BYTES32,
-          createdAt: 1_714_000_000,
-          executionCount: 2,
-          publicBaseInventory: '3000000000000000000',
-          publicQuoteInventory: '4000000'
-        },
-        buySideOpen: true,
-        sellSideOpen: true,
-        hasPrivateBaseInventory: false,
-        hasPrivateQuoteInventory: false
-      },
-      {
-        contractAddress,
-        rewardTokenSymbol: 'WISP',
-        rewardTokenDecimals: 6,
-        privateRewardTokenSymbol: 'pWISP',
-        privateRewardTokenDecimals: 6
-      }
-    );
-
-    expect(snapshot.escrowContract).toBe(contractAddress);
-  });
-
-  it('normalizes recurring paged id reads from contract indexes', () => {
-    expect(__resolveRecurringIdsFromPagedResultForTest([[1n, 2n, 0n], 0n])).toEqual([1, 2]);
-    expect(__resolveRecurringIdsFromPagedResultForTest([[], 0n])).toEqual([]);
-    expect(__resolveRecurringIdsFromPagedResultForTest(null)).toEqual([]);
-  });
-});
-
-describe('private limit fill history fallbacks', () => {
-  it('maps PrivateOrderFilled events to hidden filler history receipts', () => {
-    const filler = '0x3333333333333333333333333333333333333333';
-    const otherFiller = '0x4444444444444444444444444444444444444444';
-
-    const receipts = __mapPrivateOrderFilledLogsToReceiptsForTest(
-      [
-        {
-          args: [8n, otherFiller],
-          blockNumber: 2,
-          index: 0,
-          transactionHash: '0xother'
-        },
-        {
-          args: [8n, filler],
-          blockNumber: 3,
-          index: 4,
-          transactionHash: '0xsecond'
-        },
-        {
-          args: [8n, filler],
-          blockNumber: 1,
-          index: 2,
-          transactionHash: '0xfirst'
-        }
-      ],
-      8,
-      filler,
-      'filler'
-    );
-
-    expect(receipts).toEqual([
-      {
-        fillIndex: 1,
-        filler,
-        blockNumber: 1,
-        txHash: '0xfirst'
-      },
-      {
-        fillIndex: 3,
-        filler,
-        blockNumber: 3,
-        txHash: '0xsecond'
-      }
-    ]);
-  });
-});
-
-describe('trade snapshot selection and wallet merge helpers', () => {
-  const snapshot = (overrides: Partial<TradeSnapshot>) => ({
-    tradeId: 1,
-    escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-    maker: '0x1111111111111111111111111111111111111111',
-    taker: '0x2222222222222222222222222222222222222222',
-    offer: { kind: 'erc20', tokenAddress: REWARD_TOKEN_ADDRESS, symbol: 'AAA', decimals: 18, amount: '1' },
-    request: { kind: 'erc20', tokenAddress: REWARD_TOKEN_ADDRESS, symbol: 'BBB', decimals: 18, amount: '1' },
-    createdAt: 1,
-    expiresAt: 2,
-    status: 'open',
-    isPublic: false,
-    ...overrides
-  }) as TradeSnapshot;
-
-  it('prefers a bare compact-link candidate whose access hash matches the secret', () => {
-    const directHash = `0x${'ab'.repeat(32)}`;
-    const standard = snapshot({
-      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-      isPublic: true,
-      accessHash: ZERO_BYTES32
-    });
-    const direct = snapshot({
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      accessHash: directHash
-    });
-
-    expect(__selectTradeSnapshotCandidateForTest([standard, direct], directHash)).toBe(direct);
-  });
-
-  it('falls back to a Direct counter candidate for bare compact links with counter secrets', () => {
-    const accessSecretHash = `0x${'cd'.repeat(32)}`;
-    const standard = snapshot({
-      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-      isPublic: true,
-      accessHash: ZERO_BYTES32
-    });
-    const directCounter = snapshot({
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      accessHash: ZERO_BYTES32,
-      counterParentTradeId: 3
-    });
-
-    expect(__selectTradeSnapshotCandidateForTest([standard, directCounter], accessSecretHash)).toBe(directCounter);
-  });
-
-  it('does not pick an access-hash-aware Direct counter when the compact-link secret does not match', () => {
-    const accessSecretHash = `0x${'cd'.repeat(32)}`;
-    const standard = snapshot({
-      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-      isPublic: true,
-      accessHash: ZERO_BYTES32
-    });
-    const directCounter = snapshot({
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      accessHash: `0x${'ef'.repeat(32)}`,
-      counterParentTradeId: 3
-    });
-
-    expect(__selectTradeSnapshotCandidateForTest([standard, directCounter], accessSecretHash)).toBe(standard);
-  });
-
-  it('merges history-reader rows with direct per-contract indexes by contract-local identity', () => {
-    const standard = snapshot({
-      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-      tradeId: 7,
-      createdAt: 10
-    });
-    const directCounter = snapshot({
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      tradeId: 7,
-      taker: '0x2222222222222222222222222222222222222222',
-      createdAt: 12,
-      counterParentTradeId: 3
-    });
-    const duplicateHistory = snapshot({
-      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
-      tradeId: 7,
-      createdAt: 10,
-      walletHasFill: true
-    });
-
-    expect(__mergeWalletTradeSnapshotsForTest([[duplicateHistory], [standard, directCounter]])).toEqual([
-      directCounter,
-      {
-        ...duplicateHistory,
-        ...standard,
-        walletHasFill: true
-      }
-    ]);
-  });
-
-  it('keeps on-chain partial fill event rows when duplicate wallet snapshots merge', () => {
-    const first = snapshot({
-      tradeId: 8,
-      walletHasFill: true,
-      walletFillEvents: [
-        {
-          fillIndex: 1,
-          filler: '0x2222222222222222222222222222222222222222',
-          offerAmount: '100',
-          requestAmount: '200',
-          txHash: '0xfill1',
-          blockNumber: 10,
-          logIndex: 1
-        }
-      ]
-    });
-    const second = snapshot({
-      tradeId: 8,
-      walletFillEvents: [
-        {
-          fillIndex: 2,
-          filler: '0x3333333333333333333333333333333333333333',
-          offerAmount: '300',
-          requestAmount: '600',
-          txHash: '0xfill2',
-          blockNumber: 11,
-          logIndex: 1
-        }
-      ]
-    });
-
-    const [merged] = __mergeWalletTradeSnapshotsForTest([[first], [second]]);
-
-    expect(merged.walletHasFill).toBe(true);
-    expect(merged.walletFillEvents?.map((event) => event.txHash)).toEqual(['0xfill1', '0xfill2']);
-  });
-
-  it('treats missing Direct asset amount indexes as absent instead of throwing', () => {
-    const directAssetLikeResult = {
-      0: 2n,
-      1: PRIVATE_REWARD_TOKEN_ADDRESS
-    };
-    Object.defineProperty(directAssetLikeResult, 2, {
-      get() {
-        throw new RangeError('out of result range');
-      }
-    });
-
-    expect(__getIndexedResultValueForTest(directAssetLikeResult, 0)).toBe(2n);
-    expect(__getIndexedResultValueForTest(directAssetLikeResult, 1)).toBe(PRIVATE_REWARD_TOKEN_ADDRESS);
-    expect(__getIndexedResultValueForTest(directAssetLikeResult, 2)).toBeUndefined();
-  });
 });

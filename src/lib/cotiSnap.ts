@@ -419,11 +419,6 @@ export const getCotiSnapAesKeyResult = async (
     : { status: 'missing-aes' };
 };
 
-export const getCotiSnapAesKey = async (provider: Eip1193Provider): Promise<string | null> => {
-  const result = await getCotiSnapAesKeyResult(provider);
-  return result.status === 'ready' ? result.aesKey : null;
-};
-
 export const getCotiSnapOwnerAesKeyResult = async (
   provider: Eip1193Provider,
   ownerAddress: string,
@@ -494,28 +489,4 @@ export const storeCotiSnapAesKeyResult = async (
     ...buildSnapChainParams(context)
   });
   return stored.ok ? 'ready' : stored.status;
-};
-
-export const storeCotiSnapAesKey = async (
-  provider: Eip1193Provider,
-  aesKey?: string | null,
-  context?: CotiSnapWalletContext
-): Promise<void> => {
-  await storeCotiSnapAesKeyResult(provider, aesKey, context);
-};
-
-export const deleteCotiSnapAesKeyResult = async (
-  provider: Eip1193Provider,
-  context?: CotiSnapWalletContext
-): Promise<Exclude<CotiSnapAesKeyResult['status'], 'missing-aes'>> => {
-  const walletContext = await confirmSnapWalletContext(provider, context);
-  if (walletContext !== 'ready') {
-    return walletContext;
-  }
-  const connected = await requestAndConnectCotiSnap(provider, context);
-  if (connected !== 'ready') {
-    return connected;
-  }
-  const deleted = await invokeInstalledCotiSnap(provider, 'delete-aes-key', buildSnapChainParams(context));
-  return deleted.ok ? 'ready' : deleted.status;
 };

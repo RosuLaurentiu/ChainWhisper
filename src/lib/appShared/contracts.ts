@@ -214,13 +214,6 @@ export const OTC_REGISTRY_CONTRACT_ABI = [
   'event ContractsUpdated(address indexed updater, address standardEscrow, address privateEscrow, address directEscrow, address recurringEscrow, address reader, address historyReader)'
 ] as const;
 
-export const OTC_HISTORY_READER_CONTRACT_ABI = [
-  'function contractVersion() pure returns (string)',
-  'function supportsFeature(bytes32 feature) pure returns (bool)',
-  'function getWalletHistoryPage(address account, address registry, uint256 offset, uint256 limit) view returns ((address contractAddress, uint256 localId, uint8 kind, uint8 role, address counterparty, uint8 status, uint256 lastActivityBlock, uint256 sequence, uint8 amountVisibility)[] items, uint256 nextOffset)',
-  'function getWalletHistoryPageFromContracts(address account, address standardEscrow, address privateEscrow, address directEscrow, address recurringEscrow, uint256 offset, uint256 limit) view returns ((address contractAddress, uint256 localId, uint8 kind, uint8 role, address counterparty, uint8 status, uint256 lastActivityBlock, uint256 sequence, uint8 amountVisibility)[] items, uint256 nextOffset)'
-] as const;
-
 export const RECURRING_OTC_CONTRACT_ABI = [
   'function feeRecipient() view returns (address)',
   'function feeAmount() view returns (uint256)',

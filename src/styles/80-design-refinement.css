@@ -1319,7 +1319,6 @@ body {
   padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
 }
 
-.modal-error,
 .error {
   color: #fecaca;
 }

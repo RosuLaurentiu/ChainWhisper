@@ -1,7 +1,3 @@
-.trades-app-root {
-  grid-template-columns: 320px minmax(0, 1fr);
-}
-
 .standalone-trades-shell {
   min-height: 0;
   height: 100%;

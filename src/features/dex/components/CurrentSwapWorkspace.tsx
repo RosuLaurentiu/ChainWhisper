@@ -82,7 +82,7 @@ export const restoreCurrentTrialQuote = async (
   assertCurrent();
   const issued = await capability.restoreCurrentQuote({ quoteHash: hint.quoteHash });
   assertCurrent();
-  if (!['fast-pool','cheap-async'].includes(issued.intent.profile) || !['cheap-exit', 'cheap-history'].includes(currentCheapDexCandidateKey(issued.intent.candidate)) ||
+  if (!['fast-pool','cheap-async'].includes(issued.intent.profile) || currentCheapDexCandidateKey(issued.intent.candidate) !== 'cheap-history' ||
       issued.intent.destination.toLowerCase() !== expected.owner.toLowerCase() ||
       issued.intent.inputToken.toLowerCase() !== expected.inputToken.toLowerCase() ||
       issued.intent.outputToken.toLowerCase() !== expected.outputToken.toLowerCase()) {

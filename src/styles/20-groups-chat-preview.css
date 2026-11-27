@@ -380,12 +380,6 @@
   color: var(--muted);
 }
 
-.contact-copy-primary {
-  color: var(--text);
-  font-size: 0.92rem;
-  font-weight: 400;
-}
-
 .contact-copy-secondary {
   color: var(--muted);
   font-size: 0.82rem;
@@ -410,44 +404,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.contact-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.contact-rename {
-  margin-top: 6px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 6px;
-  min-width: 0;
-}
-
-.contact-rename input {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-elev-1);
-  color: var(--text);
-  padding: 7px 9px;
-  font-size: 0.8rem;
-  min-width: 0;
-  width: 100%;
-}
-
-.contact-rename button {
-  border: 1px solid var(--border);
-  background: var(--bg-elev-3);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 7px 9px;
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-
-.contact-rename button:hover {
-  background: rgba(139, 92, 246, 0.16);
 }
 
 .error {

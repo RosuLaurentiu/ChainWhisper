@@ -1,5 +1,5 @@
 import { decryptUint } from '@coti-io/coti-sdk-typescript';
-import { readCurrentDexGraph, readCurrentDexPrincipalReceipt } from '../../lib/appChain';
+import { readCurrentDexPrincipalReceipt } from '../../lib/appChain';
 import { createDexV2ReadCapability } from '../../lib/dexV2Chain';
 import { decryptPrivateUint256Output } from '../../lib/privateUint256';
 import type { CurrentCheapDexProfile } from '../../lib/currentDexOperation';
@@ -45,14 +45,6 @@ export const issueCurrentDexReceiptCapability = (args: IssueArgs) => issueOwnerC
       await assertCurrent(); assertSnapshotCurrent();
       return revealSnapshot(await readCurrentDexPrincipalReceipt({ ...request, capability, principal: ownerAddress }));
     };
-    return Object.freeze({ read, readCurrent,
-      // Same-block full public graph check plus the existing owner-only receipt path. No signer is exposed.
-      readFromGraph: async (request: Omit<Parameters<typeof readCurrentDexGraph>[0], 'capability'> & { operationId: bigint }) => {
-        const operationId = request.operationId;
-        const graph = await readCurrentDexGraph({ ...request, capability });
-        const receipt = await read({ expected: graph.operationReadIdentity, operationId });
-        return Object.freeze({ ...receipt, graph: graph.graph, manifestHash: graph.manifestHash });
-      }
-    });
+    return Object.freeze({ read, readCurrent });
   }
 });

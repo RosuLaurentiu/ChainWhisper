@@ -1,13 +1,3 @@
-.app-shell-dex-v2 .dex-v2-management-grid {
-  width: min(100%, 1180px);
-  max-width: 1180px;
-  grid-template-columns: minmax(0, 1fr);
-  margin-inline: auto;
-}
-.app-shell-dex-v2 .dex-v2-management-grid .dex-owner-workspace {
-  width: 100%; max-width: none; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none;
-}
-.app-shell-dex-v2 .dex-v2-management-grid > .dex-v2-form-column { width: 100%; max-width: none; grid-column: auto; padding: 24px; }
 .app-shell-dex-v2 .dex-owner-workspace { min-width: 0; display: grid; gap: 12px; }
 .app-shell-dex-v2 .dex-owner-workspace.dex-v2-test-form { padding: 12px; border-radius: 7px; }
 .app-shell-dex-v2 .dex-owner-heading { display: grid; gap: 4px; }
@@ -180,7 +170,6 @@
   :root body .app-shell-dex-v2 .dex-owner-selection-empty { min-height: 120px; }
 }
 @media (max-width: 680px) {
-  .app-shell-dex-v2 .dex-v2-management-grid > .dex-v2-form-column { padding: 16px 12px; }
   .app-shell-dex-v2 .dex-owner-workspace { gap: 10px; }
   .app-shell-dex-v2 .dex-history-row > summary { grid-template-columns: 20px minmax(0, 1fr) auto; gap: 4px 6px; }
   .app-shell-dex-v2 .dex-history-movements { grid-column: 2 / -1; justify-content: flex-start; }

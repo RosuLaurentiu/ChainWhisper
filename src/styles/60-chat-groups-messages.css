@@ -102,11 +102,6 @@
   text-overflow: ellipsis;
 }
 
-.contact-state-inline {
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
 .inline-spinner {
   width: 10px;
   height: 10px;
@@ -1639,12 +1634,6 @@
   width: 100%;
 }
 
-.chat-empty {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
 .chat-empty-state {
   display: grid;
   gap: 8px;
@@ -1774,7 +1763,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .route-loading-lines span::before,
-  .treasury-chart-skeleton-line::before,
   .chat-message-skeleton-bubble::before,
   .group-message-skeleton-bubble::before {
     animation: none;

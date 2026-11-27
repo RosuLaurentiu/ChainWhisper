@@ -189,7 +189,6 @@
 .app-shell-dex-v2 .dex-v2-current-facts div { min-width: 0; display: grid; gap: 2px; }
 .app-shell-dex-v2 .dex-v2-current-facts dt { color: #777286; font-size: 0.58rem; }
 .app-shell-dex-v2 .dex-v2-current-facts dd { margin: 0; color: #c8c3d2; font-size: 0.65rem; }
-.app-shell-dex-v2 .dex-v2-current-swap .dex-v2-limit-privacy { min-height: 56px; }
 
 .app-shell-dex-v2 .dex-v2-current-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .app-shell-dex-v2 .dex-v2-current-actions .dex-v2-review-button { grid-column: 1 / -1; margin-top: 0; }
@@ -360,69 +359,6 @@
   padding: 12px 16px 16px;
 }
 
-.app-shell-dex-v2 .dex-v2-positions-shell {
-  width: min(100%, 1180px);
-  grid-template-columns: minmax(0, 1fr);
-  margin-inline: auto;
-}
-
-.app-shell-dex-v2 .dex-v2-positions-workspace {
-  grid-column: 1;
-}
-
-.app-shell-dex-v2 .dex-v2-positions-toolbar-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 7px;
-}
-
-.app-shell-dex-v2 .dex-v2-position-pair-scope {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 7px;
-  background: rgba(5, 8, 14, 0.58);
-  padding: 3px;
-}
-
-.app-shell-dex-v2 .dex-v2-position-pair-scope button {
-  min-height: 34px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: #8f899e;
-  font-size: 0.68rem;
-  font-weight: 750;
-}
-
-.app-shell-dex-v2 .dex-v2-position-pair-scope button.active {
-  background: rgba(112, 61, 180, 0.24);
-  color: #eee8f8;
-  box-shadow: inset 0 0 0 1px rgba(157, 89, 245, 0.38);
-}
-
-.app-shell-dex-v2 .dex-v2-position-cross-pair-note {
-  display: grid;
-  gap: 4px;
-  border: 1px solid rgba(139, 92, 246, 0.3);
-  border-radius: 7px;
-  background: rgba(74, 39, 121, 0.13);
-  padding: 10px;
-}
-
-.app-shell-dex-v2 .dex-v2-position-cross-pair-note strong {
-  color: #d9c9f4;
-  font-size: 0.72rem;
-}
-
-.app-shell-dex-v2 .dex-v2-position-cross-pair-note span {
-  color: #8f899e;
-  font-size: 0.66rem;
-  line-height: 1.45;
-}
-
 @media (max-width: 920px) {
   .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel {
     margin-block: 6px 18px;
@@ -448,18 +384,6 @@
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-footer {
     padding: 10px 10px 14px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-toolbar {
-    gap: 10px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-toolbar-actions {
-    flex-wrap: wrap;
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-pair-scope button {
-    min-height: 44px;
   }
 }
 
@@ -828,7 +752,6 @@
   border-radius: 2px;
 }
 .dex-market-chart-legend .candle-up i { background: #26d6a0; }
-.dex-market-chart-legend .candle-down i { background: #ff5c8a; }
 .dex-market-chart-legend .limit i { height: 2px; background: #a76bff; }
 .dex-market-chart-tooltip {
   min-width: 220px;
@@ -893,78 +816,14 @@
   box-shadow: none;
   padding: 6px 0 0;
 }
-
-.app-shell-dex-v2 .dex-v2-token-field {
-  min-height: 102px;
-  display: grid;
-  gap: 9px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-}
-.app-shell-dex-v2 .dex-v2-token-field + .dex-v2-token-field { border: 0; }
-.app-shell-dex-v2 .dex-v2-field-label { display: flex; justify-content: space-between; gap: 12px; color: #aaa7b9; font-size: 0.78rem; }
-.app-shell-dex-v2 .dex-v2-field-label small { color: #aaa7b9; font-size: 0.72rem; font-weight: 400; }
-.app-shell-dex-v2 .dex-v2-field-tools { display: inline-flex; align-items: center; gap: 7px; }
-.app-shell-dex-v2 .dex-v2-field-tools button,
-.app-shell-dex-v2 .dex-v2-recurring-inventory small button,
-.app-shell-dex-v2 .dex-v2-pool-amount-tools button:last-child {
-  border: 1px solid rgba(139, 92, 246, 0.38);
-  border-radius: 5px;
-  background: rgba(139, 92, 246, 0.13);
-  color: #d8c8ff;
-  padding: 1px 6px;
-  font-size: 0.62rem;
-  font-weight: 700;
-}
 .app-shell-dex-v2 :is(.dex-v2-field-tools, .dex-v2-recurring-inventory, .dex-v2-pool-amount-tools) button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-.app-shell-dex-v2 .dex-v2-field-tools .dex-v2-balance-action {
-  border: 0;
-  background: transparent;
-  color: #b9a8df;
-  padding: 0;
-  font-weight: 500;
-  text-decoration: underline;
-  text-decoration-color: rgba(185, 168, 223, 0.38);
-  text-underline-offset: 2px;
 }
 .app-shell-dex-v2 .dex-v2-token-field-row:has(input[aria-invalid='true']) {
   border-color: rgba(241, 138, 155, 0.72);
   box-shadow: inset 0 0 0 1px rgba(241, 138, 155, 0.12);
 }
-.app-shell-dex-v2 .dex-v2-field-error {
-  margin: -3px 0 0;
-  color: #f18a9b;
-  font-size: 0.66rem;
-  line-height: 1.35;
-}
-.app-shell-dex-v2 .dex-v2-token-field-row {
-  min-height: 78px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0;
-  border: 1px solid var(--approved-border);
-  border-radius: 9px;
-  background: #0d101a;
-  padding: 0 14px;
-}
-.app-shell-dex-v2 .dex-v2-token-context {
-  min-height: 76px;
-  grid-column: 2;
-  grid-row: 1;
-  justify-content: flex-end;
-  gap: 9px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-}
-.app-shell-dex-v2 .dex-v2-token-context strong { flex: 0 0 auto; color: #faf9ff; font-size: 1rem; }
-.app-shell-dex-v2 .dex-v2-token-icon { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 50%; color: #fff; }
-.app-shell-dex-v2 .dex-v2-token-icon.usdc { background: linear-gradient(145deg, #1689ee, #0a5bbc); }
-.app-shell-dex-v2 .dex-v2-token-icon.usdt { background: linear-gradient(145deg, #20d8ad, #078d73); }
 .app-shell-dex-v2 :is(.dex-v2-token-field input, .dex-v2-amount-output) {
   min-width: 0;
   grid-column: 1;
@@ -974,32 +833,6 @@
   color: #faf9ff;
   font: 600 1.75rem "Space Grotesk", sans-serif;
   text-align: left;
-}
-.app-shell-dex-v2 .dex-v2-flip-button {
-  position: relative;
-  top: auto;
-  left: auto;
-  justify-self: center;
-  width: auto;
-  height: 44px;
-  display: inline-flex;
-  gap: 9px;
-  margin: -1px 0;
-  border: 1px solid var(--approved-border);
-  border-radius: 8px;
-  background: #0f1220;
-  color: #d9d5e5;
-  padding: 0 14px;
-  transform: none;
-}
-.app-shell-dex-v2 .dex-v2-flip-button::after { content: 'Switch trade direction'; font-size: 0.72rem; }
-
-.app-shell-dex-v2 .dex-v2-trade-settings,
-.app-shell-dex-v2 .dex-v2-advanced-market {
-  border: 1px solid var(--approved-border);
-  border-radius: 9px;
-  background: rgba(13, 16, 26, 0.78);
-  overflow: hidden;
 }
 .app-shell-dex-v2 :is(.dex-v2-trade-settings, .dex-v2-advanced-market) > summary {
   min-height: 48px;
@@ -1012,144 +845,6 @@
   padding: 0 14px;
   font-size: 0.78rem;
   font-weight: 650;
-}
-.app-shell-dex-v2 .dex-v2-trade-settings > summary::-webkit-details-marker,
-.app-shell-dex-v2 .dex-v2-advanced-market > summary::-webkit-details-marker { display: none; }
-.app-shell-dex-v2 .dex-v2-trade-settings .dex-v2-setting-row {
-  min-height: 40px;
-  border-top: 1px solid var(--approved-border-soft);
-  padding: 0 14px;
-}
-.app-shell-dex-v2 .dex-v2-exact-price-input {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(76px, 92px) auto;
-  align-items: center;
-  justify-content: end;
-  gap: 7px;
-}
-.app-shell-dex-v2 .dex-v2-exact-price-input input {
-  width: 100%;
-  min-height: 32px;
-  border: 1px solid rgba(170, 99, 255, 0.75);
-  border-radius: 6px;
-  background: rgba(16, 12, 28, 0.94);
-  color: #f7f3ff;
-  padding: 0 8px;
-  font: 650 0.75rem "Space Grotesk", sans-serif;
-  text-align: right;
-}
-.app-shell-dex-v2 .dex-v2-exact-price-input input:focus-visible {
-  outline: 2px solid rgba(186, 126, 255, 0.9);
-  outline-offset: 2px;
-}
-.app-shell-dex-v2 .dex-v2-exact-price-input small {
-  max-width: 116px;
-  color: #aaa6b8;
-  font-size: 0.62rem;
-  line-height: 1.25;
-}
-.app-shell-dex-v2 .dex-v2-trade-settings .dex-v2-setting-result strong { color: #f1eef8; font-size: 0.72rem; font-weight: 600; }
-.app-shell-dex-v2 .dex-v2-trade-settings > p { margin: 0; padding: 0 14px 12px; color: #9692a7; font-size: 0.7rem; }
-.app-shell-dex-v2 .dex-v2-setting-link {
-  margin: -5px 14px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--approved-purple-bright);
-  padding: 0;
-  font-size: 0.7rem;
-  text-align: left;
-}
-
-.app-shell-dex-v2 .dex-v2-settings-primary {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px;
-}
-.app-shell-dex-v2 .dex-v2-settings-primary > span {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-.app-shell-dex-v2 .dex-v2-settings-primary strong {
-  color: #f3f0fa;
-  font-size: 0.8rem;
-}
-.app-shell-dex-v2 .dex-v2-settings-primary small {
-  width: max-content;
-  border-radius: 999px;
-  background: rgba(38, 214, 160, 0.1);
-  color: #68dfba;
-  padding: 1px 5px;
-  font-size: 0.58rem;
-  font-weight: 700;
-}
-.app-shell-dex-v2 .dex-v2-settings-value {
-  color: #f6f2ff;
-  font: 700 0.82rem "Space Grotesk", sans-serif;
-}
-.app-shell-dex-v2 .dex-v2-settings-action svg { color: #a972ff; }
-.app-shell-dex-v2 .dex-v2-custom-percent {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.app-shell-dex-v2 .dex-v2-custom-percent input {
-  width: 88px;
-  min-height: 30px;
-  border: 1px solid rgba(170, 99, 255, 0.75);
-  border-radius: 6px;
-  background: rgba(16, 12, 28, 0.94);
-  color: #f7f3ff;
-  padding: 0 8px;
-  font: 650 0.75rem "Space Grotesk", sans-serif;
-  text-align: right;
-}
-.app-shell-dex-v2 .dex-v2-custom-percent small { color: #aaa6b8; font-size: 0.7rem; }
-.app-shell-dex-v2 .dex-v2-settings-advanced {
-  border-top: 0;
-}
-.app-shell-dex-v2 .dex-v2-settings-advanced > summary {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  cursor: pointer;
-  list-style: none;
-  color: #f3f0fa;
-  padding: 0 12px;
-}
-.app-shell-dex-v2 .dex-v2-settings-advanced > summary::-webkit-details-marker { display: none; }
-.app-shell-dex-v2 .dex-v2-settings-advanced[open] > summary { background: rgba(139, 92, 246, 0.05); }
-.app-shell-dex-v2 .dex-v2-settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid var(--approved-border-soft);
-}
-.app-shell-dex-v2 .dex-v2-settings-grid .dex-v2-setting-row {
-  min-width: 0;
-  min-height: 42px;
-  border-top: 0;
-  padding: 0 12px;
-}
-.app-shell-dex-v2 .dex-v2-settings-grid .dex-v2-setting-row + .dex-v2-setting-row {
-  border-left: 1px solid var(--approved-border-soft);
-}
-.app-shell-dex-v2 .dex-v2-settings-grid label { font-size: 0.72rem; }
-.app-shell-dex-v2 .dex-v2-settings-grid select { max-width: 118px; font-size: 0.72rem; }
-.app-shell-dex-v2 .dex-v2-settings-advanced > p {
-  margin: 0;
-  padding: 0 14px 12px;
-  color: #8f8a9f;
-  font-size: 0.66rem;
-}
-.app-shell-dex-v2 .dex-v2-settings-advanced .dex-v2-setting-link {
-  margin: 8px 14px 10px;
 }
 
 .app-shell-dex-v2 .dex-v2-review-button {
@@ -1164,167 +859,12 @@
 .app-shell-dex-v2 .dex-v2-review-button:disabled { background: rgba(91, 55, 161, 0.38); }
 .app-shell-dex-v2 .dex-v2-activation-note { margin: 0; color: #777489; font-size: 0.64rem; line-height: 1.45; }
 
-.app-shell-dex-v2 .dex-v2-privacy-card {
-  border: 0;
-  border-radius: 8px;
-  background: linear-gradient(90deg, rgba(89, 55, 148, 0.24), rgba(31, 36, 57, 0.7));
-  overflow: hidden;
-}
-.app-shell-dex-v2 .dex-v2-detail-tabs,
-.app-shell-dex-v2 .dex-v2-privacy-row ~ .dex-v2-privacy-row { display: none; }
-.app-shell-dex-v2 .dex-v2-privacy-row {
-  width: 100%;
-  min-height: 66px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 11px;
-  border: 0;
-  background: transparent;
-  padding: 0 14px;
-}
-.app-shell-dex-v2 .dex-v2-privacy-row > span { min-width: 0; display: grid; gap: 3px; }
-.app-shell-dex-v2 .dex-v2-privacy-row strong { color: #f1eef8; font-size: 0.78rem; }
-.app-shell-dex-v2 .dex-v2-privacy-row small { color: #9f9bad; font-size: 0.65rem; }
-.app-shell-dex-v2 .dex-v2-privacy-row > svg:first-child { color: var(--approved-purple-bright); }
-.app-shell-dex-v2 .dex-v2-privacy-row > svg:last-child { color: var(--approved-green); }
-.app-shell-dex-v2 .dex-v2-advanced-market { margin-top: 2px; }
-.app-shell-dex-v2 .dex-v2-advanced-market > :not(summary) { margin: 10px; }
-
 /* Strategies and positions use the same chart-led visual system. */
-.app-shell-dex-v2 .dex-v2-strategies-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(390px, 0.85fr);
-  gap: 0;
-  align-items: start;
-  align-content: start;
-  padding-top: 18px;
-}
-.app-shell-dex-v2 .dex-v2-strategy-form-column {
-  grid-column: 2;
-  grid-row: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-left: 1px solid var(--approved-border-soft);
-  padding: 16px 18px 8px 28px;
-}
-.app-shell-dex-v2 .dex-v2-strategy-heading { margin: 0; }
-.app-shell-dex-v2 .dex-v2-strategy-nav {
-  display: block;
-  align-self: start;
-  width: 100%;
-  margin: 0;
-  border-color: var(--approved-border);
-  border-radius: 9px;
-  background: rgba(13, 16, 26, 0.84);
-  padding: 2px;
-}
-.app-shell-dex-v2 .dex-v2-strategy-nav > div {
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 3px;
-}
-.app-shell-dex-v2 .dex-v2-strategy-nav button {
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #a8a4b7;
-  padding: 0 8px;
-  font-size: 0.76rem;
-  font-weight: 650;
-  text-align: center;
-}
-.app-shell-dex-v2 .dex-v2-strategy-nav button:hover { background: rgba(139, 92, 246, 0.08); }
-.app-shell-dex-v2 .dex-v2-strategy-nav button.active {
-  border: 0;
-  background: linear-gradient(135deg, rgba(96, 60, 174, 0.92), rgba(112, 79, 171, 0.84));
-  box-shadow: inset 0 0 0 1px rgba(181, 137, 255, 0.24);
-  color: #fff;
-}
-.app-shell-dex-v2 .dex-v2-strategies-shell > .dex-market-chart {
-  grid-column: 1;
-  grid-row: 1;
-  align-self: start;
-  height: clamp(700px, calc(100dvh - 200px), 840px);
-}
-.app-shell-dex-v2 .dex-v2-strategy-layout { grid-template-columns: 1fr; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-strategy-nav,
 .app-shell-dex-v2 .dex-v2-test-form,
-.app-shell-dex-v2 .dex-v2-strategy-preview,
-.app-shell-dex-v2 .dex-v2-positions-workspace,
-.app-shell-dex-v2 .dex-v2-position-type-guide {
+.app-shell-dex-v2 .dex-v2-strategy-preview {
   border-color: var(--approved-border);
   background: rgba(13, 16, 26, 0.76);
   box-shadow: none;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-composer {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  border-left: 1px solid var(--approved-border-soft);
-  padding: 2px 18px 20px 28px;
-}
-.app-shell-dex-v2 .dex-v2-composer-eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: #9b78f8;
-  font-size: 0.62rem;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.app-shell-dex-v2 .dex-v2-buy-sell-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 9px;
-  background: rgba(9, 12, 20, 0.72);
-  padding: 3px;
-}
-
-.app-shell-dex-v2 .dex-v2-buy-sell-tabs button {
-  min-height: 42px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #a8a4b7;
-  font-size: 0.78rem;
-  font-weight: 650;
-}
-
-.app-shell-dex-v2 .dex-v2-buy-sell-tabs button.active {
-  background: rgba(111, 63, 191, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(157, 97, 245, 0.7);
-  color: #fff;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-fields {
-  display: grid;
-  gap: 12px;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-composer .dex-v2-token-field {
-  min-height: 88px;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-composer .dex-v2-token-field-row {
-  min-height: 66px;
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-composer .dex-v2-token-context {
-  min-height: 64px;
 }
 
 .app-shell-dex-v2 .dex-v2-limit-composer :is(.dex-v2-token-field input, .dex-v2-amount-output) {
@@ -1347,8 +887,7 @@
 .app-shell-dex-v2 .dex-v2-limit-price-field > span small { color: #9a96a8; font-size: 0.68rem; font-weight: 400; }
 
 .app-shell-dex-v2 .dex-v2-limit-price-field select,
-.app-shell-dex-v2 .dex-v2-limit-price-field > input,
-.app-shell-dex-v2 .dex-v2-limit-advanced select {
+.app-shell-dex-v2 .dex-v2-limit-price-field > input {
   width: 100%;
   min-height: 48px;
   border: 1px solid var(--approved-border);
@@ -1359,207 +898,14 @@
   font: 600 0.8rem "Inter", sans-serif;
 }
 .app-shell-dex-v2 .dex-v2-limit-price-field > input { font-size: 1.02rem; }
-.app-shell-dex-v2 .dex-v2-limit-price-summary {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-}
-.app-shell-dex-v2 .dex-v2-limit-price-summary strong {
-  min-width: 0;
-  color: #d7d3df;
-  font-size: 0.7rem;
-  font-weight: 600;
-}
-.app-shell-dex-v2 .dex-v2-limit-price-summary span {
-  flex: 0 0 auto;
-  color: #c4b5fd;
-  font-size: 0.68rem;
-}
 .app-shell-dex-v2 .dex-v2-limit-price-field > input[aria-invalid='true'] {
   border-color: rgba(241, 138, 155, 0.72);
   box-shadow: inset 0 0 0 1px rgba(241, 138, 155, 0.12);
 }
-.app-shell-dex-v2 .dex-v2-limit-chart-link {
-  display: none;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-advanced {
-  overflow: hidden;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 9px;
-  background: rgba(9, 12, 20, 0.62);
-}
-
-.app-shell-dex-v2 .dex-v2-limit-advanced > summary {
-  min-height: 45px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  cursor: pointer;
-  list-style: none;
-  color: #d9d5e5;
-  padding: 0 12px;
-  font-size: 0.72rem;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-advanced > summary::-webkit-details-marker { display: none; }
-.app-shell-dex-v2 .dex-v2-limit-advanced > summary span:last-child { display: inline-flex; align-items: center; gap: 5px; color: #9d98ad; }
-.app-shell-dex-v2 .dex-v2-limit-advanced[open] > summary { border-bottom: 1px solid var(--approved-border-soft); }
-.app-shell-dex-v2 .dex-v2-limit-advanced > label { display: grid; gap: 7px; padding: 12px 12px 6px; }
-.app-shell-dex-v2 .dex-v2-limit-advanced > label > span { color: #aaa7b9; font-size: 0.72rem; }
-.app-shell-dex-v2 .dex-v2-limit-advanced > p { margin: 0; color: #858195; padding: 4px 12px 12px; font-size: 0.64rem; line-height: 1.45; }
-
-.app-shell-dex-v2 .dex-v2-limit-privacy {
-  min-height: 62px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 11px;
-  border: 1px solid rgba(128, 91, 199, 0.22);
-  border-radius: 8px;
-  background: linear-gradient(90deg, rgba(89, 55, 148, 0.24), rgba(31, 36, 57, 0.7));
-  color: #b98cff;
-  padding: 0 13px;
-}
-
-.app-shell-dex-v2 .dex-v2-limit-privacy > span { min-width: 0; display: grid; gap: 3px; }
-.app-shell-dex-v2 .dex-v2-limit-privacy strong { color: #f1eef8; font-size: 0.78rem; }
-.app-shell-dex-v2 .dex-v2-limit-privacy small { overflow: hidden; color: #9f9bad; font-size: 0.64rem; text-overflow: ellipsis; white-space: nowrap; }
-.app-shell-dex-v2 .dex-v2-limit-privacy > svg:last-child { color: var(--approved-green); }
-
-.app-shell-dex-v2 .dex-v2-recurring-composer {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  border-left: 1px solid var(--approved-border-soft);
-  padding: 0 18px 20px 28px;
-}
-.app-shell-dex-v2 .dex-v2-recurring-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-recurring-title-row > span {
-  flex: 0 0 auto;
-  border: 1px solid var(--approved-border);
-  border-radius: 999px;
-  background: rgba(139, 92, 246, 0.1);
-  color: #b9b3c8;
-  padding: 4px 8px;
-  font-size: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.app-shell-dex-v2 .dex-v2-recurring-band,
-.app-shell-dex-v2 .dex-v2-recurring-inventory {
-  display: grid;
-  gap: 11px;
-  border: 1px solid var(--approved-border);
-  border-radius: 9px;
-  background: rgba(11, 14, 23, 0.78);
-  padding: 12px;
-}
-.app-shell-dex-v2 .dex-v2-recurring-band > header,
-.app-shell-dex-v2 .dex-v2-recurring-inventory > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-recurring-band > header > span:first-child { display: grid; gap: 2px; }
-.app-shell-dex-v2 .dex-v2-recurring-band > header small,
-.app-shell-dex-v2 .dex-v2-recurring-inventory > header small { color: #858095; font-size: 0.62rem; font-weight: 500; }
-.app-shell-dex-v2 .dex-v2-recurring-band > header > span:last-child { color: #8f8a9e; font-size: 0.64rem; }
-.app-shell-dex-v2 .dex-v2-recurring-band > header > span:last-child strong { margin-left: 4px; color: var(--approved-green); }
-.app-shell-dex-v2 .dex-v2-recurring-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; border-radius: 7px; background: rgba(6, 8, 15, 0.72); padding: 3px; }
-.app-shell-dex-v2 .dex-v2-recurring-presets button { min-height: 34px; border: 0; border-radius: 5px; background: transparent; color: #aaa6b7; font-size: 0.68rem; }
-.app-shell-dex-v2 .dex-v2-recurring-presets button.active { background: rgba(107, 61, 175, 0.45); color: #fff; box-shadow: inset 0 0 0 1px rgba(174, 115, 255, 0.38); }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid,
-.app-shell-dex-v2 .dex-v2-recurring-inventory > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label,
-.app-shell-dex-v2 .dex-v2-recurring-inventory label { min-width: 0; display: grid; gap: 7px; }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label > span,
-.app-shell-dex-v2 .dex-v2-recurring-inventory label > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #aaa6b7; font-size: 0.68rem; }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label.buy strong { color: var(--approved-green); }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label.sell strong { color: #ef68cf; }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label small,
-.app-shell-dex-v2 .dex-v2-recurring-inventory label small { color: #777287; font-size: 0.58rem; }
-.app-shell-dex-v2 .dex-v2-recurring-inventory label small { display: inline-flex; align-items: center; gap: 5px; }
-.app-shell-dex-v2 .dex-v2-recurring-inventory label small .dex-v2-recurring-balance-action {
-  border: 0;
-  background: transparent;
-  color: #b9a8df;
-  padding: 0;
-  font-weight: 500;
-  text-decoration: underline;
-  text-decoration-color: rgba(185, 168, 223, 0.38);
-  text-underline-offset: 2px;
-}
-.app-shell-dex-v2 .dex-v2-recurring-inventory label small > span { color: #8f8a9e; }
-.app-shell-dex-v2 .dex-v2-recurring-inventory label > em { display: flex; justify-content: space-between; gap: 8px; color: #858095; font-size: 0.6rem; font-style: normal; }
-.app-shell-dex-v2 .dex-v2-recurring-inventory label > em strong { color: #d8d2e4; }
-.app-shell-dex-v2 .dex-v2-recurring-price-input,
-.app-shell-dex-v2 .dex-v2-recurring-inventory-input { width: 100%; min-width: 0; min-height: 42px; border: 1px solid var(--approved-border); border-radius: 7px; background: rgba(8, 10, 18, 0.9); color: #f5f2fb; padding: 0 10px; font: 650 0.78rem "Space Grotesk", sans-serif; }
-.app-shell-dex-v2 .dex-v2-recurring-price-input,
-.app-shell-dex-v2 .dex-v2-recurring-inventory-input { display: flex; align-items: center; gap: 8px; }
-.app-shell-dex-v2 .dex-v2-recurring-inventory-input input {
-  min-width: 0;
-  flex: 1 1 auto;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  font: inherit;
-}
-.app-shell-dex-v2 .dex-v2-recurring-inventory-input > span { flex: 0 0 auto; color: #858095; font-size: 0.62rem; }
-.app-shell-dex-v2 .dex-v2-recurring-price-input.invalid,
 .app-shell-dex-v2 .dex-v2-recurring-inventory-input:has(input[aria-invalid='true']) {
   border-color: rgba(240, 181, 102, 0.72);
   box-shadow: 0 0 0 2px rgba(240, 181, 102, 0.08);
 }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label .dex-v2-recurring-price-input.invalid + em { color: #f0b566; }
-.app-shell-dex-v2 .dex-v2-recurring-price-input input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #f5f2fb; padding: 0; font: 700 0.86rem "Space Grotesk", sans-serif; }
-.app-shell-dex-v2 .dex-v2-recurring-price-input > span { flex: 0 0 auto; color: #858095; font-size: 0.62rem; }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label > em { color: #858095; font-size: 0.6rem; font-style: normal; }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label.buy > em { color: rgba(35, 211, 153, 0.78); }
-.app-shell-dex-v2 .dex-v2-recurring-price-grid label.sell > em { color: rgba(239, 104, 207, 0.78); }
-.app-shell-dex-v2 .dex-v2-recurring-price-guidance { margin: 0; color: #8f8a9e; font-size: 0.62rem; line-height: 1.4; }
-.app-shell-dex-v2 .dex-v2-recurring-price-guidance.invalid { color: #f0b566; }
-.app-shell-dex-v2 .dex-v2-recurring-inventory > .dex-v2-field-error { margin: 0; }
-.app-shell-dex-v2 .dex-v2-recurring-cycle-note { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: center; border: 1px solid rgba(35, 211, 153, 0.22); border-radius: 8px; background: rgba(5, 51, 42, 0.18); color: var(--approved-green); padding: 10px 11px; }
-.app-shell-dex-v2 .dex-v2-recurring-cycle-note span { display: grid; gap: 2px; }
-.app-shell-dex-v2 .dex-v2-recurring-cycle-note strong { color: #dffbf1; font-size: 0.7rem; }
-.app-shell-dex-v2 .dex-v2-recurring-cycle-note small { color: #93b8aa; font-size: 0.62rem; line-height: 1.35; }
-.app-shell-dex-v2 .dex-v2-recurring-sides {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.app-shell-dex-v2 .dex-v2-recurring-side {
-  min-width: 0;
-  display: grid;
-  gap: 11px;
-  border: 1px solid var(--approved-border);
-  border-radius: 9px;
-  background: rgba(11, 14, 23, 0.78);
-  padding: 12px;
-}
-.app-shell-dex-v2 .dex-v2-recurring-side > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 9px;
-  border-bottom: 1px solid var(--approved-border-soft);
-}
-.app-shell-dex-v2 .dex-v2-recurring-side.buy > header strong { color: var(--approved-green); }
-.app-shell-dex-v2 .dex-v2-recurring-side.sell > header strong { color: #ef68cf; }
-.app-shell-dex-v2 .dex-v2-recurring-side > header small { color: #8e899f; font-size: 0.62rem; }
-.app-shell-dex-v2 .dex-v2-recurring-side label { min-width: 0; display: grid; gap: 7px; }
-.app-shell-dex-v2 .dex-v2-recurring-side label > span {
-  display: flex;
-  justify-content: space-between;
-  gap: 7px;
-  color: #aaa6b7;
-  font-size: 0.68rem;
-}
-.app-shell-dex-v2 .dex-v2-recurring-side label > span small { color: #777287; font-size: 0.58rem; }
 .app-shell-dex-v2 .dex-v2-recurring-side :is(select, input) {
   width: 100%;
   min-width: 0;
@@ -1570,34 +916,6 @@
   color: #f5f2fb;
   padding: 0 10px;
   font: 650 0.78rem "Space Grotesk", sans-serif;
-}
-.app-shell-dex-v2 .dex-v2-recurring-ratio-note {
-  margin: 0;
-  color: #8f8a9e;
-  font-size: 0.64rem;
-  line-height: 1.45;
-}
-.app-shell-dex-v2 .dex-v2-recurring-summary {
-  overflow: hidden;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 8px;
-  background: rgba(10, 12, 20, 0.62);
-}
-.app-shell-dex-v2 .dex-v2-recurring-summary > summary {
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  color: #bcb7c9;
-  padding: 0 12px;
-  font-size: 0.7rem;
-}
-.app-shell-dex-v2 .dex-v2-recurring-summary > summary::-webkit-details-marker { display: none; }
-.app-shell-dex-v2 .dex-v2-recurring-summary .dex-v2-strategy-preview { border: 0; border-top: 1px solid var(--approved-border-soft); border-radius: 0; }
-.app-shell-dex-v2 .dex-v2-recurring-summary > .dex-v2-recurring-ratio-note {
-  border-top: 1px solid var(--approved-border-soft);
-  padding: 10px 12px;
 }
 
 .app-shell-dex-v2 .dex-v2-pool-composer {
@@ -1630,79 +948,6 @@
 }
 .app-shell-dex-v2 .dex-v2-pool-section > header span,
 .app-shell-dex-v2 .dex-v2-pool-section > header svg { color: #918da2; font-size: 0.67rem; }
-
-.app-shell-dex-v2 .dex-v2-pool-range-inputs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.app-shell-dex-v2 .dex-v2-pool-range-inputs label {
-  position: relative;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 8px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 8px;
-  background: rgba(11, 14, 24, 0.86);
-  padding: 10px;
-}
-.app-shell-dex-v2 .dex-v2-pool-range-inputs label > span { color: #9f9bad; font-size: 0.65rem; }
-.app-shell-dex-v2 .dex-v2-pool-range-inputs label > button {
-  border: 0;
-  background: transparent;
-  color: var(--approved-green);
-  padding: 0;
-  font-size: 0.62rem;
-}
-.app-shell-dex-v2 .dex-v2-pool-range-inputs input {
-  min-width: 0;
-  grid-column: 1 / -1;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #f6f4fb;
-  padding: 0;
-  font: 600 1.06rem "Space Grotesk", sans-serif;
-}
-.app-shell-dex-v2 .dex-v2-pool-range-inputs small {
-  grid-column: 1 / -1;
-  color: var(--approved-green);
-  font-size: 0.61rem;
-}
-
-.app-shell-dex-v2 .dex-v2-pool-segmented {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 3px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 8px;
-  background: rgba(9, 12, 20, 0.72);
-  padding: 3px;
-}
-.app-shell-dex-v2 .dex-v2-pool-segmented button {
-  min-height: 40px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #aaa6b6;
-  padding: 0 5px;
-  font-size: 0.68rem;
-  white-space: nowrap;
-}
-.app-shell-dex-v2 .dex-v2-pool-segmented button.active {
-  background: linear-gradient(135deg, rgba(96, 60, 174, 0.9), rgba(112, 79, 171, 0.8));
-  box-shadow: inset 0 0 0 1px rgba(181, 137, 255, 0.22);
-  color: #fff;
-}
-.app-shell-dex-v2 .dex-v2-pool-error { margin: 0; color: #f18a9b; font-size: 0.65rem; }
-
-.app-shell-dex-v2 .dex-v2-pool-fee-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(118px, 0.75fr);
-  gap: 8px;
-}
-.app-shell-dex-v2 .dex-v2-pool-fee-row > .dex-v2-pool-segmented { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .app-shell-dex-v2 .dex-v2-pool-custom-fee {
   min-height: 42px;
   display: grid;
@@ -1729,82 +974,12 @@
   background: rgba(102, 63, 175, 0.22);
   box-shadow: inset 0 0 0 1px rgba(181, 137, 255, 0.12);
 }
-.app-shell-dex-v2 .dex-v2-pool-fee-help {
-  grid-column: 1 / -1;
-  color: #9995a8;
-  font-size: 0.61rem;
-}
 .app-shell-dex-v2 .dex-v2-pool-custom-fee:has(input[aria-invalid='true']) {
   border-color: rgba(241, 138, 155, 0.7);
 }
 
 .app-shell-dex-v2 .dex-v2-pool-amounts-section { gap: 7px; }
-.app-shell-dex-v2 .dex-v2-pool-amount-field { display: grid; gap: 6px; }
-.app-shell-dex-v2 .dex-v2-pool-amount-meta { display: flex; justify-content: space-between; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-pool-amount-meta span,
-.app-shell-dex-v2 .dex-v2-pool-amount-meta button { color: #aaa6b6; font-size: 0.65rem; }
-.app-shell-dex-v2 .dex-v2-pool-amount-meta button { border: 0; background: transparent; padding: 0; }
-.app-shell-dex-v2 .dex-v2-pool-amount-tools { display: inline-flex; align-items: center; gap: 7px; }
-.app-shell-dex-v2 .dex-v2-pool-amount-input {
-  min-height: 60px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  border: 1px solid var(--approved-border);
-  border-radius: 8px;
-  background: #0d101a;
-  padding: 0 12px;
-}
-.app-shell-dex-v2 .dex-v2-pool-token-context {
-  min-height: 58px;
-  display: flex;
-  grid-column: 2;
-  grid-row: 1;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  color: #f7f5fb;
-  padding: 0;
-}
-.app-shell-dex-v2 .dex-v2-pool-amount-input input {
-  min-width: 0;
-  grid-column: 1;
-  grid-row: 1;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #faf9ff;
-  text-align: left;
-  font: 600 1.25rem "Space Grotesk", sans-serif;
-}
-.app-shell-dex-v2 .dex-v2-pool-plus {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-self: center;
-  place-items: center;
-  margin-block: -3px;
-  border: 1px solid var(--approved-border);
-  border-radius: 50%;
-  background: #10131f;
-  color: #b4afc1;
-}
-.app-shell-dex-v2 .dex-v2-pool-share { min-height: 28px; display: flex; align-items: center; justify-content: space-between; color: #aaa6b6; font-size: 0.66rem; }
-.app-shell-dex-v2 .dex-v2-pool-share span { display: inline-flex; align-items: center; gap: 5px; }
-.app-shell-dex-v2 .dex-v2-pool-share strong { color: #d8d4e2; font-weight: 500; }
 .app-shell-dex-v2 .dex-v2-pool-composer > .dex-v2-review-button { margin-top: 16px; }
-
-.app-shell-dex-v2 .dex-v2-positions-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(390px, 0.75fr);
-  gap: 18px;
-  padding-top: 18px;
-}
-.app-shell-dex-v2 .dex-v2-position-type-guide { grid-column: 1 / -1; }
-.app-shell-dex-v2 .dex-v2-positions-workspace { grid-column: 1; }
-.app-shell-dex-v2 .dex-v2-positions-shell > .dex-market-chart { grid-column: 2; min-height: 600px; }
 
 /* P2P page family */
 .app-shell-trades .p2p-secondary-nav-mobile { display: none; }
@@ -1842,7 +1017,6 @@
 }
 .app-shell-trades .p2p-market-tabs .p2p-trade-tabs button.active,
 .app-shell-trades .p2p-create-tabs .p2p-trade-tabs button.active { color: var(--approved-purple-bright); box-shadow: inset 0 -3px var(--approved-purple); }
-.app-shell-trades .p2p-advanced-tools { display: none; }
 
 .app-shell-trades .p2p-offers-workspace {
   align-items: start;
@@ -1858,28 +1032,8 @@
   box-shadow: none;
   padding: 0;
 }
-.app-shell-trades .p2p-offers-shared-context {
-  min-height: 46px;
-  border-color: var(--approved-border);
-  border-radius: 8px;
-  background: rgba(11, 14, 24, 0.9);
-}
-.app-shell-trades .p2p-offers-title { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding-top: 8px; }
-.app-shell-trades .p2p-offers-title h1,
-.app-shell-trades .p2p-offers-title p { margin: 0; }
-.app-shell-trades .p2p-offers-title h1 { color: #faf9ff; font: 700 1.55rem "Space Grotesk", sans-serif; }
-.app-shell-trades .p2p-offers-title p,
-.app-shell-trades .p2p-offers-title > span { margin-top: 5px; color: var(--approved-muted); font-size: 0.72rem; }
-
-.app-shell-trades .p2p-offers-controls {
-  grid-template-columns: minmax(220px, 0.55fr) minmax(280px, 0.8fr);
-  justify-content: start;
-  align-items: end;
-  gap: 10px;
-}
 .app-shell-trades .p2p-swap-side-switch { min-height: 46px; border-color: var(--approved-border); background: rgba(8, 10, 18, 0.72); }
 .app-shell-trades .p2p-swap-side-switch button { min-height: 44px; }
-.app-shell-trades .p2p-offers-amount > div { min-height: 46px; border-color: var(--approved-border); background: rgba(8, 10, 18, 0.72); }
 .app-shell-trades .p2p-offers-filter-tool { min-width: 0; }
 .app-shell-trades .p2p-offers-filter-toggle { display: none; }
 .app-shell-trades .p2p-offers-filter-controls {
@@ -2333,33 +1487,6 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  padding: 0 2px;
-}
-.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary > span { display: none; }
-.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary > strong {
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 999px;
-  background: rgba(107, 61, 175, 0.14);
-  color: #dcd6e8;
-  padding: 3px 7px;
-  font-size: 0.6rem;
-  white-space: nowrap;
-}
-.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary > p {
-  display: block;
-  margin: 0;
-  color: var(--approved-muted);
-  font-size: 0.62rem;
-  line-height: 1.4;
-}
 
 .app-shell-trades .p2p-my-trades-section {
   width: min(calc(100% - 56px), 1920px);
@@ -2385,8 +1512,6 @@
   padding: 10px 0;
 }
 .app-shell-trades .p2p-my-trades-section .p2p-wallet-trade-grid .p2p-order-token-actions { display: none; }
-.app-shell-trades .p2p-footer-links-compact { display: flex; align-self: end; align-items: center; justify-content: flex-end; width: min(calc(100% - 56px), 1160px); height: 30px; min-height: 30px; margin: -22px auto 18px; border: 0; background: transparent; padding: 0; }
-.app-shell-trades .p2p-footer-links-compact .p2p-footer-contracts-btn { align-self: center; min-height: 28px; height: 28px; }
 
 @media (min-width: 920.02px) {
   .app-shell-wallet .top-header-bar { grid-template-columns: 250px minmax(0, 1fr); }
@@ -2457,9 +1582,7 @@
 
 @media (min-width: 920.02px) {
   .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel,
-  .app-shell-trades .p2p-trading-shell-create .p2p-trade-entry-mode-slot,
-  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel,
-  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .p2p-recurring-builder { width: min(100%, 1040px); max-width: 1040px; }
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel { width: min(100%, 1040px); max-width: 1040px; }
   .app-shell-trades .p2p-trading-shell-create .trade-compose-grid,
   .app-shell-trades .p2p-trading-shell-create .trade-compose-panel:not(.p2p-recurring-builder) .trade-compose-grid { grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr); gap: 10px; }
   .app-shell-trades .p2p-trading-shell-create .trade-compose-grid-fixed-pair,
@@ -2470,15 +1593,6 @@
   .app-shell-trades .p2p-trading-shell-create .trade-compose-swap-indicator { grid-column: 2; align-self: center; }
   .app-shell-trades .p2p-trading-shell-create .trade-compose-section-buy { grid-column: 3; }
   .app-shell-trades .p2p-trading-shell-create .trade-compose-limit-price .trade-compose-input { font-size: 1.55rem; }
-  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-grid > .p2p-recurring-side-panel-sell {
-    grid-column: 1;
-  }
-  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-grid > .p2p-recurring-side-panel-buy {
-    grid-column: 2;
-  }
 }
 .app-shell-trades .p2p-wallet-trade-groups { padding: 18px 20px 22px; }
 .app-shell-trades .p2p-wallet-trade-switcher {
@@ -2508,49 +1622,6 @@
 .app-shell-trades .p2p-wallet-trade-empty button { margin-inline: auto; }
 
 /* P2P recurring creation uses the shared pair and ratio context above the form. */
-.app-shell-trades .p2p-recurring-context {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 9px;
-  background: rgba(8, 10, 18, 0.52);
-  padding: 12px 14px;
-}
-.app-shell-trades .p2p-recurring-context > div {
-  display: grid;
-  gap: 3px;
-  flex: 0 0 auto;
-}
-.app-shell-trades .p2p-recurring-context span {
-  color: var(--approved-purple-bright);
-  font-size: 0.67rem;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-.app-shell-trades .p2p-recurring-context strong {
-  color: #faf9ff;
-  font: 700 0.95rem "Space Grotesk", sans-serif;
-}
-.app-shell-trades .p2p-recurring-context p {
-  max-width: 34rem;
-  margin: 0;
-  color: var(--approved-muted);
-  font-size: 0.75rem;
-  line-height: 1.4;
-  text-align: right;
-}
-.app-shell-trades .p2p-recurring-side-panel .trade-compose-field-head > strong {
-  color: var(--approved-muted);
-  font-size: 0.67rem;
-  font-weight: 700;
-}
-.app-shell-trades .p2p-recurring-side-panel .trade-compose-field-head {
-  min-height: 20px;
-  align-items: center;
-}
 .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input {
   width: 100%;
   min-height: 46px;
@@ -2562,32 +1633,6 @@
 .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-panel .trade-compose-field:has(input[inputmode='decimal']) .trade-compose-input:focus {
   border-color: var(--approved-purple-bright);
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.16);
-}
-
-@media (max-width: 920px) {
-  .app-shell-trades .p2p-recurring-context {
-    align-items: flex-start;
-    margin: 0 10px;
-    padding: 10px;
-  }
-  .app-shell-trades .p2p-recurring-context p {
-    max-width: 18rem;
-    font-size: 0.7rem;
-  }
-}
-
-@media (max-width: 560px) {
-  .app-shell-trades .p2p-recurring-context {
-    display: grid;
-    gap: 6px;
-  }
-  .app-shell-trades .p2p-recurring-context p {
-    display: none;
-  }
-  .app-shell-trades .p2p-recurring-side-head small {
-    display: block;
-    font-size: 0.68rem;
-  }
 }
 .app-shell-trades .p2p-my-trades-empty-workspace { padding: 24px 20px; }
 .app-shell-trades .p2p-my-trades-wallet-card,
@@ -2865,15 +1910,6 @@
   .app-shell .top-header.top-header-has-mobile-wallet .top-header-mobile-wallet-inline .wallet-header-panel-connected .wallet-primary-action {
     transition-property: color, background-color, border-color, box-shadow, opacity, filter, scale, translate;
   }
-  .app-shell .top-header .direct-trade-notification-popover {
-    position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + var(--ux-mobile-app-header) + var(--ux-mobile-global-nav) + 6px);
-    left: calc(8px + env(safe-area-inset-left, 0px));
-    right: calc(8px + env(safe-area-inset-right, 0px));
-    width: auto;
-    max-width: none;
-    border-radius: 8px;
-  }
   .trading-product-switch {
     grid-column: 1 / -1;
     grid-row: 1;
@@ -2946,120 +1982,7 @@
   .dex-market-chart.is-expanded { inset: 0; border: 0; border-radius: 0; }
   .app-shell-dex-v2 .dex-v2-form-column { border-left: 0; padding: 20px 6px 10px; }
   .app-shell-dex-v2 .dex-v2-composer-heading h1 { font-size: 1.15rem; }
-  .app-shell-dex-v2 .dex-v2-token-field { min-height: 82px; }
-  .app-shell-dex-v2 .dex-v2-token-field-row { min-height: 64px; grid-template-columns: minmax(0, 1fr) auto; }
-  .app-shell-dex-v2 .dex-v2-token-context { min-height: 62px; }
   .app-shell-dex-v2 :is(.dex-v2-token-field input, .dex-v2-amount-output) { font-size: 1.35rem; }
-  .app-shell-dex-v2 .dex-v2-exact-price-input {
-    grid-template-columns: minmax(74px, 90px) auto;
-  }
-  .app-shell-dex-v2 .dex-v2-exact-price-input small {
-    max-width: 92px;
-  }
-  .app-shell-dex-v2 .dex-v2-exact-price-input input {
-    min-height: 44px;
-  }
-  .app-shell-dex-v2 .dex-v2-settings-grid { grid-template-columns: 1fr; }
-  .app-shell-dex-v2 .dex-v2-settings-grid .dex-v2-setting-row + .dex-v2-setting-row {
-    border-top: 1px solid var(--approved-border-soft);
-    border-left: 0;
-  }
-  .app-shell-dex-v2 .dex-v2-privacy-card { order: initial; }
-  .app-shell-dex-v2 .dex-v2-strategies-shell,
-  .app-shell-dex-v2 .dex-v2-positions-shell { grid-template-columns: 1fr; gap: 10px; padding-top: 10px; }
-  .app-shell-dex-v2 .dex-v2-strategies-shell {
-    display: flex;
-    flex-direction: column;
-  }
-  .app-shell-dex-v2 .dex-v2-positions-shell {
-    display: flex;
-    flex-direction: column;
-  }
-  .app-shell-dex-v2 .dex-v2-strategies-shell > .dex-v2-strategy-form-column { order: 1; }
-  .app-shell-dex-v2 .dex-v2-strategies-shell > .dex-market-chart { order: 2; }
-  .app-shell-dex-v2 .dex-v2-positions-shell > .dex-v2-position-type-guide { order: 1; }
-  .app-shell-dex-v2 .dex-v2-positions-shell > .dex-v2-positions-workspace { order: 2; }
-  .app-shell-dex-v2 .dex-v2-positions-shell > .dex-market-chart { order: 3; grid-column: 1; }
-  .app-shell-dex-v2 .dex-v2-position-type-guide {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-  }
-  .app-shell-dex-v2 .dex-v2-position-type-guide > header {
-    align-items: start;
-    flex-direction: column;
-    gap: 2px;
-    padding: 0 2px 2px;
-  }
-  .app-shell-dex-v2 .dex-v2-position-type-guide > header small { display: none; }
-  .app-shell-dex-v2 .dex-v2-position-type-guide button {
-    min-height: 58px;
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 4px;
-    padding: 7px 5px;
-    text-align: center;
-  }
-  .app-shell-dex-v2 .dex-v2-position-type-guide button > span { width: 28px; height: 28px; }
-  .app-shell-dex-v2 .dex-v2-position-type-guide button small,
-  .app-shell-dex-v2 .dex-v2-position-type-guide button > svg:last-child { display: none; }
-  .app-shell-dex-v2 .dex-v2-position-transfer { width: 100%; min-width: 0; }
-  .app-shell-dex-v2 .dex-v2-position-transfer > div { grid-template-columns: 1fr; }
-  .app-shell-dex-v2 .dex-v2-position-transfer p { grid-column: 1; }
-  .app-shell-dex-v2 .dex-v2-position-transfer input { min-width: 0; width: 100%; }
-  .app-shell-dex-v2 .dex-v2-strategy-nav {
-    grid-column: 1;
-    grid-row: auto;
-    align-self: stretch;
-    margin: 0 6px;
-  }
-  .app-shell-dex-v2 .dex-v2-strategies-shell > *,
-  .app-shell-dex-v2 .dex-v2-positions-shell > * { grid-column: 1; }
-  .app-shell-dex-v2 .dex-v2-strategies-shell > .dex-market-chart,
-  .app-shell-dex-v2 .dex-v2-positions-shell > .dex-market-chart {
-    grid-row: auto;
-    min-height: 320px;
-  }
-  .app-shell-dex-v2 .dex-v2-strategy-form-column {
-    grid-row: auto;
-    border-left: 0;
-    padding: 0;
-  }
-  .app-shell-dex-v2 .dex-v2-limit-composer {
-    grid-row: auto;
-    border-left: 0;
-    padding: 6px 6px calc(20px + env(safe-area-inset-bottom, 0px));
-  }
-  .app-shell-dex-v2 .dex-v2-limit-composer .dex-v2-token-field-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .app-shell-dex-v2 .dex-v2-limit-chart-link {
-    min-height: 36px;
-    display: inline-flex;
-    align-items: center;
-    align-self: start;
-    gap: 7px;
-    border: 1px solid rgba(139, 92, 246, 0.28);
-    border-radius: 7px;
-    background: rgba(139, 92, 246, 0.08);
-    color: #c4b5fd;
-    padding: 0 10px;
-    font-size: 0.7rem;
-    font-weight: 650;
-  }
-  .app-shell-dex-v2 .dex-v2-limit-privacy small { white-space: normal; }
-  .app-shell-dex-v2 .dex-v2-recurring-composer {
-    border-left: 0;
-    padding: 6px 6px calc(20px + env(safe-area-inset-bottom, 0px));
-  }
-  .app-shell-dex-v2 .dex-v2-recurring-sides { grid-template-columns: 1fr; }
-  .app-shell-dex-v2 .dex-v2-recurring-price-grid,
-  .app-shell-dex-v2 .dex-v2-recurring-inventory > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .app-shell-dex-v2 .dex-v2-buy-sell-tabs button,
-  .app-shell-dex-v2 .dex-v2-recurring-presets button,
-  .app-shell-dex-v2 .dex-v2-recurring-price-input,
-  .app-shell-dex-v2 .dex-v2-recurring-inventory input { min-height: 44px; }
-  .app-shell-dex-v2 .dex-v2-recurring-price-grid label > span,
-  .app-shell-dex-v2 .dex-v2-recurring-inventory label > span { align-items: flex-start; flex-direction: column; gap: 2px; }
-  .app-shell-dex-v2 .dex-v2-recurring-band > header,
-  .app-shell-dex-v2 .dex-v2-recurring-inventory > header { align-items: start; flex-direction: column; gap: 4px; }
   .app-shell-dex-v2 .dex-v2-pool-composer {
     grid-row: auto;
     border-left: 0;
@@ -3067,22 +1990,11 @@
   }
   .app-shell-dex-v2 .dex-v2-pool-section { padding-block: 12px 14px; }
   .app-shell-dex-v2 .dex-v2-pool-section > header h2 { font-size: 0.98rem; }
-  .app-shell-dex-v2 .dex-v2-pool-segmented button { min-height: 36px; font-size: 0.62rem; }
-  .app-shell-dex-v2 .dex-v2-pool-range-inputs { gap: 6px; }
-  .app-shell-dex-v2 .dex-v2-pool-amount-input { min-height: 55px; }
-  .app-shell-dex-v2 .dex-v2-pool-token-context { min-height: 53px; }
 
   .app-shell-trades .p2p-market-overview,
   .app-shell-trades .p2p-create-overview { display: none; }
-  .app-shell-trades .p2p-advanced-tools { display: none; }
   .app-shell-trades .p2p-offers-workspace { padding: 7px 9px calc(48px + 12px + env(safe-area-inset-bottom, 0px)); }
   .app-shell-trades .p2p-offers-panel { gap: 10px; padding: 0; }
-  .app-shell-trades .p2p-offers-title { padding: 15px 5px 1px; }
-  .app-shell-trades .p2p-offers-title h1 { font-size: 1.32rem; }
-  .app-shell-trades .p2p-offers-title p,
-  .app-shell-trades .p2p-offers-title > span { display: none; }
-  .app-shell-trades .p2p-offers-controls { grid-template-columns: 1fr; gap: 7px; }
-  .app-shell-trades .p2p-offers-amount > span { display: none; }
   .app-shell-trades .p2p-offers-filter-tool {
     border: 1px dashed var(--approved-border-soft);
     border-radius: 7px;
@@ -3226,7 +2138,6 @@
   }
   .app-shell-trades .p2p-wallet-trade-group:has(.p2p-wallet-trade-empty) { min-height: 190px; }
   .app-shell-trades .p2p-wallet-trade-empty { min-height: 170px; padding: 24px 16px; }
-  .app-shell-trades .p2p-footer-links-compact { display: none; }
 }
 
 @media (max-width: 340px) {
@@ -3276,8 +2187,6 @@
 }
 
 @media (max-width: 430px) {
-  .app-shell-trades .p2p-offers-shared-context { grid-template-columns: minmax(0, 1fr) auto 32px; min-height: 36px; }
-  .app-shell-trades .p2p-offers-shared-context > span { max-width: 145px; }
   .app-shell-trades .p2p-offers-empty { padding: 20px 10px; }
   .dex-market-chart > header { align-items: center; }
   .dex-market-chart-actions .dex-market-chart-expand { display: none; }
@@ -3665,51 +2574,6 @@
 .p2p-wallet-menu:has(.wallet-utility-menu) > .p2p-wallet-disconnect-action:hover { background: rgba(255, 87, 111, 0.07); }
 
 /* One attached terminal owns both the selected order overview and its activity. */
-.app-shell-dex-v2 .dex-v2-positions-workspace {
-  grid-column: 1 / -1;
-  max-width: none;
-}
-.app-shell-dex-v2 .dex-v2-positions-shell > .dex-market-chart {
-  grid-column: 1 / -1;
-  min-height: 420px;
-}
-.app-shell-dex-v2 .dex-v2-position-management {
-  display: grid;
-  grid-template-columns: minmax(390px, 0.9fr) minmax(430px, 1.1fr);
-  align-items: start;
-  gap: 14px;
-}
-.app-shell-dex-v2 .dex-v2-position-index,
-.app-shell-dex-v2 .dex-v2-position-terminal {
-  min-width: 0;
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 9px;
-  background: rgba(8, 11, 19, 0.7);
-  padding: 12px;
-}
-.app-shell-dex-v2 .dex-v2-position-scope {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  color: #8f899e;
-  font-size: 0.68rem;
-}
-.app-shell-dex-v2 .dex-v2-position-scope strong { color: #e7e2ee; justify-self: start; }
-.app-shell-dex-v2 .dex-v2-position-scope small { color: #777182; }
-.app-shell-dex-v2 .dex-v2-position-lifecycle-tabs,
-.app-shell-dex-v2 .dex-v2-position-terminal-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 8px;
-  background: rgba(5, 8, 14, 0.62);
-  padding: 4px;
-}
 .app-shell-dex-v2 :is(.dex-v2-position-lifecycle-tabs, .dex-v2-position-terminal-tabs) button {
   min-height: 36px;
   display: flex;
@@ -3727,137 +2591,9 @@
   color: #f3effa;
   box-shadow: inset 0 0 0 1px rgba(177, 116, 255, 0.3);
 }
-.app-shell-dex-v2 .dex-v2-position-lifecycle-tabs button strong {
-  min-width: 20px;
-  border-radius: 999px;
-  background: rgba(139, 92, 246, 0.18);
-  padding: 2px 5px;
-  font-size: 0.62rem;
-}
-.app-shell-dex-v2 .dex-v2-position-kind-filters { display: flex; gap: 6px; overflow-x: auto; }
-.app-shell-dex-v2 .dex-v2-position-kind-filters button {
-  min-height: 30px;
-  flex: 0 0 auto;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 999px;
-  background: transparent;
-  color: #9992a6;
-  padding: 0 11px;
-  font: 650 0.66rem Inter, sans-serif;
-}
-.app-shell-dex-v2 .dex-v2-position-kind-filters button.active { border-color: #8753cd; background: rgba(112, 61, 180, 0.22); color: #eee8f8; }
-.app-shell-dex-v2 .dex-v2-position-row {
-  width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
-  border-color: var(--approved-border-soft);
-  background: rgba(11, 14, 23, 0.82);
-  color: #ece8f2;
-  padding: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.app-shell-dex-v2 .dex-v2-position-row dl { grid-column: 2 / -1; }
-.app-shell-dex-v2 .dex-v2-position-row .dex-v2-position-status { grid-column: 2; }
-.app-shell-dex-v2 .dex-v2-position-row .dex-v2-position-open-icon { grid-column: 3; grid-row: 1; }
-.app-shell-dex-v2 .dex-v2-position-row:hover,
-.app-shell-dex-v2 .dex-v2-position-row.selected { border-color: rgba(164, 91, 255, 0.68); background: rgba(77, 39, 122, 0.2); }
-.app-shell-dex-v2 .dex-v2-position-row.selected { box-shadow: inset 3px 0 0 #9d59f5; }
-.app-shell-dex-v2 .dex-v2-position-open-icon { color: #8f899e; }
-.app-shell-dex-v2 .dex-v2-position-history-empty,
-.app-shell-dex-v2 .dex-v2-position-terminal-empty {
-  min-height: 210px;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 7px;
-  border: 1px dashed var(--approved-border-soft);
-  border-radius: 8px;
-  color: #8f899e;
-  padding: 24px;
-  text-align: center;
-}
 .app-shell-dex-v2 :is(.dex-v2-position-history-empty, .dex-v2-position-terminal-empty) strong { color: #e8e3ef; }
 .app-shell-dex-v2 :is(.dex-v2-position-history-empty, .dex-v2-position-terminal-empty) p { max-width: 360px; margin: 0; font-size: 0.72rem; line-height: 1.5; }
-.app-shell-dex-v2 .dex-v2-position-terminal { position: sticky; top: 12px; }
-.app-shell-dex-v2 .dex-v2-position-terminal:focus { outline: none; }
-.app-shell-dex-v2 .dex-v2-position-terminal-back { display: none; }
-.app-shell-dex-v2 .dex-v2-position-terminal-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 2px 2px 4px;
-}
-.app-shell-dex-v2 .dex-v2-position-terminal-head > div { display: grid; gap: 3px; }
-.app-shell-dex-v2 .dex-v2-position-terminal-head > div > span { color: #8f899e; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.08em; }
-.app-shell-dex-v2 .dex-v2-position-terminal-head h2 { margin: 0; font-size: 0.94rem; }
-.app-shell-dex-v2 .dex-v2-position-terminal-head > strong { color: #59dcb0; font-size: 0.68rem; }
-.app-shell-dex-v2 .dex-v2-position-terminal-head > strong.paused { color: #f0bb6a; }
-.app-shell-dex-v2 .dex-v2-position-terminal-panel { min-width: 0; }
-.app-shell-dex-v2 .dex-v2-position-overview { display: grid; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-position-terms {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 9px 10px;
-  border: 1px solid rgba(139, 92, 246, 0.34);
-  border-radius: 8px;
-  background: rgba(139, 92, 246, 0.07);
-  padding: 12px;
-}
-.app-shell-dex-v2 .dex-v2-position-terms > svg { color: #a972ff; }
-.app-shell-dex-v2 .dex-v2-position-terms header { display: grid; gap: 3px; }
-.app-shell-dex-v2 .dex-v2-position-terms header strong { color: #eee9f8; font-size: 0.76rem; }
-.app-shell-dex-v2 .dex-v2-position-terms header span,
-.app-shell-dex-v2 .dex-v2-position-terms p { color: #9690a5; font-size: 0.67rem; line-height: 1.45; }
-.app-shell-dex-v2 .dex-v2-position-terms p { grid-column: 2; margin: 0; }
-.app-shell-dex-v2 .dex-v2-position-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.app-shell-dex-v2 .dex-v2-position-actions button {
-  min-height: 34px;
-  border: 1px solid rgba(139, 92, 246, 0.45);
-  border-radius: 7px;
-  background: rgba(139, 92, 246, 0.12);
-  color: #e6dcfb;
-  padding: 0 11px;
-}
-.app-shell-dex-v2 .dex-v2-position-actions button:disabled { cursor: not-allowed; opacity: 0.45; }
-.app-shell-dex-v2 .dex-v2-position-action-status { margin: 0; color: #9992aa; font-size: 0.68rem; line-height: 1.45; }
-.app-shell-dex-v2 .dex-v2-position-overview-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-.app-shell-dex-v2 .dex-v2-position-overview-grid > div { display: grid; gap: 4px; border: 1px solid var(--approved-border-soft); border-radius: 7px; background: rgba(5, 8, 14, 0.52); padding: 9px; }
-.app-shell-dex-v2 .dex-v2-position-overview-grid dt { color: #817a8e; font-size: 0.62rem; }
-.app-shell-dex-v2 .dex-v2-position-overview-grid dd { margin: 0; color: #e8e3ef; font-size: 0.74rem; font-weight: 700; }
 .app-shell-dex-v2 .dex-v2-position-terminal :is(.dex-v2-position-owner-actions, .dex-v2-position-private) { grid-column: auto; }
-.app-shell-dex-v2 .dex-v2-position-terminal .dex-v2-position-private { padding-top: 12px; }
-.app-shell-dex-v2 .dex-v2-position-activity { display: grid; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-position-activity > header { display: grid; gap: 3px; border-bottom: 1px solid var(--approved-border-soft); padding: 2px 2px 10px; }
-.app-shell-dex-v2 .dex-v2-position-activity > header span { color: #8f899e; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.08em; }
-.app-shell-dex-v2 .dex-v2-position-activity-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 0; }
-.app-shell-dex-v2 .dex-v2-position-activity-status > div { display: grid; gap: 4px; border: 1px solid var(--approved-border-soft); border-radius: 7px; background: rgba(5, 8, 14, 0.52); padding: 9px; }
-.app-shell-dex-v2 .dex-v2-position-activity-status dt,
-.app-shell-dex-v2 .dex-v2-position-activity-coverage span { color: #817a8e; font-size: 0.62rem; }
-.app-shell-dex-v2 .dex-v2-position-activity-status dd { margin: 0; color: #e8e3ef; font-size: 0.72rem; font-weight: 700; }
-.app-shell-dex-v2 .dex-v2-position-activity-coverage { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid rgba(50, 213, 154, 0.18); border-radius: 7px; background: rgba(6, 32, 28, 0.34); padding: 9px; }
-.app-shell-dex-v2 .dex-v2-position-activity-coverage strong { color: #76e9bf; font-size: 0.68rem; text-align: right; }
-.app-shell-dex-v2 .dex-v2-position-activity h3 { margin: 0; color: #d7d1df; font-size: 0.7rem; }
-.app-shell-dex-v2 .dex-v2-position-activity ol { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
-.app-shell-dex-v2 .dex-v2-position-activity li { position: relative; display: grid; grid-template-columns: 16px 1fr; gap: 9px; padding: 9px 2px; }
-.app-shell-dex-v2 .dex-v2-position-activity li:not(:last-child)::after { content: ''; position: absolute; left: 7px; top: 24px; bottom: -4px; width: 1px; background: var(--approved-border-soft); }
-.app-shell-dex-v2 .dex-v2-position-activity li i { width: 9px; height: 9px; margin-top: 4px; border: 2px solid #9f61ef; border-radius: 50%; background: #0b0e17; }
-.app-shell-dex-v2 .dex-v2-position-activity li div { display: flex; justify-content: space-between; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-position-activity li span { color: #948d9f; font-size: 0.68rem; }
-.app-shell-dex-v2 .dex-v2-position-activity li strong { color: #e7e2ee; font-size: 0.7rem; text-align: right; }
-.app-shell-dex-v2 .dex-v2-position-activity > p { margin: 0; border: 1px solid var(--approved-border-soft); border-radius: 7px; background: rgba(5, 8, 14, 0.5); color: #8f899e; padding: 9px; font-size: 0.66rem; line-height: 1.5; }
-.app-shell-dex-v2 .dex-v2-position-transfer > div { grid-template-columns: minmax(0, 1fr) auto; }
-.app-shell-dex-v2 .dex-v2-position-transfer p,
-.app-shell-dex-v2 .dex-v2-position-transfer small { grid-column: 1 / -1; }
-.app-shell-dex-v2 .dex-v2-position-transfer small { color: #817a8e; font-size: 0.61rem; line-height: 1.4; }
-.app-shell-dex-v2 .dex-v2-position-transfer small.error { color: #ff7798; }
-.app-shell-dex-v2 .dex-v2-position-transfer input[aria-invalid="true"] { border-color: rgba(255, 82, 125, 0.72); box-shadow: 0 0 0 1px rgba(255, 82, 125, 0.18); }
 
 .app-shell-trades .p2p-terminal-view-tabs {
   width: 100%;
@@ -3977,10 +2713,6 @@
 .app-shell-trades .p2p-terminal-activity-panel .p2p-terminal-history-empty { min-height: 180px; }
 
 /* Small visual refinements after the broad hierarchy pass. */
-.app-shell-dex-v2 .dex-v2-recurring-title-row h1 {
-  font-size: 1.22rem;
-  line-height: 1.16;
-}
 @media (min-width: 920.02px) {
   .app-shell-trades .p2p-my-trades-section .p2p-wallet-trade-group:has(.p2p-wallet-trade-empty) { min-height: 185px; }
   .app-shell-trades .p2p-my-trades-section .p2p-wallet-trade-empty { min-height: 160px; padding-block: 22px; }
@@ -4014,37 +2746,6 @@
 .app-shell-trades .p2p-my-trades-section .p2p-filter-clear::after { display: none; }
 
 @media (max-width: 860px) {
-  .app-shell-dex-v2 .dex-v2-position-management { grid-template-columns: minmax(0, 1fr); }
-  .app-shell-dex-v2 .dex-v2-position-row {
-    scroll-margin-top: 10px;
-  }
-  .app-shell-dex-v2 .dex-v2-position-terminal { scroll-margin-top: 10px; }
-  .app-shell-dex-v2 .dex-v2-position-terminal { position: static; }
-  .app-shell-dex-v2 .dex-v2-position-terminal-back {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 7px;
-    width: fit-content;
-    border: 0;
-    background: transparent;
-    color: #bca7d9;
-    padding: 0 4px;
-    font: 700 0.7rem Inter, sans-serif;
-  }
-  .app-shell-dex-v2 .dex-v2-position-row { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .app-shell-dex-v2 .dex-v2-position-row dl { grid-column: 2 / -1; }
-  .app-shell-dex-v2 .dex-v2-position-row .dex-v2-position-status { grid-column: 2; }
-  .app-shell-dex-v2 .dex-v2-position-row .dex-v2-position-open-icon { grid-column: 3; grid-row: 1; }
-  .app-shell-dex-v2 .dex-v2-position-scope { grid-template-columns: auto 1fr; }
-  .app-shell-dex-v2 .dex-v2-position-scope small { grid-column: 1 / -1; }
-  .app-shell-dex-v2 .dex-v2-position-overview-grid { grid-template-columns: minmax(0, 1fr); }
-  .app-shell-dex-v2 .dex-v2-position-activity-status { grid-template-columns: minmax(0, 1fr); }
-  .app-shell-dex-v2 .dex-v2-position-activity-coverage { align-items: flex-start; flex-direction: column; gap: 4px; }
-  .app-shell-dex-v2 .dex-v2-position-activity-coverage strong { text-align: left; }
-  .app-shell-dex-v2 .dex-v2-position-activity li div { display: grid; gap: 3px; }
-  .app-shell-dex-v2 .dex-v2-position-activity li strong { text-align: left; }
   .app-shell-trades .p2p-management-scope-row { justify-content: stretch; }
   .app-shell-trades .p2p-management-pair-scope { width: 100%; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .app-shell-trades .p2p-management-pair-scope button { min-width: 0; padding-inline: 8px; }
@@ -4059,18 +2760,6 @@
 }
 
 /* P2P Create detail pass: keep the default task concise without hiding access or safety semantics. */
-.app-shell-trades .p2p-trading-shell-create .p2p-trade-access-settings .standalone-trade-access-summary {
-  display: block;
-  padding: 0 2px;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-trade-access-settings .standalone-trade-access-summary > p {
-  width: 100%;
-  font-size: 0.66rem;
-  line-height: 1.45;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-private-link-readiness {
-  grid-template-columns: auto minmax(0, 1fr);
-}
 .app-shell-trades .p2p-trading-shell-create .trade-compose-advanced-body > .trade-compose-warning {
   display: block;
   margin: 0;
@@ -4201,15 +2890,6 @@
 .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head h2 {
   font-size: 1.05rem;
 }
-.app-shell-trades .p2p-trading-shell-create .p2p-create-mode-switch {
-  min-height: 42px;
-  border-radius: 8px;
-  padding: 3px;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-create-mode-switch button {
-  min-height: 34px;
-  border-radius: 6px;
-}
 .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > :is(.trade-compose-panel, .p2p-recurring-builder) {
   width: 100%;
   max-width: 780px;
@@ -4247,66 +2927,6 @@
 .app-shell-trades .p2p-trading-shell-create .trade-compose-footer {
   margin-top: 0;
   padding: 10px 0 0;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-grid {
-  gap: 8px;
-  padding: 0;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-panel {
-  gap: 8px;
-  padding: 11px;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-head > span {
-  display: none;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-head {
-  gap: 2px;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-head strong {
-  font-size: 0.95rem;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-primary-field .trade-compose-field-tools {
-  color: var(--muted);
-  font-size: 0.7rem;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-receive-preview {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-receive-preview strong {
-  color: var(--text);
-  font-weight: 700;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-privacy-note {
-  min-height: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 5px 7px 5px 11px;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-privacy-note .trade-compose-privacy-help {
-  display: none;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-actions {
-  display: grid;
-  grid-template-columns: auto minmax(260px, 1fr);
-  align-items: end;
-  gap: 10px;
-  margin: 0;
-  border-top: 1px solid var(--approved-border-soft);
-  padding: 10px 0 0;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-action-fee {
-  min-width: 92px;
-  min-height: 42px;
-  padding: 6px 8px;
-}
-.app-shell-trades .p2p-trading-shell-create .p2p-recurring-actions .trade-compose-send {
-  min-height: 44px;
 }
 
 @media (max-width: 920px) {
@@ -4388,12 +3008,6 @@
   .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > :is(.trade-compose-panel, .p2p-recurring-builder) {
     padding: 9px;
   }
-  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-actions {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-action-fee {
-    min-height: 36px;
-  }
 }
 
 /* Shared Trading Agent workspace: persistent destination, attached context, no autopilot. */
@@ -4424,23 +3038,6 @@
   padding: 0;
 }
 
-.app-shell-trades .p2p-agent-titlebar {
-  min-height: 82px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  border-bottom: 1px solid var(--approved-border-soft);
-  padding: 0 2px 16px;
-}
-
-.app-shell-trades .p2p-agent-titlebar > div {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-}
-
-.app-shell-trades .p2p-agent-titlebar span,
 .app-shell-trades .p2p-agent-empty-state > span,
 .app-shell-trades .p2p-agent-context span {
   color: var(--approved-purple-bright);
@@ -4450,29 +3047,9 @@
   text-transform: uppercase;
 }
 
-.app-shell-trades .p2p-agent-titlebar h1,
-.app-shell-trades .p2p-agent-titlebar p,
 .app-shell-trades .p2p-agent-empty-state h2,
 .app-shell-trades .p2p-agent-empty-state p {
   margin: 0;
-}
-
-.app-shell-trades .p2p-agent-titlebar h1 {
-  color: #f7f4ff;
-  font: 700 1.4rem "Space Grotesk", sans-serif;
-}
-
-.app-shell-trades .p2p-agent-titlebar p {
-  max-width: 690px;
-  color: var(--approved-muted);
-  font-size: 0.76rem;
-  line-height: 1.5;
-}
-
-.app-shell-trades .p2p-agent-settings-button {
-  flex: 0 0 auto;
-  min-height: 40px;
-  padding-inline: 14px;
 }
 
 .app-shell-trades .p2p-agent-workspace {
@@ -4669,29 +3246,6 @@
     gap: 10px;
   }
 
-  .app-shell-trades .p2p-agent-titlebar {
-    min-height: 70px;
-    align-items: center;
-    gap: 10px;
-    padding: 4px 2px 10px;
-  }
-
-  .app-shell-trades .p2p-agent-titlebar h1 {
-    font-size: 1.12rem;
-  }
-
-  .app-shell-trades .p2p-agent-titlebar p {
-    max-width: 245px;
-    font-size: 0.66rem;
-    line-height: 1.35;
-  }
-
-  .app-shell-trades .p2p-agent-settings-button {
-    min-height: 36px;
-    padding-inline: 10px;
-    font-size: 0.66rem;
-  }
-
   .app-shell-trades .p2p-agent-workspace {
     min-height: 0;
     display: flex;
@@ -4748,100 +3302,6 @@
   }
 }
 
-.app-shell-dex-v2 .dex-v2-mode-nav .dex-v2-agent-nav-tab {
-  margin-left: auto;
-}
-
-@media (max-width: 920px) {
-  .app-shell-dex-v2 .dex-v2-mode-nav .dex-v2-agent-nav-tab {
-    margin-left: 0;
-  }
-}
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics {
-  overflow: hidden;
-  border: 1px solid #29263b;
-  border-radius: 10px;
-  background: #0d0d17;
-}
-
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics summary {
-  min-height: 44px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  color: #c8c4da;
-  cursor: pointer;
-  list-style: none;
-  font-size: 0.7rem;
-  font-weight: 700;
-}
-
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics summary::-webkit-details-marker { display: none; }
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics summary strong { color: #9f74ff; font-size: 0.66rem; }
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics[open] summary svg { transform: rotate(180deg); }
-
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics dl {
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid #29263b;
-}
-
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics dl div {
-  min-width: 0;
-  padding: 9px 12px;
-  display: grid;
-  gap: 3px;
-  border-bottom: 1px solid #1d1b2b;
-}
-
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics dt { color: #777489; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics dd { margin: 0; overflow: hidden; color: #d9d6e7; font-size: 0.68rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics > a,
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics > p { margin: 10px 12px; display: block; font-size: 0.66rem; line-height: 1.45; }
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics > a { color: #a879ff; }
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics > p { color: #ffbe5c; }
-
-.app-shell-dex-v2 .dex-v2-pair-readiness {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding: 10px 12px;
-  border-top: 1px solid #29263b;
-}
-
-.app-shell-dex-v2 .dex-v2-pair-readiness > span {
-  display: grid;
-  gap: 3px;
-  padding: 9px;
-  border: 1px solid #29263b;
-  border-radius: 8px;
-  background: #090911;
-}
-
-.app-shell-dex-v2 .dex-v2-pair-readiness > span.contract-active { border-color: rgba(139, 92, 246, 0.55); }
-.app-shell-dex-v2 .dex-v2-pair-readiness strong { color: #eeeaf8; font-size: 0.69rem; }
-.app-shell-dex-v2 .dex-v2-pair-readiness small { color: #8f8b9f; font-size: 0.61rem; line-height: 1.35; }
-
-.app-shell-dex-v2 .dex-v2-testnet-diagnostics .testnet-token-faucet {
-  grid-template-columns: minmax(0, 1fr);
-  margin: 10px 12px;
-  padding: 12px;
-}
-
-.testnet-token-faucet-status { grid-column: 1 / -1; margin: 0; color: #cfc9df; font-size: 0.72rem; }
-.testnet-token-faucet-status.confirmed { color: #91e4c5; }
-.testnet-token-faucet-status.failed,
-.testnet-token-faucet-status.uncertain { color: #ffbe5c; }
-.testnet-token-faucet-status a { color: #b89aff; }
-
-@media (max-width: 520px) {
-  .app-shell-dex-v2 .dex-v2-testnet-diagnostics dl { grid-template-columns: minmax(0, 1fr); }
-  .app-shell-dex-v2 .dex-v2-pair-readiness { grid-template-columns: minmax(0, 1fr); }
-}
-
 /* Four-token beta funding panel. */
 .app-shell-dex-v2 .dex-v2-beta-tokens { min-width: 0; }
 .app-shell-dex-v2 .dex-v2-beta-tokens { color: #e7e2f3; }
@@ -4849,10 +3309,6 @@
 .app-shell-dex-v2 .dex-v2-token-funding > summary { cursor: pointer; color: #eee7ff; font-size: 0.9rem; }
 .app-shell-dex-v2 .dex-v2-token-funding[open] > summary { margin-bottom: 12px; }
 .app-shell-dex-v2 .dex-v2-token-funding > summary:focus-visible { outline: 2px solid #a879ff; outline-offset: 2px; }
-.app-shell-dex-v2 .dex-v2-beta-token-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.app-shell-dex-v2 .dex-v2-beta-token-heading h4 { margin: 0; font-size: 1rem; }
-.app-shell-dex-v2 .dex-v2-beta-token-heading > span { color: #c9b4e9; font-size: 0.75rem; }
-.app-shell-dex-v2 .dex-v2-beta-token-intro { margin: 6px 0 12px; color: #b7b2c4; font-size: 0.85rem; }
 .app-shell-dex-v2 .dex-v2-beta-token-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .app-shell-dex-v2 .dex-v2-beta-tokens button { min-height: 44px; padding: 8px 12px; border: 1px solid #514164; border-radius: 7px; background: #241b34; color: #eee7ff; font: inherit; font-size: 0.8rem; cursor: pointer; }
 .app-shell-dex-v2 .dex-v2-beta-tokens button:disabled { color: #b4a9c6; background: #18131f; border-color: #352d42; cursor: not-allowed; }
@@ -4860,16 +3316,11 @@
 .app-shell-dex-v2 .dex-v2-beta-token-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 10px; border: 1px solid #302a45; border-radius: 9px; overflow: hidden; }
 .app-shell-dex-v2 .dex-v2-beta-token-card { min-width: 0; padding: 12px; background: #0d0b16; }
 .app-shell-dex-v2 .dex-v2-beta-token-card + .dex-v2-beta-token-card { border-top: 1px solid #302a45; }
-.app-shell-dex-v2 .dex-v2-beta-token-card > header,
-.app-shell-dex-v2 .dex-v2-beta-token-action { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.app-shell-dex-v2 .dex-v2-beta-token-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .app-shell-dex-v2 .dex-v2-beta-token-card > header strong { color: #f2edff; font-size: 0.95rem; }
 .app-shell-dex-v2 .dex-v2-beta-token-card > header span,
-.app-shell-dex-v2 .dex-v2-beta-token-card p,
-.app-shell-dex-v2 .dex-v2-beta-token-action > span { color: #b7b2c4; font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
+.app-shell-dex-v2 .dex-v2-beta-token-card p { color: #b7b2c4; font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
 .app-shell-dex-v2 .dex-v2-beta-token-card p { margin: 6px 0; }
-.app-shell-dex-v2 .dex-v2-beta-token-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin-top: 8px; }
-.app-shell-dex-v2 .dex-v2-beta-token-action > span strong { color: #f2edff; }
-.app-shell-dex-v2 .dex-v2-beta-token-action button { flex-shrink: 0; }
 .app-shell-dex-v2 .dex-v2-beta-token-card .dex-v2-beta-token-status { margin: 5px 0 0; color: #c9b4e9; font-size: 0.8rem; }
 .app-shell-dex-v2 .dex-v2-beta-token-card details { margin-top: 8px; border-top: 1px solid #29263b; padding-top: 7px; }
 .app-shell-dex-v2 .dex-v2-beta-token-card summary { color: #cfc9df; cursor: pointer; font-size: 0.8rem; }
@@ -4881,8 +3332,6 @@
 .app-shell-dex-v2 .dex-v2-beta-tokens a:focus-visible { outline: 2px solid #a879ff; outline-offset: 2px; }
 .app-shell-dex-v2 .dex-v2-beta-token-footer { margin-top: 12px; }
 .app-shell-dex-v2 .dex-v2-beta-token-footer a { color: #c9b4e9; font-size: 0.8rem; overflow-wrap: anywhere; }
-.app-shell-dex-v2 .dex-v2-beta-token-help { margin-top: 12px; font-size: 0.8rem; color: #b7b2c4; }
-.app-shell-dex-v2 .dex-v2-beta-token-help summary { cursor: pointer; color: #cfc9df; }
 .app-shell-dex-v2 .dex-v2-beta-tokens > p[role="status"] { font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
 @media (max-width: 520px) { .app-shell-dex-v2 .dex-v2-beta-token-card > header { align-items: flex-start; flex-direction: column; gap: 4px; } }
 /* Agent tools are three distinct destinations, exposed once. */
@@ -4995,30 +3444,6 @@
   gap: 10px;
   padding: 12px;
 }
-.trading-market-catalog-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px;
-  border: 1px solid var(--approved-border-soft);
-  border-radius: 8px;
-  background: rgba(5, 7, 13, 0.72);
-  padding: 3px;
-}
-.trading-market-catalog-tabs button {
-  min-height: 38px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--approved-muted);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-.trading-market-catalog-tabs button[aria-pressed="true"] {
-  background: rgba(112, 61, 180, 0.3);
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(167, 107, 255, 0.4);
-}
-.trading-market-catalog-tabs small { margin-left: 5px; color: inherit; opacity: 0.72; }
 .trading-market-catalog[hidden] { display: none; }
 .trading-market-catalog { display: grid; gap: 9px; padding: 2px; }
 .trading-market-token-choice { display: grid; min-width: 0; gap: 4px; color: var(--approved-muted); font-size: 0.72rem; }
@@ -5036,53 +3461,9 @@
   color: var(--approved-muted);
   font-size: 0.66rem;
 }
-.trading-market-catalog > header span,
-.trading-market-catalog-mainnet > div > span {
+.trading-market-catalog > header span {
   font-weight: 750;
   text-transform: uppercase;
-}
-.trading-market-catalog-mainnet {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.trading-market-token-menu .trading-market-catalog-mainnet > div { min-width: 0; display: grid; align-content: start; gap: 5px; }
-.trading-market-catalog-mainnet > div > span { color: #817d90; font-size: 0.62rem; }
-.trading-market-catalog-list { display: grid; gap: 2px; }
-.trading-market-catalog-single .trading-market-catalog-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.trading-market-catalog-list > span {
-  min-width: 0;
-  border-left: 2px solid transparent;
-  border-radius: 4px;
-  background: rgba(18, 21, 34, 0.62);
-  color: #aaa6b7;
-  padding: 7px 9px;
-  font-size: 0.7rem;
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.trading-market-catalog-list > span.selected {
-  border-left-color: var(--approved-purple-bright);
-  background: rgba(105, 61, 174, 0.2);
-  color: #fff;
-}
-.trading-market-catalog-list > button {
-  min-width: 0;
-  border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: #aaa7ba;
-  padding: 7px 8px;
-  text-align: left;
-  cursor: pointer;
-}
-.trading-market-catalog-list > button:hover,
-.trading-market-catalog-list > button.selected {
-  border-left-color: var(--approved-purple-bright);
-  background: rgba(105, 61, 174, 0.2);
-  color: #fff;
 }
 /* Compact desktop product switch. */
 @media (min-width: 920.02px) {
@@ -5174,11 +3555,6 @@
 
   .app-shell-dex-v2 .dex-v2-form-column { gap: 8px; padding: 16px 18px 8px 28px; }
   .app-shell-dex-v2 .dex-v2-swap-card { gap: 10px; }
-  .app-shell-dex-v2 .dex-v2-token-field { min-height: 88px; }
-  .app-shell-dex-v2 .dex-v2-token-field-row { min-height: 66px; }
-  .app-shell-dex-v2 .dex-v2-token-context { min-height: 64px; }
-  .app-shell-dex-v2 .dex-v2-buy-sell-tabs button { min-height: 38px; }
-  .app-shell-dex-v2 .dex-v2-privacy-row { min-height: 52px; }
   .app-shell-dex-v2 .dex-v2-review-button { min-height: 46px; }
 
   .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav,
@@ -5254,7 +3630,6 @@
   }
 
   .app-shell-dex-v2 .dex-v2-mode-nav button.active::after { display: none; }
-  .app-shell-dex-v2 .dex-v2-mode-nav .dex-v2-agent-nav-tab,
   .app-shell-trades .p2p-trade-tabs .p2p-agent-nav-tab { margin-left: 0; }
 }
 @media (min-width: 920.02px) and (max-width: 1120px) {
@@ -5333,46 +3708,6 @@
     z-index: 1;
     height: clamp(758px, calc(100dvh - 142px), 898px);
     margin-top: -48px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-shell > .dex-market-chart {
-    grid-column: 1;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-workspace {
-    grid-column: 2;
-    min-width: 0;
-    height: clamp(700px, calc(100dvh - 200px), 840px);
-    overflow-y: auto;
-    border-width: 0 0 0 1px;
-    border-radius: 0;
-    background: transparent;
-    padding: 16px 18px 20px 28px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-shell {
-    gap: 0;
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-management {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-terminal {
-    position: static;
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-terminal-back {
-    min-height: 36px;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    width: fit-content;
-    border: 0;
-    background: transparent;
-    color: #bca7d9;
-    padding: 0 4px;
-    font: 700 0.7rem Inter, sans-serif;
   }
 
   .app-shell-dex-v2 .dex-v2-strategy-form-column > :is(
@@ -5505,11 +3840,6 @@
     border-radius: 0;
   }
 
-  .app-shell-trades .p2p-trading-shell-offers-terminal > .p2p-footer-links {
-    grid-column: 1 / -1;
-    grid-row: 3;
-  }
-
   .app-shell-trades .p2p-trading-shell-drawer-open :is(
     .p2p-market-overview,
     .p2p-my-trades-section,
@@ -5609,11 +3939,6 @@
     grid-column: 2;
     grid-row: 2;
   }
-
-  .app-shell-trades .p2p-trading-shell-create-with-offers > .p2p-footer-links {
-    grid-column: 1 / -1;
-    grid-row: 3;
-  }
 }
 
 /* Final P2P page refinement: one frame, one control scale, no empty full-height ticket. */
@@ -5690,66 +4015,6 @@ html {
 
 /* Final Trading workspace contract: lists stay left and task terminals stay right. */
 @media (min-width: 920.02px) {
-  .app-shell-dex-v2 .dex-v2-positions-shell {
-    display: block;
-    width: 100%;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-workspace {
-    width: 100%;
-    height: clamp(700px, calc(100dvh - 200px), 840px);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(560px, 42vw, 720px);
-    grid-template-rows: auto minmax(0, 1fr);
-    align-items: start;
-    overflow: hidden;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    padding: 0;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-toolbar {
-    grid-column: 1;
-    grid-row: 1;
-    min-height: 70px;
-    margin-right: 14px;
-    border: 1px solid var(--approved-border-soft);
-    border-radius: 10px 10px 0 0;
-    background: rgba(9, 12, 20, 0.88);
-    padding: 12px 16px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-management {
-    display: contents;
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-index {
-    grid-column: 1;
-    grid-row: 2;
-    min-width: 0;
-    min-height: 0;
-    max-height: 770px;
-    overflow-y: auto;
-    margin-right: 14px;
-    border-radius: 0 0 10px 10px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-terminal {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    min-width: 0;
-    height: 100%;
-    max-height: 840px;
-    overflow-y: auto;
-    border-radius: 10px;
-    background: rgba(9, 12, 20, 0.96);
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-empty,
-  .app-shell-dex-v2 .dex-v2-position-terminal-empty {
-    min-height: 300px;
-  }
 
   .app-shell-trades :is(
     .p2p-trading-shell-offers-terminal,
@@ -5803,20 +4068,7 @@ html {
 }
 
 @media (max-width: 920px) {
-  .app-shell-dex-v2 .dex-v2-positions-workspace {
-    display: block;
-    height: auto;
-    overflow: visible;
-    border: 0;
-    background: transparent;
-    padding: 0;
-  }
 
-  .app-shell-dex-v2 .dex-v2-position-management {
-    display: grid;
-  }
-
-  .app-shell-dex-v2 .dex-v2-positions-workspace.index-open .dex-v2-position-terminal,
   .app-shell-dex-v2 .dex-v2-positions-workspace.detail-open :is(.dex-v2-positions-toolbar, .dex-v2-position-index) {
     display: none;
   }
@@ -5939,21 +4191,6 @@ html {
     overflow: visible;
   }
 
-  .app-shell-dex-v2 .dex-v2-positions-workspace {
-    height: auto;
-    min-height: clamp(540px, calc(100dvh - 270px), 720px);
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-terminal {
-    height: auto;
-    min-height: 420px;
-  }
-
-  .app-shell-dex-v2 .dex-v2-position-terminal-empty {
-    min-height: 418px;
-    border: 0;
-  }
-
   .app-shell-trades :is(
     .p2p-offers-orderbook,
     .standalone-trade-create-panel,
@@ -5985,15 +4222,13 @@ html {
 /* Keep keyboard navigation as clear as pointer navigation across Trading. */
 .trading-market-pair,
 .trading-product-switch button,
-.app-shell-trades .p2p-offer-rate-row,
-.app-shell-dex-v2 .dex-v2-position-row {
+.app-shell-trades .p2p-offer-rate-row {
   transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
 }
 
 .trading-market-pair:focus-visible,
 .app-shell:is(.app-shell-trades, .app-shell-dex-v2) .trading-product-switch button:focus-visible,
-.app-shell-trades .p2p-offer-rate-row:focus-visible,
-.app-shell-dex-v2 .dex-v2-position-row:focus-visible {
+.app-shell-trades .p2p-offer-rate-row:focus-visible {
   outline: 0;
   box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.78);
 }
@@ -6001,8 +4236,7 @@ html {
 @media (prefers-reduced-motion: reduce) {
   .trading-market-pair,
   .trading-product-switch button,
-  .app-shell-trades .p2p-offer-rate-row,
-  .app-shell-dex-v2 .dex-v2-position-row {
+  .app-shell-trades .p2p-offer-rate-row {
     transition: none;
   }
 }
@@ -6071,8 +4305,6 @@ html {
 .app-shell-dex-v2 .dex-v2-workspace-panel { min-width: 0; }
 .app-shell-dex-v2 .dex-market-chart-host { min-width: 0; }
 .app-shell-dex-v2 .dex-market-chart-host > .dex-market-chart { height: calc(clamp(700px, calc(100dvh - 200px), 840px) + var(--dex-chart-top-extension, 0px)); }
-.app-shell-dex-v2 .dex-v2-management-grid { grid-template-columns: minmax(0, 1fr); max-width: 960px; margin-left: auto; }
-.app-shell-dex-v2 .dex-v2-management-grid > .dex-v2-form-column { border: 1px solid var(--approved-border); border-radius: 9px; margin-top: 12px; padding: 22px; }
 .app-shell-dex-v2 .dex-v2-quote-output {
   min-width: 0; display: grid; gap: 10px; padding: 12px 14px 14px; border: 1px solid var(--approved-border); border-radius: 9px; background: #0d101a;
 }
@@ -6125,21 +4357,18 @@ html {
 .app-shell-dex-v2 .dex-v2-empty-state { align-self: center; text-align: center; padding: 28px 12px; border: 1px dashed var(--approved-border); border-radius: 9px; color: #b7b2c4; }
 .app-shell-dex-v2 .dex-v2-empty-state h3 { font-size: 1rem; color: #eee8f6; }
 .app-shell-dex-v2 .dex-v2-pending-card { border: 1px solid #6f4fa0; padding: 18px; border-radius: 9px; }
-.app-shell-dex-v2 .dex-v2-context-notice { padding: 12px; border: 1px solid #6f4fa0; color: #c9b4e9; font-size: 0.82rem; line-height: 1.5; }
 .dex-token-identity { display: grid; gap: 6px; padding: 10px 12px; font-size: 0.82rem; }
 .dex-token-identity small { font-size: 0.7rem; overflow-wrap: anywhere; }
 .app-shell-dex-v2 .trading-product-market :is(.trading-market-price, .trading-market-seed) { min-width: 0; }
 .app-shell-dex-v2 .dex-v2-page :is(button, input, select, summary):focus-visible { outline: 2px solid #c4b5fd; outline-offset: 3px; }
 @media (max-width: 760px) {
   .app-shell-dex-v2 .dex-v2-section-tabs { margin-bottom: 16px; }
-  .app-shell-dex-v2 .dex-v2-management-grid > .dex-v2-form-column { margin-top: 12px; padding: 16px 12px; }
   .app-shell-dex-v2 .dex-v2-current-fields { grid-template-columns: 1fr; }
   .app-shell-dex-v2 .dex-v2-execution-choice { flex-wrap: wrap; }
 }
 .app-shell-dex-v2 .trading-market-pair strong { white-space: normal; font-size: 0.85rem; }
 .app-shell-dex-v2 .trading-market-pair strong > small { display: block; color: #b7b2c4; font-size: 0.8rem; line-height: 1.4; }
 .app-shell-dex-v2 fieldset.dex-v2-panel-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
-.app-shell-dex-v2 .dex-v2-limit-privacy small { font-size: 0.75rem; color: #b7b2c4; }
 @media (max-width: 920px) {
   /* The shared P2P tabs are fixed on mobile. DEX owns its own bottom navigation. */
   .app-shell-dex-v2 .dex-view-navigation { min-width: 0; }
