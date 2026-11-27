@@ -154,6 +154,42 @@ test('standing recovery holds a wrong fee scope, a changed scope or a new journa
   }
 });
 
+test('CW-155: build 13 rereads accounting before the timed admission, so a 100 s fee read does not hold the restart', async () => {
+  const {h, io, watchdog} = standingHarness('build13');
+  const readAt = [];
+  io.facts = (facts => input => { readAt.push(h.calls.length); h.now += watchdog.CONFIG.admissionMs - 20000; return facts(input); })(io.facts);
+  const result = await watchdog.tick(io);
+  assert.equal(result.status, 'WATCHDOG_RESTART_STARTED', JSON.stringify(result));
+  assert.deepEqual(readAt, [0, 0], 'both full reads come before the first admission RPC read');
+  assert.equal(h.rechecks, 1);
+  assert.equal(h.writes.filter(([kind]) => kind === 'start').length, 1);
+});
+
+test('CW-155: the standing recheck before the start still holds on a lock or a journal change during admission', async () => {
+  for (const [mutate, name] of [[h => { h.recheckFacts = {...structuredClone(h.facts), locks: ['/test/lock/x.lock']}; }, 'lock'],
+    [h => { h.journalChange = {'j/c1.jsonl': 'changed'}; }, 'journal']]) {
+    const {h, io, watchdog} = standingHarness('build13');
+    mutate(h);
+    const result = await watchdog.tick(io);
+    assert.equal(result.status, 'WATCHDOG_HOLD', name);
+    assert.equal(result.guard, 'WATCHDOG_FACTS_CHANGED', name);
+    assert.equal(h.rechecks, 1, name);
+    assert.equal(started(h), false, name);
+    assert.equal(h.writes.some(([kind]) => kind === 'approval'), false, name);
+  }
+});
+
+test('CW-155: only the immutable C1 adoption claims leave the sender-lock list', () => {
+  const {senderLockEntries} = createWatchdog('build13');
+  const mutex = 'chainwhisper-testnet-sender-' + 'a'.repeat(64) + '.lock';
+  const claim = hex => mutex + '.c1-adopt-' + hex.repeat(64);
+  assert.deepEqual(senderLockEntries([claim('b'), claim('c')]), []);
+  assert.deepEqual(senderLockEntries([claim('b'), mutex]), [mutex]);
+  assert.deepEqual(senderLockEntries([mutex + '.next-6f1c', claim('b')]), [mutex + '.next-6f1c']);
+  for (const other of [mutex + '.c1-adopt-short', mutex + '.c1-adopt-' + 'B'.repeat(64), 'other.lock', 'runner.lock', claim('b') + '.tmp'])
+    assert.deepEqual(senderLockEntries([other]), [other], other);
+});
+
 test('standing recovery pins the exact replacement controller and full window reserves', () => {
   const {CONFIG: config} = createWatchdog(true);
   const root = path.resolve(__dirname, '../../ChainWhisper Contracts V2/validation/candidates/c1-band-sizing-2026-11-21');

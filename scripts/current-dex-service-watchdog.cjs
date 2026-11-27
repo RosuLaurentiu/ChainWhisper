@@ -23,7 +23,7 @@ const stateDir = '/var/lib/server-dashboard/chainwhisper-beta-watchdog';
 const base = root + '/ChainWhisper Contracts V2/validation/candidates/limit-fill-history-shared-receipt-2026-10-13/';
 const priceBase = root + '/ChainWhisper Contracts V2/validation/candidates/shared-core-exit-preview-native-2026-10-07/reference-history/service-v8';
 const graph = build13 ? '5045070b8faad2caab781e2981ad3300b7d916016b7a1d354fe59b12a1d1c239' : standing ? '9e6c03ac69178445605dc78a70e088b596684181d73b218a6a3a89e942b3af21' : '9c2cb36f958dc21ef11bf7d91ebf0373904a3d741edd6bf9eeae25752960631e';
-const runtimeManifestSha256 = build13 ? '7591445221aa55aa64c88cb48d09701177d23f6165b1003d1e4637246d13e9f3' : standing ? '40dd7e541c65aa122b3fafbbdfda35233e87f05fe721d55eaa5d931fd4628d51' : '04388584b9e948fbdd198bbcc115bf8580aeacabd677277078aa2fd126cc49b7';
+const runtimeManifestSha256 = build13 ? 'a5ced95d45838ba2e2c210c52552ceda263e0e37212a00caa1665361d43efd65' : standing ? '40dd7e541c65aa122b3fafbbdfda35233e87f05fe721d55eaa5d931fd4628d51' : '04388584b9e948fbdd198bbcc115bf8580aeacabd677277078aa2fd126cc49b7';
 const replacementBindingSha256 = build13 ? '35350b730e959fdbb8557edce5b61c2110f585ffda234b2dde58c78e4fa2e3cb' : '6f6c3efd3b6915343f9281348a1dc313cee7fe99727fac50144ec44c364e5d5f';
 const peerBindingSha256 = build13 ? '78bf74adac5634948defe7f1a168462f87f97cfbc93d8742859a55742e5668bd' : replacementBindingSha256;
 const serviceBinding = name => name === 'c1' ? replacementBindingSha256 : peerBindingSha256;
@@ -43,7 +43,7 @@ const CONFIG = Object.freeze({
     [controller + '/readiness.js']: build13 ? '548684ffe442bf164ef5765155c73b37f17af44638163876d829b7474d0640f7' : standing ? '396320c82ba02c1fe2004e3ea6a66b1c3cf5217b2d28af8daef185c91ed6d7a9' : 'f261317074e26e06ad5afaf0a98abf935972a9dc957e7d22187a3e74d24b7540',
     [controller + '/launch.js']: standing ? '45c9d4a19947fc2e05b35c46b461571b27ca615233d2a8cdbac6cacf13142d5c' : '1affa76c2246249bfd290674687ed87fc4ea84225608bd343fb4fe31f6d67536',
     ...(build13 ? {
-      [controller + '/runtime-selection.json']: 'a05e3323180ee7619c1b7e92822c0c76898bb1e95e9d598b7349ba629f38e41e',
+      [controller + '/runtime-selection.json']: '715665e6eff19d349e41f21b773898fb9658050000bbc217c765d4bd3574df45',
       [controller + '/initial-service-state.cjs']: '170e2ea469bdd44a9a92c9be7eb3099104068d8859490fbf9d1f1f7cd188a7e5',
       '/etc/systemd/system/chainwhisper-beta.service.d/prices-only.cw120-preserved': 'c3c2c500c93616b756b0ebcbbf074cc286404f5e7511159b6784405095ebdb2f',
       '/etc/systemd/system/chainwhisper-beta.service.d/zz-c1-rehearsal.cw120-preserved': '05101abbee753e787d63aa8d3ad7d9f9d76fe18ba2be6a3b55447983dd5fe1bd'
@@ -405,6 +405,9 @@ async function tick(io) {
     hold(!facts.feeError, 'WATCHDOG_FEE_JOURNAL', facts.feeError);
     if (scope) checkStandingFees(facts.accounting, scope);
     const carry = feeCarry({ baselineCarry: baseline.carry, deltas: facts.deltas, settledFeeWei: group.settledFeeWei, failedFeeLimitWei });
+    // CW-155: the full second read snapshots every fee journal again (99.6 s on build 13, 2026-11-27). It also finds a
+    // journal that appeared meanwhile, so it stays, but before the timed admission: inside it the 120 s bound always held.
+    if (scope) hold(isDeepStrictEqual(io.facts(feeInput), facts), 'WATCHDOG_FACTS_CHANGED');
     const newRun = install ? `server-beta-${day(io.now())}-cw120-peer-install` : `server-beta-${day(io.now())}-auto-${state.restarts.length + 1}`;
     hold(!io.exists(CONFIG.runParent + '/' + newRun), 'WATCHDOG_RUN_EXISTS', newRun);
 
@@ -449,12 +452,9 @@ async function tick(io) {
     if (install) hold(installRestart(io, group, runName)?.sha === install.sha, 'WATCHDOG_INSTALL_APPROVAL_DRIFT');
     hold(Object.keys(io.pinned()).length === 0, 'WATCHDOG_PINNED_FILE');
     const journals = journalList(facts.accounting);
-    if (scope) {
-      hold(isDeepStrictEqual(readStandingScope(io, approval, group.period), scope), 'WATCHDOG_C1_STANDING_SCOPE');
-      hold(isDeepStrictEqual(io.facts(feeInput), facts), 'WATCHDOG_FACTS_CHANGED');
-    } else {
-      hold(comparable(io.recheck({ journals, ...(scope ? {scope} : {}) })) === comparable({ ...facts, journals }), 'WATCHDOG_FACTS_CHANGED');
-    }
+    if (scope) hold(isDeepStrictEqual(readStandingScope(io, approval, group.period), scope), 'WATCHDOG_C1_STANDING_SCOPE');
+    // Fast recheck just before the start: the journal hashes, locks and the C1 and price saved states.
+    hold(comparable(io.recheck({ journals, ...(scope ? {scope} : {}) })) === comparable({ ...facts, journals }), 'WATCHDOG_FACTS_CHANGED');
     hold(io.now() - started < CONFIG.admissionMs, 'WATCHDOG_ADMISSION_BOUND');
 
     // One start: save the old approval, write the new one, readiness, intent, start.
@@ -522,9 +522,14 @@ function findLocks() {
   for (const dir of dirs) walk(dir, 3);
   return found.sort();
 }
+// CW-155: each C1 lease adoption leaves one immutable `<mutex>.c1-adopt-<sha256>` claim (session-lease.cjs reserve()).
+// The worker walks the claims only while the mutex file itself exists, so they are records, not locks. Every other
+// entry still counts as a lock: the mutex, an interrupted `.next-<uuid>` publish or any unknown name.
+const ADOPT_CLAIM = /^chainwhisper-testnet-sender-[0-9a-f]{64}\.lock\.c1-adopt-[0-9a-f]{64}$/;
+const senderLockEntries = names => names.filter(name => !ADOPT_CLAIM.test(name));
 function standingC1(scope) {
   const disk = require(replacement + '/window-b/convergence-service-state.cjs');
-  const locks = fs.readdirSync(disk.checkSenderLock(scope.senderLock));
+  const locks = senderLockEntries(fs.readdirSync(disk.checkSenderLock(scope.senderLock)));
   const current = disk.checkPaths({stream: scope.stream});
   if (!fs.existsSync(current.journal)) return { locks, c1: {queuedPairs: [], window: null} };
   const initial = disk.paths({stream: scope.stream});
@@ -720,7 +725,7 @@ function cli() {
   tick(hostIo()).then(result => { console.log(JSON.stringify(result)); })
     .catch(error => { console.error(JSON.stringify({ status: 'WATCHDOG_ERROR', message: String(error?.message ?? error).slice(0, 200), noAutomaticRetryOfStart: true })); process.exitCode = 1; });
 }
-return { CONFIG, Hold, classifyStop, checkGroupTraffic, evictedRuns, allRunsSettled, restartDecision, feeCarry, buildApproval, seedState, installRestart, tick, selfCheck, hostIo, findLocks, reconcileRehearsalStop, checkRehearsalStopRecords, cli };
+return { CONFIG, Hold, classifyStop, checkGroupTraffic, evictedRuns, allRunsSettled, restartDecision, feeCarry, buildApproval, seedState, installRestart, tick, selfCheck, hostIo, findLocks, senderLockEntries, reconcileRehearsalStop, checkRehearsalStopRecords, cli };
 }
 module.exports = {...createWatchdog(), createWatchdog};
 if (require.main === module) createWatchdog(process.argv[3] === '--build13' ? 'build13' : process.argv[3] === '--standing').cli();
