@@ -88,10 +88,18 @@ export default function useCurrentDexMarketReference(active: boolean,candidate:C
   const reference=currentDexMarketReference(view,pair,now);
   const last=useRef<{candidate:CurrentCheapDexCandidate;pair:readonly[string,string];reference:Extract<CurrentDexMarketReference,{status:'available'|'last-known'}>}|null>(null);
   if(!active||last.current&&(last.current.candidate!==candidate||last.current.pair[0]!==base||last.current.pair[1]!==quote))last.current=null;
-  if(reference.status==='available'||reference.status==='last-known')last.current={candidate,pair:[base,quote],reference};
-  else if(last.current&&now>=BigInt(last.current.reference.sampledAt)){
-    const {price,sampledAt,revision}=last.current.reference;
-    return {status:'last-known' as const,price,sampledAt,revision,pair:last.current.pair};
+  if(reference.status==='available'||reference.status==='last-known'){
+    // CW-168: a last-known price of the same sample keeps the time at which the App last read it as current.
+    const previous=last.current?.reference;
+    const checkedAt=reference.status==='last-known'&&!reference.checkedAt&&previous?.checkedAt&&
+      previous.sampledAt===reference.sampledAt&&previous.revision===reference.revision?previous.checkedAt:undefined;
+    const kept=checkedAt?Object.freeze({...reference,checkedAt}):reference;
+    last.current={candidate,pair:[base,quote],reference:kept};
+    return kept;
+  }
+  if(last.current&&now>=BigInt(last.current.reference.sampledAt)){
+    const {price,sampledAt,checkedAt,revision}=last.current.reference;
+    return {status:'last-known' as const,price,sampledAt,...(checkedAt?{checkedAt}:{}),revision,pair:last.current.pair};
   }
   return reference;
 }

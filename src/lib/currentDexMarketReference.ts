@@ -3,7 +3,8 @@ import { currentDexDailyPricePairOrientation, isVerifiedCurrentDexDailyPrice, is
   type CurrentDexDailyPriceView, type CurrentDexPublicReferenceView } from './currentDexDailyPrice';
 
 export type CurrentDexMarketReference = Readonly<{ status: 'available'; price: number; sampledAt: string; checkedAt?: string; revision: string }> |
-  Readonly<{ status: 'last-known'; price: number; sampledAt: string; revision: string; pair?: readonly [string,string] }> |
+  // checkedAt: the last block time at which the App read this price as the current Pool reference (display only).
+  Readonly<{ status: 'last-known'; price: number; sampledAt: string; checkedAt?: string; revision: string; pair?: readonly [string,string] }> |
   Readonly<{ status: 'loading' | 'stale' | 'unavailable' }>;
 type VerifiedCurrentDexMarketReference = Extract<CurrentDexMarketReference, { status: 'available' }> &
   Readonly<{ pair: readonly [string,string]; rateNumerator: bigint; rateDenominator: bigint }>;
@@ -42,7 +43,7 @@ export const currentDexMarketReference = (view: CurrentDexDailyPriceView|Current
   const price = direction === 1 ? canonical : 1/canonical;
   if (!Number.isFinite(price) || price <= 0) return { status: 'unavailable' };
   if (s.currentReference !== 'available' || now-at > 120n)
-    return Object.freeze({status:'last-known',price,sampledAt:o.sampledAt,revision:o.revision,pair:Object.freeze([pair[0],pair[1]]) as readonly [string,string]});
+    return Object.freeze({status:'last-known',price,sampledAt:o.sampledAt,...(s.currentReference==='available'&&o.checkedAt?{checkedAt:o.checkedAt}:{}),revision:o.revision,pair:Object.freeze([pair[0],pair[1]]) as readonly [string,string]});
   const raw = BigInt(o.priceE18), scale = 10n ** 18n;
   const reference: VerifiedCurrentDexMarketReference = Object.freeze({ status: 'available', price, sampledAt: o.sampledAt, ...(o.checkedAt?{checkedAt:o.checkedAt}:{}), revision: o.revision,
     pair: Object.freeze([pair[0], pair[1]]) as readonly [string,string],

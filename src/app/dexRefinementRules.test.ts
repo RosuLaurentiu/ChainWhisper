@@ -120,6 +120,14 @@ describe('mobile refinement (owner decision 2026-11-18, audit items 1-5)', () =>
     expect(mobileRule('shell', ':root body .app-shell-dex-v2 .trading-market-change:not([data-price-state="last-known"]) .trading-market-change-detail {')).toContain('display: none;');
   });
 
+  // CW-168: a recent published price uses data-price-state="updating". It is not "last-known", so its live detail
+  // hides on phones as the live state does, and its price keeps the live colour.
+  it('treats a recently published price as live in the one-row market line', () => {
+    const line = ':root body .app-shell-dex-v2 .trading-market-change:not([data-price-state="last-known"]) .trading-market-change-detail {';
+    expect(line).not.toContain('updating');
+    expect(stylesheet('shell')).toContain(':root body .app-shell .trading-market-change:is([data-price-state="available"], [data-price-state="updating"]) strong { color: #55d6af; }');
+  });
+
   it('sets the 12 px floor, keeps the Agent prompt in view and makes P2P frames solid', () => {
     expect(mobileRule('shell', '.p2p-offers-list-head span')).toContain('font-size: .75rem;');
     expect(mobileRule('p2p', ':root body .app-shell .p2p-agent-composer {')).toContain('position: sticky; bottom: 0;');

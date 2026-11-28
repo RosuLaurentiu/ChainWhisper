@@ -1,7 +1,7 @@
 import { Children, createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import TradingProductSwitch from './TradingProductSwitch';
+import TradingProductSwitch, { RECENT_POOL_PRICE_MAX_AGE_S } from './TradingProductSwitch';
 // The selected current candidate (build 13).
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE } from '../../lib/dexV2Deployment';
 import { CURRENT_DEX_DISPLAY_PAIR as P } from '../../lib/currentDexDisplay';
@@ -123,11 +123,61 @@ describe('TradingProductSwitch', () => {
       const recorded=(sampledAt:string)=>renderToStaticMarkup(createElement(TradingProductSwitch,{
         activeProduct:'dex',dexCandidate:STAGED_SHARED_HISTORY_DEX_CANDIDATE,onNavigate:()=>{},selectedPair:['BCN','ORBT'],onSelectedPairChange:()=>{},
         priceDisplayInverted:inverted,onPriceDisplayInvertedChange:()=>{},marketReference:{status:'last-known',price:2,sampledAt,revision:'1'}}));
-      expect(recorded('999955')).toContain('>Recorded 45s ago<');expect(recorded('999400')).toContain('>Recorded 10m ago<');
+      expect(recorded('999400')).toContain('>Recorded 10m ago<');
       expect(recorded('996401')).toContain('>Recorded 59m ago<');
       const old=recorded('996400');expect(old).toMatch(/>Recorded \d{1,2} \w{3} \d{4}, \d{2}:\d{2}</);expect(old).not.toMatch(/Recorded \d+[sm] ago/);
-      expect(recorded('999955')).toMatch(/aria-description="\d{1,2} \w{3} \d{4}, \d{2}:\d{2} · Last recorded public Pool price\. Current market price is not verified\."/);
+      expect(recorded('999400')).toMatch(/aria-description="\d{1,2} \w{3} \d{4}, \d{2}:\d{2} · Last recorded public Pool price\. Current market price is not verified\."/);
     }finally{clock.mockRestore();}
+  });
+  // Owner plan 2026-11-28 (CW-168): a price published less than RECENT_POOL_PRICE_MAX_AGE_S ago reads as current.
+  describe('recent published Pool price', () => {
+    const now = 1_000_000_000;
+    const render = (marketReference?: ComponentProps<typeof TradingProductSwitch>['marketReference']) => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
+      try {
+        return renderToStaticMarkup(createElement(TradingProductSwitch, { activeProduct: 'dex', dexCandidate: STAGED_SHARED_HISTORY_DEX_CANDIDATE,
+          onNavigate: () => {}, selectedPair: ['BCN', 'ORBT'], onSelectedPairChange: () => {}, priceDisplayInverted: false,
+          onPriceDisplayInvertedChange: () => {}, marketReference }));
+      } finally { clock.mockRestore(); }
+    };
+    const lastKnown = (age: number) => render({ status: 'last-known', price: 2, sampledAt: String(now - age), revision: '1' });
+    it('is one limit of the 300 s publish rule plus a margin', () => {
+      expect(RECENT_POOL_PRICE_MAX_AGE_S).toBeGreaterThan(300);
+      expect(RECENT_POOL_PRICE_MAX_AGE_S).toBeLessThanOrEqual(480);
+    });
+    it.each([[0, '0s ago'], [45, '45s ago'], [330, '5m ago'], [RECENT_POOL_PRICE_MAX_AGE_S - 1, `${Math.floor((RECENT_POOL_PRICE_MAX_AGE_S - 1) / 60)}m ago`]])(
+      'shows a price %is old as live with an updating hint', (age, label) => {
+        const markup = lastKnown(age);
+        expect(markup).toContain('data-price-state="updating"');
+        expect(markup).toContain('2 ORBT/BCN');
+        expect(markup).toContain('COTI Testnet<span class="trading-market-change-detail"> · Live Pool reference</span>');
+        expect(markup).toContain('aria-label="Pool price updating"'); expect(markup).toContain(`>Updating · ${label}</small>`);
+        expect(markup).toContain(`aria-description="Pool price confirmed ${label}. Pools are changing; the price service publishes a new price at most every 5 minutes."`);
+        expect(markup).not.toContain('Last Pool price'); expect(markup).not.toContain('Recorded '); expect(markup).not.toContain(' title=');
+      });
+    it.each([RECENT_POOL_PRICE_MAX_AGE_S, 600, 7200])('shows a price %is old as the last Pool price', age => {
+      const markup = lastKnown(age);
+      expect(markup).toContain('data-price-state="last-known"');
+      expect(markup).toContain(' · Last Pool price'); expect(markup).toContain('>Recorded ');
+      expect(markup).not.toContain('Updating'); expect(markup).not.toContain('Live Pool reference');
+    });
+    it('counts the age from the last read that found the price current', () => {
+      const markup = render({ status: 'last-known', price: 2, sampledAt: String(now - 5000), checkedAt: String(now - 90), revision: '1' });
+      expect(markup).toContain('data-price-state="updating"'); expect(markup).toContain('>Updating · 1m ago</small>');
+      const old = render({ status: 'last-known', price: 2, sampledAt: String(now - 5000), checkedAt: String(now - RECENT_POOL_PRICE_MAX_AGE_S), revision: '1' });
+      expect(old).toContain('data-price-state="last-known"'); expect(old).toContain('>Recorded ');
+    });
+    it.each([undefined, { status: 'unavailable' as const }])('keeps the unavailable state when no price was read (%o)', reference => {
+      const markup = render(reference);
+      expect(markup).toContain('data-price-state="unavailable"'); expect(markup).toContain('Price unavailable');
+      expect(markup).not.toContain('Updating'); expect(markup).not.toContain('Recorded ');
+      expect(markup).not.toContain('2 ORBT/BCN');
+    });
+    it('keeps a live reference live without the updating hint', () => {
+      const markup = render({ status: 'available', price: 2, sampledAt: String(now - 600), checkedAt: String(now - 10), revision: '1' });
+      expect(markup).toContain('data-price-state="available"'); expect(markup).toContain('>10s ago</small>');
+      expect(markup).not.toContain('Updating');
+    });
   });
   it('presents DEX and P2P as one local trading choice', () => {
     const markup = renderToStaticMarkup(createElement(TradingProductSwitch, {
