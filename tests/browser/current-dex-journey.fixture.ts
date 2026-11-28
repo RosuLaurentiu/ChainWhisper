@@ -4,15 +4,16 @@
 import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import { AbiCoder, Interface, toBeHex } from '@coti-io/coti-ethers';
+import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
 import { decodeUint, decryptUint, decryptUint256, encodeKey, encrypt } from '@coti-io/coti-sdk-typescript';
 import DexPage from '../../src/features/dex/components/DexV2Page';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c, currentCheapDexQuoteProtocol } from '../../src/lib/dexV2Deployment';
 const CURRENT_CHEAP_POOL_TOKENS = [c.tokens[1], c.tokens[0]] as const;
-import { CURRENT_POOL_FUNDING_ABI } from '../../src/lib/currentDexPoolFunding';
+import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI } from '../../src/lib/currentDexPoolFunding';
 import { issueCurrentDexPoolFundingCapability } from '../../src/features/wallet/currentDexPoolFundingCapability';
 import { issueCurrentDexPoolPositionCapability } from '../../src/features/wallet/currentDexPoolPositionCapability';
-import { CURRENT_POOL_POSITION_ABI, currentPoolPositionAbi, currentPoolNftAbi } from '../../src/lib/currentDexPoolPosition';
+import { CURRENT_POOL_POSITION_ABI, currentPoolPositionAbi, currentPoolNftAbi, currentPoolSnapshotAbi } from '../../src/lib/currentDexPoolPosition';
+import { POOL_EXIT_PREVIEW_ABI, computePoolExitPreviewContext } from '../../src/lib/currentDexPoolExitPreview';
 import { issueCurrentDexLimitCapability } from '../../src/features/wallet/currentDexLimitCapability';
 import { currentLimitAbi,currentLimitTokens,currentLimitMappingSlot,currentLimitAddressSlot,CURRENT_LIMIT_LAYOUT } from '../../src/lib/currentDexLimit';
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI, CURRENT_DEX_RECEIPT_ABI,
@@ -37,8 +38,10 @@ const token = new Interface([...PRIVATE_ERC20_TOKEN_VNEXT_ABI,
   'function claimFaucet()', 'function faucetClaimed(address) view returns(bool)', 'function faucetAmount() view returns(uint256)',
   'event FaucetClaimed(address indexed account)',
   'event Approval(address indexed owner,address indexed spender,(uint256 ciphertextHigh,uint256 ciphertextLow) ownerValue,(uint256 ciphertextHigh,uint256 ciphertextLow) spenderValue)']);
-const pools = new Interface(CURRENT_POOL_FUNDING_ABI);
+// Build 13 Pool calls select the market; the preview event keeps its shape.
+const pools = new Interface([...PREPARED_POOL_FUNDING_ABI, CURRENT_POOL_FUNDING_ABI[2]]);
 const claim = new Interface(['event SharedClaimCreated(uint256 indexed positionId)']);
+const snapshotEvents = currentPoolSnapshotAbi, exitEvents = new Interface(POOL_EXIT_PREVIEW_ABI);
 const mint = new Interface(['event Transfer(address indexed from,address indexed to,uint256 indexed tokenId)']);
 const debit = new Interface(['event Transfer(address indexed from,address indexed to,(uint256 ciphertextHigh,uint256 ciphertextLow) senderValue,(uint256 ciphertextHigh,uint256 ciphertextLow) receiverValue)']);
 const small = 'tuple(uint256 ciphertext,bytes signature)', large = 'tuple(tuple(uint256 ciphertextHigh,uint256 ciphertextLow) ciphertext,bytes signature)';
@@ -116,6 +119,72 @@ const seal = (value: bigint) => {
 };
 const wide = (value: bigint) => [seal(value >> 128n), seal(value & ((1n << 128n) - 1n))];
 const zero = toBeHex(0, 32), initialNumber = Number(c.attestationBlock.number) + 100;
+// Build 13 storage model. Each word keeps its history by block, so that a read pinned to an earlier block
+// returns the earlier value. The layout is PREPARED_POOL_LAYOUT of the production snapshot reader.
+const coder = AbiCoder.defaultAbiCoder(), mask128 = (1n << 128n) - 1n;
+const slotOf = (key: bigint | string, slot: bigint, type = 'uint256') => BigInt(keccak256(coder.encode([type, 'uint256'], [key, slot])));
+let storage = new Map<string, Array<[number, bigint]>>(), accountWrites = new Map<string, number[]>(), writeBlock = initialNumber, contextSequence = 0n;
+const putWord = (address: string, slot: bigint, value: bigint) => {
+  const key = `${address.toLowerCase()}:${slot}`, rows = storage.get(key) ?? [], writes = accountWrites.get(address.toLowerCase()) ?? [];
+  if (rows.at(-1)?.[0] === writeBlock) rows.at(-1)![1] = value; else rows.push([writeBlock, value]);
+  if (writes.at(-1) !== writeBlock) writes.push(writeBlock);
+  storage.set(key, rows); accountWrites.set(address.toLowerCase(), writes);
+};
+const wordAt = (address: string, slot: bigint, block = Number.MAX_SAFE_INTEGER) => {
+  const rows = storage.get(`${address.toLowerCase()}:${slot}`);
+  if (!rows) return undefined;
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i][0] <= block) return rows[i][1];
+  return 0n;
+};
+// The storage root of an account changes with each block that writes one of its words.
+const storageRoot = (address: string, block: number) => toBeHex((accountWrites.get(address.toLowerCase()) ?? []).filter(value => value <= block).length + 1, 32);
+const newContext = () => (BigInt(writeBlock) << 32n) + ++contextSequence;
+const defaultPair = c.pairs.find(pair => [c.tokens[0][0], c.tokens[1][0]].every(token => (pair.tokens as readonly string[]).includes(token)))!;
+const claimBase = (market: string, id: bigint) => slotOf(id, slotOf(market, 1n, 'bytes32') + 15n);
+const marketOf = (id: bigint, block?: number) => toBeHex(wordAt(c.core, slotOf(id, 18n), block) ?? 0n, 32);
+const claimWord = (id: bigint, index: number, block?: number) => wordAt(c.core, claimBase(marketOf(id, block), id) + BigInt(index), block) ?? 0n;
+const setClaim = (id: bigint, index: number, value: bigint) => putWord(c.core, claimBase(marketOf(id), id) + BigInt(index), value);
+// The plain values of each private claim. Storage holds only their owner envelopes.
+let claimPlain = new Map<string, bigint[]>();
+// Writes the ten owner envelopes of a claim and a new context, as poolSnapshot and each owner write do.
+const sealClaim = (id: bigint, values: bigint[]) => {
+  setClaim(id, 13, newContext());
+  values.forEach((value, i) => { const words = wide(value); [5n, 6n, ...words].forEach((word, j) => setClaim(id, 14 + i * 4 + j, word)); });
+};
+const clearClaimEnvelopes = (id: bigint) => { setClaim(id, 13, 0n); for (let i = 0; i < 10; i++) { setClaim(id, 16 + i * 4, 0n); setClaim(id, 17 + i * 4, 0n); } };
+const claimEnvelopes = (id: bigint) => Array.from({ length: 10 }, (_, i) => [claimWord(id, 16 + i * 4), claimWord(id, 17 + i * 4)]);
+const nftOwnerOf = (id: bigint, block?: number) => toBeHex(wordAt(nft, slotOf(id, 2n), block) ?? 0n, 20);
+const setNftOwner = (id: bigint, to: string) => {
+  const from = nftOwnerOf(id);
+  if (BigInt(from) !== 0n) putWord(nft, slotOf(from, 3n, 'address'), (wordAt(nft, slotOf(from, 3n, 'address')) ?? 1n) - 1n);
+  if (BigInt(to) !== 0n) putWord(nft, slotOf(to, 3n, 'address'), (wordAt(nft, slotOf(to, 3n, 'address')) ?? 0n) + 1n);
+  putWord(nft, slotOf(id, 2n), BigInt(to)); putWord(nft, slotOf(id, 6n), 1n);
+};
+const createClaim = (market: string, id: bigint, to: string, values: bigint[]) => {
+  putWord(c.core, slotOf(id, 18n), BigInt(market)); putWord(c.core, slotOf(market, 124n, 'bytes32'), 1n);
+  [[0, 1n], [4, 1n], [5, 1n], [6, 1n], [7, 1n], [59, 1n], [62, values[9]]].forEach(([index, value]) => setClaim(id, Number(index), BigInt(value)));
+  sealClaim(id, values); claimPlain.set(id.toString(), [...values]); setNftOwner(id, to);
+};
+// Before privacy activation a claim has no stored context; its public context then follows its revision.
+const publicContext = (id: bigint, block?: number) => claimWord(id, 13, block) || BigInt(keccak256(coder.encode(['uint256', 'uint256'], [id, claimWord(id, 4, block)])));
+let exitPreview: { id: string; values: bigint[]; context: string } | null = null, badClaimSnapshot = false;
+// Each Pool write advances the revision of the seven spread anchors of its market.
+const touchAnchors = (market: string) => { for (let j = 0n; j < 7n; j++) {
+  const id = wordAt(c.core, slotOf(market, 1n, 'bytes32') + 18n + j)!; setClaim(id, 4, claimWord(id, 4) + 1n); } };
+const seedStorage = () => {
+  // IDs 1 to 42 are the anchors (six markets, seven spreads). The fixture owner holds claim 81; the next ID is 82.
+  putWord(c.core, 11n, 81n); putWord(c.core, 12n, 3n);
+  c.pairs.forEach((pair, p) => {
+    const base = slotOf(pair.marketId, 1n, 'bytes32');
+    [c.releaseId, pair.marketId, pair.tokens[0], pair.tokens[1], nft, pair.poolTerms].forEach((value, i) => putWord(c.core, base + BigInt(i), BigInt(value)));
+    for (let j = 0; j < 7; j++) {
+      const id = BigInt(p * 7 + j + 1);
+      putWord(c.core, base + 18n + BigInt(j), id); putWord(c.core, slotOf(id, 18n), BigInt(pair.marketId));
+      setClaim(id, 0, 1n); setClaim(id, 4, 1n); setClaim(id, 62, BigInt(j));
+    }
+  });
+};
+seedStorage(); createClaim(defaultPair.marketId, 81n, owner, [200n, 100n, 200n, 400n, 0n, 0n, 0n, 0n, 0n, 1n]);
 // Build 13 async stages: 1 opened, 2 to 4 work, then READY, FUNDED, SETTLED and RELEASED. A Fast Quote is READY when it is issued.
 const { ready: READY, funded: FUNDED, settled: SETTLED, released: RELEASED } = c.protocol.stages;
 let head = initialNumber, stage = 0, deadline = 0n, context = zero, profile = 'fast-pool';
@@ -124,6 +193,9 @@ let quoteTerms: Record<string, string> | null = null;
 let operationTokens = [c.tokens[1][0], c.tokens[0][0]] as string[], fundedBlock = 0, operationMaximum = 20n;
 const keeper = `0x${'55'.repeat(20)}`, work = new Interface(['function advanceFixedWork(uint256 operationId)']);
 let active = true, gasLimit = 150_000_000n, nonce = 4, operationId = 0n;
+// hideNewReceipts hides only the receipts of later transactions, as a slow chain does; receiptAvailable hides all.
+let hiddenFromBlock = Number.MAX_SAFE_INTEGER;
+const receiptVisible = (receipt?: Record<string, unknown>) => receiptAvailable && !!receipt && (receipt.blockNumber as number) < hiddenFromBlock;
 let receiptAvailable = true, interrupted = false, refundOnly = false, corruptPayout = false, graphDrift = false;
 let adverseDelivery = false;
 let signingAttempts = 0, denySignature = false;
@@ -131,7 +203,7 @@ let inputSignatureRequests = 0;
 let waitReceipt = false;
 let nextOperationId = 101n;
 let revertNext = false, quoteAmountDrift = false, belowMinimumFill = false;
-let poolMode = 0n, poolContext = zero, poolAmounts: bigint[] = [], poolPositionId = 81n, badPoolDebit = false;
+let poolMarket = '', poolMode = 0n, poolContext = zero, poolAmounts: bigint[] = [], poolPositionId = 81n, badPoolDebit = false;
 let claimStatus=1n,claimRevision=1n,claimOwnership=1n,claimLifecycle=1n,claimOwner=owner,recipientCode='0x',claimContext=toBeHex(999n,32);
 let claimValues=[200n,100n,200n,400n,0n,0n,0n,0n,0n,1n];
 let limitId=91n,limitDirection=true,limitAmount=0n,limitTerms:bigint[]=[],limitWords=new Map<string,bigint>(),badLimitTerms=false;
@@ -159,7 +231,7 @@ const advancedLog = () => ({ address: c.core, ...opening.encodeEventLog(opening.
 const deliveryLogs = () => [transferLog(operationTokens[1], c.core, owner, 999n, receiptAmounts()[5]), transferLog(operationTokens[0], c.core, owner, 999n, receiptAmounts()[2])];
 // A keeper work transaction: the public trigger that moves an async operation to READY or SETTLED.
 const keeperWork = (logs: Array<{ address: string; topics: string[]; data: string }>) => {
-  head = latestHead() + 1; blockTimes.set(head, seconds() - 1);
+  head = latestHead() + 1; blockTimes.set(head, seconds() - 1); writeBlock = head;
   const hash = toBeHex(BigInt(head), 32), minedHash = blockHash(head); blockTransactions.set(head, hash);
   txs.set(hash, { hash, chainId: 7082400n, from: keeper, to: c.core, value: 0n, data: work.encodeFunctionData('advanceFixedWork', [operationId]),
     nonce: head, gasLimit: 50_000_000n, gasPrice: FIXED_GAS_PRICE, blockNumber: head, blockHash: minedHash });
@@ -169,6 +241,19 @@ const sends: Array<{ name: string; operationId: string; nonce: number; gasLimit:
 const txs = new Map<string, Record<string, unknown>>(), mined = new Map<string, Record<string, unknown>>();
 const calls: string[] = [];
 let tokenAllowances = [1000n, 1000n, 1000n, 1000n], tokenClaimed = [false, false, false, false], badFundingCredit = false;
+// A token keeps one balance envelope until the balance changes; storage and balanceOf return the same words.
+const balanceCiphers = new Map<number, { value: bigint; words: bigint[] }>();
+const balanceCipher = (index: number) => {
+  const saved = balanceCiphers.get(index);
+  if (saved?.value === limitBalances[index]) return saved.words;
+  const words = wide(limitBalances[index]); balanceCiphers.set(index, { value: limitBalances[index], words }); return words;
+};
+// One storage read at a pinned block: token balance words, the versioned model, then the earlier Limit words.
+const readWord = (address: string, slot: bigint, block: number) => {
+  const target = address.toLowerCase(), index = c.tokens.findIndex(([token]) => token === target);
+  if (index >= 0 && mountedOwner) { const offset = slot - slotOf(mountedOwner, 4n, 'address'); if (offset >= 0n && offset < 4n) return [1n, 1n, ...balanceCipher(index)][Number(offset)]; }
+  return wordAt(target, slot, block) ?? limitWords.get(`${target}:${slot}`) ?? 0n;
+};
 let balanceReadFailure = false, balanceReadDelay = 0, privacyUnlocked = true;
 let wrongWalletResponseNonce = false;
 // Kept for the Control type of older callers; the wallet returns only a hash now, so this flag changes nothing.
@@ -181,6 +266,12 @@ const seconds = () => Math.floor(Date.now() / 1000);
 const blockTime = (number: number) => { if (!blockTimes.has(number)) blockTimes.set(number, seconds() - 1); return blockTimes.get(number)!; };
 const latestHead = () => { if (seconds() - blockTime(head) >= 5) { head++; blockTimes.set(head, seconds() - 1); } return head; };
 const FIXED_GAS_PRICE = 50_000_000n;
+// History: the owner's last poolSnapshot of claim 81, mined in the first fixture block. The App finds it by its event.
+{ const hash = toBeHex((1n << 200n) + 81n, 32), minedHash = blockHash(initialNumber); blockTransactions.set(initialNumber, hash);
+  txs.set(hash, { hash, chainId: 7082400n, from: owner, to: c.core, value: 0n, data: currentPoolPositionAbi.encodeFunctionData('poolSnapshot', [81n]),
+    nonce: 3, gasLimit: 30_000_000n, gasPrice: FIXED_GAS_PRICE, blockNumber: initialNumber, blockHash: minedHash });
+  mined.set(hash, { hash, status: 1, from: owner, to: c.core, blockNumber: initialNumber, blockHash: minedHash,
+    logs: [{ address: c.core, ...snapshotEvents.encodeEventLog(snapshotEvents.getEvent('PoolSnapshotRefreshed')!, [81n, toBeHex(claimWord(81n, 13), 32), claimEnvelopes(81n)]) }] }); }
 const quantity = (number: number | bigint) => `0x${BigInt(number).toString(16)}`;
 const assertCurrent = () => { if (!active) throw new Error('Test wallet session revoked.'); };
 const send = async (method: string, params: unknown[]) => {
@@ -201,7 +292,7 @@ const send = async (method: string, params: unknown[]) => {
       gas: quantity(tx.gasLimit as bigint), gasPrice: quantity(FIXED_GAS_PRICE), blockNumber: quantity(tx.blockNumber as number), blockHash: tx.blockHash, transactionIndex: '0x0' } : null;
   }
   if (method === 'eth_getTransactionReceipt') {
-    const receipt = receiptAvailable ? mined.get(String(params[0]).toLowerCase()) as Record<string, unknown> | undefined : undefined;
+    const found = mined.get(String(params[0]).toLowerCase()) as Record<string, unknown> | undefined, receipt = receiptVisible(found) ? found : undefined;
     return receipt ? { transactionHash: receipt.hash, status: quantity(receipt.status as number), from: receipt.from, to: receipt.to,
       blockNumber: quantity(receipt.blockNumber as number), blockHash: receipt.blockHash, transactionIndex: '0x0',
       logs: (receipt.logs as Array<Record<string, unknown>>).map((log, index) => ({ ...log, logIndex: quantity(index), transactionHash: receipt.hash,
@@ -217,20 +308,30 @@ const send = async (method: string, params: unknown[]) => {
       timestamp: quantity(blockTime(number)), gasLimit: quantity(gasLimit), baseFeePerGas: '0x0',
       transactions: blockTransactions.has(number) ? [blockTransactions.get(number)!] : [] };
   }
-  const selector = params[method === 'eth_getStorageAt' ? 2 : 1] as { blockHash: string; requireCanonical: boolean };
+  const selector = params[method === 'eth_getStorageAt' || method === 'eth_getProof' ? 2 : 1] as { blockHash: string; requireCanonical: boolean };
   if (!selector?.requireCanonical || BigInt(selector.blockHash) > BigInt(head) ||
       BigInt(selector.blockHash) < BigInt(initialNumber)) throw new Error('Unpinned fixture RPC.');
   if (method === 'eth_getCode') return String(params[0]).toLowerCase() === mountedOwner.toLowerCase() ? '0x' : graphDrift ? '0x6001' : codes[String(params[0]).toLowerCase()]??recipientCode;
+  if (method === 'eth_getProof') {
+    const account = String(params[0]).toLowerCase(), pinned = Number(BigInt(selector.blockHash));
+    return { address: account, storageHash: storageRoot(account, pinned), storageProof: (params[1] as string[]).map(key => ({ key, value: quantity(readWord(account, BigInt(key), pinned)) })) };
+  }
   if (method === 'eth_getStorageAt') {
-    if(([c.core,engine,nft] as string[]).includes(String(params[0]).toLowerCase()))return toBeHex(limitWords.get(`${String(params[0]).toLowerCase()}:${BigInt(params[1] as string)}`)??0n,32);
-    if (String(params[0]).toLowerCase() !== at('ChainWhisperFixedEngineFactory')) throw new Error('Unexpected storage target.');
+    if (String(params[0]).toLowerCase() !== at('ChainWhisperFixedEngineFactory')) return toBeHex(readWord(String(params[0]), BigInt(params[1] as string), Number(BigInt(selector.blockHash))), 32);
     return c.factoryStorage.find(([slot]) => BigInt(slot) === BigInt(params[1] as string))![1];
   }
   if (method === 'eth_call') {
     const call = params[0] as { to: string; data: string; from?: string }, target = call.to.toLowerCase();
     if(target===nft&&call.data.startsWith(currentPoolNftAbi.getFunction('ownerOf')!.selector)) {
-      const id=currentPoolNftAbi.decodeFunctionData('ownerOf',call.data)[0];if(id===poolPositionId&&claimStatus===4n||id===limitId&&limitClosed)throw new Error('Position NFT burned');
-      return currentPoolNftAbi.encodeFunctionResult('ownerOf',[id===poolPositionId?claimOwner:owner]);
+      const id=currentPoolNftAbi.decodeFunctionData('ownerOf',call.data)[0],pinned=Number(BigInt(selector.blockHash));
+      if(claimPlain.has(id.toString())){if(BigInt(nftOwnerOf(id,pinned))===0n)throw new Error('Position NFT burned');return currentPoolNftAbi.encodeFunctionResult('ownerOf',[nftOwnerOf(id,pinned)]);}
+      if(id===limitId&&limitClosed)throw new Error('Position NFT burned');
+      return currentPoolNftAbi.encodeFunctionResult('ownerOf',[owner]);
+    }
+    if (target === nft) {
+      const read = currentPoolNftAbi.parseTransaction({ data: call.data }), pinned = Number(BigInt(selector.blockHash));
+      if (read?.name === 'balanceOf') return currentPoolNftAbi.encodeFunctionResult('balanceOf', [wordAt(nft, slotOf(String(read.args[0]).toLowerCase(), 3n, 'address'), pinned) ?? 0n]);
+      if (read?.name === 'getApproved') return currentPoolNftAbi.encodeFunctionResult('getApproved', [toBeHex(0n, 20)]);
     }
     if (c.tokens.some(([address]) => address === target)) {
       if (call.from?.toLowerCase() !== mountedOwner.toLowerCase()) throw new Error('Funding read has wrong owner.');
@@ -239,7 +340,7 @@ const send = async (method: string, params: unknown[]) => {
       if (parsed.name === 'balanceOf') {
         if (balanceReadDelay) await new Promise(resolve => setTimeout(resolve, balanceReadDelay));
         if (balanceReadFailure) throw new Error('Test balance read unavailable');
-        return token.encodeFunctionResult('balanceOf(address)', [wide(limitBalances[c.tokens.findIndex(([address])=>address===target)])]);
+        return token.encodeFunctionResult('balanceOf(address)', [balanceCipher(c.tokens.findIndex(([address])=>address===target))]);
       }
       const index = c.tokens.findIndex(([address]) => address === target);
       if (parsed.name === 'allowance') return token.encodeFunctionResult('allowance(address,address)', [[wide(999n), wide(tokenAllowances[index]), wide(888n)]]);
@@ -269,10 +370,10 @@ const send = async (method: string, params: unknown[]) => {
     if (!parsed) throw new Error(`Unknown fixture call ${target}:${call.data.slice(0, 10)}`);
     const name = parsed.name;
     calls.push(name);
-    if(name==='poolPublicState'||name==='poolSnapshot') {
-      if(parsed.args[0]!==poolPositionId||name==='poolSnapshot'&&call.from?.toLowerCase()!==claimOwner)throw new Error('Wrong claim or owner');
-      return name==='poolPublicState'?abi.encodeFunctionResult(name,[[claimStatus,0n,0n,0n,claimRevision,claimOwnership,claimLifecycle,1n,claimContext]]):
-        abi.encodeFunctionResult(name,[claimContext,claimValues.map(v=>[wide(999n),wide(v)])]);
+    if(name==='poolPublicState') {
+      const id=parsed.args[0] as bigint,pinned=Number(BigInt(selector.blockHash));
+      if(!claimPlain.has(id.toString()))throw new Error('Unknown fixture claim');
+      return abi.encodeFunctionResult(name,[[claimWord(id,0,pinned),0n,0n,0n,...[4,5,6,7].map(i=>claimWord(id,i,pinned)),toBeHex(publicContext(id,pinned),32)]]);
     }
     if (['fastPoolQuotePublic', 'cheapAsyncPublic', 'principalReceipt', 'fastPoolPrincipalReceipt'].includes(name)) {
       if (parsed.args[0] !== operationId || operationId === 0n) throw new Error('Fixture operation ID not mined.');
@@ -289,7 +390,7 @@ const send = async (method: string, params: unknown[]) => {
   }
   throw new Error(`Unexpected RPC ${method}`);
 };
-const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: () => ({ aesKey: aes }),
+const newSigner = () => { const wallet = ({ address: owner, getAddress: async () => mountedOwner || owner, getUserOnboardInfo: () => ({ aesKey: aes }),
   signMessage: async () => { inputSignatureRequests++; if (denySignature) throw new Error('Test wallet signature denied.'); return `0x${'44'.repeat(65)}`; },
   encryptValue: async (value: bigint) => { inputSignatureRequests++; return { ciphertext: seal(value), signature: `0x${'44'.repeat(65)}` }; },
   estimateGas: async () => 1_000_000n,
@@ -298,11 +399,13 @@ const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: 
     assertCurrent();
     const parsed = opening.parseTransaction({ data: request.data }) ?? accepts.parseTransaction({ data: request.data }) ?? pools.parseTransaction({ data: request.data }) ?? currentPoolPositionAbi.parseTransaction({data:request.data}) ?? currentPoolNftAbi.parseTransaction({data:request.data}) ?? currentLimitAbi.parseTransaction({data:request.data}) ?? token.parseTransaction({ data: request.data }) ?? currentTokenFundingAbi.parseTransaction({ data: request.data });
     if (!parsed) throw new Error('Unknown fixture transaction.');
-    const name = parsed.name, quote = name.startsWith('quote'), poolPreview = name === 'previewPoolFunding', poolFund = name === 'createPoolPosition',poolManage=name==='managePoolPosition',poolTransfer=name==='safeTransferFrom',limitCreate=name==='createPrivateOrder',limitSnapshot=name==='privateOrderSnapshot',limitClaim=name==='claimPrivateOrderProceeds',limitClose=name==='closePrivateOrder',limitManage=name==='managePrivateOrderStatus';
+    const name = parsed.name, quote = name.startsWith('quote'), poolPreview = name === 'previewPoolFunding', poolFund = name === 'createPoolPosition',poolManage=name==='managePoolPosition',poolSnapshot=name==='poolSnapshot',poolTransfer=name==='safeTransferFrom',limitCreate=name==='createPrivateOrder',limitSnapshot=name==='privateOrderSnapshot',limitClaim=name==='claimPrivateOrderProceeds',limitClose=name==='closePrivateOrder',limitManage=name==='managePrivateOrderStatus';
     const limitPayouts:bigint[]=[], swapLogs: Array<{ address: string; topics: string[]; data: string }> = [];
-    const poolClose=poolManage&&parsed.args[2]===7n,from=mountedOwner,payouts:bigint[]=[],target=request.to??c.core;
+    const from=mountedOwner,target=request.to??c.core,positionLogs:Array<{ address: string; topics: string[]; data: string }>=[];
     const tokenIndex = c.tokens.findIndex(([address]) => address === target.toLowerCase()), faucet = name === 'claimFaucet', approval = name === 'approve' || name === 'increaseAllowance';
     if (request.nonce !== nonce) throw new Error('Nonce changed.');
+    const minedBlock = latestHead() + 1;
+    if (!revertNext && !interrupted) writeBlock = minedBlock;
     signingAttempts++;
     if (interrupted) throw new Error('Test transport interrupted after signing request.');
     const status = revertNext ? 0 : 1;
@@ -333,39 +436,81 @@ const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: 
       if(limitClaim||limitClose){c.tokens.forEach((_,i)=>{const payout=i===(limitDirection?1:0)?(limitClose?limitAmount:0n):limitProceeds;limitPayouts.push(payout);limitBalances[i]+=payout;});limitProceeds=0n;putLimit(c.core,currentLimitMappingSlot(24n,20n)+15n,999n);putLimit(engine,currentLimitMappingSlot(24n,9n)+18n,999n);}
       if(limitClose){limitClosed=true;limitAmount=0n;for(const [address,root]of [[c.core,20n],[engine,9n]]as const)putLimit(address,currentLimitMappingSlot(24n,root),257n);putLimit(engine,currentLimitMappingSlot(limitId,0n),BigInt(owner));putLimit(engine,currentLimitMappingSlot(0n,5n),0n);putLimit(engine,3n,0n);putLimit(nft,currentLimitMappingSlot(limitId,2n),0n);putLimit(nft,currentLimitMappingSlot(limitId,4n),0n);putLimit(nft,currentLimitAddressSlot(owner,3n),0n);writeLimitSnapshot();}
     }else if (status === 1 && poolPreview) {
-      const decoded = AbiCoder.defaultAbiCoder().decode(poolTypes, parsed.args[1]);
+      // Packed build 13 inputs: the spread class, two budgets and five pairs (price, price witness, spread, spread witness, tolerance).
+      if (parsed.args[1] !== 0n) throw new Error('Fixture Pool preview supports a new position only.');
+      const decoded = coder.decode([small, `${large}[2]`, `${large}[5]`], parsed.args[2]);
       const budgets = decoded[1].map((input: { ciphertext: { ciphertextHigh: bigint; ciphertextLow: bigint } }) => decryptUint256(input.ciphertext, aes));
-      const terms = decoded[2].map((input: { ciphertext: bigint }) => decryptUint(input.ciphertext, aes));
+      const terms = decoded[2].flatMap((input: { ciphertext: { ciphertextHigh: bigint; ciphertextLow: bigint } }) => {
+        const value = decryptUint256(input.ciphertext, aes); return [value >> 128n, value & mask128]; });
+      // The price is canonical token1 for each token0. An existing Pool uses its reserve ratio (1 for 2 here).
       const n = poolMode === 0n ? terms[0] : 1n, d = poolMode === 0n ? terms[1] : 2n;
       const used0 = budgets[0] < budgets[1] * d / n ? budgets[0] : budgets[1] * d / n, used1 = used0 * n / d;
-      poolContext = toBeHex(BigInt(head) + 100_000n, 32);
+      poolContext = toBeHex(newContext(), 32); poolMarket = String(parsed.args[0]).toLowerCase();
       const shares = used0;
       poolAmounts = [poolMode, used0, used1, budgets[0] - used0, budgets[1] - used1, shares, shares,
         terms[8], terms[9], decryptUint(decoded[0].ciphertext, aes)];
     } else if (status === 1 && poolFund) {
-      if (parsed.args[0] !== poolContext || !poolAmounts.length) throw new Error('Pool funding did not bind its mined preview.');
-      poolPositionId++;
-      claimStatus=1n;claimRevision=1n;claimOwnership=1n;claimLifecycle=1n;claimOwner=owner;claimContext=toBeHex(BigInt(head)+200_000n,32);
-      claimValues=[poolAmounts[1],poolAmounts[2],poolAmounts[5],poolAmounts[5],0n,0n,0n,0n,0n,poolAmounts[9]];
-    } else if(status===1&&poolTransfer){
-      if(parsed.args[0].toLowerCase()!==claimOwner||parsed.args[2]!==poolPositionId)throw new Error('Wrong NFT transfer owner');
-      claimOwner=parsed.args[1].toLowerCase();claimStatus=3n;claimRevision++;claimOwnership++;claimLifecycle++;claimContext=toBeHex(BigInt(head)+300_000n,32);
-    } else if(status===1&&poolManage) {
-      if(parsed.args[0]!==poolPositionId||parsed.args[1]!==claimContext||from.toLowerCase()!==claimOwner)throw new Error('Wrong Pool claim or context');
-      const action=parsed.args[2];
-      if(action===1n||action===7n){
-        const decoded=AbiCoder.defaultAbiCoder().decode(action===1n?[`${small}[2]`,`${large}[2]`]:[`${large}[2]`],parsed.args[3]);
-        const fraction=action===1n?decoded[0].map((input:{ciphertext:bigint})=>decryptUint(input.ciphertext,aes)):[1n,1n];
-        const removed=claimValues[2]*fraction[0]/fraction[1];
-        payouts.push(...claimValues.slice(0,2).map(value=>value*removed/claimValues[2]));
-        const minimums=decoded[action===1n?1:0].map((input:{ciphertext:{ciphertextHigh:bigint;ciphertextLow:bigint}})=>decryptUint256(input.ciphertext,aes));
-        if(minimums.some((value:bigint,i:number)=>value>payouts[i]))throw new Error('Private minimum payout rejected');
-        claimValues[2]-=removed;claimValues[3]-=removed;
-        if(action===7n){claimStatus=4n;claimLifecycle++;}else{claimValues[0]-=payouts[0];claimValues[1]-=payouts[1];}
-      }else if(action===6n){if(claimStatus!==3n)throw new Error('Wrong activation status');claimStatus=2n;claimLifecycle++;}
-      else if(action===5n){if(claimStatus!==2n)throw new Error('Wrong resume status');claimStatus=1n;claimLifecycle++;}
-      else throw new Error('Wrong owner action');
-      claimRevision++;claimContext=toBeHex(BigInt(head)+300_000n,32);
+      if (String(parsed.args[0]).toLowerCase() !== poolMarket || parsed.args[1] !== poolContext || !poolAmounts.length) throw new Error('Pool funding did not bind its mined preview.');
+      const pair = c.pairs.find(row => row.marketId === poolMarket)!, indexes = pair.tokens.map(address => c.tokens.findIndex(([token]) => token === address));
+      if (indexes.some((index, i) => tokenAllowances[index] < poolAmounts[i + 1] || limitBalances[index] < poolAmounts[i + 1])) throw new Error('Pool funding exceeds a balance or allowance.');
+      poolPositionId = wordAt(c.core, 11n)! + 1n; putWord(c.core, 11n, poolPositionId);
+      createClaim(poolMarket, poolPositionId, from, [poolAmounts[1], poolAmounts[2], poolAmounts[5], poolAmounts[5] + (poolMode === 0n ? 0n : 200n), 0n, 0n, 0n, 0n, 0n, poolAmounts[9]]);
+      touchAnchors(poolMarket);
+      indexes.forEach((index, i) => { limitBalances[index] -= poolAmounts[i + 1]; tokenAllowances[index] -= poolAmounts[i + 1]; });
+    } else if (status === 1 && poolSnapshot) {
+      const id = parsed.args[0] as bigint, plain = claimPlain.get(id.toString()), closed = claimWord(id, 0) === 4n;
+      if (!plain || claimWord(id, 0) === 3n || (closed ? toBeHex(claimWord(id, 12), 20) : nftOwnerOf(id)) !== from.toLowerCase()) throw new Error('Wrong claim or owner');
+      // A closed claim keeps its context and system words; only the owner envelopes are written again.
+      if (closed) plain.forEach((value, i) => wide(value + (badClaimSnapshot && i === 0 ? 1n : 0n)).forEach((word, j) => setClaim(id, 16 + i * 4 + j, word)));
+      else sealClaim(id, plain);
+      positionLogs.push({ address: c.core, ...snapshotEvents.encodeEventLog(snapshotEvents.getEvent('PoolSnapshotRefreshed')!, [id, toBeHex(claimWord(id, 13), 32), claimEnvelopes(id)]) });
+    } else if (status === 1 && poolTransfer) {
+      const id = parsed.args[2] as bigint;
+      if (!claimPlain.has(id.toString()) || parsed.args[0].toLowerCase() !== from.toLowerCase() || nftOwnerOf(id) !== from.toLowerCase()) throw new Error('Wrong NFT transfer owner');
+      // A transfer keeps the economic state; the recipient has no owner envelopes until privacy activation.
+      setNftOwner(id, parsed.args[1].toLowerCase()); setClaim(id, 0, 3n); [4, 5, 6].forEach(index => setClaim(id, index, claimWord(id, index) + 1n)); clearClaimEnvelopes(id);
+      positionLogs.push({ address: nft, ...mint.encodeEventLog(mint.getEvent('Transfer')!, [from, parsed.args[1], id]) });
+    } else if (status === 1 && poolManage) {
+      const id = parsed.args[0] as bigint, action = parsed.args[2] as bigint, plain = claimPlain.get(id.toString());
+      if (!plain || nftOwnerOf(id) !== from.toLowerCase() || BigInt(parsed.args[1]) !== publicContext(id)) throw new Error('Wrong Pool claim or context');
+      const market = marketOf(id), pair = c.pairs.find(row => row.marketId === market)!, bump = (index: number) => setClaim(id, index, claimWord(id, index) + 1n);
+      const minimumsOf = (inputs: Array<{ ciphertext: { ciphertextHigh: bigint; ciphertextLow: bigint } }>) => inputs.map(input => decryptUint256(input.ciphertext, aes));
+      const pay = (amounts: bigint[], minimums: bigint[]) => {
+        if (minimums.some((value, i) => value > amounts[i])) throw new Error('Private minimum payout rejected');
+        pair.tokens.forEach((address, i) => { limitBalances[c.tokens.findIndex(([token]) => token === address)] += amounts[i];
+          positionLogs.push(transferLog(address, c.core, from, 999n, amounts[i] + (badPoolDebit ? 1n : 0n))); });
+        touchAnchors(market);
+      };
+      if (action === 11n) {
+        // Exit preview: no storage write. Its context commits to the reserve words that the production codec reads.
+        const fraction = decryptUint256(coder.decode([large], parsed.args[3])[0].ciphertext, aes), n = fraction >> 128n, d = fraction & mask128, burned = plain[2] * n / d;
+        const base = slotOf(market, 1n, 'bytes32'), words = (start: bigint, count: number) => Array.from({ length: count }, (_, i) => toBeHex(wordAt(c.core, start + BigInt(i)) ?? 0n, 32));
+        const marketWords = words(base, 71), anchors = Array.from({ length: 7 }, (_, j) => words(claimBase(market, BigInt(marketWords[18 + j])), 64));
+        exitPreview = { id: id.toString(), values: [plain[0] * n / d, plain[1] * n / d, burned, plain[2] - burned, n, d],
+          context: computePoolExitPreviewContext(request.data, { chainId: 7082400n, core: c.core, releaseId: c.releaseId, marketId: market, owner: from, marketWords, anchors }, true) };
+        positionLogs.push({ address: c.core, ...exitEvents.encodeEventLog(exitEvents.getEvent('PoolExitPreviewed')!, [id, exitPreview.context, exitPreview.values.map(wide)]) });
+      } else if (action === 12n) {
+        const decoded = coder.decode(['bytes32', large, `${large}[2]`], parsed.args[3]);
+        if (claimWord(id, 0) !== 1n || !exitPreview || exitPreview.id !== id.toString() || decoded[0] !== exitPreview.context) throw new Error('Withdrawal differs from its exit preview');
+        const [amount0, amount1, burned, remaining] = exitPreview.values;
+        pay([amount0, amount1], minimumsOf(decoded[2]));
+        claimPlain.set(id.toString(), [plain[0] - amount0, plain[1] - amount1, remaining, plain[3] - burned, 0n, 0n, 0n, 0n, 0n, plain[9]]);
+        bump(4); setClaim(id, 13, newContext()); exitPreview = null;
+      } else if (action === 7n) {
+        if (![1n, 2n].includes(claimWord(id, 0))) throw new Error('Wrong close status');
+        pay([plain[0], plain[1]], minimumsOf(coder.decode([`${large}[2]`], parsed.args[3])[0]));
+        // A closed claim keeps its last total shares and holds the exact payouts.
+        claimPlain.set(id.toString(), [plain[0], plain[1], 0n, plain[3], 0n, 0n, 0n, 0n, 0n, plain[9]]);
+        setClaim(id, 0, 4n); bump(4); bump(6); setClaim(id, 12, BigInt(from)); setClaim(id, 60, claimWord(id, 22)); setClaim(id, 61, claimWord(id, 23));
+        setNftOwner(id, toBeHex(0n, 20));
+        positionLogs.push({ address: nft, ...mint.encodeEventLog(mint.getEvent('Transfer')!, [from, toBeHex(0n, 20), id]) });
+      } else if (action === 6n) {
+        if (claimWord(id, 0) !== 3n) throw new Error('Wrong activation status');
+        setClaim(id, 0, 2n); bump(4); bump(6); sealClaim(id, plain);
+      } else if (action === 5n) {
+        if (claimWord(id, 0) !== 2n) throw new Error('Wrong resume status');
+        setClaim(id, 0, 1n); bump(4); bump(6);
+      } else throw new Error('Wrong owner action');
     } else if (status === 1 && quote) {
       profile = name === 'quoteFastPoolV1' || name === 'quoteFastPool' ? 'fast-pool' : 'cheap-async';
       const terms = profile === 'cheap-async' ? parsed.args[0] : parsed.args;
@@ -387,7 +532,7 @@ const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: 
       if (stage === FUNDED) fundedBlock = latestHead() + 1;
       if (profile === 'cheap-async') swapLogs.push(advancedLog());
     }
-    head = latestHead() + 1; blockTimes.set(head, seconds() - 1);
+    head = minedBlock; blockTimes.set(head, seconds() - 1); writeBlock = head;
     const hash = toBeHex(BigInt(head), 32), minedHash = blockHash(head);
     blockTransactions.set(head, hash);
     const event = status === 0 ? null : poolPreview ? pools.encodeEventLog(pools.getEvent('PoolFundingPreviewed')!, [0n, poolContext, poolAmounts.map(wide)]) :
@@ -396,14 +541,9 @@ const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: 
     const poolLogs = status === 1 && poolFund ? [
       { address: c.core, ...claim.encodeEventLog(claim.getEvent('SharedClaimCreated')!, [poolPositionId]) },
       { address: nft, ...mint.encodeEventLog(mint.getEvent('Transfer')!, [toBeHex(0n, 20), owner, poolPositionId]) },
-      ...CURRENT_CHEAP_POOL_TOKENS.map(([address], index) => ({ address,
+      ...c.pairs.find(row => row.marketId === poolMarket)!.tokens.map((address, index) => ({ address,
         ...debit.encodeEventLog(debit.getEvent('Transfer')!, [owner, c.core, wide(poolAmounts[index + 1] + (badPoolDebit ? 1n : 0n)), wide(poolAmounts[index + 1])]) }))
     ] : [];
-    const closeLogs=status===1&&(poolManage||poolTransfer)?[
-      ...(poolClose||poolTransfer?[{address:nft,...mint.encodeEventLog(mint.getEvent('Transfer')!,[from,poolClose?toBeHex(0n,20):claimOwner,poolPositionId])}]:[]),
-      ...payouts.map((value,index)=>({address:CURRENT_CHEAP_POOL_TOKENS[index][0],...debit.encodeEventLog(debit.getEvent('Transfer')!,
-        [c.core,from,wide(value),wide(value+(badPoolDebit?1n:0n))])}))
-    ]:[];
     const limitLogs=status===1&&limitCreate?[
       {address:c.core,...currentLimitAbi.encodeEventLog(currentLimitAbi.getEvent('FixedPositionCreated')!,[limitId])},
       {address:nft,...mint.encodeEventLog(mint.getEvent('Transfer')!,[toBeHex(0n,20),owner,limitId])},
@@ -419,7 +559,7 @@ const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: 
       { address: target, ...token.encodeEventLog(token.getEvent('FaucetClaimed')!, [from]) }
     ] : approval ? [{ address: target, ...token.encodeEventLog(token.getEvent('Approval')!, [from, c.core, wide(tokenAllowances[tokenIndex]), wide(999n)]) }] : [];
     txs.set(hash, tx); mined.set(hash, { hash, status, from, to: target, blockNumber: head, blockHash: minedHash,
-      logs: faucet||approval?fundingLogs:limitCreate||limitClaim||limitClose?limitLogs:limitSnapshot||limitManage?[]:poolManage||poolTransfer ? closeLogs : poolFund ? poolLogs : event ? [{ address: c.core, ...event }] : swapLogs });
+      logs: faucet||approval?fundingLogs:limitCreate||limitClaim||limitClose?limitLogs:limitSnapshot||limitManage?[]:poolManage||poolTransfer||poolSnapshot ? positionLogs : poolFund ? poolLogs : event ? [{ address: c.core, ...event }] : swapLogs });
     sends.push({ name, operationId: operationId.toString(), nonce, gasLimit: request.gasLimit.toString(), data: request.data });
     nonce++;
     return tx;
@@ -441,13 +581,13 @@ const readProvider = { send, getTransaction: async (hash: string) => {
     return tx && wrongWalletResponseNonce ? { ...tx, nonce: (tx.nonce as number) + 1 } : tx;
   },
   getLogs: async (filter: { address?: string; fromBlock: bigint | number; toBlock: bigint | number; topics?: Array<string | null> }) =>
-    [...mined.values()].filter(receipt => receiptAvailable && BigInt(receipt.blockNumber as number) >= BigInt(filter.fromBlock) && BigInt(receipt.blockNumber as number) <= BigInt(filter.toBlock))
+    [...mined.values()].filter(receipt => receiptVisible(receipt) && BigInt(receipt.blockNumber as number) >= BigInt(filter.fromBlock) && BigInt(receipt.blockNumber as number) <= BigInt(filter.toBlock))
       .flatMap(receipt => (receipt.logs as Array<{ address: string; topics: string[]; data: string }>).map((log, index) => ({ ...log, index, removed: false,
         transactionHash: receipt.hash as string, blockNumber: receipt.blockNumber as number, blockHash: receipt.blockHash as string })))
       .filter(log => (!filter.address || log.address.toLowerCase() === filter.address.toLowerCase()) &&
         (filter.topics ?? []).every((topic, index) => topic === null || log.topics[index]?.toLowerCase() === topic.toLowerCase())),
-  getTransactionReceipt: async (hash: string) => receiptAvailable ? providerReceipt(hash) : null,
-  waitForTransaction: async (hash: string) => waitReceipt && receiptAvailable ? providerReceipt(hash) : null };
+  getTransactionReceipt: async (hash: string) => receiptVisible(mined.get(hash)) ? providerReceipt(hash) : null,
+  waitForTransaction: async (hash: string) => waitReceipt && receiptVisible(mined.get(hash)) ? providerReceipt(hash) : null };
 const host = document.getElementById('root')!, root = createRoot(host);
 const browserProvider = { request: ({ method, params }: { method: string; params?: unknown[] }) => send(method, params ?? []) };
 let mountedOwner = owner, priceDisplayInverted = false;
@@ -502,11 +642,11 @@ const control = {
     pendingRecords()!.setItem(PENDING_KEY, JSON.stringify({ ...saved, ...patch }));
     return saved as Record<string, unknown>;
   },
-  set: (next: { ready?: boolean; receiptAvailable?: boolean; waitReceipt?: boolean; interrupted?: boolean; corruptPayout?: boolean;
+  set: (next: { ready?: boolean; receiptAvailable?: boolean; hideNewReceipts?: boolean; waitReceipt?: boolean; interrupted?: boolean; corruptPayout?: boolean;
     graphDrift?: boolean; gasLimit?: string; wallet?: string; revoked?: boolean; contextDrift?: boolean;
     nextOperationId?: string; issueLogs?: 'missing' | 'duplicate' | 'forged'; settled?: boolean;
     revertNext?: boolean; quoteAmountDrift?: boolean; belowMinimumFill?: boolean; connected?: boolean; adverseDelivery?: boolean;
-    poolMode?: 'initialize' | 'add'; badPoolDebit?: boolean; denySignature?: boolean;badLimitTerms?:boolean;badLimitPayout?:boolean;recipientCode?:string;claimContextDrift?:boolean; badFundingCredit?: boolean;
+    poolMode?: 'initialize' | 'add'; badPoolDebit?: boolean; denySignature?: boolean;badLimitTerms?:boolean;badLimitPayout?:boolean;recipientCode?:string;claimContextDrift?:boolean;badClaimSnapshot?:boolean; badFundingCredit?: boolean;
     priceDisplayInverted?: boolean; balances?: string[]; balanceReadFailure?: boolean; balanceReadDelay?: number; privacyUnlocked?: boolean; wrongWalletResponseNonce?: boolean; missingWalletChainId?: boolean; delayedTransactionVisibility?: boolean }) => {
     if (next.priceDisplayInverted !== undefined) { priceDisplayInverted = next.priceDisplayInverted; render(); }
     if (next.delayedTransactionVisibility !== undefined) delayedTransactionVisibility = next.delayedTransactionVisibility;
@@ -519,12 +659,14 @@ const control = {
     if (next.badFundingCredit !== undefined) badFundingCredit = next.badFundingCredit;
     if(next.badLimitPayout!==undefined)badLimitPayout=next.badLimitPayout;
     if(next.recipientCode!==undefined)recipientCode=next.recipientCode;
-    if(next.claimContextDrift)claimContext=toBeHex(BigInt(head)+999_000n,32);
+    if(next.claimContextDrift){writeBlock=latestHead();setClaim(81n,13,newContext());}
+    if(next.badClaimSnapshot!==undefined)badClaimSnapshot=next.badClaimSnapshot;
     if(next.badLimitTerms!==undefined)badLimitTerms=next.badLimitTerms;
     if (next.denySignature !== undefined) denySignature = next.denySignature;
     if (next.poolMode !== undefined) poolMode = next.poolMode === 'initialize' ? 0n : 1n;
     if (next.badPoolDebit !== undefined) badPoolDebit = next.badPoolDebit;
     if (next.receiptAvailable !== undefined) receiptAvailable = next.receiptAvailable;
+    if (next.hideNewReceipts !== undefined) hiddenFromBlock = next.hideNewReceipts ? latestHead() + 1 : Number.MAX_SAFE_INTEGER;
     if (next.waitReceipt !== undefined) waitReceipt = next.waitReceipt;
     if (next.interrupted !== undefined) interrupted = next.interrupted;
     if (next.corruptPayout !== undefined) corruptPayout = next.corruptPayout;
@@ -551,7 +693,7 @@ const control = {
   },
   // Only the fake chain ledger survives an actual page reload; no prepared/issued app objects or signer are transferred.
   exportChain: () => JSON.stringify({ blockTimes: [...blockTimes], blockTransactions: [...blockTransactions], head, stage, deadline, context, profile, nonce, operationId, nextOperationId, operationTokens, fundedBlock, refundOnly, operationMaximum,
-    sends, signingAttempts, tokenAllowances, tokenClaimed, claimStatus,claimRevision,claimOwnership,claimLifecycle,claimOwner,claimContext,claimValues,poolPositionId,limitId,limitDirection,limitAmount,limitTerms,limitProceeds,limitClosed,limitBalances,limitWords:[...limitWords], txs: [...txs], mined: [...mined] }, (_key, value) =>
+    sends, signingAttempts, tokenAllowances, tokenClaimed, claimStatus,claimRevision,claimOwnership,claimLifecycle,claimOwner,claimContext,claimValues,poolPositionId,limitId,limitDirection,limitAmount,limitTerms,limitProceeds,limitClosed,limitBalances,limitWords:[...limitWords], storage: [...storage], accountWrites: [...accountWrites], claimPlain: [...claimPlain], exitPreview, writeBlock, contextSequence, poolMarket, poolContext, poolAmounts, txs: [...txs], mined: [...mined] }, (_key, value) =>
     typeof value === 'bigint' ? { __testBigInt: value.toString() } : value),
   restoreChain: (raw: string) => {
     const saved = JSON.parse(raw, (_key, value) => value?.__testBigInt !== undefined ? BigInt(value.__testBigInt) : value);
@@ -560,6 +702,8 @@ const control = {
     if(saved.claimValues)({claimStatus,claimRevision,claimOwnership,claimLifecycle,claimOwner,claimContext,claimValues,poolPositionId}=saved);
     if(saved.limitWords){({limitId,limitDirection,limitAmount,limitTerms}=saved);({limitProceeds,limitClosed,limitBalances}=saved);limitWords=new Map(saved.limitWords);}
     if (saved.tokenAllowances) ({ tokenAllowances, tokenClaimed } = saved);
+    if (saved.storage) { storage = new Map(saved.storage); accountWrites = new Map(saved.accountWrites); claimPlain = new Map(saved.claimPlain);
+      ({ writeBlock, contextSequence, poolMarket, poolContext, poolAmounts, exitPreview } = saved); }
     blockTimes.clear(); blockTransactions.clear();
     for (const [number, time] of saved.blockTimes ?? []) blockTimes.set(number, time);
     for (const [number, hash] of saved.blockTransactions ?? []) blockTransactions.set(number, hash);

@@ -7,7 +7,7 @@ type Control = {
     limit:{id:string;unspent:string;proceeds:string;closed:boolean;balances:string[];status:string;coreLifecycle:string;engineLifecycle:string} };
   seedLimit(direction?:boolean):void;
   seedFunding(): void;
-  set(next: { ready?: boolean; receiptAvailable?: boolean; waitReceipt?: boolean; interrupted?: boolean; corruptPayout?: boolean;
+  set(next: { ready?: boolean; receiptAvailable?: boolean; hideNewReceipts?: boolean; waitReceipt?: boolean; interrupted?: boolean; corruptPayout?: boolean;
     graphDrift?: boolean; gasLimit?: string; wallet?: string; revoked?: boolean; contextDrift?: boolean;
     nextOperationId?: string; issueLogs?: 'missing' | 'duplicate' | 'forged'; settled?: boolean;
     revertNext?: boolean; quoteAmountDrift?: boolean; belowMinimumFill?: boolean; connected?: boolean;
@@ -156,21 +156,43 @@ test('initial connection does not mask invalid Quote input as a wallet change', 
 });
 
 async function poolPreview(page: Page) {
-  await page.locator('button:visible').filter({ hasText: /^Strategies$/ }).first().click();
-  const pool = page.getByRole('region', { name: 'Current private Pool creation', exact: true });
-  await expect(pool).toBeVisible();
-  await pool.getByLabel('Pool starting price', { exact: true }).fill('0.5');
-  await pool.getByLabel('Test token 1 Pool budget', { exact: true }).fill('240');
-  await pool.getByLabel('Test token 0 Pool budget', { exact: true }).fill('100');
-  await pool.getByRole('button', { name: 'Get private Pool preview', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Confirm private Pool inputs', exact: true });
-  await expect(dialog).toBeVisible();
+  const pool = await poolForm(page);
   expect((await control(page).snapshot()).sends).toHaveLength(0);
-  await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(pool.getByRole('status')).toContainText('Pool preview submitted');
-  await pool.getByRole('button', { name: 'Check Pool status', exact: true }).click();
+  // The current App has no "Confirm private Pool inputs" window (owner decision 2026-11-17): Preview deposit
+  // starts the eight private-input signatures and the preview send, then verifies the private preview itself.
+  await pool.getByRole('button', { name: 'Preview deposit', exact: true }).click();
+  await expect(poolStatus(pool)).toHaveText('Private Pool preview verified. Review the exact debit before funding.');
   await expect(pool.getByLabel('Authenticated Pool preview')).toBeVisible();
+  expect((await control(page).snapshot()).sends.map(row => row.name)).toEqual(['previewPoolFunding']);
   return pool;
+}
+// The Pool is under "Liquidity". The canonical Pool order of the default market is HBR, then BCN.
+// The budgets are 240 and 100 raw units; two amounts with no price fill the price (2.4 HBR for each BCN).
+const openLiquidity = (page: Page) => page.locator('button:visible').filter({ hasText: /^Liquidity$/ }).first().click();
+const poolRegion = (page: Page) => page.getByRole('region', { name: 'Current private Pool creation', exact: true });
+const poolStatus = (pool: Swap) => pool.locator('p.dex-v2-activation-note[role=status]');
+async function poolForm(page: Page) {
+  await openLiquidity(page);
+  const pool = poolRegion(page);
+  await expect(pool).toBeVisible();
+  await pool.getByLabel('HBR Pool budget', { exact: true }).fill('0.00024');
+  await pool.getByLabel('BCN Pool budget', { exact: true }).fill('0.0001');
+  await expect(pool.getByLabel('Pool starting price', { exact: true })).toHaveValue('2.4');
+  return pool;
+}
+// Opens the funding review of a verified preview, confirms it and waits for the allowance check.
+// The default Core allowance (1000 raw units) covers both debits, so no approval is sent.
+async function poolFundingReview(page: Page, pool: Swap, title = 'Initialize this Pool') {
+  await pool.getByRole('button', { name: 'Review funding', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: title, exact: true });
+  await expect(confirmation).toBeVisible();
+  return confirmation;
+}
+async function poolFundingReady(page: Page, pool: Swap, title = 'Initialize this Pool') {
+  const sends = (await control(page).snapshot()).sends.length;
+  await (await poolFundingReview(page, pool, title)).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(poolStatus(pool)).toHaveText('Both token approvals are ready. Select Review and fund Pool to deposit.');
+  expect((await control(page).snapshot()).sends).toHaveLength(sends);
 }
 
 for (const width of [1440, 390]) test(`direction-aware price and percentage fill at ${width}px`, async ({ page }, info) => {
@@ -492,7 +514,7 @@ test('Limit owner browser known private payout failure keeps pending and all fun
 });
 
 for (const [mode, viewport] of [['initialize', { width: 1440, height: 1000 }], ['add', { width: 390, height: 844 }]] as const) {
-  test(`current Pool ${mode} preview and exact funding mint a verified NFT`, async ({ page }) => {
+  test(`current Pool ${mode} preview and exact funding mint a verified NFT`, async ({ page }, info) => {
     await page.setViewportSize(viewport);
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -502,29 +524,38 @@ for (const [mode, viewport] of [['initialize', { width: 1440, height: 1000 }], [
     expect(page.url()).toContain('/dex');
     await expect(page.locator('vite-error-overlay')).toHaveCount(0);
     const preview = pool.getByLabel('Authenticated Pool preview');
-    await expect(preview).toContainText(mode === 'initialize' ? 'Initialize this Pool' : 'Add to this Pool');
-    await expect(preview).toContainText('Test token 1 debit200 atoms');
-    await expect(preview).toContainText('Test token 0 debit100 atoms');
-    await expect(preview).toContainText('Test token 1 left in wallet40 atoms');
-    await expect(pool.getByLabel('Pool spread')).toHaveValue('1');
-    expect(await pool.getByLabel('Pool spread').locator('option').allTextContents()).toEqual(['0.1%', '0.3%', '0.5%', '1%', '2%', '5%', '10%']);
-    await preview.screenshot({ path: `C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/current-pool-${mode}-preview.png` });
+    const title = mode === 'initialize' ? 'Initialize this Pool' : 'Add to this Pool';
+    await expect(preview).toContainText(title);
+    // A new Pool takes the entered price: both budgets fit. An existing Pool uses its reserve ratio
+    // (2 HBR for each BCN in the fixture), so 40 raw units of HBR stay in the wallet.
+    await expect(preview).toContainText(mode === 'initialize' ? 'HBR debit0.00024' : 'HBR debit0.0002');
+    await expect(preview).toContainText('BCN debit0.0001');
+    if (mode === 'add') await expect(preview).toContainText('HBR unused0.00004');
+    else await expect(preview).not.toContainText('unused');
+    await expect(pool.getByLabel('Pool spread', { exact: true })).toHaveValue('1');
+    expect(await pool.getByLabel('Pool spread', { exact: true }).locator('option').allTextContents()).toEqual(['0.1%', '0.3%', '0.5%', '1%', '2%', '5%', '10%']);
+    await preview.screenshot({ path: info.outputPath(`current-pool-${mode}-preview.png`) });
     const before = await control(page).snapshot();
-    await pool.getByRole('button', { name: 'Review and fund Pool', exact: true }).click();
-    const confirmation = page.getByRole('dialog', { name: mode === 'initialize' ? 'Initialize this Pool' : 'Add to this Pool', exact: true });
-    await expect(confirmation).toBeVisible();
+    const confirmation = await poolFundingReview(page, pool, title);
+    await expect(confirmation).toContainText(mode === 'initialize' ? 'HBR debit0.00024' : 'HBR debit0.0002');
+    await expect(confirmation).toContainText(mode === 'initialize' ? 'HBR unused from entered budget0.0' : 'HBR unused from entered budget0.00004');
     expect((await control(page).snapshot()).sends).toHaveLength(before.sends.length);
     await confirmation.getByRole('button', { name: 'Continue', exact: true }).click();
-    await expect(pool.getByRole('status')).toContainText('Pool funding submitted');
-    await pool.getByRole('button', { name: 'Check Pool status', exact: true }).click();
-    await expect(pool.getByRole('status')).toContainText('Position NFT 82 minted. Both private token debits are verified.');
+    await expect(poolStatus(pool)).toHaveText('Both token approvals are ready. Select Review and fund Pool to deposit.');
+    expect((await control(page).snapshot()).sends).toHaveLength(before.sends.length);
+    // The funding review is the consent for the deposit: "Review and fund Pool" sends it and the App verifies the result.
+    await pool.getByRole('button', { name: 'Review and fund Pool', exact: true }).click();
+    await expect(poolStatus(pool)).toHaveText('Position NFT 82 minted. Both private token debits are verified.');
+    await expect(pool).toContainText('Verified position NFT ID: 82.');
     const result = await control(page).snapshot();
     expect(result.sends.map(row => row.name)).toEqual(['previewPoolFunding', 'createPoolPosition']);
     expect(result.sends.map(row => row.gasLimit)).toEqual(['100000000', '100000000']);
     expect(result.pending).toBeNull();
+    // Exact accounting: the wallet balances (BCN, HBR) fall by the two debits only.
+    expect(result.limit.balances.slice(0, 2)).toEqual(mode === 'initialize' ? ['900', '760'] : ['900', '800']);
     expect(errors).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: `C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/current-pool-${mode}.png` });
+    await page.screenshot({ path: info.outputPath(`current-pool-${mode}.png`) });
   });
 }
 
@@ -532,27 +563,42 @@ for (const fault of ['terms', 'owner', 'pending', 'graph', 'debit'] as const) {
   test(`current Pool ${fault} drift cannot reuse a private preview or claim an NFT result`, async ({ page }) => {
     const pool = await poolPreview(page);
     if (fault === 'terms') {
+      await pool.locator('details.dex-v2-pool-settings > summary').click();
       await pool.getByLabel('Pool funding tolerance', { exact: true }).fill('2');
-      await expect(pool.getByRole('button', { name: 'Review and fund Pool', exact: true })).toBeDisabled();
+      // A changed term removes the funding action; only a new preview is available.
+      await expect(pool.getByRole('button', { name: 'Review funding', exact: true })).toHaveCount(0);
+      await expect(pool.getByRole('button', { name: 'Review and fund Pool', exact: true })).toHaveCount(0);
       await expect(pool.getByRole('alert')).toContainText('terms or wallet session changed');
     } else if (fault === 'owner') {
       await control(page).set({ wallet: `0x${'33'.repeat(20)}`, revoked: true });
-      await expect(pool.getByRole('button', { name: 'Review and fund Pool', exact: true })).toBeDisabled();
+      await expect(pool.getByRole('button', { name: 'Review funding', exact: true })).toHaveCount(0);
+      await expect(pool.getByRole('button', { name: 'Review and fund Pool', exact: true })).toHaveCount(0);
       await expect(pool.getByLabel('Authenticated Pool preview')).toHaveCount(0);
+    } else if (fault === 'graph') {
+      await control(page).set({ graphDrift: true });
+      // The funding review reads the candidate again after the owner confirms; a changed runtime stops before any deposit.
+      await (await poolFundingReview(page, pool)).getByRole('button', { name: 'Continue', exact: true }).click();
+      await expect(poolStatus(pool)).toContainText('runtime hash differs');
+      await expect(pool.getByRole('button', { name: 'Review and fund Pool', exact: true })).toHaveCount(0);
     } else {
-      if (fault === 'graph') await control(page).set({ graphDrift: true });
+      await poolFundingReady(page, pool);
       if (fault === 'pending') await control(page).set({ interrupted: true });
       if (fault === 'debit') await control(page).set({ badPoolDebit: true });
       await pool.getByRole('button', { name: 'Review and fund Pool', exact: true }).click();
-      if (fault !== 'graph') await page.getByRole('dialog', { name: 'Initialize this Pool', exact: true })
-        .getByRole('button', { name: 'Continue', exact: true }).click();
-      await expect(pool.getByRole('status')).toContainText(fault === 'graph' ? 'runtime hash differs' : fault === 'pending' ? 'interrupted' : 'funding submitted');
-      await pool.getByRole('button', { name: 'Check Pool status', exact: true }).click();
       if (fault === 'pending') {
-        await expect(pool.getByRole('status')).toContainText('Do not resend');
-        await expect(pool.getByRole('button', { name: 'Get private Pool preview', exact: true })).toBeDisabled();
+        await expect(poolStatus(pool)).toContainText('interrupted');
+        await pool.getByRole('button', { name: 'Check Pool status', exact: true }).click();
+        await expect(poolStatus(pool)).toContainText('Do not resend');
+        await expect(pool.getByRole('button', { name: 'Review and fund Pool', exact: true })).toBeDisabled();
+        expect((await control(page).snapshot()).pending).not.toBeNull();
+      } else {
+        await expect(poolStatus(pool)).toContainText('Pool funding debit differs from its confirmed preview.');
+        await pool.getByRole('button', { name: 'Check Pool status', exact: true }).click();
+        await expect(poolStatus(pool)).toContainText('Known Pool verification failure. Manual reconciliation is required.');
+        expect((await control(page).snapshot()).pending).not.toBeNull();
       }
-      await expect(pool.getByRole('status')).not.toContainText('NFT 82 minted');
+      await expect(poolStatus(pool)).not.toContainText('NFT 82 minted');
+      await expect(pool).not.toContainText('Verified position NFT ID');
     }
     expect((await control(page).snapshot()).sends.length).toBe(fault === 'debit' ? 2 : 1);
   });
@@ -560,43 +606,44 @@ for (const fault of ['terms', 'owner', 'pending', 'graph', 'debit'] as const) {
 
 test('current Pool denied signature sends nothing and status refresh permits a fresh preview', async ({ page }) => {
   await control(page).set({ denySignature: true });
-  await page.locator('button:visible').filter({ hasText: /^Strategies$/ }).first().click();
-  const pool = page.getByRole('region', { name: 'Current private Pool creation', exact: true });
-  await pool.getByLabel('Pool starting price').fill('0.5');
-  await pool.getByLabel('Test token 1 Pool budget').fill('240');
-  await pool.getByLabel('Test token 0 Pool budget').fill('100');
-  await pool.getByRole('button', { name: 'Get private Pool preview', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Confirm private Pool inputs' }).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(pool.getByRole('status')).toContainText('signature denied');
+  const pool = await poolForm(page);
+  await pool.getByRole('button', { name: 'Preview deposit', exact: true }).click();
+  await expect(poolStatus(pool)).toContainText('signature denied');
   expect((await control(page).snapshot()).sends).toHaveLength(0);
   await pool.getByRole('button', { name: 'Check Pool status', exact: true }).click();
-  await expect(pool.getByRole('status')).toContainText('No pending Pool attempt');
-  await expect(pool.getByRole('button', { name: 'Get private Pool preview', exact: true })).toBeEnabled();
+  await expect(poolStatus(pool)).toContainText('No pending Pool attempt');
+  await expect(pool.getByRole('button', { name: 'Preview deposit', exact: true })).toBeEnabled();
+  expect((await control(page).snapshot()).pending).toBeNull();
 });
 
 test('current Pool reconnect cannot restore a prepared private preview', async ({ page }) => {
   await poolPreview(page);
-  await page.evaluate(() => (window as unknown as { __currentJourney: Control }).__currentJourney.remount());
-  await page.locator('button:visible').filter({ hasText: /^Strategies$/ }).first().click();
-  const pool = page.getByRole('region', { name: 'Current private Pool creation', exact: true });
+  await remount(page);
+  await openLiquidity(page);
+  const pool = poolRegion(page);
+  await expect(pool).toBeVisible();
   await expect(pool.getByLabel('Authenticated Pool preview')).toHaveCount(0);
+  await expect(pool.getByRole('button', { name: 'Review funding', exact: true })).toHaveCount(0);
   await expect(pool.getByRole('button', { name: 'Review and fund Pool', exact: true })).toHaveCount(0);
   expect((await control(page).snapshot()).sends).toHaveLength(1);
 });
 
 test('current Pool pending funding survives reload without private funding or NFT authority', async ({ page }) => {
+  await page.clock.install();
   const pool = await poolPreview(page);
+  await poolFundingReady(page, pool);
+  // With no receipt of the deposit the App waits 60 s, then keeps the deposit pending.
+  await control(page).set({ hideNewReceipts: true });
   await pool.getByRole('button', { name: 'Review and fund Pool', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Initialize this Pool' }).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(pool.getByRole('status')).toContainText('funding submitted');
+  await expect(poolStatus(pool)).toHaveText('Pool funding submitted. Checking the private debits and minted NFT.');
+  await passReceiptWait(page);
+  await expect(poolStatus(pool)).toHaveText('Pool transaction is pending. Check Pool status; do not resend.');
   expect((await control(page).snapshot()).pending).not.toBeNull();
-  const ledger = await page.evaluate(() => (window as unknown as { __currentJourney: Control }).__currentJourney.exportChain());
-  await page.reload();
-  await page.evaluate(raw => (window as unknown as { __currentJourney: Control }).__currentJourney.restoreChain(raw), ledger);
-  await page.locator('button:visible').filter({ hasText: /^Strategies$/ }).first().click();
-  const reconnected = page.getByRole('region', { name: 'Current private Pool creation', exact: true });
+  await reloadWithChain(page, await exportChain(page));
+  await openLiquidity(page);
+  const reconnected = poolRegion(page);
   await reconnected.getByRole('button', { name: 'Check Pool status', exact: true }).click();
-  await expect(reconnected.getByRole('status')).toContainText('no authenticated private result');
+  await expect(poolStatus(reconnected)).toContainText('no authenticated private result');
   await expect(reconnected.getByLabel('Authenticated Pool preview')).toHaveCount(0);
   await expect(reconnected).not.toContainText('Verified position NFT ID');
   expect((await control(page).snapshot()).sends).toHaveLength(2);
