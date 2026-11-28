@@ -21,6 +21,11 @@ import { PRIVATE_ERC20_TOKEN_VNEXT_ABI } from '../../src/lib/appShared/contracts
 import { issueCurrentDexQuoteCapability } from '../../src/features/wallet/currentDexQuoteCapability';
 import { issueCurrentDexSubmissionCapability } from '../../src/features/wallet/currentDexSubmissionCapability';
 import { issueCurrentDexReceiptCapability } from '../../src/features/wallet/currentDexReceiptCapability';
+import { readCurrentSharedDexTokenFunds, readCurrentSharedDexSwapFunds } from '../../src/lib/currentSharedDexTokenFunds';
+import { decryptPrivateUint256Output } from '../../src/lib/privateUint256';
+import { currentDexPendingStorage } from '../../src/lib/currentDexPendingAttempt';
+import { CURRENT_SHARED_TOKEN_DISTRIBUTION as distribution, currentSharedDistributionVaultAbi as vaultAbi } from '../../src/lib/currentSharedDexTokenDistribution';
+import { currentTokenFundingAbi } from '../../src/lib/currentDexTokenFunding';
 
 const owner = `0x${'22'.repeat(20)}`, aes = '000102030405060708090a0b0c0d0e0f';
 const slippage = currentCheapDexQuoteProtocol(c);
@@ -57,6 +62,31 @@ const codes: Record<string, string> = {}, runtimeHashes: Record<string, string> 
   const code = `0xdead${i.toString(16).padStart(2, '0')}`;
   codes[address] = code; runtimeHashes[code] = hash;
 });
+// Build 13 registry: every listed pair has its own Engine, PoolTerms and math companions.
+const registry = new Interface([
+  'function marketForTokens(address input,address output) view returns(bytes32 selectedMarket,uint256 canonicalId,uint256 registryRevision,uint256 marketRevision,bool enabled,address engine,address terms)',
+  ...['token0', 'token1', 'sharedMath'].map(name => `function ${name}() view returns(address)`)
+]);
+c.pairs.forEach((pair, p) => pair.companions.forEach(([, address, hash], i) => {
+  if (codes[address]) return;
+  const code = `0xbeef${p.toString(16).padStart(2, '0')}${i.toString(16).padStart(2, '0')}`;
+  codes[address] = code; runtimeHashes[code] = hash;
+}));
+// The refill vault: synthetic runtime and deployment calldata preimages, checked through the same seam as the runtimes.
+const vault = distribution.vault.address.toLowerCase(), vaultDeployment = distribution.vaultDeployment, vaultInput = '0xfeed01';
+codes[vault] = '0xfeed00'; runtimeHashes[codes[vault]] = distribution.vault.runtimeHash; runtimeHashes[vaultInput] = vaultDeployment.calldataHash;
+const FAUCET_AMOUNT = distribution.initialAmount;
+const vaultValues = (): Record<string, unknown> => ({ CHAIN_ID: distribution.chainId, TOKEN_A: c.tokens[0][0], TOKEN_B: c.tokens[1][0], TOKEN_C: c.tokens[2][0], TOKEN_D: c.tokens[3][0],
+  TOKEN_RUNTIME: distribution.tokenRuntimeHash, CLAIM_AMOUNT: distribution.refillAmount, INITIAL_QUOTA: distribution.initialQuota, COOLDOWN: distribution.cooldown,
+  expiresAt: distribution.vault.expiresAt, recovery: distribution.vault.recovery, remainingQuota: distribution.initialQuota, nextClaimAt: 0n });
+const pairGetters: Record<string, Record<string, string>> = {};
+for (const pair of c.pairs) {
+  const math = pair.companions.find(([role]) => role === 'ChainWhisperSharedPoolMath')![1];
+  pairGetters[pair.engine] = { core: c.core, releaseId: c.releaseId, marketId: pair.marketId };
+  pairGetters[pair.poolTerms] = { core: c.core, releaseId: c.releaseId, marketId: pair.marketId,
+    token0: pair.tokens[0], token1: pair.tokens[1], sharedMath: math };
+  pairGetters[math] = { core: c.core };
+}
 const common = { releaseId: c.releaseId, marketId: c.marketId, feePpm: c.feePpm, maxWorkLifetime: c.maxWorkLifetime,
   inputToken: c.tokens[0][0], outputToken: c.tokens[1][0], positionNFT: nft };
 const values: Record<string, Record<string, string | number>> = {
@@ -85,7 +115,11 @@ const seal = (value: bigint) => {
 };
 const wide = (value: bigint) => [seal(value >> 128n), seal(value & ((1n << 128n) - 1n))];
 const zero = toBeHex(0, 32), initialNumber = Number(c.attestationBlock.number) + 100;
+// Build 13 async stages: 1 opened, 2 to 4 work, then READY, FUNDED, SETTLED and RELEASED. A Fast Quote is READY when it is issued.
+const { ready: READY, funded: FUNDED, settled: SETTLED, released: RELEASED } = c.protocol.stages;
 let head = initialNumber, stage = 0, deadline = 0n, context = zero, profile = 'fast-pool';
+let operationTokens = [c.tokens[1][0], c.tokens[0][0]] as string[], fundedBlock = 0, operationMaximum = 20n;
+const keeper = `0x${'55'.repeat(20)}`, work = new Interface(['function advanceFixedWork(uint256 operationId)']);
 let active = true, gasLimit = 150_000_000n, nonce = 4, operationId = 0n;
 let receiptAvailable = true, interrupted = false, refundOnly = false, corruptPayout = false, graphDrift = false;
 let adverseDelivery = false;
@@ -98,7 +132,7 @@ let poolMode = 0n, poolContext = zero, poolAmounts: bigint[] = [], poolPositionI
 let claimStatus=1n,claimRevision=1n,claimOwnership=1n,claimLifecycle=1n,claimOwner=owner,recipientCode='0x',claimContext=toBeHex(999n,32);
 let claimValues=[200n,100n,200n,400n,0n,0n,0n,0n,0n,1n];
 let limitId=91n,limitDirection=true,limitAmount=0n,limitTerms:bigint[]=[],limitWords=new Map<string,bigint>(),badLimitTerms=false;
-let limitProceeds=0n,limitClosed=false,limitBalances=[1000n,1000n],badLimitPayout=false;
+let limitProceeds=0n,limitClosed=false,limitBalances=[1000n,1000n,1000n,1000n],badLimitPayout=false;
 const putLimit=(address:string,index:bigint,value:bigint)=>limitWords.set(`${address}:${index}`,value);
 const writeLimitSnapshot=()=>[limitAmount,limitProceeds,...limitTerms.slice(0,3),limitAmount,limitDirection?1n:0n,0n].forEach((value,i)=>{
   const words=wide(value+(badLimitTerms&&i===2?1n:0n)),base=currentLimitMappingSlot(limitId,30n)+BigInt(i*4+2);putLimit(engine,base,words[0]);putLimit(engine,base+1n,words[1]);
@@ -110,32 +144,79 @@ const initializeLimitAuthority=()=>{
   putLimit(engine,currentLimitMappingSlot(0n,5n),24n);putLimit(engine,currentLimitMappingSlot(0n,6n),1n);putLimit(engine,3n,1n);
   putLimit(nft,currentLimitMappingSlot(limitId,2n),BigInt(owner));putLimit(nft,currentLimitAddressSlot(owner,3n),1n);
 };
+// Private receipt amounts: maximum input, actual input, refund, gross output, fee and net output.
+// The base case is a maximum input of 20 raw units; a larger maximum input scales each amount.
+const receiptAmounts = (block = Number.MAX_SAFE_INTEGER) => (refundOnly ? [20n, 0n, 20n, 0n, 0n, 0n] :
+  adverseDelivery && stage >= FUNDED && block >= fundedBlock ? [20n, 15n, 5n, 16n, 1n, 15n] : belowMinimumFill ? [20n, 3n, 17n, 4n, 1n, 3n] :
+  quoteAmountDrift ? [20n, 14n, 6n, 17n, 1n, 16n] : [20n, 15n, 5n, 17n, 1n, corruptPayout ? 15n : 16n]).map(value => value * (operationMaximum / 20n));
+const transferLog = (token: string, from: string, to: string, senderValue: bigint, receiverValue: bigint) =>
+  ({ address: token, ...debit.encodeEventLog(debit.getEvent('Transfer')!, [from, to, wide(senderValue), wide(receiverValue)]) });
+const advancedLog = () => ({ address: c.core, ...opening.encodeEventLog(opening.getEvent('CheapAsyncAdvanced')!, [operationId, stage, context]) });
+// The frozen contract sends the output and the refund to the owner in this order, also for zero amounts.
+const deliveryLogs = () => [transferLog(operationTokens[1], c.core, owner, 999n, receiptAmounts()[5]), transferLog(operationTokens[0], c.core, owner, 999n, receiptAmounts()[2])];
+// A keeper work transaction: the public trigger that moves an async operation to READY or SETTLED.
+const keeperWork = (logs: Array<{ address: string; topics: string[]; data: string }>) => {
+  head = latestHead() + 1; blockTimes.set(head, seconds() - 1);
+  const hash = toBeHex(BigInt(head), 32), minedHash = blockHash(head); blockTransactions.set(head, hash);
+  txs.set(hash, { hash, chainId: 7082400n, from: keeper, to: c.core, value: 0n, data: work.encodeFunctionData('advanceFixedWork', [operationId]),
+    nonce: head, gasLimit: 50_000_000n, gasPrice: FIXED_GAS_PRICE, blockNumber: head, blockHash: minedHash });
+  mined.set(hash, { hash, status: 1, from: keeper, to: c.core, blockNumber: head, blockHash: minedHash, logs });
+};
 const sends: Array<{ name: string; operationId: string; nonce: number; gasLimit: string; data: string }> = [];
 const txs = new Map<string, Record<string, unknown>>(), mined = new Map<string, Record<string, unknown>>();
 const calls: string[] = [];
-let tokenAllowances = [1000n, 1000n], tokenClaimed = [false, false], badFundingCredit = false;
+let tokenAllowances = [1000n, 1000n, 1000n, 1000n], tokenClaimed = [false, false, false, false], badFundingCredit = false;
 let balanceReadFailure = false, balanceReadDelay = 0, privacyUnlocked = true;
 let wrongWalletResponseNonce = false;
 let missingWalletChainId = false;
 let delayedTransactionVisibility = false;
 const blockHash = (number: number) => toBeHex(BigInt(number), 32);
+// Each block keeps one timestamp. An idle chain makes an empty block after 5 s, as a live chain does.
+const blockTimes = new Map<number, number>(), blockTransactions = new Map<number, string>();
+const seconds = () => Math.floor(Date.now() / 1000);
+const blockTime = (number: number) => { if (!blockTimes.has(number)) blockTimes.set(number, seconds() - 1); return blockTimes.get(number)!; };
+const latestHead = () => { if (seconds() - blockTime(head) >= 5) { head++; blockTimes.set(head, seconds() - 1); } return head; };
+const FIXED_GAS_PRICE = 50_000_000n;
 const quantity = (number: number | bigint) => `0x${BigInt(number).toString(16)}`;
 const assertCurrent = () => { if (!active) throw new Error('Test wallet session revoked.'); };
 const send = async (method: string, params: unknown[]) => {
   assertCurrent();
   if (method === 'eth_chainId') return '0x6c11a0';
-  if (method === 'eth_gasPrice') return '0x2160ebc';
+  if (method === 'eth_gasPrice') return quantity(FIXED_GAS_PRICE);
+  if (method === 'eth_accounts') return mountedOwner ? [mountedOwner] : [];
+  if (method === 'eth_getTransactionCount') return quantity(nonce);
+  if (method === 'eth_getTransactionByHash' && String(params[0]).toLowerCase() === vaultDeployment.transactionHash) return { hash: vaultDeployment.transactionHash,
+    from: vaultDeployment.from, to: null, nonce: quantity(vaultDeployment.nonce), chainId: quantity(7082400), value: '0x0', input: vaultInput,
+    blockHash: vaultDeployment.blockHash, blockNumber: quantity(vaultDeployment.blockNumber), transactionIndex: '0x0' };
+  if (method === 'eth_getTransactionReceipt' && String(params[0]).toLowerCase() === vaultDeployment.transactionHash) return { transactionHash: vaultDeployment.transactionHash,
+    from: vaultDeployment.from, to: null, contractAddress: distribution.vault.address, status: '0x1', blockHash: vaultDeployment.blockHash,
+    blockNumber: quantity(vaultDeployment.blockNumber), transactionIndex: '0x0', logs: [] };
+  if (method === 'eth_getTransactionByHash') {
+    const tx = txs.get(String(params[0]).toLowerCase()) as Record<string, unknown> | undefined;
+    return tx ? { hash: tx.hash, chainId: quantity(7082400), from: tx.from, to: tx.to, value: '0x0', input: tx.data, nonce: quantity(tx.nonce as number),
+      gas: quantity(tx.gasLimit as bigint), gasPrice: quantity(FIXED_GAS_PRICE), blockNumber: quantity(tx.blockNumber as number), blockHash: tx.blockHash, transactionIndex: '0x0' } : null;
+  }
+  if (method === 'eth_getTransactionReceipt') {
+    const receipt = receiptAvailable ? mined.get(String(params[0]).toLowerCase()) as Record<string, unknown> | undefined : undefined;
+    return receipt ? { transactionHash: receipt.hash, status: quantity(receipt.status as number), from: receipt.from, to: receipt.to,
+      blockNumber: quantity(receipt.blockNumber as number), blockHash: receipt.blockHash, transactionIndex: '0x0',
+      logs: (receipt.logs as Array<Record<string, unknown>>).map((log, index) => ({ ...log, logIndex: quantity(index), transactionHash: receipt.hash,
+        blockNumber: quantity(receipt.blockNumber as number), blockHash: receipt.blockHash, removed: false })) } : null;
+  }
   if (method === 'eth_getBalance') return '0xde0b6b3a7640000';
   if (method === 'eth_getBlockByNumber') {
-    const number = params[0] === 'latest' ? head : Number(BigInt(params[0] as string));
+    const number = params[0] === 'latest' ? latestHead() : Number(BigInt(params[0] as string));
+    if (BigInt(number) === vaultDeployment.blockNumber) return { number: quantity(number), hash: vaultDeployment.blockHash, timestamp: '0x1', gasLimit: quantity(gasLimit),
+      baseFeePerGas: '0x0', transactions: [vaultDeployment.transactionHash] };
     return { number: quantity(number), hash: number === 0 ? c.genesisHash :
       number === Number(c.attestationBlock.number) ? c.attestationBlock.hash : blockHash(number),
-      timestamp: quantity(Math.floor(Date.now() / 1000) - 1), gasLimit: quantity(gasLimit) };
+      timestamp: quantity(blockTime(number)), gasLimit: quantity(gasLimit), baseFeePerGas: '0x0',
+      transactions: blockTransactions.has(number) ? [blockTransactions.get(number)!] : [] };
   }
   const selector = params[method === 'eth_getStorageAt' ? 2 : 1] as { blockHash: string; requireCanonical: boolean };
   if (!selector?.requireCanonical || BigInt(selector.blockHash) > BigInt(head) ||
       BigInt(selector.blockHash) < BigInt(initialNumber)) throw new Error('Unpinned fixture RPC.');
-  if (method === 'eth_getCode') return graphDrift ? '0x6001' : codes[String(params[0]).toLowerCase()]??recipientCode;
+  if (method === 'eth_getCode') return graphDrift ? '0x6001' : String(params[0]).toLowerCase() === mountedOwner.toLowerCase() ? '0x' : codes[String(params[0]).toLowerCase()]??recipientCode;
   if (method === 'eth_getStorageAt') {
     if(([c.core,engine,nft] as string[]).includes(String(params[0]).toLowerCase()))return toBeHex(limitWords.get(`${String(params[0]).toLowerCase()}:${BigInt(params[1] as string)}`)??0n,32);
     if (String(params[0]).toLowerCase() !== at('ChainWhisperFixedEngineFactory')) throw new Error('Unexpected storage target.');
@@ -149,7 +230,8 @@ const send = async (method: string, params: unknown[]) => {
     }
     if (c.tokens.some(([address]) => address === target)) {
       if (call.from?.toLowerCase() !== mountedOwner.toLowerCase()) throw new Error('Funding read has wrong owner.');
-      const parsed = token.parseTransaction({ data: call.data })!;
+      const parsed = token.parseTransaction({ data: call.data });
+      if (!parsed) throw new Error(`Unknown fixture token call ${target}:${call.data.slice(0, 10)}`);
       if (parsed.name === 'balanceOf') {
         if (balanceReadDelay) await new Promise(resolve => setTimeout(resolve, balanceReadDelay));
         if (balanceReadFailure) throw new Error('Test balance read unavailable');
@@ -158,13 +240,30 @@ const send = async (method: string, params: unknown[]) => {
       const index = c.tokens.findIndex(([address]) => address === target);
       if (parsed.name === 'allowance') return token.encodeFunctionResult('allowance(address,address)', [[wide(999n), wide(tokenAllowances[index]), wide(888n)]]);
       if (parsed.name === 'faucetClaimed') return token.encodeFunctionResult('faucetClaimed', [tokenClaimed[index]]);
-      if (parsed.name === 'faucetAmount') return token.encodeFunctionResult('faucetAmount', [10_000n * 10n ** 18n]);
-      if (parsed.name === 'decimals') return token.encodeFunctionResult('decimals', [18n]);
+      if (parsed.name === 'faucetAmount') return token.encodeFunctionResult('faucetAmount', [FAUCET_AMOUNT]);
+      if (parsed.name === 'decimals') return token.encodeFunctionResult('decimals', [6n]);
       if (parsed.name === 'publicAmountsEnabled') return token.encodeFunctionResult('publicAmountsEnabled', [false]);
       if (parsed.name === 'accountEncryptionAddress') return token.encodeFunctionResult('accountEncryptionAddress', [toBeHex(0n, 20)]);
       throw new Error('Unexpected token call.');
     }
-    const parsed = abi.parseTransaction({ data: call.data })!, name = parsed.name;
+    if (target === vault) {
+      const read = vaultAbi.parseTransaction({ data: call.data });
+      if (!read || vaultValues()[read.name] === undefined) throw new Error(`Unknown fixture vault call ${call.data.slice(0, 10)}`);
+      return vaultAbi.encodeFunctionResult(read.name, [vaultValues()[read.name]]);
+    }
+    if (call.data.startsWith(registry.getFunction('marketForTokens')!.selector)) {
+      const [input, output] = registry.decodeFunctionData('marketForTokens', call.data).map(value => String(value).toLowerCase());
+      const pair = target === c.core ? c.pairs.find(row => row.tokens.includes(input) && row.tokens.includes(output) && input !== output) : undefined;
+      if (!pair) throw new Error('Unlisted fixture market.');
+      return registry.encodeFunctionResult('marketForTokens', [pair.marketId, BigInt(pair.canonicalId), 1n, 1n, true, pair.engine, pair.poolTerms]);
+    }
+    const pairGetter = registry.parseTransaction({ data: call.data }) ?? abi.parseTransaction({ data: call.data });
+    if (pairGetter && values[target]?.[pairGetter.name] === undefined && pairGetters[target]?.[pairGetter.name] !== undefined) {
+      return (registry.getFunction(pairGetter.name) ? registry : abi).encodeFunctionResult(pairGetter.name, [pairGetters[target][pairGetter.name]]);
+    }
+    const parsed = abi.parseTransaction({ data: call.data });
+    if (!parsed) throw new Error(`Unknown fixture call ${target}:${call.data.slice(0, 10)}`);
+    const name = parsed.name;
     calls.push(name);
     if(name==='poolPublicState'||name==='poolSnapshot') {
       if(parsed.args[0]!==poolPositionId||name==='poolSnapshot'&&call.from?.toLowerCase()!==claimOwner)throw new Error('Wrong claim or owner');
@@ -173,11 +272,11 @@ const send = async (method: string, params: unknown[]) => {
     }
     if (['fastPoolQuotePublic', 'cheapAsyncPublic', 'principalReceipt', 'fastPoolPrincipalReceipt'].includes(name)) {
       if (parsed.args[0] !== operationId || operationId === 0n) throw new Error('Fixture operation ID not mined.');
-      if (name === 'fastPoolQuotePublic') return operation.encodeFunctionResult(name, [context, deadline, stage === 4]);
+      if (name === 'fastPoolQuotePublic') return operation.encodeFunctionResult(name, [context, deadline, stage === READY]);
       if (name === 'cheapAsyncPublic') return operation.encodeFunctionResult(name, [stage, context, deadline]);
       if (call.from?.toLowerCase() !== owner) throw new Error('Private receipt has wrong owner.');
-      const amounts = refundOnly ? [20n, 0n, 20n, 0n, 0n, 0n] : adverseDelivery && stage >= 5 ? [20n, 15n, 5n, 16n, 1n, 15n] : belowMinimumFill ? [20n, 3n, 17n, 4n, 1n, 3n] :
-        quoteAmountDrift ? [20n, 14n, 6n, 17n, 1n, 16n] : [20n, 15n, 5n, 17n, 1n, corruptPayout ? 15n : 16n];
+      // A read pinned before the funding block returns the Quote that the owner reviewed.
+      const amounts = receiptAmounts(Number(BigInt(selector.blockHash)));
       return receipts.encodeFunctionResult(name, [[[999n, seal(refundOnly ? 0n : 1n)],
         ...amounts.map(value => [wide(999n), wide(value)])]]);
     }
@@ -186,19 +285,19 @@ const send = async (method: string, params: unknown[]) => {
   }
   throw new Error(`Unexpected RPC ${method}`);
 };
-const newSigner = () => ({ address: owner, getUserOnboardInfo: () => ({ aesKey: aes }),
+const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: () => ({ aesKey: aes }),
   signMessage: async () => { inputSignatureRequests++; if (denySignature) throw new Error('Test wallet signature denied.'); return `0x${'44'.repeat(65)}`; },
   encryptValue: async (value: bigint) => { inputSignatureRequests++; return { ciphertext: seal(value), signature: `0x${'44'.repeat(65)}` }; },
-  estimateGas: async () => { throw new Error('MPC estimate must not run.'); },
+  estimateGas: async () => 1_000_000n,
   getNonce: async () => nonce,
   sendTransaction: async (request: { data: string; nonce: number; gasLimit: bigint;to?:string }) => {
     assertCurrent();
-    const parsed = opening.parseTransaction({ data: request.data }) ?? accepts.parseTransaction({ data: request.data }) ?? pools.parseTransaction({ data: request.data }) ?? currentPoolPositionAbi.parseTransaction({data:request.data}) ?? currentPoolNftAbi.parseTransaction({data:request.data}) ?? currentLimitAbi.parseTransaction({data:request.data}) ?? token.parseTransaction({ data: request.data });
+    const parsed = opening.parseTransaction({ data: request.data }) ?? accepts.parseTransaction({ data: request.data }) ?? pools.parseTransaction({ data: request.data }) ?? currentPoolPositionAbi.parseTransaction({data:request.data}) ?? currentPoolNftAbi.parseTransaction({data:request.data}) ?? currentLimitAbi.parseTransaction({data:request.data}) ?? token.parseTransaction({ data: request.data }) ?? currentTokenFundingAbi.parseTransaction({ data: request.data });
     if (!parsed) throw new Error('Unknown fixture transaction.');
     const name = parsed.name, quote = name.startsWith('quote'), poolPreview = name === 'previewPoolFunding', poolFund = name === 'createPoolPosition',poolManage=name==='managePoolPosition',poolTransfer=name==='safeTransferFrom',limitCreate=name==='createPrivateOrder',limitSnapshot=name==='privateOrderSnapshot',limitClaim=name==='claimPrivateOrderProceeds',limitClose=name==='closePrivateOrder',limitManage=name==='managePrivateOrderStatus';
-    const limitPayouts:bigint[]=[];
+    const limitPayouts:bigint[]=[], swapLogs: Array<{ address: string; topics: string[]; data: string }> = [];
     const poolClose=poolManage&&parsed.args[2]===7n,from=mountedOwner,payouts:bigint[]=[],target=request.to??c.core;
-    const tokenIndex = c.tokens.findIndex(([address]) => address === target.toLowerCase()), faucet = name === 'claimFaucet', approval = name === 'approve';
+    const tokenIndex = c.tokens.findIndex(([address]) => address === target.toLowerCase()), faucet = name === 'claimFaucet', approval = name === 'approve' || name === 'increaseAllowance';
     if (request.nonce !== nonce) throw new Error('Nonce changed.');
     signingAttempts++;
     if (interrupted) throw new Error('Test transport interrupted after signing request.');
@@ -206,8 +305,11 @@ const newSigner = () => ({ address: owner, getUserOnboardInfo: () => ({ aesKey: 
     revertNext = false;
     if (status === 1 && (faucet || approval)) {
       if (tokenIndex < 0) throw new Error('Not a current funding token');
-      if (faucet) { if (tokenClaimed[tokenIndex]) throw new Error('Faucet already claimed'); tokenClaimed[tokenIndex] = true; limitBalances[tokenIndex] += 10_000n * 10n ** 18n - (badFundingCredit ? 1n : 0n); }
-      else { if (parsed.args[0].toLowerCase() !== c.core) throw new Error('Wrong Core spender'); tokenAllowances[tokenIndex] = decryptUint256(parsed.args[1].ciphertext, aes); }
+      if (faucet) { if (tokenClaimed[tokenIndex]) throw new Error('Faucet already claimed'); tokenClaimed[tokenIndex] = true; limitBalances[tokenIndex] += FAUCET_AMOUNT - (badFundingCredit ? 1n : 0n); }
+      else { if (parsed.args[0].toLowerCase() !== c.core) throw new Error('Wrong Core spender');
+        const value = decryptUint256(parsed.args[1].ciphertext, aes);
+        if (name === 'approve' && value !== 0n && tokenAllowances[tokenIndex] !== 0n) throw new Error('Approve needs a zero allowance.');
+        tokenAllowances[tokenIndex] = name === 'approve' ? value : tokenAllowances[tokenIndex] + value; }
     } else if(status===1&&limitCreate){
       limitId++;limitAmount=decryptUint256(parsed.args[0].ciphertext,aes);limitDirection=decryptUint(parsed.args[1].ciphertext,aes)===1n;
       if(decryptUint(parsed.args[2].ciphertext,aes)!==0n)throw new Error('Only plain Limit mode is admitted');
@@ -263,18 +365,26 @@ const newSigner = () => ({ address: owner, getUserOnboardInfo: () => ({ aesKey: 
     } else if (status === 1 && quote) {
       profile = name === 'quoteFastPoolV1' || name === 'quoteFastPool' ? 'fast-pool' : 'cheap-async';
       const terms = profile === 'cheap-async' ? parsed.args[0] : parsed.args;
-      deadline = terms[3]; operationId = nextOperationId++;
-      stage = profile === 'fast-pool' ? 4 : 1;
-      context = stage === 4 ? toBeHex(operationId + 1000n, 32) : zero;
+      deadline = terms[3]; operationId = nextOperationId++; operationTokens = [String(terms[0]).toLowerCase(), String(terms[1]).toLowerCase()];
+      operationMaximum = decryptUint256(terms[4].ciphertext, aes);
+      if (operationMaximum % 20n !== 0n) throw new Error('Fixture swaps use a maximum input that is a multiple of 20 raw units.');
+      stage = profile === 'fast-pool' ? READY : 1; refundOnly = false; fundedBlock = 0;
+      context = stage === READY ? toBeHex(operationId + 1000n, 32) : zero;
     } else if (status === 1) {
       if (parsed.args[0] !== operationId || name.startsWith('accept') && parsed.args[1] !== context) throw new Error('Accept did not use mined ID/context.');
-      stage = name.startsWith('accept') ? 5 : 7; refundOnly = stage === 7;
+      if (name.startsWith('accept') ? stage !== READY : name === 'recoverSwap' ? stage !== FUNDED : stage < 1 || stage > READY) throw new Error('Wrong operation stage.');
+      swapLogs.push(...(name.startsWith('accept') ? [transferLog(operationTokens[0], from, c.core, receiptAmounts()[0], 999n),
+        ...(profile === 'fast-pool' ? deliveryLogs() : [])] : name === 'recoverSwap' ? [transferLog(operationTokens[0], c.core, from, 999n, operationMaximum)] : []));
+      stage = name.startsWith('accept') ? FUNDED : RELEASED; refundOnly = stage === RELEASED;
+      if (stage === FUNDED) fundedBlock = latestHead() + 1;
+      if (profile === 'cheap-async') swapLogs.push(advancedLog());
     }
-    head++;
+    head = latestHead() + 1; blockTimes.set(head, seconds() - 1);
     const hash = toBeHex(BigInt(head), 32), minedHash = blockHash(head);
+    blockTransactions.set(head, hash);
     const event = status === 0 ? null : poolPreview ? pools.encodeEventLog(pools.getEvent('PoolFundingPreviewed')!, [0n, poolContext, poolAmounts.map(wide)]) :
       quote && profile === 'fast-pool' ? opening.encodeEventLog(opening.getEvent('FastPoolQuoteIssued')!, [operationId, context, deadline]) :
-      profile === 'cheap-async' ? opening.encodeEventLog(opening.getEvent('CheapAsyncAdvanced')!, [operationId, stage, context]) : null;
+      quote ? opening.encodeEventLog(opening.getEvent('CheapAsyncAdvanced')!, [operationId, stage, context]) : null;
     const poolLogs = status === 1 && poolFund ? [
       { address: c.core, ...claim.encodeEventLog(claim.getEvent('SharedClaimCreated')!, [poolPositionId]) },
       { address: nft, ...mint.encodeEventLog(mint.getEvent('Transfer')!, [toBeHex(0n, 20), owner, poolPositionId]) },
@@ -295,59 +405,103 @@ const newSigner = () => ({ address: owner, getUserOnboardInfo: () => ({ aesKey: 
       ...(limitClose?[{address:nft,...mint.encodeEventLog(mint.getEvent('Transfer')!,[owner,toBeHex(0n,20),limitId])}]:[]),
       ...c.tokens.map(([address],i)=>({address,...debit.encodeEventLog(debit.getEvent('Transfer')!,[c.core,owner,wide(999n),wide(limitPayouts[i]+(badLimitPayout?1n:0n))])}))
     ]:[];
-    const tx = { ...request, hash, chainId: 7082400n, from, to: target, value: 0n, blockNumber: head, blockHash: minedHash };
+    const tx = { ...request, gasPrice: FIXED_GAS_PRICE, hash, chainId: 7082400n, from, to: target, value: 0n, blockNumber: head, blockHash: minedHash };
     const fundingLogs = status !== 1 ? [] : faucet ? [
-      { address: target, ...debit.encodeEventLog(debit.getEvent('Transfer')!, [toBeHex(0n, 20), from, wide(999n), wide(10_000n * 10n ** 18n)]) },
+      { address: target, ...debit.encodeEventLog(debit.getEvent('Transfer')!, [toBeHex(0n, 20), from, wide(999n), wide(FAUCET_AMOUNT)]) },
       { address: target, ...token.encodeEventLog(token.getEvent('FaucetClaimed')!, [from]) }
     ] : approval ? [{ address: target, ...token.encodeEventLog(token.getEvent('Approval')!, [from, c.core, wide(tokenAllowances[tokenIndex]), wide(999n)]) }] : [];
     txs.set(hash, tx); mined.set(hash, { hash, status, from, to: target, blockNumber: head, blockHash: minedHash,
-      logs: faucet||approval?fundingLogs:limitCreate||limitClaim||limitClose?limitLogs:limitSnapshot||limitManage?[]:poolManage||poolTransfer ? closeLogs : poolFund ? poolLogs : event ? [{ address: c.core, ...event }] : [] });
+      logs: faucet||approval?fundingLogs:limitCreate||limitClaim||limitClose?limitLogs:limitSnapshot||limitManage?[]:poolManage||poolTransfer ? closeLogs : poolFund ? poolLogs : event ? [{ address: c.core, ...event }] : swapLogs });
     sends.push({ name, operationId: operationId.toString(), nonce, gasLimit: request.gasLimit.toString(), data: request.data });
     nonce++;
-    return wrongWalletResponseNonce ? { ...tx, nonce: nonce + 1 } : missingWalletChainId ? { ...tx, chainId: null } : tx;
+    return tx;
   }
 });
+  // The App asks the wallet for the hash only, then reads the transaction from the read provider.
+  return { ...wallet, sendUncheckedTransaction: async (request: Parameters<typeof wallet.sendTransaction>[0]) => (await wallet.sendTransaction(request)).hash };
+};
 let signer = newSigner();
+// Mined logs carry their origin, as the SDK provider returns them.
+const providerReceipt = (hash: string) => {
+  const receipt = mined.get(hash);
+  return receipt ? { ...receipt, logs: (receipt.logs as Array<Record<string, unknown>>).map((log, index) => ({ ...log, index, transactionHash: receipt.hash,
+    blockNumber: receipt.blockNumber, blockHash: receipt.blockHash, removed: false })) } : null;
+};
 const readProvider = { send, getTransaction: async (hash: string) => {
     if (delayedTransactionVisibility) { delayedTransactionVisibility = false; return null; }
-    return txs.get(hash) ?? null;
+    const tx = txs.get(hash) ?? null;
+    return tx && wrongWalletResponseNonce ? { ...tx, nonce: (tx.nonce as number) + 1 } : tx;
   },
-  getTransactionReceipt: async (hash: string) => receiptAvailable ? mined.get(hash) ?? null : null,
-  waitForTransaction: async (hash: string) => waitReceipt && receiptAvailable ? mined.get(hash) ?? null : null };
+  getLogs: async (filter: { address?: string; fromBlock: bigint | number; toBlock: bigint | number; topics?: Array<string | null> }) =>
+    [...mined.values()].filter(receipt => receiptAvailable && BigInt(receipt.blockNumber as number) >= BigInt(filter.fromBlock) && BigInt(receipt.blockNumber as number) <= BigInt(filter.toBlock))
+      .flatMap(receipt => (receipt.logs as Array<{ address: string; topics: string[]; data: string }>).map((log, index) => ({ ...log, index, removed: false,
+        transactionHash: receipt.hash as string, blockNumber: receipt.blockNumber as number, blockHash: receipt.blockHash as string })))
+      .filter(log => (!filter.address || log.address.toLowerCase() === filter.address.toLowerCase()) &&
+        (filter.topics ?? []).every((topic, index) => topic === null || log.topics[index]?.toLowerCase() === topic.toLowerCase())),
+  getTransactionReceipt: async (hash: string) => receiptAvailable ? providerReceipt(hash) : null,
+  waitForTransaction: async (hash: string) => waitReceipt && receiptAvailable ? providerReceipt(hash) : null };
 const host = document.getElementById('root')!, root = createRoot(host);
 const browserProvider = { request: ({ method, params }: { method: string; params?: unknown[] }) => send(method, params ?? []) };
 let mountedOwner = owner, priceDisplayInverted = false;
+// The production funds capability reads only through the admitted shared HTTP provider. This local binding
+// runs the same production readers over the mock chain, with the same wallet-session and privacy guards.
+const fundsCapability = () => {
+  const binding = control.binding();
+  if (!privacyUnlocked) throw new Error('Unlock the selected Testnet owner privacy before reading beta funds.');
+  type FundsArgs = Parameters<typeof readCurrentSharedDexTokenFunds>[0];
+  const read = async <T>(reader: (args: FundsArgs) => Promise<T>, assertCallerCurrent: () => void = () => {}) => {
+    const check = async () => { assertCallerCurrent(); binding.assertSnapshotCurrent(); if (!privacyUnlocked) throw new Error('Owner privacy is unavailable.'); };
+    const rpc = async (method: string, params: unknown[]) => { await check(); const value = await send(method, params); await check(); return value; };
+    const raw = await rpc('eth_getBlockByNumber', ['latest', false]) as Record<string, string>;
+    return reader({ owner: binding.ownerAddress, candidate: 'cheap-history', head: { number: BigInt(raw.number), hash: raw.hash, timestamp: BigInt(raw.timestamp) },
+      rpc, assertCurrent: check, decrypt: cipher => decryptPrivateUint256Output(binding.signer as never, cipher) });
+  };
+  return Object.freeze({ read: (assertCallerCurrent?: () => void) => read(readCurrentSharedDexTokenFunds, assertCallerCurrent),
+    readSwap: (tokens: readonly [string, string], assertCallerCurrent?: () => void) => read(args => readCurrentSharedDexSwapFunds({ ...args, tokens }), assertCallerCurrent) });
+};
+const onboard = () => privacyUnlocked ? { [mountedOwner.toLowerCase()]: { aesKey: aes } } : {};
 const render = () => root.render(createElement(DexPage, { priceDisplayInverted, swapCandidate: 'cheap-history',
   onPriceDisplayInvertedChange: (value: boolean) => { priceDisplayInverted = value; render(); }, sharedWalletSession: {
   walletAddress: mountedOwner, chainId: 7082400, browserProvider,
-  sessionOnboardInfo:privacyUnlocked?{[mountedOwner.toLowerCase()]:{aesKey:aes}}:{},walletAesHealthByAddress:{},
+  sessionOnboardInfo:onboard(),walletAesHealthByAddress:{},
   actions: {
     getCurrentDexQuoteCapability: () => issueCurrentDexQuoteCapability({} as never),
     getCurrentDexReceiptCapability: () => issueCurrentDexReceiptCapability({} as never),
+    getCurrentSharedDexTokenFundsCapability: async () => fundsCapability(),
     getCurrentDexPoolFundingCapability: () => issueCurrentDexPoolFundingCapability({ candidate: 'cheap-history' } as never),
     getCurrentDexPoolPositionCapability: () => issueCurrentDexPoolPositionCapability({ candidate: 'cheap-history' } as never),
     getCurrentDexLimitCapability: () => issueCurrentDexLimitCapability({ candidate: 'cheap-history' } as never),
-    getCurrentDexSubmissionCapability: () => issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never)
+    getCurrentDexSubmissionCapability: () => issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history', sessionOnboardInfo: onboard() } as never)
   }
 } as never }));
+// The App keeps the pending action of each chain, candidate and wallet in shared browser storage.
+const PENDING_KEY = 'chainwhisper:dex:current-pending-attempt:v1';
+const pendingRecords = () => currentDexPendingStorage({ chainId: c.chainId, graph: c.graph, owner });
 const control = {
   runtimeHashes,
-  seedFunding: () => { limitBalances = [0n, 0n]; tokenAllowances = [0n, 0n]; tokenClaimed = [false, false]; },
+  seedFunding: () => { limitBalances = [0n, 0n, 0n, 0n]; tokenAllowances = [0n, 0n, 0n, 0n]; tokenClaimed = [false, false, false, false]; },
   seedLimit:(direction=true)=>{if(limitAmount!==0n)throw new Error('Limit fixture already funded');limitId=92n;limitAmount=300n;limitProceeds=7n;limitDirection=direction;limitTerms=[3n,10n,1n,7n,2n];initializeLimitAuthority();writeLimitSnapshot();},
   binding: () => {const captured=mountedOwner;const guard=()=>{assertCurrent();if(mountedOwner!==captured)throw new Error('Wallet or network changed');};return { signer, readProvider, ownerAddress: captured, chainId: 7082400n,
     assertCurrent: async () => guard(), assertSnapshotCurrent: guard };},
   snapshot: () => ({ sends, calls, signingAttempts, inputSignatureRequests, operationId: operationId.toString(), stage,
-    limit:{id:limitId.toString(),unspent:limitAmount.toString(),proceeds:limitProceeds.toString(),closed:limitClosed,balances:limitBalances.map(String),status:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,2n)}`)??0n).toString(),coreLifecycle:(limitWords.get(`${c.core}:${currentLimitMappingSlot(24n,20n)+11n}`)??0n).toString(),engineLifecycle:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,9n)+11n}`)??0n).toString()},pending: sessionStorage.getItem('chainwhisper:dex:current-pending-attempt:v1') }),
+    limit:{id:limitId.toString(),unspent:limitAmount.toString(),proceeds:limitProceeds.toString(),closed:limitClosed,balances:limitBalances.map(String),status:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,2n)}`)??0n).toString(),coreLifecycle:(limitWords.get(`${c.core}:${currentLimitMappingSlot(24n,20n)+11n}`)??0n).toString(),engineLifecycle:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,9n)+11n}`)??0n).toString()},pending: pendingRecords()?.getItem(PENDING_KEY) ?? null }),
+  // Changes the saved pending action through the production record storage and returns the record as it was.
+  editPending: (patch: Record<string, unknown>) => {
+    const saved = JSON.parse(pendingRecords()!.getItem(PENDING_KEY)!);
+    pendingRecords()!.setItem(PENDING_KEY, JSON.stringify({ ...saved, ...patch }));
+    return saved as Record<string, unknown>;
+  },
   set: (next: { ready?: boolean; receiptAvailable?: boolean; waitReceipt?: boolean; interrupted?: boolean; corruptPayout?: boolean;
     graphDrift?: boolean; gasLimit?: string; wallet?: string; revoked?: boolean; contextDrift?: boolean;
     nextOperationId?: string; issueLogs?: 'missing' | 'duplicate' | 'forged'; settled?: boolean;
     revertNext?: boolean; quoteAmountDrift?: boolean; belowMinimumFill?: boolean; connected?: boolean; adverseDelivery?: boolean;
     poolMode?: 'initialize' | 'add'; badPoolDebit?: boolean; denySignature?: boolean;badLimitTerms?:boolean;badLimitPayout?:boolean;recipientCode?:string;claimContextDrift?:boolean; badFundingCredit?: boolean;
-    balances?: string[]; balanceReadFailure?: boolean; balanceReadDelay?: number; privacyUnlocked?: boolean; wrongWalletResponseNonce?: boolean; missingWalletChainId?: boolean; delayedTransactionVisibility?: boolean }) => {
+    priceDisplayInverted?: boolean; balances?: string[]; balanceReadFailure?: boolean; balanceReadDelay?: number; privacyUnlocked?: boolean; wrongWalletResponseNonce?: boolean; missingWalletChainId?: boolean; delayedTransactionVisibility?: boolean }) => {
+    if (next.priceDisplayInverted !== undefined) { priceDisplayInverted = next.priceDisplayInverted; render(); }
     if (next.delayedTransactionVisibility !== undefined) delayedTransactionVisibility = next.delayedTransactionVisibility;
     if (next.missingWalletChainId !== undefined) missingWalletChainId = next.missingWalletChainId;
     if (next.wrongWalletResponseNonce !== undefined) wrongWalletResponseNonce = next.wrongWalletResponseNonce;
-    if (next.balances) limitBalances = next.balances.map(BigInt);
+    if (next.balances) limitBalances = limitBalances.map((value, index) => next.balances![index] === undefined ? value : BigInt(next.balances![index]));
     if (next.balanceReadFailure !== undefined) balanceReadFailure = next.balanceReadFailure;
     if (next.balanceReadDelay !== undefined) balanceReadDelay = next.balanceReadDelay;
     if (next.privacyUnlocked !== undefined) { privacyUnlocked = next.privacyUnlocked; render(); }
@@ -359,7 +513,6 @@ const control = {
     if (next.denySignature !== undefined) denySignature = next.denySignature;
     if (next.poolMode !== undefined) poolMode = next.poolMode === 'initialize' ? 0n : 1n;
     if (next.badPoolDebit !== undefined) badPoolDebit = next.badPoolDebit;
-    if (next.ready) { stage = 4; context = toBeHex(operationId + 1000n, 32); }
     if (next.receiptAvailable !== undefined) receiptAvailable = next.receiptAvailable;
     if (next.waitReceipt !== undefined) waitReceipt = next.waitReceipt;
     if (next.interrupted !== undefined) interrupted = next.interrupted;
@@ -367,7 +520,6 @@ const control = {
     if (next.graphDrift !== undefined) graphDrift = next.graphDrift;
     if (next.contextDrift) context = toBeHex(operationId + 2000n, 32);
     if (next.nextOperationId !== undefined) nextOperationId = BigInt(next.nextOperationId);
-    if (next.settled) { if (stage !== 5) throw new Error('Fixture terminal requires funded stage 5.'); stage = 6; }
     if (next.revertNext !== undefined) revertNext = next.revertNext;
     if (next.quoteAmountDrift !== undefined) quoteAmountDrift = next.quoteAmountDrift;
     if (next.belowMinimumFill !== undefined) belowMinimumFill = next.belowMinimumFill;
@@ -382,17 +534,24 @@ const control = {
     if (next.revoked) active = false;
     if (next.wallet !== undefined) { mountedOwner = next.wallet;signer=newSigner(); render(); }
     if (next.connected !== undefined) { mountedOwner = next.connected ? owner : ''; render(); }
+    // Keeper steps run last: their logs use the amounts that the other flags of this call select.
+    if (next.ready) { stage = READY; context = toBeHex(operationId + 1000n, 32); keeperWork([advancedLog()]); }
+    if (next.settled) { if (stage !== FUNDED) throw new Error('Fixture terminal requires the funded stage.'); stage = SETTLED; keeperWork([...deliveryLogs(), advancedLog()]); }
   },
   // Only the fake chain ledger survives an actual page reload; no prepared/issued app objects or signer are transferred.
-  exportChain: () => JSON.stringify({ head, stage, deadline, context, profile, nonce, operationId, nextOperationId,
+  exportChain: () => JSON.stringify({ blockTimes: [...blockTimes], blockTransactions: [...blockTransactions], head, stage, deadline, context, profile, nonce, operationId, nextOperationId, operationTokens, fundedBlock, refundOnly, operationMaximum,
     sends, signingAttempts, tokenAllowances, tokenClaimed, claimStatus,claimRevision,claimOwnership,claimLifecycle,claimOwner,claimContext,claimValues,poolPositionId,limitId,limitDirection,limitAmount,limitTerms,limitProceeds,limitClosed,limitBalances,limitWords:[...limitWords], txs: [...txs], mined: [...mined] }, (_key, value) =>
     typeof value === 'bigint' ? { __testBigInt: value.toString() } : value),
   restoreChain: (raw: string) => {
     const saved = JSON.parse(raw, (_key, value) => value?.__testBigInt !== undefined ? BigInt(value.__testBigInt) : value);
     ({ head, stage, deadline, context, profile, nonce, operationId, nextOperationId, signingAttempts } = saved);
+    if (saved.operationTokens) ({ operationTokens, fundedBlock, refundOnly, operationMaximum } = saved);
     if(saved.claimValues)({claimStatus,claimRevision,claimOwnership,claimLifecycle,claimOwner,claimContext,claimValues,poolPositionId}=saved);
     if(saved.limitWords){({limitId,limitDirection,limitAmount,limitTerms}=saved);({limitProceeds,limitClosed,limitBalances}=saved);limitWords=new Map(saved.limitWords);}
     if (saved.tokenAllowances) ({ tokenAllowances, tokenClaimed } = saved);
+    blockTimes.clear(); blockTransactions.clear();
+    for (const [number, time] of saved.blockTimes ?? []) blockTimes.set(number, time);
+    for (const [number, hash] of saved.blockTransactions ?? []) blockTransactions.set(number, hash);
     sends.splice(0, sends.length, ...saved.sends);
     txs.clear(); mined.clear();
     for (const [hash, tx] of saved.txs) txs.set(hash, tx);
