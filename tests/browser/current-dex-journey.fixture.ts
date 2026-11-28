@@ -368,7 +368,7 @@ const send = async (method: string, params: unknown[]) => {
     }
     if (call.data.startsWith(registry.getFunction('marketForTokens')!.selector)) {
       const [input, output] = registry.decodeFunctionData('marketForTokens', call.data).map(value => String(value).toLowerCase());
-      const pair = target === c.core ? c.pairs.find(row => row.tokens.includes(input) && row.tokens.includes(output) && input !== output) : undefined;
+      const pair = target === c.core ? c.pairs.find(row => (row.tokens as readonly string[]).includes(input) && (row.tokens as readonly string[]).includes(output) && input !== output) : undefined;
       if (!pair) throw new Error('Unlisted fixture market.');
       return registry.encodeFunctionResult('marketForTokens', [pair.marketId, BigInt(pair.canonicalId), 1n, 1n, true, pair.engine, pair.poolTerms]);
     }
