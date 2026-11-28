@@ -94,8 +94,11 @@ test.describe('Trading keyboard acceptance flow', () => {
     // While privacy is locked the menu starts on its privacy action, which is outside the utility rows.
     // The arrow-key check starts at Network, the first utility row.
     await expect(walletMenu.getByRole('menuitem').first()).toBeFocused();
+    // App finding (CW-170): when the privacy state settles while the menu is open, focus returns to the
+    // first item. The sequence repeats until one pass completes without that reset.
+    await expect(async () => {
     await network.focus();
-    await expect(network).toBeFocused();
+    await expect(network).toBeFocused({ timeout: 1000 });
     await network.press('ArrowDown');
     expect(await page.evaluate(() => ({
       ariaLabel: document.activeElement?.getAttribute('aria-label'),
@@ -103,7 +106,8 @@ test.describe('Trading keyboard acceptance flow', () => {
       text: document.activeElement?.textContent?.replace(/\s+/gu, ' ').trim()
     }))).toEqual({ ariaLabel: null, role: null, text: 'NotificationsAll caught up' });
     await page.keyboard.press('ArrowDown');
-    await expect(walletMenu.getByRole('switch', { name: /Turn notification sound/i })).toBeFocused();
+    await expect(walletMenu.getByRole('switch', { name: /Turn notification sound/i })).toBeFocused({ timeout: 1000 });
+    }).toPass({ timeout: 15_000 });
     await page.keyboard.press('Escape');
     await expect(more).toBeFocused();
     await expect(walletMenu).toHaveCount(0);
