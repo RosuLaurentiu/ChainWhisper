@@ -6,6 +6,11 @@ import type { CurrentDexMarketReference } from '../../lib/currentDexMarketRefere
 import { AppTooltip } from '../../shared/ui/AppTooltip';
 
 export type TradingPair = readonly [string, string];
+// Owner plan 2026-11-28 (CW-168): the price service publishes at most once per 300 s per market, and each C1 or swap
+// transaction makes the live Core reference unavailable for a short time. A published price younger than this limit
+// (300 s plus a 120 s margin) keeps the live presentation with an "Updating" hint. Display only: it is not a quote and
+// it does not make the reference available to estimates.
+export const RECENT_POOL_PRICE_MAX_AGE_S = 420;
 export const SUCCESSOR_TESTNET_PAIRS: readonly TradingPair[] = Object.freeze([
   Object.freeze(['BCN', 'HBR'] as const),
   Object.freeze(['BCN', 'EMBR'] as const),
@@ -67,9 +72,14 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
   const marketPrice = hasPrice ? rateInverted ? 1/marketReference.price : marketReference.price : null;
   const marketLabel = marketPrice !== null ? `${marketPrice.toLocaleString('en',{maximumSignificantDigits:6})} ${rateQuoteSymbol}/${rateBaseSymbol}` :
     marketReference?.status === 'loading' ? 'Checking price' : marketReference?.status === 'stale' ? 'Price stale' : 'Price unavailable';
-  const lastKnown = marketReference?.status === 'last-known';
   const sampleAge = hasPrice
     ? Math.max(0, Math.floor(Date.now() / 1000) - Number(marketReference.status==='available'?marketReference.checkedAt??marketReference.sampledAt:marketReference.sampledAt)) : null;
+  // The age of a last Pool price counts from the later of its publish time and the last read that found it current.
+  const confirmedAge = marketReference?.status === 'last-known'
+    ? Math.max(0, Math.floor(Date.now() / 1000) - Math.max(Number(marketReference.sampledAt), Number(marketReference.checkedAt ?? 0))) : null;
+  const updating = confirmedAge !== null && confirmedAge < RECENT_POOL_PRICE_MAX_AGE_S;
+  const lastKnown = marketReference?.status === 'last-known' && !updating;
+  const updatingAge = updating ? confirmedAge < 60 ? `${confirmedAge}s ago` : `${Math.floor(confirmedAge / 60)}m ago` : null;
   const lastSampleTime = lastKnown ? new Date(Number(marketReference.sampledAt)*1000).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'}) : null;
   // A recent record shows its age, like the live state. An older record shows its date and time.
   const lastSampleLabel = !lastKnown || sampleAge === null ? null : sampleAge < 60 ? `${sampleAge}s ago` : sampleAge < 3600 ? `${Math.floor(sampleAge / 60)}m ago` : lastSampleTime;
@@ -149,13 +159,13 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
             </button></AppTooltip>
           </div>
         </div>
-        <div className="trading-market-change" data-price-state={activeProduct === 'dex' ? marketReference?.status ?? 'unavailable' : p2pMarket?.reference ? 'available' : 'unavailable'}>
+        <div className="trading-market-change" data-price-state={activeProduct === 'dex' ? updating ? 'updating' : marketReference?.status ?? 'unavailable' : p2pMarket?.reference ? 'available' : 'unavailable'}>
           {/* Owner decision 2026-11-18: on phones the live detail hides so the line fits one row; "Last Pool price" stays. */}
           <span>{activeProduct === 'dex' ? <>COTI Testnet<span className="trading-market-change-detail">{lastKnown ? ' · Last Pool price' : ' · Live Pool reference'}</span></> : 'Market reference'}</span>
           <AppTooltip text={activeProduct === 'dex' ? 'Rounded Pool reference · excludes Limits' : p2pMarket?.reference?.title}>
             <strong>{activeProduct === 'dex' ? marketLabel : p2pMarket?.reference?.label ?? 'Price unavailable'}</strong>
           </AppTooltip>
-          {activeProduct === 'dex' && lastSampleTime ? <AppTooltip text={`${lastSampleTime} · Last recorded public Pool price. Current market price is not verified.`}><small>{`Recorded ${lastSampleLabel}`}</small></AppTooltip> : activeProduct === 'dex' && sampleAge !== null ? <AppTooltip text={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}><small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'}>{sampleAge}s ago</small></AppTooltip> : null}
+          {activeProduct === 'dex' && updating ? <AppTooltip text={`Pool price confirmed ${updatingAge}. Pools are changing; the price service publishes a new price at most every 5 minutes.`}><small aria-label="Pool price updating">{`Updating · ${updatingAge}`}</small></AppTooltip> : activeProduct === 'dex' && lastSampleTime ? <AppTooltip text={`${lastSampleTime} · Last recorded public Pool price. Current market price is not verified.`}><small>{`Recorded ${lastSampleLabel}`}</small></AppTooltip> : activeProduct === 'dex' && sampleAge !== null ? <AppTooltip text={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}><small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'}>{sampleAge}s ago</small></AppTooltip> : null}
         </div>
         <div className="trading-product-switch">
           <button
