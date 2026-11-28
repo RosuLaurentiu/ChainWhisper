@@ -6,8 +6,8 @@ import { createParts } from '@ui-sdk/react/primitive';
  * The App's tab list (CW-161). ui-sdk supplies the behaviour: one tab stop, arrow keys, Home and End,
  * `aria-selected` and the disabled state. The App supplies the look through `className`.
  *
- * The root renders no element, so the tab list keeps its place in the page. The `app-ui` class removes the
- * ui-sdk default look (see base.css). Feature code must use these parts and must not import ui-sdk tabs directly.
+ * The root renders no element, so the tab list keeps its place in the page. Feature code must use these parts
+ * and must not import ui-sdk tabs directly.
  */
 const parts = createParts(tabs, { list: 'div', tab: 'button' });
 
@@ -31,7 +31,7 @@ export function AppTabList<T extends string>({ value, onChange, label, className
         }
       }}
     >
-      <parts.List className={className ? `app-ui ${className}` : 'app-ui'} aria-label={label}>
+      <parts.List className={className} aria-label={label}>
         {children}
       </parts.List>
     </parts.Root>
@@ -53,7 +53,7 @@ export function AppTab({ className, activeClassName = 'active', children, ...pro
       // The App stylesheets style the native disabled state, so a disabled tab stays a disabled button.
       render={props.disabled ? <button disabled /> : undefined}
       className={(state) =>
-        ['app-ui', className, state.selected ? activeClassName : undefined].filter(Boolean).join(' ')
+        [className, state.selected ? activeClassName : undefined].filter(Boolean).join(' ') || undefined
       }
     >
       {children}

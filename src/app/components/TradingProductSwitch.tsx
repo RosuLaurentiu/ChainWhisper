@@ -3,6 +3,7 @@ import type { P2PTradingHeaderContext } from '../../features/trading/components/
 import { CURRENT_DEX_DISPLAY_PAIR, CURRENT_DEX_DISPLAY_TOKENS, readCurrentDexDisplay } from '../../lib/currentDexDisplay';
 import type { CurrentCheapDexIdentity } from '../../lib/dexV2Deployment';
 import type { CurrentDexMarketReference } from '../../lib/currentDexMarketReference';
+import { AppTooltip } from '../../shared/ui/AppTooltip';
 
 export type TradingPair = readonly [string, string];
 export const SUCCESSOR_TESTNET_PAIRS: readonly TradingPair[] = Object.freeze([
@@ -130,12 +131,11 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
         <div className="trading-market-ratio">
           {activeProduct === 'p2p' ? <span>Price ratio</span> : null}
           <div>
-            <button
+            <AppTooltip text="Reverse price display"><button
               type="button"
               className="trading-ratio-trigger"
               onClick={() => onPriceDisplayInvertedChange(!priceDisplayInverted)}
               aria-label={`Reverse price display to 1 ${rateQuoteSymbol} priced in ${rateBaseSymbol}`}
-              title="Reverse price display"
             >
               <strong
                 key={rateInverted ? 'ratio-inverted' : 'ratio-forward'}
@@ -146,14 +146,16 @@ export default function TradingProductSwitch(props: TradingProductSwitchProps) {
                 {rateQuoteSymbol}/{rateBaseSymbol}
               </strong>
               <ArrowLeftRight size={15} strokeWidth={2.1} aria-hidden="true" />
-            </button>
+            </button></AppTooltip>
           </div>
         </div>
         <div className="trading-market-change" data-price-state={activeProduct === 'dex' ? marketReference?.status ?? 'unavailable' : p2pMarket?.reference ? 'available' : 'unavailable'}>
           {/* Owner decision 2026-11-18: on phones the live detail hides so the line fits one row; "Last Pool price" stays. */}
           <span>{activeProduct === 'dex' ? <>COTI Testnet<span className="trading-market-change-detail">{lastKnown ? ' · Last Pool price' : ' · Live Pool reference'}</span></> : 'Market reference'}</span>
-          <strong title={activeProduct === 'dex' ? 'Rounded Pool reference · excludes Limits' : p2pMarket?.reference?.title}>{activeProduct === 'dex' ? marketLabel : p2pMarket?.reference?.label ?? 'Price unavailable'}</strong>
-          {activeProduct === 'dex' && lastSampleTime ? <small title={`${lastSampleTime} · Last recorded public Pool price. Current market price is not verified.`}>{`Recorded ${lastSampleLabel}`}</small> : activeProduct === 'dex' && sampleAge !== null ? <small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'} title={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}>{sampleAge}s ago</small> : null}
+          <AppTooltip text={activeProduct === 'dex' ? 'Rounded Pool reference · excludes Limits' : p2pMarket?.reference?.title}>
+            <strong>{activeProduct === 'dex' ? marketLabel : p2pMarket?.reference?.label ?? 'Price unavailable'}</strong>
+          </AppTooltip>
+          {activeProduct === 'dex' && lastSampleTime ? <AppTooltip text={`${lastSampleTime} · Last recorded public Pool price. Current market price is not verified.`}><small>{`Recorded ${lastSampleLabel}`}</small></AppTooltip> : activeProduct === 'dex' && sampleAge !== null ? <AppTooltip text={marketReference?.status==='available'&&marketReference.checkedAt?'Valid for 120s after the last check':'Expires after 120s'}><small aria-label={marketReference?.status==='available'&&marketReference.checkedAt?'Market check age':'Market sample age'}>{sampleAge}s ago</small></AppTooltip> : null}
         </div>
         <div className="trading-product-switch">
           <button

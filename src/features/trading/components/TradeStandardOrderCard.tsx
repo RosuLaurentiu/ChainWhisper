@@ -63,6 +63,7 @@ import {
   withProgressPaymentFallback,
   type TradeOverviewCardOptions
 } from './P2PTradingPage.helpers';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type TradeStandardOrderCardProps = {
   trade: TradeSnapshot;
@@ -412,14 +413,13 @@ export default function TradeStandardOrderCard({
       : expiryParts.date;
   const expiryChipTitle = `Created: ${formatMessageTimestamp(trade.createdAt)} - ${expiryParts.title}`;
   const renderExpiryChip = () => hasExpiry ? (
-    <span
+    <AppTooltip text={expiryChipTitle}><span
       className={`p2p-offer-expiry p2p-expiry-chip ${
         expiryCountdown ? `trade-card-expiry-${expiryCountdown.urgency}` : ''
       }`}
-      title={expiryChipTitle}
     >
       {expiryChipLabel}
-    </span>
+    </span></AppTooltip>
   ) : null;
   const showFixedDateRowContent = showExpiryInFixedRow && (hasExpiry || Boolean(counterRelation));
 
@@ -440,20 +440,22 @@ export default function TradeStandardOrderCard({
       <div className="p2p-offer-card-head p2p-order-card-head">
         <div className="p2p-offer-title">
           <div className="p2p-order-title-row">
-            <h3 className="p2p-order-title-pair" title={pairTitleFull} aria-label={pairTitleFull}>
-              <span className="p2p-order-title-token">{pairTitleFromSymbol}</span>
-              <ArrowRight className="p2p-order-title-arrow" size={16} strokeWidth={2.4} aria-hidden="true" />
-              <span className="p2p-order-title-token">{pairTitleToSymbol}</span>
-            </h3>
+            <AppTooltip text={pairTitleFull}>
+              <h3 className="p2p-order-title-pair" aria-label={pairTitleFull}>
+                <span className="p2p-order-title-token">{pairTitleFromSymbol}</span>
+                <ArrowRight className="p2p-order-title-arrow" size={16} strokeWidth={2.4} aria-hidden="true" />
+                <span className="p2p-order-title-token">{pairTitleToSymbol}</span>
+              </h3>
+            </AppTooltip>
             <strong className={`p2p-offer-status ${statusClassName}`}>{statusLabel}</strong>
             {tradeTitleRelationTags.map((label) => (
-              <span
-                className="p2p-order-chip p2p-order-chip-owner"
-                key={`${tradeKey}:title-relation:${label}`}
-                title="Created by you"
-              >
-                {label}
-              </span>
+              <AppTooltip key={`${tradeKey}:title-relation:${label}`} text="Created by you">
+                <span
+                  className="p2p-order-chip p2p-order-chip-owner"
+                >
+                  {label}
+                </span>
+              </AppTooltip>
             ))}
           </div>
           <div className="p2p-order-meta-line p2p-order-tag-stack">
@@ -463,24 +465,24 @@ export default function TradeStandardOrderCard({
               </span>
               <span className="p2p-order-grid-cell p2p-order-grid-cell-relations">
                 {tradeMetaRelationTags.map((label) => (
-                  <span
-                    className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
-                    key={`${tradeKey}:relation:${label}`}
-                    title={label === 'Maker' ? 'Created by you' : undefined}
-                  >
-                    {label}
-                  </span>
+                  <AppTooltip key={`${tradeKey}:relation:${label}`} text={label === 'Maker' ? 'Created by you' : undefined}>
+                    <span
+                      className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
+                    >
+                      {label}
+                    </span>
+                  </AppTooltip>
                 ))}
               </span>
               <span className="p2p-order-grid-cell p2p-order-grid-cell-tags">
                 {tradeSecondaryTags.map((label) => (
-                  <span
-                    className="p2p-order-chip"
-                    key={`${tradeKey}:tag:${label}`}
-                    title={counterRelation?.chipLabel === label ? counterRelation.detail : undefined}
-                  >
-                    {label}
-                  </span>
+                  <AppTooltip key={`${tradeKey}:tag:${label}`} text={counterRelation?.chipLabel === label ? counterRelation.detail : undefined}>
+                    <span
+                      className="p2p-order-chip"
+                    >
+                      {label}
+                    </span>
+                  </AppTooltip>
                 ))}
                 {!showExpiryInFixedRow ? renderExpiryChip() : null}
               </span>
@@ -491,9 +493,11 @@ export default function TradeStandardOrderCard({
               <span className="p2p-order-grid-cell p2p-order-grid-cell-id">{renderExpiryChip()}</span>
               <span className="p2p-order-grid-cell p2p-order-grid-cell-relations">
                 {counterRelation ? (
-                  <span className="p2p-order-chip" title={counterRelation.detail}>
-                    {counterRelation.chipLabel}
-                  </span>
+                  <AppTooltip text={counterRelation.detail}>
+                    <span className="p2p-order-chip">
+                      {counterRelation.chipLabel}
+                    </span>
+                  </AppTooltip>
                 ) : null}
               </span>
               <span className="p2p-order-grid-cell p2p-order-grid-cell-tags" />
@@ -503,7 +507,7 @@ export default function TradeStandardOrderCard({
       </div>
 
       {showPriceSummary ? (
-        <button
+        <AppTooltip text={priceRatioDisplay?.toggleTitle ?? 'Private terms'}><button
           type="button"
           className={
             isHiddenLiquidityTerms
@@ -511,13 +515,12 @@ export default function TradeStandardOrderCard({
               : 'p2p-hidden-price-card p2p-price-ratio-card p2p-order-market-panel'
           }
           onClick={() => toggleTradeRateDirection(trade.tradeId, trade.escrowContract)}
-          title={priceRatioDisplay?.toggleTitle ?? 'Private terms'}
           aria-label={priceRatioDisplay?.ariaLabel ?? `Private terms for trade ${trade.tradeId}.`}
         >
           <span>Price ratio</span>
           {priceSideLabel ? <span className="p2p-price-side-label">{priceSideLabel}</span> : null}
           <strong className="p2p-price-label">{renderDeskPriceLabel(tradeRateText)}</strong>
-        </button>
+        </button></AppTooltip>
       ) : null}
 
       {orderLiquiditySummary ? (
@@ -554,9 +557,11 @@ export default function TradeStandardOrderCard({
         <div className="p2p-offer-terms p2p-offer-terms-clear p2p-order-detail-band" aria-label={formatTradeListTerms(trade)}>
           <div className={`p2p-offer-term p2p-offer-term-offered ${leftToneClass}`}>
             <span>{leftSideLabel}</span>
-            <strong title={formatVisibleTermTitle(leftSide)}>
-              {formatVisibleTermText(leftSide)}
-            </strong>
+            <AppTooltip text={formatVisibleTermTitle(leftSide)}>
+              <strong>
+                {formatVisibleTermText(leftSide)}
+              </strong>
+            </AppTooltip>
             {leftMetaLabel ? (
               <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
                 {leftMetaLabel}
@@ -568,9 +573,11 @@ export default function TradeStandardOrderCard({
           </div>
           <div className={`p2p-offer-term p2p-offer-term-requested ${rightToneClass}`}>
             <span>{rightSideLabel}</span>
-            <strong title={formatVisibleTermTitle(rightSide)}>
-              {formatVisibleTermText(rightSide)}
-            </strong>
+            <AppTooltip text={formatVisibleTermTitle(rightSide)}>
+              <strong>
+                {formatVisibleTermText(rightSide)}
+              </strong>
+            </AppTooltip>
             {rightMetaLabel ? (
               <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
                 {rightMetaLabel}
@@ -601,9 +608,11 @@ export default function TradeStandardOrderCard({
         <div>
           {tokenExplorerLinks.length ? (
             tokenExplorerLinks.map((link) => (
-              <a key={link.key} className="p2p-offer-token-link" href={link.href} target="_blank" rel="noreferrer" title={link.title}>
-                {link.label}
-              </a>
+              <AppTooltip key={link.key} text={link.title}>
+                <a className="p2p-offer-token-link" href={link.href} target="_blank" rel="noreferrer">
+                  {link.label}
+                </a>
+              </AppTooltip>
             ))
           ) : (
             <span className="p2p-token-placeholder p2p-order-muted-slot">Native only</span>
@@ -615,67 +624,72 @@ export default function TradeStandardOrderCard({
         {isFinishedTrade ? (
           <div className="p2p-card-footer-actions">
             {canOpenTerminal ? (
-              <button
-                type="button"
-                className="p2p-offer-open-btn"
-                onClick={openCardTerminal}
-                title={OPEN_TERMINAL_LABEL}
-                aria-label={OPEN_TERMINAL_LABEL}
-              >
-                <span>{OPEN_TERMINAL_LABEL}</span>
-              </button>
+              <AppTooltip text={OPEN_TERMINAL_LABEL}>
+                <button
+                  type="button"
+                  className="p2p-offer-open-btn"
+                  onClick={openCardTerminal}
+                  aria-label={OPEN_TERMINAL_LABEL}
+                >
+                  <span>{OPEN_TERMINAL_LABEL}</span>
+                </button>
+              </AppTooltip>
             ) : (
               <span className="p2p-offer-final-state">
                 {statusLabel} offer #{trade.tradeId}
               </span>
             )}
             {!hideShareAction && shareUrl ? (
-              <button
-                type="button"
-                className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
-                onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
-                title={lastCopiedKey === shareKey ? 'Trade link copied' : accessSecret ? 'Share private trade link' : 'Share trade link'}
-                aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
-                aria-live="polite"
-              >
-                {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
-              </button>
+              <AppTooltip text={lastCopiedKey === shareKey ? 'Trade link copied' : accessSecret ? 'Share private trade link' : 'Share trade link'}>
+                <button
+                  type="button"
+                  className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
+                  onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
+                  aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
+                  aria-live="polite"
+                >
+                  {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
+                </button>
+              </AppTooltip>
             ) : null}
           </div>
         ) : (
           <div className="p2p-card-footer-actions">
             {perspective.isMaker && canOpenTerminal ? (
-              <button
-                type="button"
-                className="p2p-offer-manage-btn"
-                onClick={openCardTerminal}
-                title={OPEN_TERMINAL_LABEL}
-                aria-label={OPEN_TERMINAL_LABEL}
-              >
-                <span>{OPEN_TERMINAL_LABEL}</span>
-              </button>
+              <AppTooltip text={OPEN_TERMINAL_LABEL}>
+                <button
+                  type="button"
+                  className="p2p-offer-manage-btn"
+                  onClick={openCardTerminal}
+                  aria-label={OPEN_TERMINAL_LABEL}
+                >
+                  <span>{OPEN_TERMINAL_LABEL}</span>
+                </button>
+              </AppTooltip>
             ) : showOpenTradeAction && canOpenTerminal ? (
-              <button
-                type="button"
-                className="p2p-offer-open-btn"
-                onClick={openCardTerminal}
-                title={OPEN_TERMINAL_LABEL}
-                aria-label={OPEN_TERMINAL_LABEL}
-              >
-                {renderOpenActionCtaContent(openTradeActionCta)}
-              </button>
+              <AppTooltip text={OPEN_TERMINAL_LABEL}>
+                <button
+                  type="button"
+                  className="p2p-offer-open-btn"
+                  onClick={openCardTerminal}
+                  aria-label={OPEN_TERMINAL_LABEL}
+                >
+                  {renderOpenActionCtaContent(openTradeActionCta)}
+                </button>
+              </AppTooltip>
             ) : null}
             {!hideShareAction && shareUrl ? (
-              <button
-                type="button"
-                className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
-                onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
-                title={lastCopiedKey === shareKey ? 'Trade link copied' : accessSecret ? 'Share private trade link' : 'Share trade link'}
-                aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
-                aria-live="polite"
-              >
-                {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
-              </button>
+              <AppTooltip text={lastCopiedKey === shareKey ? 'Trade link copied' : accessSecret ? 'Share private trade link' : 'Share trade link'}>
+                <button
+                  type="button"
+                  className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
+                  onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
+                  aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
+                  aria-live="polite"
+                >
+                  {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
+                </button>
+              </AppTooltip>
             ) : null}
           </div>
         )}

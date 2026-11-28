@@ -3,6 +3,7 @@ import { getAddress, formatUnits } from '@coti-io/coti-ethers';
 import type { TradeBalanceDisclosureV2Runtime, TradeBalanceDisclosureV2State } from '../../../lib/tradeBalanceDisclosureV2';
 import { buildTradeCustomTokenInfoKey, type TradeCustomTokenInfo } from '../../../lib/appHelpers';
 import { isTradeActionConfirmationCancelledError, type TradeFundingPreflightInput } from '../../../lib/tradeActionConfirm';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 export type TradeBalanceDisclosureV2Props = { runtime: TradeBalanceDisclosureV2Runtime; orderId?: string; actionInProgress: boolean;
   tokenInfoByKey: Readonly<Record<string, TradeCustomTokenInfo>>; ensureTokenInfo: (token: { address: string; kind: 'erc20' | 'private-erc20' }) => Promise<unknown>;
@@ -109,8 +110,8 @@ export default function TradeBalanceDisclosureV2({ runtime, orderId, actionInPro
       {own && !state.taker ? <><label className="p2p-terminal-input-field">Counterparty wallet<input type="text" autoComplete="off" spellCheck={false} value={entry} disabled={locked}
         onChange={event => setText({ session, value: event.target.value })} /></label>
         <button type="button" className="standalone-trade-secondary-btn" disabled={locked || !candidate || candidate === state.maker} onClick={() => { if (candidate) setTarget({ session, recipient: candidate }); }}>Check access</button>
-        {history?.values.map(value => <button type="button" key={value} className="standalone-trade-secondary-btn" title={value} disabled={locked || history.busy}
-          onClick={() => { setText({ session, value }); setTarget({ session, recipient: value }); }}>{value.slice(0, 8)}…{value.slice(-4)}</button>)}
+        {history?.values.map(value => <AppTooltip key={value} text={value}><button type="button" className="standalone-trade-secondary-btn" disabled={locked || history.busy}
+          onClick={() => { setText({ session, value }); setTarget({ session, recipient: value }); }}>{value.slice(0, 8)}…{value.slice(-4)}</button></AppTooltip>)}
         {!history?.complete || history?.failed ? <button type="button" className="standalone-trade-secondary-btn" disabled={locked || history?.busy} onClick={() => { void loadRecipients(); }}>{history?.busy ? 'Loading recipients…' : 'Load more recipients'}</button> : null}
         {history?.failed ? <p role="alert">Recipient history could not refresh.</p> : null}
       </> : null}

@@ -195,7 +195,7 @@ describe('Group submitted-send hold', () => {
     );
     const send = buttonWithClass(html, 'group-compose-send chat-compose-send');
     expect(send).toContain('disabled=""');
-    expect(send).toContain(`title="${holdReason}"`);
+    expect(send).toContain(`aria-description="${holdReason}"`);
     expect(buttonWithClass(html, 'chat-compose-attach chat-compose-attach-icon')).toContain('disabled=""');
     expect(html).toContain(`role="status">${holdReason}<`);
   });
@@ -207,7 +207,8 @@ describe('Group submitted-send hold', () => {
     );
     const send = buttonWithClass(html, 'group-compose-send chat-compose-send');
     expect(send).not.toContain('disabled=""');
-    expect(send).toContain('title="Send group message"');
+    expect(send).toContain('aria-label="Send group message"');
+    expect(send).not.toContain('aria-description=');
     expect(html).not.toContain(holdReason);
   });
 });

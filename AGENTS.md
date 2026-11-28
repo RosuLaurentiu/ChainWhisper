@@ -91,16 +91,21 @@ are historical evidence, not current compatibility requirements.
   `.agents/skills/ui-sdk` and read `node_modules/@ui-sdk/react/docs/llms.txt`.
   To build a new component, also search `node_modules/@ui-sdk/react/docs/core.md`
   by heading and read `rendering.md` next to it. Style each part with the App
-  tokens; the default `web.css` look must not replace the approved design.
+  tokens.
   Feature code uses the wrappers in `src/shared/ui` (CW-160) and does not import
   ui-sdk parts directly. Compare computed styles before and after a conversion.
-  A wrapper puts the class `app-ui` on each part; the `app-ui-reset` layer in
-  base.css then removes the ui-sdk default look (CW-162).
+  Do not import `@ui-sdk/core/web.css`: it restyles links, icons and every
+  part, and the App stylesheets give each part its look (CW-165).
 - Forms (CW-163): existing forms keep native inputs, wrapping labels and their
   `aria-label` names; browser specs use those names. Link each shown field error
   to its control with `describedByIds` from `src/shared/components/a11y.ts`.
   ui-sdk Field needs one container and one label part for each field, so use it
   for a new form only, not to rewrite a current one.
+- Hints and status (CW-165): use `AppTooltip` from `src/shared/ui` for a short hint,
+  not the `title` attribute. Each trigger keeps its own name. A tooltip does
+  not show on touch, so do not put required information in one only. Pending,
+  failed and recovery messages stay in the page next to their action; do not
+  move them to toasts.
 - Route ownership is in src/shell/routing.ts. Keep same-App navigation and
   harmless aliases. An old contract link may show unsupported; never reinterpret
   its ID as an order on the current contract.

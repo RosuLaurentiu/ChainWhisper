@@ -1,6 +1,7 @@
 import { StrictMode, Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import InitialHomeApp from './app/components/InitialHomeApp';
+import { AppTooltipHost } from './shared/ui/AppTooltip';
 import { RouteLoadingFallback } from './app/lazyRoutes';
 import type { AppHelpLaunchContext } from './lib/appHelpLaunch';
 import {
@@ -10,7 +11,8 @@ import {
   stripStaleTradeSearchParams,
   type AppPage
 } from './shell/routing';
-import '@ui-sdk/core/web.css';
+// ui-sdk supplies behaviour only. Its default stylesheet (@ui-sdk/core/web.css) is not imported, because the
+// App stylesheets give every part its look (CW-165).
 import './styles.css';
 
 const App = lazy(() => import('./App'));
@@ -87,5 +89,6 @@ function AppEntry() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppEntry />
+    <AppTooltipHost />
   </StrictMode>
 );

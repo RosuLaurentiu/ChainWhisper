@@ -22,9 +22,33 @@
   letter-spacing: -0.02em;
 }
 
+/* The one shared hint tooltip of AppTooltip (CW-165). ui-sdk places it in the browser top layer next to the
+   element that the pointer or the keyboard focus is on. The look follows the DEX chart tooltip. */
+.app-tooltip {
+  max-width: min(320px, calc(100vw - 16px));
+  margin: 0;
+  padding: 6px 9px;
+  overflow: visible;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.36);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+/* A trigger with no hint text keeps its place in the page; its empty tooltip does not show. */
+.app-tooltip:empty {
+  display: none;
+}
+
 /* Full-screen layer of AppDialog (CW-160). ui-sdk shows it in the browser top layer as a popover. These values
-   remove the popover and ui-sdk web.css defaults, so the layer class that follows (modal-backdrop,
-   image-lightbox-backdrop) gives the same look as before. Keep this rule before those classes. */
+   remove the browser popover defaults, so the layer class that follows (modal-backdrop, image-lightbox-backdrop)
+   gives the same look as before. Keep this rule before those classes. */
 .app-dialog-surface {
   width: auto;
   height: auto;

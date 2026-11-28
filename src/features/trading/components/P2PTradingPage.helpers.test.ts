@@ -292,14 +292,18 @@ describe('renderCarbonPriceReference', () => {
     });
 
     expect(isValidElement(node)).toBe(true);
-    if (!isValidElement<{ children: string; onClick: () => void; title: string; 'aria-pressed': boolean }>(node)) {
+    if (!isValidElement<{ text: string; children: unknown }>(node)) {
       throw new Error('Expected a React element');
     }
-    expect(node.type).toBe('button');
-    expect(node.props.children).toBe('Carbon price unavailable');
-    expect(node.props.title).toBe('Flip ChainWhisper price ratio');
-    expect(node.props.onClick).toBe(onToggle);
-    expect(node.props['aria-pressed']).toBe(true);
+    expect(node.props.text).toBe('Flip ChainWhisper price ratio');
+    const button = node.props.children;
+    if (!isValidElement<{ children: string; onClick: () => void; 'aria-pressed': boolean }>(button)) {
+      throw new Error('Expected the hint to hold one element');
+    }
+    expect(button.type).toBe('button');
+    expect(button.props.children).toBe('Carbon price unavailable');
+    expect(button.props.onClick).toBe(onToggle);
+    expect(button.props['aria-pressed']).toBe(true);
   });
 });
 

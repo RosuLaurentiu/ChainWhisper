@@ -18,6 +18,7 @@ import {
   isCipherTradeWalletConnectConfigured
 } from '../../../lib/walletConnectMobile';
 import type { ChatReadCursorCloudSyncStatus } from './useChatReadCursorCloudSync';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type BrowserWalletActivationOptions = {
   forceFreshPrivacy?: boolean;
@@ -254,28 +255,29 @@ export default function useChatWalletHeaderControl({
           {readCursorCloudConfigured && onToggleReadCursorCloud ? (
             <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">
               <span>Chat privacy</span>
-              <button
-                type="button"
-                className={readCursorCloudReady ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  setError('');
-                  void onToggleReadCursorCloud().catch((cause) => {
-                    setError(getProviderErrorMessage(
-                      cause,
-                      'Cross-device read-status preference was not changed.'
-                    ));
-                  });
-                }}
-                disabled={busy || readCursorCloudBusy}
-                role="menuitem"
-                aria-pressed={readCursorCloudReady}
-                title={readCursorCloudReady
+              <AppTooltip text={readCursorCloudReady
                   ? 'Delete this wallet\'s synced read cursors and sign this device out. Messages and encryption keys were never stored.'
-                  : 'Sync only finalized message IDs and block anchors. Messages and encryption keys stay out of Supabase.'}
-              >
-                {readCursorCloudLabel}
-              </button>
+                  : 'Sync only finalized message IDs and block anchors. Messages and encryption keys stay out of Supabase.'}>
+                <button
+                  type="button"
+                  className={readCursorCloudReady ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                  onClick={() => {
+                    setChatWalletMenuOpen(false);
+                    setError('');
+                    void onToggleReadCursorCloud().catch((cause) => {
+                      setError(getProviderErrorMessage(
+                        cause,
+                        'Cross-device read-status preference was not changed.'
+                      ));
+                    });
+                  }}
+                  disabled={busy || readCursorCloudBusy}
+                  role="menuitem"
+                  aria-pressed={readCursorCloudReady}
+                >
+                  {readCursorCloudLabel}
+                </button>
+              </AppTooltip>
             </div>
           ) : null}
           <button
@@ -317,27 +319,28 @@ export default function useChatWalletHeaderControl({
                 </button>
               );
             })}
-            <button
-              type="button"
-              className={cipherTradeWalletConnectActive ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-              onClick={() => {
-                setChatWalletMenuOpen(false);
-                connectWallet(CIPHERTRADE_WALLETCONNECT_WALLET_ID);
-              }}
-              disabled={busy || !cipherTradeWalletConnectConfigured || cipherTradeWalletConnectActive}
-              title={
+            <AppTooltip text={
                 cipherTradeWalletConnectConfigured
                   ? 'Scan a WalletConnect QR code with CipherTrade Mobile'
                   : 'Set VITE_WALLETCONNECT_PROJECT_ID to enable CipherTrade Mobile'
-              }
-              role="menuitem"
-            >
-              {cipherTradeWalletConnectActive
-                ? 'CipherTrade Mobile ready'
-                : cipherTradeWalletConnectConfigured
-                  ? 'Connect CipherTrade Mobile'
-                  : 'CipherTrade Mobile setup needed'}
-            </button>
+              }>
+              <button
+                type="button"
+                className={cipherTradeWalletConnectActive ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                onClick={() => {
+                  setChatWalletMenuOpen(false);
+                  connectWallet(CIPHERTRADE_WALLETCONNECT_WALLET_ID);
+                }}
+                disabled={busy || !cipherTradeWalletConnectConfigured || cipherTradeWalletConnectActive}
+                role="menuitem"
+              >
+                {cipherTradeWalletConnectActive
+                  ? 'CipherTrade Mobile ready'
+                  : cipherTradeWalletConnectConfigured
+                    ? 'Connect CipherTrade Mobile'
+                    : 'CipherTrade Mobile setup needed'}
+              </button>
+            </AppTooltip>
             {orderedWallets.length === 0 ? (
               <button
                 type="button"

@@ -6,6 +6,7 @@ import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../../../lib/ap
 import { CHAT_IMAGE_FILE_ACCEPT } from '../../../lib/imagePull';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
 import { insertChatComposerLineBreak, syncChatComposerText } from '../../../shared/chatComposeText';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 export type ChatComposerPromptEstimate = {
   tone: 'ok' | 'warning';
@@ -157,12 +158,7 @@ export default function DirectChatCompose({
               aria-label={`Tip amount in ${activeTipTokenSymbol}`}
               disabled={tipping}
             />
-            <button
-              className="chat-tip-send"
-              type="button"
-              onClick={onSendTip}
-              disabled={!canSendTipFromComposer || sendHeld}
-              title={
+            <AppTooltip text={
                 sendHoldReason
                   ? sendHoldReason
                   : tipAmountWeiFromInput <= 0n
@@ -170,10 +166,14 @@ export default function DirectChatCompose({
                   : tipAmountExceedsBalance
                     ? `Amount exceeds your ${activeTipTokenSymbol} balance`
                     : `Send ${tipAmountSummaryLabel}`
-              }
+              }><button
+              className="chat-tip-send"
+              type="button"
+              onClick={onSendTip}
+              disabled={!canSendTipFromComposer || sendHeld}
             >
               {tipping ? 'Sending tip...' : `Send ${activeTipTokenSymbol}`}
-            </button>
+            </button></AppTooltip>
           </div>
           <div className="chat-tip-meta">
             <span>{tipAmountSummaryLabel}</span>
@@ -216,18 +216,19 @@ export default function DirectChatCompose({
               onSendImage(file);
             }}
           />
-          <button
-            type="button"
-            className="chat-compose-attach chat-compose-attach-icon"
-            onClick={() => {
-              imageInputRef.current?.click();
-            }}
-            disabled={attachDisabled}
-            aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
-            title={sendHoldReason ?? imageAttachTitle}
-          >
-            <ChatImageIcon />
-          </button>
+          <AppTooltip text={sendHoldReason ?? imageAttachTitle}>
+            <button
+              type="button"
+              className="chat-compose-attach chat-compose-attach-icon"
+              onClick={() => {
+                imageInputRef.current?.click();
+              }}
+              disabled={attachDisabled}
+              aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
+            >
+              <ChatImageIcon />
+            </button>
+          </AppTooltip>
           <div
             ref={composerRef}
             className="chat-compose-editor"
@@ -277,18 +278,19 @@ export default function DirectChatCompose({
               }
             }}
           />
-          <button
-            type="button"
-            className="chat-compose-send"
-            onClick={onSendMessage}
-            disabled={sending || tipping || uploadingImage || sendHeld}
-            aria-label={sending ? 'Sending message' : uploadingImage ? 'Preparing image' : 'Send message'}
-            title={
+          <AppTooltip text={
               sending ? 'Sending...' : uploadingImage ? 'Preparing image...' : sendHoldReason ?? 'Send message'
-            }
-          >
-            <ChatSendIcon />
-          </button>
+            }>
+            <button
+              type="button"
+              className="chat-compose-send"
+              onClick={onSendMessage}
+              disabled={sending || tipping || uploadingImage || sendHeld}
+              aria-label={sending ? 'Sending message' : uploadingImage ? 'Preparing image' : 'Send message'}
+            >
+              <ChatSendIcon />
+            </button>
+          </AppTooltip>
         </div>
         {msgLength > 0 ? (
           <div className="chat-compose-length-row">
@@ -315,24 +317,26 @@ export default function DirectChatCompose({
           </div>
         ) : null}
         <div className="chat-compose-actions">
-          <button
-            type="button"
-            onClick={onToggleTipComposer}
-            className={tipComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
-            disabled={tipToggleDisabled}
-            title={tipToggleTitle}
-          >
-            Tip
-          </button>
-          <button
-            type="button"
-            onClick={onToggleTradeComposer}
-            className={tradeComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
-            disabled={tradeToggleDisabled}
-            title={tradeToggleTitle}
-          >
-            Trade
-          </button>
+          <AppTooltip text={tipToggleTitle}>
+            <button
+              type="button"
+              onClick={onToggleTipComposer}
+              className={tipComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+              disabled={tipToggleDisabled}
+            >
+              Tip
+            </button>
+          </AppTooltip>
+          <AppTooltip text={tradeToggleTitle}>
+            <button
+              type="button"
+              onClick={onToggleTradeComposer}
+              className={tradeComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+              disabled={tradeToggleDisabled}
+            >
+              Trade
+            </button>
+          </AppTooltip>
         </div>
       </div>
     </div>

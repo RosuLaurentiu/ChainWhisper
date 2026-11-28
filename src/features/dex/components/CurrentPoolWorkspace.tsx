@@ -22,6 +22,7 @@ import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionC
 import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import './CurrentPoolWorkspace.css';
 import './TransactionSteps.css';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 export const CURRENT_POOL_SPREADS = ['0.1', '0.3', '0.5', '1', '2', '5', '10'] as const;
 const spreadFractions = [[1001n, 1000n], [1003n, 1000n], [201n, 200n], [101n, 100n], [51n, 50n], [21n, 20n], [11n, 10n]];
@@ -679,8 +680,8 @@ export default function CurrentPoolWorkspace({ sharedWalletSession, priceDisplay
       </div></details>
       {preparedCandidate ? <details className="dex-v2-setup"><summary>Status and recovery</summary>{recovery}</details> : recovery}
       {savedActionPending ? <p role="alert">{positionPending?'A position needs your attention before another deposit. Open the position to check its status. Nothing is resent.':'A saved action needs a status check. Open its status and recovery in History before a new deposit.'}</p> : null}
-      {transactionHash ? <p className="dex-v2-activation-note dex-v2-pool-transaction">Transaction <a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${transactionHash}`}
-        target="_blank" rel="noreferrer" title={transactionHash} aria-label={`View transaction ${transactionHash}`}>{transactionHash.slice(0, 6)}…{transactionHash.slice(-4)}</a>
+      {transactionHash ? <p className="dex-v2-activation-note dex-v2-pool-transaction">Transaction <AppTooltip text={transactionHash}><a href={`${COTI_TESTNET_NETWORK.blockExplorerUrl}/tx/${transactionHash}`}
+        target="_blank" rel="noreferrer" aria-label={`View transaction ${transactionHash}`}>{transactionHash.slice(0, 6)}…{transactionHash.slice(-4)}</a></AppTooltip>
         <button type="button" onClick={() => { void navigator.clipboard?.writeText(transactionHash); }} aria-label="Copy transaction hash">Copy</button></p> : null}
       {nftId !== null && nftScope.current === scope.current ? <p className="dex-v2-activation-note">Verified position NFT ID: {nftId.toString()}. {attemptComplete ? 'The claim exit is complete.' : 'Use this ID and funding transaction in Your liquidity to refresh and exit the claim.'}</p> : null}
     </section>

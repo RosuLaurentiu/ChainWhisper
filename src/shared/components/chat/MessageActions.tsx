@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, type KeyboardEvent } from 'react';
 import { FilePenLine, LoaderCircle, MessageCircleReply, SmilePlus } from 'lucide-react';
 import { DEFAULT_REACTION_EMOJIS, type ChatMessage } from '../../../lib/appShared';
+import { AppTooltip } from '../../ui/AppTooltip';
 
 type MessageActionsProps = {
   message: ChatMessage;
@@ -96,45 +97,48 @@ export default function MessageActions({
 
   return (
     <>
-      <button
-        ref={reactionButtonRef}
-        type="button"
-        className="message-react-action"
-        onClick={() => onToggleReactionPicker(message.id)}
-        aria-controls={pickerOpen ? pickerId : undefined}
-        aria-expanded={pickerOpen}
-        aria-label="React to this message"
-        title={reactionTitle}
-        disabled={reactionDisabled}
-      >
-        <SmilePlus aria-hidden="true" size={15} strokeWidth={2.25} />
-      </button>
-      <button
-        type="button"
-        className="message-reply-action"
-        onClick={() => onReplyToMessage(message)}
-        aria-label="Reply to this message"
-        title={replyTitle}
-        disabled={replyDisabled}
-      >
-        <MessageCircleReply aria-hidden="true" size={15} strokeWidth={2.25} />
-      </button>
-      {onDraftTradeFromMessage ? (
+      <AppTooltip text={reactionTitle}>
+        <button
+          ref={reactionButtonRef}
+          type="button"
+          className="message-react-action"
+          onClick={() => onToggleReactionPicker(message.id)}
+          aria-controls={pickerOpen ? pickerId : undefined}
+          aria-expanded={pickerOpen}
+          aria-label="React to this message"
+          disabled={reactionDisabled}
+        >
+          <SmilePlus aria-hidden="true" size={15} strokeWidth={2.25} />
+        </button>
+      </AppTooltip>
+      <AppTooltip text={replyTitle}>
         <button
           type="button"
-          className={draftTradeLoading ? 'message-draft-trade-action loading' : 'message-draft-trade-action'}
-          onClick={() => onDraftTradeFromMessage(message)}
-          aria-busy={draftTradeLoading}
-          aria-label={draftTradeLoading ? 'Drafting trade from this message' : 'Draft trade from this message'}
-          title={draftTradeTitle}
-          disabled={draftTradeDisabled}
+          className="message-reply-action"
+          onClick={() => onReplyToMessage(message)}
+          aria-label="Reply to this message"
+          disabled={replyDisabled}
         >
-          {draftTradeLoading ? (
-            <LoaderCircle aria-hidden="true" size={15} strokeWidth={2.25} />
-          ) : (
-            <FilePenLine aria-hidden="true" size={15} strokeWidth={2.25} />
-          )}
+          <MessageCircleReply aria-hidden="true" size={15} strokeWidth={2.25} />
         </button>
+      </AppTooltip>
+      {onDraftTradeFromMessage ? (
+        <AppTooltip text={draftTradeTitle}>
+          <button
+            type="button"
+            className={draftTradeLoading ? 'message-draft-trade-action loading' : 'message-draft-trade-action'}
+            onClick={() => onDraftTradeFromMessage(message)}
+            aria-busy={draftTradeLoading}
+            aria-label={draftTradeLoading ? 'Drafting trade from this message' : 'Draft trade from this message'}
+            disabled={draftTradeDisabled}
+          >
+            {draftTradeLoading ? (
+              <LoaderCircle aria-hidden="true" size={15} strokeWidth={2.25} />
+            ) : (
+              <FilePenLine aria-hidden="true" size={15} strokeWidth={2.25} />
+            )}
+          </button>
+        </AppTooltip>
       ) : null}
       {pickerOpen ? (
         <div
@@ -152,20 +156,18 @@ export default function MessageActions({
             </p>
           ) : null}
           {DEFAULT_REACTION_EMOJIS.map((emoji) => (
-            <button
-              key={`${message.id}-${emoji}`}
+            <AppTooltip key={`${message.id}-${emoji}`} text={reactedEmojiSet.has(emoji) ? `Remove reaction ${emoji}` : `React with ${emoji}`}><button
               type="button"
               onClick={() => {
                 onSendReaction(message, emoji).catch(() => {});
               }}
               disabled={sendingReaction}
-              title={reactedEmojiSet.has(emoji) ? `Remove reaction ${emoji}` : `React with ${emoji}`}
               aria-label={reactedEmojiSet.has(emoji)
                 ? `Remove ${reactionDisclosure ? 'public on-chain ' : ''}reaction ${emoji}`
                 : reactionDisclosure ? `Public on-chain reaction ${emoji}` : `Reaction ${emoji}`}
             >
               {emoji}
-            </button>
+            </button></AppTooltip>
           ))}
         </div>
       ) : null}

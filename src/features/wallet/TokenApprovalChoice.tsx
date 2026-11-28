@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { TokenApprovalMode } from '../../lib/tokenAllowance';
+import { AppTooltip } from '../../shared/ui/AppTooltip';
 
 export function useTokenApprovalMode(scope: string): [TokenApprovalMode, (mode: TokenApprovalMode) => void, () => TokenApprovalMode] {
   const [choice, setChoice] = useState<{ scope: string; mode: TokenApprovalMode }>();
@@ -14,12 +15,12 @@ export default function TokenApprovalChoice({ token, spender, value, onChange, d
   token: string; spender: string; value: TokenApprovalMode; onChange: (mode: TokenApprovalMode) => void; disabled?: boolean;
 }) {
   return <div className="dex-v2-approval-policy">
-    <button type="button" role="switch" aria-checked={value === 'unlimited'}
-      aria-label={`Unlimited ${token} approval`} disabled={disabled} title={`Spender: ${spender}`}
+    <AppTooltip text={`Spender: ${spender}`}><button type="button" role="switch" aria-checked={value === 'unlimited'}
+      aria-label={`Unlimited ${token} approval`} disabled={disabled}
       onClick={() => onChange(value === 'unlimited' ? 'exact' : 'unlimited')}>
       <span>Unlimited {token} approval</span>
       <span className="dex-v2-approval-switch-track" aria-hidden="true"><i /></span>
-    </button>
+    </button></AppTooltip>
     <small>{value === 'unlimited'
       ? 'Allows future spending until revoked. Use may be visible on-chain.'
       : 'Approve only the amount needed.'}</small>

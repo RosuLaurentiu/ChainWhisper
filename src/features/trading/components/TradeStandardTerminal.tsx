@@ -72,6 +72,7 @@ import {
   type TerminalHistoryPanelConfig
 } from './P2PTradingPage.helpers';
 import { TradeTerminalHistoryMobileControls } from './TradeTerminalHistoryPanel';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type CounterAcceptMode = 'close-related' | 'fill';
 
@@ -492,14 +493,16 @@ export default function TradeStandardTerminal({
             <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
             {terminalAccessChip ? <span className="p2p-order-chip">{terminalAccessChip}</span> : null}
             {counterRelation ? (
-              <span className="p2p-order-chip" title={counterRelation.detail}>
-                {counterRelation.chipLabel}
-              </span>
+              <AppTooltip text={counterRelation.detail}>
+                <span className="p2p-order-chip">
+                  {counterRelation.chipLabel}
+                </span>
+              </AppTooltip>
             ) : null}
             {terminalExpiryChip && expiryCountdown ? (
-              <span className={`p2p-expiry-chip trade-card-expiry-${expiryCountdown.urgency}`} title={expiryParts.title}>
+              <AppTooltip text={expiryParts.title}><span className={`p2p-expiry-chip trade-card-expiry-${expiryCountdown.urgency}`}>
                 {terminalExpiryChip}
-              </span>
+              </span></AppTooltip>
             ) : null}
           </div>
         </div>
@@ -567,18 +570,17 @@ export default function TradeStandardTerminal({
             </div>
           )}
 
-          <button
+          <AppTooltip text={priceRatioDisplay?.toggleTitle ?? 'Private terms'}><button
             type="button"
             className="p2p-terminal-price-card"
             onClick={() => toggleTradeRateDirection(snapshot.tradeId, snapshot.escrowContract)}
-            title={priceRatioDisplay?.toggleTitle ?? 'Private terms'}
             aria-label={priceRatioDisplay?.ariaLabel ?? `Private terms for trade ${snapshot.tradeId}.`}
           >
             <span>Price ratio</span>
             {terminalPriceSideLabel ? <span className="p2p-price-side-label">{terminalPriceSideLabel}</span> : null}
             <strong>{tradeRateText}</strong>
             {renderCarbonPriceReference(terminalCarbonPriceReference)}
-          </button>
+          </button></AppTooltip>
 
           {fallbackCompletionSummary ? (
             <div className="p2p-terminal-progress" aria-label={fallbackCompletionSummary.percentLabel}>
@@ -617,16 +619,18 @@ export default function TradeStandardTerminal({
             <div className="p2p-terminal-stat-grid">
               <div>
                 <span>Maker</span>
-                <a href={makerExplorerUrl} target="_blank" rel="noreferrer" title={snapshot.maker}>
+                <AppTooltip text={snapshot.maker}><a href={makerExplorerUrl} target="_blank" rel="noreferrer">
                   {perspective.isMaker ? `${shortenAddress(snapshot.maker)} (you)` : shortenAddress(snapshot.maker)}
-                </a>
+                </a></AppTooltip>
               </div>
               <div>
                 <span>Peer</span>
                 {peerExplorerUrl ? (
-                  <a href={peerExplorerUrl} target="_blank" rel="noreferrer" title={peerAddress}>
-                    {peerLabel}
-                  </a>
+                  <AppTooltip text={peerAddress}>
+                    <a href={peerExplorerUrl} target="_blank" rel="noreferrer">
+                      {peerLabel}
+                    </a>
+                  </AppTooltip>
                 ) : (
                   <strong>{peerLabel}</strong>
                 )}
@@ -637,9 +641,11 @@ export default function TradeStandardTerminal({
               <div>
                 {tokenExplorerLinks.length ? (
                   tokenExplorerLinks.map((link) => (
-                    <a key={link.href} href={link.href} target="_blank" rel="noreferrer" title={link.title}>
-                      {link.label}
-                    </a>
+                    <AppTooltip key={link.href} text={link.title}>
+                      <a href={link.href} target="_blank" rel="noreferrer">
+                        {link.label}
+                      </a>
+                    </AppTooltip>
                   ))
                 ) : (
                   <strong>Native only</strong>
@@ -652,16 +658,17 @@ export default function TradeStandardTerminal({
               </button>
               {renderTradeConversationButton(snapshot, shareUrl || undefined, accessSecret || undefined)}
               {shareUrl ? (
-                <button
-                  type="button"
-                  className={lastCopiedKey === shareKey ? 'p2p-terminal-share copied' : 'p2p-terminal-share'}
-                  onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
-                  title={lastCopiedKey === shareKey ? 'Trade link copied' : 'Share trade link'}
-                  aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
-                  aria-live="polite"
-                >
-                  {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
-                </button>
+                <AppTooltip text={lastCopiedKey === shareKey ? 'Trade link copied' : 'Share trade link'}>
+                  <button
+                    type="button"
+                    className={lastCopiedKey === shareKey ? 'p2p-terminal-share copied' : 'p2p-terminal-share'}
+                    onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
+                    aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
+                    aria-live="polite"
+                  >
+                    {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
+                  </button>
+                </AppTooltip>
               ) : null}
             </div>
           </details>
@@ -677,7 +684,9 @@ export default function TradeStandardTerminal({
                   <div className="p2p-terminal-field-head">
                     <span style={privateBook ? { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip' } : undefined}>{privateBook ? 'Maximum payment' : 'You pay'} {displayTrade.request.symbol}</span>
                     {requestBalanceLabel !== 'Unlock' ? (
-                      <small title={resolveTerminalAssetBalanceLabel(displayTrade.request, 6)}>{requestBalanceLabel}</small>
+                      <AppTooltip text={resolveTerminalAssetBalanceLabel(displayTrade.request, 6)}>
+                        <small>{requestBalanceLabel}</small>
+                      </AppTooltip>
                     ) : null}
                   </div>
                   <input
@@ -711,7 +720,9 @@ export default function TradeStandardTerminal({
                   <div className="p2p-terminal-field-head">
                     <span style={privateBook ? { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip' } : undefined}>{privateBook ? 'Receive up to' : 'You receive'} {displayTrade.offer.symbol}</span>
                     {offerBalanceLabel !== 'Unlock' ? (
-                      <small title={resolveTerminalAssetBalanceLabel(displayTrade.offer, 6)}>{offerBalanceLabel}</small>
+                      <AppTooltip text={resolveTerminalAssetBalanceLabel(displayTrade.offer, 6)}>
+                        <small>{offerBalanceLabel}</small>
+                      </AppTooltip>
                     ) : null}
                   </div>
                   <input
@@ -729,14 +740,7 @@ export default function TradeStandardTerminal({
                 </label>
               </div>
               {fillTooHigh ? <p className="p2p-terminal-ticket-warning">Amount is above current visible liquidity.</p> : null}
-              <button
-                type="button"
-                className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
-                  processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
-                }`}
-                onClick={() => partialFillTrade(snapshot, fillSubmitInput).catch(() => {})}
-                disabled={processingTradeActionId === tradeKey || !fillCanSubmit}
-                title={
+              <AppTooltip text={
                   processingTradeActionId === tradeKey
                     ? 'Wallet action in progress...'
                     : !walletKey
@@ -748,7 +752,13 @@ export default function TradeStandardTerminal({
                           : fillTooHigh
                             ? 'Amount is above current visible liquidity.'
                             : undefined
-                }
+                }><button
+                type="button"
+                className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
+                  processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
+                }`}
+                onClick={() => partialFillTrade(snapshot, fillSubmitInput).catch(() => {})}
+                disabled={processingTradeActionId === tradeKey || !fillCanSubmit}
               >
                 {processingTradeActionId === tradeKey
                   ? 'Processing...'
@@ -763,7 +773,7 @@ export default function TradeStandardTerminal({
                           : isHiddenLiquidityTerms
                             ? `Buy up to ${requestedBuyLabel}`
                             : `Buy ${requestedBuyLabel}`}
-              </button>
+              </button></AppTooltip>
               {canCounter ? (
                 <button type="button" className="trade-card-action trade-card-action-counter" onClick={() => beginCounterTrade(snapshot)}>
                   Counter
@@ -825,14 +835,7 @@ export default function TradeStandardTerminal({
             </div>
           ) : snapshot.status === 'open' && canActAsTaker ? (
             <div className="p2p-terminal-action-stack">
-              <button
-                type="button"
-                className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
-                  processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
-                }`}
-                onClick={() => acceptTrade(snapshot).catch(() => {})}
-                disabled={processingTradeActionId === tradeKey || directTermsPending || !walletKey || !onCotiNetwork}
-                title={
+              <AppTooltip text={
                   processingTradeActionId === tradeKey
                     ? 'Wallet action in progress...'
                     : !walletKey
@@ -842,7 +845,13 @@ export default function TradeStandardTerminal({
                         : snapshot.counterParentTradeId
                           ? 'Close the parent first, accept this counter, then close sibling counters.'
                           : undefined
-                }
+                }><button
+                type="button"
+                className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
+                  processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
+                }`}
+                onClick={() => acceptTrade(snapshot).catch(() => {})}
+                disabled={processingTradeActionId === tradeKey || directTermsPending || !walletKey || !onCotiNetwork}
               >
                 {processingTradeActionId === tradeKey
                   ? 'Processing...'
@@ -853,17 +862,18 @@ export default function TradeStandardTerminal({
                       : snapshot.counterParentTradeId
                         ? 'Close parent & accept'
                         : `Buy ${fixedBuyLabel}`}
-              </button>
+              </button></AppTooltip>
               {!isHiddenLiquidityTerms && snapshot.counterParentTradeId && perspective.isTaker && (
-                <button
-                  type="button"
-                  className="trade-card-action trade-card-action-counter"
-                  onClick={() => acceptTrade(snapshot, 'fill').catch(() => {})}
-                  disabled={processingTradeActionId === tradeKey}
-                  title="Fill this counter offer without closing the parent or sibling counters."
-                >
-                  Fill
-                </button>
+                <AppTooltip text="Fill this counter offer without closing the parent or sibling counters.">
+                  <button
+                    type="button"
+                    className="trade-card-action trade-card-action-counter"
+                    onClick={() => acceptTrade(snapshot, 'fill').catch(() => {})}
+                    disabled={processingTradeActionId === tradeKey}
+                  >
+                    Fill
+                  </button>
+                </AppTooltip>
               )}
               {canCounter ? (
                 <button type="button" className="trade-card-action trade-card-action-counter" onClick={() => beginCounterTrade(snapshot)} disabled={processingTradeActionId === tradeKey}>

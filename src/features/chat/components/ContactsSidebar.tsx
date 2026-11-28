@@ -8,6 +8,7 @@ import {
   type GroupInvite,
   type GroupSummary
 } from '../../../lib/appShared';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type ContactGroupPanelRatio = {
   contactsPanelFlex: number;
@@ -167,30 +168,32 @@ function ContactsSidebar({
               onNicknameInputChange(singleLine);
             }}
           />
-          <button
-            type="button"
-            className="contact-profile-editor-action"
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            onClick={onSaveNickname}
-            disabled={!canSavePublicName || !walletAddress}
-            title="Saved publicly by your wallet in ChainWhisper Chat V2"
-          >
-            Save
-          </button>
+          <AppTooltip text="Saved publicly by your wallet in ChainWhisper Chat V2">
+            <button
+              type="button"
+              className="contact-profile-editor-action"
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+              onClick={onSaveNickname}
+              disabled={!canSavePublicName || !walletAddress}
+            >
+              Save
+            </button>
+          </AppTooltip>
         </div>
         <div className="contact-actions-panel">
           <div className="contact-actions-grid">
-            <button
-              type="button"
-              className="contact mark-read-button contact-action-btn"
-              onClick={onMarkAllConversationsAsRead}
-              disabled={readStateActionsDisabled || !hasUnreadConversations}
-              title={readStateActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}
-            >
-              Mark all as read
-            </button>
+            <AppTooltip text={readStateActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}>
+              <button
+                type="button"
+                className="contact mark-read-button contact-action-btn"
+                onClick={onMarkAllConversationsAsRead}
+                disabled={readStateActionsDisabled || !hasUnreadConversations}
+              >
+                Mark all as read
+              </button>
+            </AppTooltip>
             <button
               type="button"
               className="contact mark-read-button contact-action-btn"
@@ -207,7 +210,13 @@ function ContactsSidebar({
             >
               New chat
             </button>
-            <button
+            <AppTooltip text={
+                showHiddenContacts
+                  ? 'Return to your main conversations'
+                  : hiddenContactsCount > 0
+                    ? `Show ${hiddenContactsLabel}`
+                    : 'No hidden chats yet'
+              }><button
               type="button"
               className={
                 showHiddenContacts
@@ -216,13 +225,6 @@ function ContactsSidebar({
               }
               onClick={onToggleShowHiddenContacts}
               aria-pressed={showHiddenContacts}
-              title={
-                showHiddenContacts
-                  ? 'Return to your main conversations'
-                  : hiddenContactsCount > 0
-                    ? `Show ${hiddenContactsLabel}`
-                    : 'No hidden chats yet'
-              }
               disabled={!showHiddenContacts && hiddenContactsCount === 0}
             >
               {showHiddenContacts
@@ -230,7 +232,7 @@ function ContactsSidebar({
                 : hiddenContactsCount > 0
                   ? `Hidden chats (${hiddenContactsCount})`
                   : 'Hidden chats (0)'}
-            </button>
+            </button></AppTooltip>
           </div>
         </div>
       </div>
@@ -297,80 +299,68 @@ function ContactsSidebar({
                     }}
                   >
                     <div className="contact-top">
-                      <div className="contact-main" title={contact.address}>
-                        {hasName ? (
-                          <>
-                            <span className="contact-name-inline">{displayName}</span>
-                            <button
-                              type="button"
-                              className={
-                                isContactCopied
-                                  ? 'contact-copy contact-copy-secondary copied'
-                                  : 'contact-copy contact-copy-secondary'
-                              }
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onCopyWithFeedback(contact.address, contactCopyKey).catch(() => {});
-                              }}
-                              title={isContactCopied ? 'Copied' : 'Copy address'}
-                            >
-                              {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            className={isContactCopied ? 'contact-copy copied' : 'contact-copy'}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onCopyWithFeedback(contact.address, contactCopyKey).catch(() => {});
-                            }}
-                            title={isContactCopied ? 'Copied' : 'Copy address'}
-                          >
-                            {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
-                          </button>
-                        )}
-                      </div>
+                      <AppTooltip text={contact.address}>
+                        <div className="contact-main">
+                          {hasName ? (
+                            <>
+                              <span className="contact-name-inline">{displayName}</span>
+                              <AppTooltip text={isContactCopied ? 'Copied' : 'Copy address'}>
+                                <button
+                                  type="button"
+                                  className={
+                                    isContactCopied
+                                      ? 'contact-copy contact-copy-secondary copied'
+                                      : 'contact-copy contact-copy-secondary'
+                                  }
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onCopyWithFeedback(contact.address, contactCopyKey).catch(() => {});
+                                  }}
+                                >
+                                  {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
+                                </button>
+                              </AppTooltip>
+                            </>
+                          ) : (
+                            <AppTooltip text={isContactCopied ? 'Copied' : 'Copy address'}>
+                              <button
+                                type="button"
+                                className={isContactCopied ? 'contact-copy copied' : 'contact-copy'}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onCopyWithFeedback(contact.address, contactCopyKey).catch(() => {});
+                                }}
+                              >
+                                {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
+                              </button>
+                            </AppTooltip>
+                          )}
+                        </div>
+                      </AppTooltip>
                       {hasConversation ? (
-                        <span
-                          className="contact-chat-icon"
-                          aria-label={unreadMap[normalizedAddress] ? 'Unread messages' : 'Has conversation'}
-                          title={unreadMap[normalizedAddress] ? 'Unread messages' : 'Has conversation'}
-                          style={{ marginRight: 6, color: unreadMap[normalizedAddress] ? '#e33' : undefined }}
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            width="18"
-                            height="18"
-                            aria-hidden="true"
-                            focusable="false"
-                            xmlns="http://www.w3.org/2000/svg"
+                        <AppTooltip text={unreadMap[normalizedAddress] ? 'Unread messages' : 'Has conversation'}>
+                          <span
+                            className="contact-chat-icon"
+                            aria-label={unreadMap[normalizedAddress] ? 'Unread messages' : 'Has conversation'}
+                            style={{ marginRight: 6, color: unreadMap[normalizedAddress] ? '#e33' : undefined }}
                           >
-                            <path
-                              fill="currentColor"
-                              d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
-                            />
-                          </svg>
-                        </span>
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="18"
+                              height="18"
+                              aria-hidden="true"
+                              focusable="false"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <path
+                                fill="currentColor"
+                                d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
+                              />
+                            </svg>
+                          </span>
+                        </AppTooltip>
                       ) : null}
-                      <button
-                            type="button"
-                            className={conversationStatePending ? 'contact-icon loading' : 'contact-icon'}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onRemoveContact(contact.address);
-                            }}
-                            disabled={conversationStatePending || conversationMetadataActionsDisabled}
-                            aria-label={
-                              conversationMetadataActionsDisabled
-                                ? 'Conversation sync unavailable'
-                                : conversationStatePending
-                                ? 'Conversation update in progress'
-                                : isHidden
-                                  ? 'Unhide conversation'
-                                  : 'Hide conversation'
-                            }
-                            title={
+                      <AppTooltip text={
                               conversationMetadataActionsDisabled
                                 ? walletPromptSensitiveActionsTitle
                                 : conversationStatePending
@@ -378,48 +368,66 @@ function ContactsSidebar({
                                 : isHidden
                                   ? 'Unhide'
                                   : 'Hide'
-                            }
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              width="15"
-                              height="15"
-                              aria-hidden="true"
-                              focusable="false"
-                              xmlns="http://www.w3.org/2000/svg"
+                            }>
+                        <button
+                              type="button"
+                              className={conversationStatePending ? 'contact-icon loading' : 'contact-icon'}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRemoveContact(contact.address);
+                              }}
+                              disabled={conversationStatePending || conversationMetadataActionsDisabled}
+                              aria-label={
+                                conversationMetadataActionsDisabled
+                                  ? 'Conversation sync unavailable'
+                                  : conversationStatePending
+                                  ? 'Conversation update in progress'
+                                  : isHidden
+                                    ? 'Unhide conversation'
+                                    : 'Hide conversation'
+                              }
                             >
-                              <path
-                                d="M3 6h18"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.8"
-                                strokeLinecap="round"
-                              />
-                              <path
-                                d="M8 6V4h8v2"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.8"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                              <path
-                                d="M19 6l-1 14H6L5 6"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.8"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                              <path
-                                d="M10 11v6M14 11v6"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.8"
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                      </button>
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="15"
+                                height="15"
+                                aria-hidden="true"
+                                focusable="false"
+                                xmlns="http://www.w3.org/2000/svg"
+                              >
+                                <path
+                                  d="M3 6h18"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                />
+                                <path
+                                  d="M8 6V4h8v2"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M19 6l-1 14H6L5 6"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M10 11v6M14 11v6"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                        </button>
+                      </AppTooltip>
                     </div>
                   </div>
                 </li>
@@ -527,26 +535,27 @@ function ContactsSidebar({
                       </span>
                     </div>
                     {hasConversation ? (
-                      <span
-                        className="contact-chat-icon"
-                        aria-label={hasUnread ? 'Unread group messages' : 'Has group messages'}
-                        title={hasUnread ? 'Unread group messages' : 'Has group messages'}
-                        style={{ marginRight: 6, color: hasUnread ? '#e33' : undefined }}
-                      >
-                        <svg
-                          viewBox="0 0 24 24"
-                          width="18"
-                          height="18"
-                          aria-hidden="true"
-                          focusable="false"
-                          xmlns="http://www.w3.org/2000/svg"
+                      <AppTooltip text={hasUnread ? 'Unread group messages' : 'Has group messages'}>
+                        <span
+                          className="contact-chat-icon"
+                          aria-label={hasUnread ? 'Unread group messages' : 'Has group messages'}
+                          style={{ marginRight: 6, color: hasUnread ? '#e33' : undefined }}
                         >
-                          <path
-                            fill="currentColor"
-                            d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
-                          />
-                        </svg>
-                      </span>
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="18"
+                            height="18"
+                            aria-hidden="true"
+                            focusable="false"
+                            xmlns="http://www.w3.org/2000/svg"
+                          >
+                            <path
+                              fill="currentColor"
+                              d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
+                            />
+                          </svg>
+                        </span>
+                      </AppTooltip>
                     ) : null}
                   </div>
                   <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>

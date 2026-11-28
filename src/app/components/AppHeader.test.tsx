@@ -87,7 +87,7 @@ describe('AppHeader mobile navigation', () => {
     );
 
     expect(markup).toContain('aria-label="Open App Help"');
-    expect(markup).toContain('title="Open App Help"');
+    expect(markup).not.toContain('title=');
     expect(markup).toMatch(
       /class="top-header-actions"[\s\S]*class="header-icon-btn top-header-help-btn"/
     );

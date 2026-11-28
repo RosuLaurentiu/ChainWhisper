@@ -23,6 +23,7 @@ import {
   getTradeCounterRelation,
   getTradeLiquidityLabel
 } from './P2PTradingPage.helpers';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type TradeCounterParentSummaryProps = {
   trade: TradeSnapshot;
@@ -119,12 +120,11 @@ export default function TradeCounterParentSummary({ trade, walletAddress }: Trad
         </div>
         <div>
           <span>Expires</span>
-          <strong
+          <AppTooltip text={parentExpiryParts.title}><strong
             className={parentExpiryCountdown ? `trade-card-expiry-${parentExpiryCountdown.urgency}` : undefined}
-            title={parentExpiryParts.title}
           >
             {parentExpiryCountdown ? parentExpiryCountdown.label.replace(/^Expires /, '') : parentExpiryParts.date}
-          </strong>
+          </strong></AppTooltip>
         </div>
         <div>
           <span>Counter behavior</span>

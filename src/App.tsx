@@ -195,6 +195,7 @@ import {
   type TradeOfferMessagePayload,
   trimReplyPreview,
 } from './lib/appShared';
+import { AppTooltip } from './shared/ui/AppTooltip';
 
 type AppProps = {
   initialAppHelpLaunchContext?: AppHelpLaunchContext | null;
@@ -4118,7 +4119,7 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
   const debugControl =
     // CW-097: the simulated incoming message is a development tool; the published App never shows it.
     import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug') ? (
-      <button
+      <AppTooltip text="Simulate incoming message (debug)"><button
         type="button"
         className="sound-toggle-btn"
         onClick={() => {
@@ -4136,11 +4137,10 @@ export default function App({ initialAppHelpLaunchContext = null }: AppProps) {
             [key]: [...(messagesByContactRef.current[key] ?? []), msg] };
           setMessagesByContact(messagesByContactRef.current);
         }}
-        title="Simulate incoming message (debug)"
         style={{ marginLeft: 6 }}
       >
         {'\uD83E\uDDEA'}
-      </button>
+      </button></AppTooltip>
     ) : null;
   const mobileGroupActions = (
     <GroupActionControls

@@ -33,6 +33,7 @@ import {
 } from '../../../lib/linkedTradeContext';
 import { isSupportedDirectTradeV2Escrow } from '../../../lib/directTradeV2Deployment';
 import { getCounterOfferUnavailableReason } from '../../../lib/tradeCounterSupport';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type MessageReactionSummary = {
   emoji: string;
@@ -431,25 +432,27 @@ function DirectChatPanel({
                 aria-label="Private saved contact name"
                 disabled={savingContactName || walletPromptSensitiveActionsDisabled}
               />
-              <button
-                type="submit"
-                className="contact"
-                disabled={savingContactName || walletPromptSensitiveActionsDisabled}
-                title="Save a private name for this contact"
-              >
-                {savingContactName ? 'Saving...' : 'Save as'}
-              </button>
+              <AppTooltip text="Save a private name for this contact">
+                <button
+                  type="submit"
+                  className="contact"
+                  disabled={savingContactName || walletPromptSensitiveActionsDisabled}
+                >
+                  {savingContactName ? 'Saving...' : 'Save as'}
+                </button>
+              </AppTooltip>
             </form>
           ) : null}
           {pendingTradeAgentRetry ? (
-            <span
-              className="chat-header-state"
-              role="status"
-              aria-live="polite"
-              title="Reopen the original message or linked order to retry the paid Agent request without another WISP transfer."
-            >
-              Agent retry ready
-            </span>
+            <AppTooltip text="Reopen the original message or linked order to retry the paid Agent request without another WISP transfer.">
+              <span
+                className="chat-header-state"
+                role="status"
+                aria-live="polite"
+              >
+                Agent retry ready
+              </span>
+            </AppTooltip>
           ) : null}
           {activeConversationHidden ? (
             <span className="chat-header-state">Hidden</span>
@@ -460,12 +463,7 @@ function DirectChatPanel({
             </span>
           ) : null}
           {!isSelfChat ? (
-            <button
-              type="button"
-              className="contact"
-              onClick={onToggleConversationHidden}
-              disabled={activeConversationStateSyncPending || walletPromptSensitiveActionsDisabled}
-              title={
+            <AppTooltip text={
                 walletPromptSensitiveActionsDisabled
                   ? walletPromptSensitiveActionsTitle
                   : activeConversationStateSyncPending
@@ -473,34 +471,40 @@ function DirectChatPanel({
                   : activeConversationHidden
                     ? 'Unhide conversation'
                     : 'Hide conversation'
-              }
-            >
-              {activeConversationStateSyncPending ? 'Saving...' : activeConversationHidden ? 'Unhide' : 'Hide'}
-            </button>
+              }>
+              <button
+                type="button"
+                className="contact"
+                onClick={onToggleConversationHidden}
+                disabled={activeConversationStateSyncPending || walletPromptSensitiveActionsDisabled}
+              >
+                {activeConversationStateSyncPending ? 'Saving...' : activeConversationHidden ? 'Unhide' : 'Hide'}
+              </button>
+            </AppTooltip>
           ) : null}
           {pendingNativeCreditLabel ? (
-            <button
+            <AppTooltip text="Claim native COTI tips sent to you in Direct Chat"><button
               type="button"
               className="contact"
               onClick={onWithdrawNativeCredit}
               disabled={withdrawingNativeCredit}
-              title="Claim native COTI tips sent to you in Direct Chat"
             >
               {withdrawingNativeCredit
                 ? 'Claiming tips...'
                 : `Claim ${pendingNativeCreditLabel}`}
-            </button>
+            </button></AppTooltip>
           ) : null}
           {directChatV2KeyRotationEnabled && !isSelfChat ? (
-            <button
-              type="button"
-              className="contact"
-              onClick={onRotateDirectChatV2Key}
-              disabled={rotatingDirectChatV2Key}
-              title="Rotate the conversation encryption key. Existing messages remain readable."
-            >
-              {rotatingDirectChatV2Key ? 'Rotating key...' : 'Rotate key'}
-            </button>
+            <AppTooltip text="Rotate the conversation encryption key. Existing messages remain readable.">
+              <button
+                type="button"
+                className="contact"
+                onClick={onRotateDirectChatV2Key}
+                disabled={rotatingDirectChatV2Key}
+              >
+                {rotatingDirectChatV2Key ? 'Rotating key...' : 'Rotate key'}
+              </button>
+            </AppTooltip>
           ) : null}
         </div>
       </div>
@@ -656,7 +660,7 @@ function DirectChatPanel({
                     onReplyToMessage={onReplyToMessage}
                   />
                   {hasDirectMessageReplyReference(message) ? (
-                    <button
+                    <AppTooltip text="Go to replied message"><button
                       type="button"
                       className="message-reply"
                       onClick={() =>
@@ -669,24 +673,22 @@ function DirectChatPanel({
                           message.replyToLogIndex
                         )
                       }
-                      title="Go to replied message"
                       aria-label={`Go to replied message: ${getReplyReferenceFallbackLabel(message)}`}
                     >
                       {'\u21AA'} {getReplyReferenceFallbackLabel(message)}
-                    </button>
+                    </button></AppTooltip>
                   ) : null}
                   {message.tradeReference ? (
-                    <button
+                    <AppTooltip text="Open order"><button
                       type="button"
                       className="message-trade-reference"
                       onClick={() => onOpenTradeTerminalPath(message.tradeReference!.terminalPath)}
-                      title="Open order"
                       aria-label={`Open ${getTradeReferenceLabel(message.tradeReference)} order`}
                     >
                       <span className="message-trade-reference-kicker">Trade</span>
                       <strong>{getTradeReferenceLabel(message.tradeReference)}</strong>
                       <span>{getTradeReferenceSummary(message.tradeReference)}</span>
-                    </button>
+                    </button></AppTooltip>
                   ) : null}
                   {parsedTradeOffer ? (
                     (() => {
@@ -772,8 +774,11 @@ function DirectChatPanel({
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">
                       {messageReactions.map((reaction) => (
-                        <button
-                          key={`${message.id}-${reaction.emoji}`}
+                        <AppTooltip key={`${message.id}-${reaction.emoji}`} text={
+                            walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
+                              ? walletPromptSensitiveActionsTitle
+                              : undefined
+                          }><button
                           type="button"
                           className={reaction.reactedByMe ? 'message-reaction-chip active' : 'message-reaction-chip'}
                           onClick={() => {
@@ -785,18 +790,13 @@ function DirectChatPanel({
                             reaction.reactedByMe ||
                             (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
                           }
-                          title={
-                            walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
-                              ? walletPromptSensitiveActionsTitle
-                              : undefined
-                          }
                           aria-label={`${reaction.reactedByMe ? 'Your reaction' : 'Reaction'} ${reaction.emoji}, ${
                             reaction.count
                           } ${reaction.count === 1 ? 'reaction' : 'reactions'}`}
                         >
                           <span>{reaction.emoji}</span>
                           <span>{reaction.count}</span>
-                        </button>
+                        </button></AppTooltip>
                       ))}
                     </div>
                   ) : null}

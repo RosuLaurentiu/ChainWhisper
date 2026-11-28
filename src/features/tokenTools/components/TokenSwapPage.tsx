@@ -29,6 +29,7 @@ import {
 import type { AppHelpReason } from '../../../lib/appHelpLaunch';
 import type { ChainWhisperWispStage } from '../../../lib/wispPrivacyBridge';
 import { moveFocusWithin } from '../../../shared/components/a11y';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 export type WispRecoveryView = {
   open: boolean;
@@ -242,9 +243,11 @@ const MobileTokenMenu = ({
 );
 
 const InfoTip = ({ label }: { label: string }) => (
-  <span className="swap-info-tip" title={label} aria-label={label} tabIndex={0}>
-    <Info size={12} aria-hidden="true" />
-  </span>
+  <AppTooltip text={label}>
+    <span className="swap-info-tip" aria-label={label} tabIndex={0}>
+      <Info size={12} aria-hidden="true" />
+    </span>
+  </AppTooltip>
 );
 
 const formatBalance = (value: bigint | null | undefined, pair: PrivacyTokenPair, locked = false) => {

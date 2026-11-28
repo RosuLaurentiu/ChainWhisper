@@ -13,6 +13,7 @@ import {
   formatCompactTradeTimestamp,
   type TerminalHistoryPanelConfig
 } from './P2PTradingPage.helpers';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type TransactionLinkFeedbackOptions = {
   className?: string;
@@ -130,7 +131,7 @@ export function TradeTerminalHistoryRows({
             <div className="p2p-terminal-history-event">
               <span>{row.label}</span>
               <strong>{row.detail}</strong>
-              {dateLabel ? <small title={dateTitle}>{dateLabel}</small> : null}
+              {dateLabel ? <AppTooltip text={dateTitle}><small>{dateLabel}</small></AppTooltip> : null}
             </div>
             <div className="p2p-terminal-history-amounts p2p-terminal-history-lifecycle-summary">
               <div className="p2p-terminal-history-chip p2p-terminal-history-chip-lifecycle">
@@ -149,16 +150,17 @@ export function TradeTerminalHistoryRows({
             </div>
             {txUrl && txLinkFeedback ? (
               <div className="p2p-terminal-history-proof">
-                <a
-                  className={txLinkFeedback.className}
-                  href={txUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={txLinkFeedback.onClick}
-                  title={txLinkFeedback.title}
-                >
-                  {txLinkFeedback.label}
-                </a>
+                <AppTooltip text={txLinkFeedback.title}>
+                  <a
+                    className={txLinkFeedback.className}
+                    href={txUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={txLinkFeedback.onClick}
+                  >
+                    {txLinkFeedback.label}
+                  </a>
+                </AppTooltip>
               </div>
             ) : null}
           </div>
@@ -191,7 +193,7 @@ export function TradeTerminalHistoryRows({
             <div className="p2p-terminal-history-event">
               <span>{sourceLabel}</span>
               {sequenceLabel ? <strong>{sequenceLabel}</strong> : null}
-              {dateLabel ? <small title={dateTitle}>{dateLabel}</small> : null}
+              {dateLabel ? <AppTooltip text={dateTitle}><small>{dateLabel}</small></AppTooltip> : null}
               {swapFillNoteLabel ? <small className="p2p-terminal-history-note">{swapFillNoteLabel}</small> : null}
             </div>
             <div className="p2p-terminal-history-amounts">
@@ -207,16 +209,17 @@ export function TradeTerminalHistoryRows({
             </div>
             <div className="p2p-terminal-history-proof">
               {txUrl && txLinkFeedback ? (
-                <a
-                  className={txLinkFeedback.className}
-                  href={txUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={txLinkFeedback.onClick}
-                  title={txLinkFeedback.title}
-                >
-                  {txLinkFeedback.label}
-                </a>
+                <AppTooltip text={txLinkFeedback.title}>
+                  <a
+                    className={txLinkFeedback.className}
+                    href={txUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={txLinkFeedback.onClick}
+                  >
+                    {txLinkFeedback.label}
+                  </a>
+                </AppTooltip>
               ) : (
                 <strong>{row.amountVisibility === 'private-hidden' ? 'Private' : 'Indexed'}</strong>
               )}

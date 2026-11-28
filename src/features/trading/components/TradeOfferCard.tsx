@@ -27,6 +27,7 @@ import {
   getTradeTermsVisibility,
   hasHydratedDirectTradeTerms
 } from '../../../lib/p2pTradeView';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type TradeOfferCardProps = {
   offer: TradeOfferMessagePayload;
@@ -625,16 +626,17 @@ export default function TradeOfferCard({
 
       {collapsed ? (
         visibleRatioLabel ? (
-          <button
-            type="button"
-            className="trade-card-ratio-card"
-            onClick={() => setShowReverseRate((value) => !value)}
-            title={visibleRatioTitle}
-            aria-label={visibleRatioAriaLabel}
-          >
-            <span className="trade-card-ratio-title">Price ratio</span>
-            <strong>{visibleRatioLabel}</strong>
-          </button>
+          <AppTooltip text={visibleRatioTitle}>
+            <button
+              type="button"
+              className="trade-card-ratio-card"
+              onClick={() => setShowReverseRate((value) => !value)}
+              aria-label={visibleRatioAriaLabel}
+            >
+              <span className="trade-card-ratio-title">Price ratio</span>
+              <strong>{visibleRatioLabel}</strong>
+            </button>
+          </AppTooltip>
         ) : assetPanels.length > 0 ? (
           <div className="trade-card-summary">
             {assetPanels.map((panel) => (
@@ -660,16 +662,17 @@ export default function TradeOfferCard({
       {!collapsed ? (
         <>
           {visibleRatioLabel ? (
-            <button
-              type="button"
-              className="trade-card-ratio-card"
-              onClick={() => setShowReverseRate((value) => !value)}
-              title={visibleRatioTitle}
-              aria-label={visibleRatioAriaLabel}
-            >
-              <span className="trade-card-ratio-title">Price ratio</span>
-              <strong>{visibleRatioLabel}</strong>
-            </button>
+            <AppTooltip text={visibleRatioTitle}>
+              <button
+                type="button"
+                className="trade-card-ratio-card"
+                onClick={() => setShowReverseRate((value) => !value)}
+                aria-label={visibleRatioAriaLabel}
+              >
+                <span className="trade-card-ratio-title">Price ratio</span>
+                <strong>{visibleRatioLabel}</strong>
+              </button>
+            </AppTooltip>
           ) : null}
           {visibleOrderValueLabel ? (
             <div className="trade-card-order-value">
@@ -696,20 +699,21 @@ export default function TradeOfferCard({
                     <div className="trade-card-asset-head">
                       <span className="trade-card-label">{panel.label}</span>
                       {panel.asset.tokenAddress ? (
-                        <a
-                          className="trade-card-contract-link"
-                          href={panel.verifyUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={panel.asset.tokenAddress}
-                        >
-                          {shortenAddress(panel.asset.tokenAddress)}
-                          {panel.verified ? (
-                            <span className="trade-card-contract-verified" aria-label="Verified contract">
-                              &#10003;
-                            </span>
-                          ) : null}
-                        </a>
+                        <AppTooltip text={panel.asset.tokenAddress}>
+                          <a
+                            className="trade-card-contract-link"
+                            href={panel.verifyUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {shortenAddress(panel.asset.tokenAddress)}
+                            {panel.verified ? (
+                              <span className="trade-card-contract-verified" aria-label="Verified contract">
+                                &#10003;
+                              </span>
+                            ) : null}
+                          </a>
+                        </AppTooltip>
                       ) : null}
                     </div>
                     <strong>{showVisibleFillInline ? panel.asset.symbol : panel.displayText}</strong>
@@ -808,50 +812,52 @@ export default function TradeOfferCard({
           {isOpen && (isTaker || canAcceptOpenTakerTrade) ? (
             <div className="trade-card-actions">
               {!hiddenLiquidity ? (
-                <button
-                  type="button"
-                  className="trade-card-action trade-card-action-accept"
-                  onClick={
-                    directTermsPending
-                      ? onRevealTerms
-                      : showVisibleFillInline
-                        ? () => onPartialFill?.(fillSubmitInput)
-                        : onAccept
-                  }
-                  title={
+                <AppTooltip text={
                     directTermsPending
                       ? 'Unlock privacy and refresh to reveal the exact Direct offer terms.'
                       : isCounterTrade && isTaker
                         ? 'Close the parent first, accept this counter, then close sibling counters.'
                         : undefined
-                  }
-                  disabled={
-                    showVisibleFillInline
-                      ? partialFillDisabled || !fillCanSubmit
-                      : actionPending || (directTermsPending && !onRevealTerms) || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)
-                  }
-                >
-                  {actionPending
-                    ? 'Processing...'
-                    : directTermsPending
-                      ? 'Reveal terms to continue'
-                      : hasWalletForOpenAccept
-                        ? isCounterTrade && isTaker
-                          ? 'Close parent & accept'
-                          : 'Buy'
-                        : 'Connect wallet to buy'}
-                </button>
+                  }>
+                  <button
+                    type="button"
+                    className="trade-card-action trade-card-action-accept"
+                    onClick={
+                      directTermsPending
+                        ? onRevealTerms
+                        : showVisibleFillInline
+                          ? () => onPartialFill?.(fillSubmitInput)
+                          : onAccept
+                    }
+                    disabled={
+                      showVisibleFillInline
+                        ? partialFillDisabled || !fillCanSubmit
+                        : actionPending || (directTermsPending && !onRevealTerms) || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)
+                    }
+                  >
+                    {actionPending
+                      ? 'Processing...'
+                      : directTermsPending
+                        ? 'Reveal terms to continue'
+                        : hasWalletForOpenAccept
+                          ? isCounterTrade && isTaker
+                            ? 'Close parent & accept'
+                            : 'Buy'
+                          : 'Connect wallet to buy'}
+                  </button>
+                </AppTooltip>
               ) : null}
               {!hiddenLiquidity && isCounterTrade && isTaker && onFillCounter ? (
-                <button
-                  type="button"
-                  className="trade-card-action trade-card-action-counter"
-                  onClick={onFillCounter}
-                  disabled={actionPending}
-                  title="Fill this counter offer without closing the parent or sibling counters."
-                >
-                  Fill
-                </button>
+                <AppTooltip text="Fill this counter offer without closing the parent or sibling counters.">
+                  <button
+                    type="button"
+                    className="trade-card-action trade-card-action-counter"
+                    onClick={onFillCounter}
+                    disabled={actionPending}
+                  >
+                    Fill
+                  </button>
+                </AppTooltip>
               ) : null}
               {(isTaker || canAcceptOpenTakerTrade) &&
               showCounterAction &&
@@ -866,14 +872,15 @@ export default function TradeOfferCard({
                 </button>
               ) : null}
               {showCounterUnavailable && !(canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest) ? (
-                <button
-                  type="button"
-                  className="trade-card-action trade-card-action-counter trade-card-action-disabled"
-                  disabled
-                  title={counterUnavailableReason}
-                >
-                  Counter unavailable
-                </button>
+                <AppTooltip text={counterUnavailableReason}>
+                  <button
+                    type="button"
+                    className="trade-card-action trade-card-action-counter trade-card-action-disabled"
+                    disabled
+                  >
+                    Counter unavailable
+                  </button>
+                </AppTooltip>
               ) : null}
               {isTaker ? (
                 <button
@@ -907,14 +914,15 @@ export default function TradeOfferCard({
                       </button>
                     ) : null}
                     {showCounterUnavailable && !showCounterAction ? (
-                      <button
-                        type="button"
-                        className="trade-card-action trade-card-action-counter trade-card-action-disabled"
-                        disabled
-                        title={counterUnavailableReason}
-                      >
-                        Counter unavailable
-                      </button>
+                      <AppTooltip text={counterUnavailableReason}>
+                        <button
+                          type="button"
+                          className="trade-card-action trade-card-action-counter trade-card-action-disabled"
+                          disabled
+                        >
+                          Counter unavailable
+                        </button>
+                      </AppTooltip>
                     ) : null}
                   </div>
                   <p className="trade-card-private-fill-note">
@@ -959,9 +967,9 @@ export default function TradeOfferCard({
               <div className="trade-card-counterparty">
                 <span>Creator</span>
                 {makerExplorerUrl ? (
-                  <a href={makerExplorerUrl} target="_blank" rel="noreferrer" title={offer.maker}>
+                  <AppTooltip text={offer.maker}><a href={makerExplorerUrl} target="_blank" rel="noreferrer">
                     {isMaker ? `${shortenAddress(offer.maker)} (you)` : shortenAddress(offer.maker)}
-                  </a>
+                  </a></AppTooltip>
                 ) : (
                   <strong>{shortenAddress(offer.maker)}</strong>
                 )}
@@ -969,9 +977,11 @@ export default function TradeOfferCard({
               <div className="trade-card-counterparty">
                 <span>Peer</span>
                 {counterpartyExplorerUrl ? (
-                  <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={resolvedPeerAddress}>
-                    {peerLabel}
-                  </a>
+                  <AppTooltip text={resolvedPeerAddress}>
+                    <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer">
+                      {peerLabel}
+                    </a>
+                  </AppTooltip>
                 ) : (
                   <strong>{peerLabel}</strong>
                 )}
@@ -981,9 +991,11 @@ export default function TradeOfferCard({
             <div className="trade-card-counterparty">
               <span>Peer</span>
               {counterpartyExplorerUrl ? (
-                <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={resolvedPeerAddress}>
-                  {peerLabel}
-                </a>
+                <AppTooltip text={resolvedPeerAddress}>
+                  <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer">
+                    {peerLabel}
+                  </a>
+                </AppTooltip>
               ) : (
                 <strong>{peerLabel}</strong>
               )}
@@ -995,12 +1007,11 @@ export default function TradeOfferCard({
       <div className="trade-card-meta-inline">
         <span>Created {formatMessageTimestamp(createdAt)}</span>
         {expiryCountdown ? (
-          <span
+          <AppTooltip text={`Created: ${formatMessageTimestamp(createdAt)}`}><span
             className={`trade-card-expiry-${expiryCountdown.urgency}`}
-            title={`Created: ${formatMessageTimestamp(createdAt)}`}
           >
             {expiryCountdown.label}
-          </span>
+          </span></AppTooltip>
         ) : null}
         {!showExpiryAt && latestResponse ? <span>Updated {formatMessageTimestamp(latestResponse.createdAt)}</span> : null}
       </div>

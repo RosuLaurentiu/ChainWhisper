@@ -15,6 +15,7 @@ import {
 } from '../../../lib/otcSwapIntent';
 import { buildTransactionExplorerUrl } from '../../../lib/p2pTradeView';
 import useTradeActionConfirmationState from './useTradeActionConfirmationState';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type UseP2PActionFeedbackArgs = {
   activeTerminalSwapIntentRef: MutableRefObject<OtcSwapIntent | null>;
@@ -168,16 +169,17 @@ export default function useP2PActionFeedback({
           <span className="p2p-action-notice-dot" aria-hidden="true" />
           <strong>{actionNotice.message}</strong>
           {txUrl && txLinkFeedback ? (
-            <a
-              className={txLinkFeedback.className}
-              href={txUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={txLinkFeedback.onClick}
-              title={txLinkFeedback.title}
-            >
-              {txLinkFeedback.label}
-            </a>
+            <AppTooltip text={txLinkFeedback.title}>
+              <a
+                className={txLinkFeedback.className}
+                href={txUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={txLinkFeedback.onClick}
+              >
+                {txLinkFeedback.label}
+              </a>
+            </AppTooltip>
           ) : null}
           {actionNotice.status === 'error' || actionNotice.status === 'uncertain' ? (
             <button type="button" onClick={clearActionNotice}>

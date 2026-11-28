@@ -4,6 +4,7 @@ import { Bar, CartesianGrid, ComposedChart, ReferenceArea, ReferenceLine, Respon
 import { buildPrivateLiquidityDailyPriceDemoSeries } from '../../../lib/privateLiquidityDailyPrice';
 import { isVerifiedCurrentDexDailyPrice, currentDexDailyPricePairOrientation, type CurrentDexDailyPriceView } from '../../../lib/currentDexDailyPrice';
 import { isVerifiedCurrentDexMarketReference, type CurrentDexMarketReference } from '../../../lib/currentDexMarketReference';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 const DAY = 86_400;
 const PREVIEW_ENDING_DAY = BigInt(Math.floor(Date.now()/86_400_000)-1);
@@ -177,11 +178,11 @@ export default function DexMarketChart({baseSymbol='BCN',quoteSymbol='HBR',histo
       {recurringBuyPrice===undefined?null:<span className={`recurring-${recurringBuySide}`}><i />{recurringBuyLabel??'Buy order'}</span>}
       {recurringSellPrice===undefined?null:<span className={`recurring-${recurringSellSide}`}><i />{recurringSellLabel??'Sell order'}</span>}
       {latest?<small>{`${preview?'Preview':'Last sample'} ${formatPrice(latest.price)} ${ratioLabel}`}</small>:!showMarketSeries?<small>Two exact prices</small>:null}
-      {live?<small title={live.recorded?`${formatTime(live.timestamp)} UTC · last recorded Pool price · the current price is not verified · not a saved daily record`
-        :`${formatTime(live.timestamp)} UTC · not a saved daily record`}>{`${live.recorded?'Last recorded':'Live'} ${formatPrice(live.price)} ${ratioLabel}`}</small>:null}
+      {live?<AppTooltip text={live.recorded?`${formatTime(live.timestamp)} UTC · last recorded Pool price · the current price is not verified · not a saved daily record`
+        :`${formatTime(live.timestamp)} UTC · not a saved daily record`}><small>{`${live.recorded?'Last recorded':'Live'} ${formatPrice(live.price)} ${ratioLabel}`}</small></AppTooltip>:null}
     </div><div className="dex-market-chart-actions"><div role="group" aria-label="Chart period">
       {RANGES.map(option=><button key={option.label} type="button" aria-pressed={range===option.label} className={range===option.label?'active':undefined} onClick={()=>setRange(option.label)}>{option.label}</button>)}
-    </div>{showMarketSeries&&onHistoryRefresh&&view.status!=='unconfigured'?<button type="button" aria-label="Refresh daily history" title="Refresh daily history" disabled={view.status==='loading'} onClick={onHistoryRefresh}><RefreshCw size={18} aria-hidden="true"/></button>:null}<button type="button" className="dex-market-chart-expand" aria-label={expanded?'Close expanded chart':'Expand chart'} aria-expanded={expanded} onClick={()=>setExpanded(v=>!v)}>
+    </div>{showMarketSeries&&onHistoryRefresh&&view.status!=='unconfigured'?<AppTooltip text="Refresh daily history"><button type="button" aria-label="Refresh daily history" disabled={view.status==='loading'} onClick={onHistoryRefresh}><RefreshCw size={18} aria-hidden="true"/></button></AppTooltip>:null}<button type="button" className="dex-market-chart-expand" aria-label={expanded?'Close expanded chart':'Expand chart'} aria-expanded={expanded} onClick={()=>setExpanded(v=>!v)}>
       {expanded?<Minimize2 size={18} aria-hidden="true"/>:<Maximize2 size={18} aria-hidden="true"/>}</button></div></header>
     <div className="dex-market-chart-plot">
       {showMarketSeries&&chartData.length===0?<div className="dex-market-chart-empty"><strong>{message[0]}</strong></div>

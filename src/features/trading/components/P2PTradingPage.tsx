@@ -207,6 +207,7 @@ import {
   type TradeSigner,
   type TradeVisibility
 } from './P2PTradingPage.helpers';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 const buildApprovedOffersQaCandidates = (): OtcSwapQuoteCandidate[] => {
   const scale = 10n ** 18n;
@@ -979,30 +980,31 @@ export default function P2PTradingPage({
             : 'This trade participant is unavailable.';
 
       return (
-        <button
-          type="button"
-          className="p2p-terminal-share p2p-terminal-message"
-          onClick={() => {
-            if (!target) {
-              return;
-            }
-            const terminalPath = buildTradeTerminalPath(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-            onOpenTradeConversation(
-              target.address,
-              buildLinkedTradeContext({
-                counterpartyAddress: target.address,
-                shareUrl,
-                snapshot,
-                source: 'terminal',
-                terminalPath
-              })
-            );
-          }}
-          disabled={!target}
-          title={title}
-        >
-          {label}
-        </button>
+        <AppTooltip text={title}>
+          <button
+            type="button"
+            className="p2p-terminal-share p2p-terminal-message"
+            onClick={() => {
+              if (!target) {
+                return;
+              }
+              const terminalPath = buildTradeTerminalPath(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
+              onOpenTradeConversation(
+                target.address,
+                buildLinkedTradeContext({
+                  counterpartyAddress: target.address,
+                  shareUrl,
+                  snapshot,
+                  source: 'terminal',
+                  terminalPath
+                })
+              );
+            }}
+            disabled={!target}
+          >
+            {label}
+          </button>
+        </AppTooltip>
       );
     },
     [onOpenTradeConversation, walletKey]

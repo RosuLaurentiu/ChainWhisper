@@ -6,6 +6,7 @@ import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../../../lib/ap
 import { CHAT_IMAGE_FILE_ACCEPT } from '../../../lib/imagePull';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
 import { insertChatComposerLineBreak, syncChatComposerText } from '../../../shared/chatComposeText';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type GroupTipRecipient = {
   key: string;
@@ -175,12 +176,7 @@ export default function GroupChatCompose({
               aria-label={`Tip amount in ${activeTipTokenSymbol}`}
               disabled={tipping}
             />
-            <button
-              className="chat-tip-send"
-              type="button"
-              onClick={onSendTip}
-              disabled={!canSendGroupTipFromComposer}
-              title={
+            <AppTooltip text={
                 !selectedGroupTipRecipient
                   ? 'Select a member'
                   : tipAmountWeiFromInput <= 0n
@@ -188,10 +184,14 @@ export default function GroupChatCompose({
                     : tipAmountExceedsBalance
                       ? `Amount exceeds your ${activeTipTokenSymbol} balance`
                       : `Send ${tipAmountSummaryLabel}`
-              }
+              }><button
+              className="chat-tip-send"
+              type="button"
+              onClick={onSendTip}
+              disabled={!canSendGroupTipFromComposer}
             >
               {tipping ? 'Sending tip...' : `Send ${activeTipTokenSymbol}`}
-            </button>
+            </button></AppTooltip>
           </div>
           <div className="chat-tip-meta">
             <span>{tipAmountSummaryLabel}</span>
@@ -231,18 +231,19 @@ export default function GroupChatCompose({
               onSendImage(file);
             }}
           />
-          <button
-            type="button"
-            className="chat-compose-attach chat-compose-attach-icon"
-            onClick={() => {
-              imageInputRef.current?.click();
-            }}
-            disabled={attachDisabled}
-            aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
-            title={sendHoldReason ?? imageAttachTitle}
-          >
-            <ChatImageIcon />
-          </button>
+          <AppTooltip text={sendHoldReason ?? imageAttachTitle}>
+            <button
+              type="button"
+              className="chat-compose-attach chat-compose-attach-icon"
+              onClick={() => {
+                imageInputRef.current?.click();
+              }}
+              disabled={attachDisabled}
+              aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
+            >
+              <ChatImageIcon />
+            </button>
+          </AppTooltip>
           <div
             ref={composerRef}
             className="chat-compose-editor"
@@ -293,24 +294,25 @@ export default function GroupChatCompose({
               }
             }}
           />
-          <button
-            className="group-compose-send chat-compose-send"
-            type="button"
-            onClick={onSendMessage}
-            disabled={sendingGroupMessage || processingGroupAction || uploadingImage || sendHeld}
-            aria-label={
-              sendingGroupMessage ? 'Sending group message' : uploadingImage ? 'Preparing image' : 'Send group message'
-            }
-            title={
+          <AppTooltip text={
               sendingGroupMessage
                 ? 'Sending...'
                 : uploadingImage
                   ? 'Preparing image...'
                   : sendHoldReason ?? 'Send group message'
-            }
-          >
-            <ChatSendIcon />
-          </button>
+            }>
+            <button
+              className="group-compose-send chat-compose-send"
+              type="button"
+              onClick={onSendMessage}
+              disabled={sendingGroupMessage || processingGroupAction || uploadingImage || sendHeld}
+              aria-label={
+                sendingGroupMessage ? 'Sending group message' : uploadingImage ? 'Preparing image' : 'Send group message'
+              }
+            >
+              <ChatSendIcon />
+            </button>
+          </AppTooltip>
         </div>
         {msgLength > 0 ? (
           <div className="chat-compose-length-row">
@@ -337,23 +339,24 @@ export default function GroupChatCompose({
           </div>
         ) : null}
         <div className="group-compose-actions group-compose-actions-single">
-          <button
-            type="button"
-            onClick={onToggleTipComposer}
-            className={tipComposerOpen ? 'chat-tip-toggle group-compose-tip active' : 'chat-tip-toggle group-compose-tip'}
-            disabled={
-              tipping || sendingGroupMessage || processingGroupAction || uploadingImage || activeGroupTipRecipients.length === 0
-            }
-            title={
+          <AppTooltip text={
               activeGroupTipRecipients.length === 0
                 ? 'No other group members available to tip'
                 : tipComposerOpen
                   ? 'Hide tip options'
                   : 'Open tip options'
-            }
-          >
-            Tip
-          </button>
+            }>
+            <button
+              type="button"
+              onClick={onToggleTipComposer}
+              className={tipComposerOpen ? 'chat-tip-toggle group-compose-tip active' : 'chat-tip-toggle group-compose-tip'}
+              disabled={
+                tipping || sendingGroupMessage || processingGroupAction || uploadingImage || activeGroupTipRecipients.length === 0
+              }
+            >
+              Tip
+            </button>
+          </AppTooltip>
         </div>
       </div>
     </div>

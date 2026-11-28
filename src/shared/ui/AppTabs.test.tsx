@@ -18,7 +18,7 @@ describe('AppTabList', () => {
     expect(markup.match(/<div/g)).toHaveLength(1);
     expect(markup).toContain('role="tablist"');
     expect(markup).toContain('aria-label="Trade direction"');
-    expect(markup).toContain('class="app-ui p2p-swap-side-switch"');
+    expect(markup).toContain('class="p2p-swap-side-switch"');
     expect(markup.match(/role="tab"/g)).toHaveLength(2);
     expect(markup).toContain('data-swap-mode="buy"');
   });
@@ -29,10 +29,10 @@ describe('AppTabList', () => {
 
     expect(buy).toContain('aria-selected="false"');
     expect(buy).toContain('tabindex="-1"');
-    expect(buy).toContain('class="app-ui"');
+    expect(buy).not.toContain('class=');
     expect(sell).toContain('aria-selected="true"');
     expect(sell).toContain('tabindex="0"');
-    expect(sell).toContain('class="app-ui sell active"');
+    expect(sell).toContain('class="sell active"');
   });
 
   it('marks a disabled tab', () => {

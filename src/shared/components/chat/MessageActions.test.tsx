@@ -12,8 +12,10 @@ vi.mock('react', async (original) => ({
 }));
 
 type PickerElement = ReactElement<{
-  role?: string; children?: unknown; disabled?: boolean; title?: string; 'aria-label'?: string; onClick: () => void;
+  role?: string; children?: unknown; disabled?: boolean; 'aria-label'?: string; onClick: () => void;
 }>;
+// Each reaction button is the one child of its hint (AppTooltip).
+type HintElement = ReactElement<{ text?: string; children: PickerElement }>;
 
 const message = { id: 'message' } as ChatMessage;
 
@@ -27,9 +29,10 @@ function reactionButtons(sendingReaction = false) {
   });
   const children = tree.props.children as PickerElement[];
   const picker = children.find((child) => child?.props?.role === 'dialog')!;
-  const buttons = (picker.props.children as unknown[]).flat().filter(
-    (child): child is PickerElement => Boolean(child && typeof child === 'object' && (child as PickerElement).type === 'button')
+  const hints = (picker.props.children as unknown[]).flat().filter(
+    (child): child is HintElement => Boolean(child && typeof child === 'object' && typeof (child as HintElement).props?.text === 'string')
   );
+  const buttons = hints.map((hint) => ({ hint: hint.props.text, props: hint.props.children.props, type: hint.props.children.type }));
   return { buttons, onSendReaction };
 }
 
@@ -39,9 +42,10 @@ describe('MessageActions reaction picker', () => {
     const own = buttons.find((button) => button.props.children === '👍')!;
     const other = buttons.find((button) => button.props.children !== '👍')!;
     expect(own.props.disabled).toBe(false);
-    expect(own.props.title).toBe('Remove reaction 👍');
+    expect(own.type).toBe('button');
+    expect(own.hint).toBe('Remove reaction 👍');
     expect(own.props['aria-label']).toBe('Remove public on-chain reaction 👍');
-    expect(other.props.title).toBe(`React with ${other.props.children}`);
+    expect(other.hint).toBe(`React with ${other.props.children}`);
     own.props.onClick();
     expect(onSendReaction).toHaveBeenCalledOnce();
     expect(onSendReaction).toHaveBeenCalledWith(message, '👍');

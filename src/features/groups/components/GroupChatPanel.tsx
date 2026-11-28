@@ -18,6 +18,7 @@ import {
   type GroupSummary,
   type TipTokenSelection
 } from '../../../lib/appShared';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type MessageReactionSummary = {
   emoji: string;
@@ -331,53 +332,56 @@ export default function GroupChatPanel({
                     return (
                       <li key={participant.key}>
                         <div className="group-member-row">
-                          <button
-                            type="button"
-                            className={isParticipantCopied ? 'group-member-copy copied' : 'group-member-copy'}
-                            onClick={(event) => {
-                              onCopyWithFeedback(participant.address, participantCopyKey).catch(() => {});
-                              const detailsElement = event.currentTarget.closest('details');
-                              if (detailsElement instanceof HTMLDetailsElement) {
-                                detailsElement.open = false;
-                              }
-                            }}
-                            title={isParticipantCopied ? 'Copied' : `Copy ${participant.address}`}
-                          >
-                            <span className="group-member-name">
-                              {participant.name ?? participant.shortAddress}
-                              {participant.isSelf ? <span className="group-member-badge">You</span> : null}
-                              {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
-                            </span>
-                            <span className="group-member-address">
-                              {isParticipantCopied ? 'Copied' : participant.shortAddress}
-                            </span>
-                          </button>
+                          <AppTooltip text={isParticipantCopied ? 'Copied' : `Copy ${participant.address}`}>
+                            <button
+                              type="button"
+                              className={isParticipantCopied ? 'group-member-copy copied' : 'group-member-copy'}
+                              onClick={(event) => {
+                                onCopyWithFeedback(participant.address, participantCopyKey).catch(() => {});
+                                const detailsElement = event.currentTarget.closest('details');
+                                if (detailsElement instanceof HTMLDetailsElement) {
+                                  detailsElement.open = false;
+                                }
+                              }}
+                            >
+                              <span className="group-member-name">
+                                {participant.name ?? participant.shortAddress}
+                                {participant.isSelf ? <span className="group-member-badge">You</span> : null}
+                                {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
+                              </span>
+                              <span className="group-member-address">
+                                {isParticipantCopied ? 'Copied' : participant.shortAddress}
+                              </span>
+                            </button>
+                          </AppTooltip>
                           {canUseMemberTools && isActiveGroupAdmin && !participant.isSelf ? (
                             <>
                               {adminTransferEnabled ? (
+                                <AppTooltip text={`Transfer administration to ${participant.address}`}>
+                                  <button
+                                    type="button"
+                                    className="group-member-remove"
+                                    onClick={() => {
+                                      onTransferAdmin(participant.address).catch(() => {});
+                                    }}
+                                    disabled={processingGroupAction}
+                                  >
+                                    Make admin
+                                  </button>
+                                </AppTooltip>
+                              ) : null}
+                              <AppTooltip text={`Remove ${participant.address}`}>
                                 <button
                                   type="button"
                                   className="group-member-remove"
                                   onClick={() => {
-                                    onTransferAdmin(participant.address).catch(() => {});
+                                    onRemoveMember(participant.address).catch(() => {});
                                   }}
                                   disabled={processingGroupAction}
-                                  title={`Transfer administration to ${participant.address}`}
                                 >
-                                  Make admin
+                                  Remove
                                 </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                className="group-member-remove"
-                                onClick={() => {
-                                  onRemoveMember(participant.address).catch(() => {});
-                                }}
-                                disabled={processingGroupAction}
-                                title={`Remove ${participant.address}`}
-                              >
-                                Remove
-                              </button>
+                              </AppTooltip>
                             </>
                           ) : null}
                         </div>
@@ -647,23 +651,22 @@ export default function GroupChatPanel({
                   ) : null}
                   {message.direction === 'incoming' && !isGroupSystemMessage ? (
                     canCopySenderAddress ? (
-                      <button
+                      <AppTooltip text={isSenderCopied ? 'Copied' : `Copy ${message.senderAddress as string}`}><button
                         type="button"
                         className={isSenderCopied ? 'message-sender-copy copied' : 'message-sender-copy'}
                         onClick={() => {
                           onCopyWithFeedback(message.senderAddress as string, senderCopyKey).catch(() => {});
                         }}
-                        title={isSenderCopied ? 'Copied' : `Copy ${message.senderAddress as string}`}
                         aria-label={isSenderCopied ? 'Sender address copied' : `Copy sender address for ${senderLabel}`}
                       >
                         {isSenderCopied ? `${senderLabel} (copied)` : senderLabel}
-                      </button>
+                      </button></AppTooltip>
                     ) : (
                       <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
                     )
                   ) : null}
                   {message.replyToText || message.replyToTxHash || typeof message.replyToBlockNumber === 'number' ? (
-                    <button
+                    <AppTooltip text="Go to replied message"><button
                       type="button"
                       className="message-reply"
                       onClick={() =>
@@ -676,11 +679,10 @@ export default function GroupChatPanel({
                           message.replyToLogIndex
                         )
                       }
-                      title="Go to replied message"
                       aria-label={`Go to replied message: ${getReplyReferenceFallbackLabel(message)}`}
                     >
                       {'\u21AA'} {getReplyReferenceFallbackLabel(message)}
-                    </button>
+                    </button></AppTooltip>
                   ) : null}
                   {parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
@@ -692,8 +694,11 @@ export default function GroupChatPanel({
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">
                       {messageReactions.map((reaction) => (
-                        <button
-                          key={`${message.id}-${reaction.emoji}`}
+                        <AppTooltip key={`${message.id}-${reaction.emoji}`} text={
+                            walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
+                              ? walletPromptSensitiveActionsTitle
+                              : undefined
+                          }><button
                           type="button"
                           className={reaction.reactedByMe ? 'message-reaction-chip active' : 'message-reaction-chip'}
                           onClick={() => {
@@ -705,18 +710,13 @@ export default function GroupChatPanel({
                             reaction.reactedByMe ||
                             (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
                           }
-                          title={
-                            walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
-                              ? walletPromptSensitiveActionsTitle
-                              : undefined
-                          }
                           aria-label={`${reaction.reactedByMe ? 'Your reaction' : 'Reaction'} ${reaction.emoji}, ${
                             reaction.count
                           } ${reaction.count === 1 ? 'reaction' : 'reactions'}`}
                         >
                           <span>{reaction.emoji}</span>
                           <span>{reaction.count}</span>
-                        </button>
+                        </button></AppTooltip>
                       ))}
                     </div>
                   ) : null}

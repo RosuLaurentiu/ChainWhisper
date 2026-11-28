@@ -18,6 +18,7 @@ import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice'
 import type { TradePricingField } from '../../../lib/tradePricing';
 import { describedByIds } from '../../../shared/components/a11y';
 import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 export type TradeComposerTokenOption = {
   value: string;
@@ -374,9 +375,11 @@ export function TradeTokenSelect({
       >
         <span>{selectedVerificationLabel}</span>
         {verifyUrl ? (
-          <a href={verifyUrl} target="_blank" rel="noreferrer" title={explorerLabel}>
-            {selectedAddressLabel}
-          </a>
+          <AppTooltip text={explorerLabel}>
+            <a href={verifyUrl} target="_blank" rel="noreferrer">
+              {selectedAddressLabel}
+            </a>
+          </AppTooltip>
         ) : (
           <small>{selectedAddressLabel}</small>
         )}
@@ -727,19 +730,22 @@ export default function TradeComposerPanel({
   };
   const renderPriceReference = () =>
     displayedPriceReference && canTogglePriceDisplay ? (
-      <button
-        type="button"
-        className="p2p-carbon-price-reference"
-        onClick={() => setPriceOrientation(!showReversePriceDisplay)}
-        aria-pressed={showReversePriceDisplay}
-        title={displayedPriceReference.title}
-      >
-        {displayedPriceReference.label}
-      </button>
+      <AppTooltip text={displayedPriceReference.title}>
+        <button
+          type="button"
+          className="p2p-carbon-price-reference"
+          onClick={() => setPriceOrientation(!showReversePriceDisplay)}
+          aria-pressed={showReversePriceDisplay}
+        >
+          {displayedPriceReference.label}
+        </button>
+      </AppTooltip>
     ) : displayedPriceReference ? (
-      <p className="p2p-carbon-price-reference" title={displayedPriceReference.title}>
-        {displayedPriceReference.label}
-      </p>
+      <AppTooltip text={displayedPriceReference.title}>
+        <p className="p2p-carbon-price-reference">
+          {displayedPriceReference.label}
+        </p>
+      </AppTooltip>
     ) : null;
   const priceField = showPriceInput ? (
     <div className={resolvePricingFieldClassName('trade-compose-field trade-compose-price-field', 'price')}>
@@ -788,16 +794,17 @@ export default function TradeComposerPanel({
     <div className={className} aria-live="polite">
       {tradePreviewLabel && !visibleTradeRateLabel ? <strong>{tradePreviewLabel}</strong> : null}
       {visibleTradeRateLabel ? (
-        <button
-          type="button"
-          className="trade-compose-rate-toggle"
-          onClick={() => setPriceOrientation(!showReverseRate)}
-          title="Flip rate"
-          aria-label="Flip displayed trade rate"
-        >
-          <span>Price ratio</span>
-          <strong>{visibleTradeRateLabel}</strong>
-        </button>
+        <AppTooltip text="Flip rate">
+          <button
+            type="button"
+            className="trade-compose-rate-toggle"
+            onClick={() => setPriceOrientation(!showReverseRate)}
+            aria-label="Flip displayed trade rate"
+          >
+            <span>Price ratio</span>
+            <strong>{visibleTradeRateLabel}</strong>
+          </button>
+        </AppTooltip>
       ) : showPriceRatioPreview ? (
         <div className="trade-compose-rate-toggle trade-compose-rate-toggle-static">
           <span>Price ratio</span>
@@ -813,15 +820,16 @@ export default function TradeComposerPanel({
         <strong>{title}</strong>
         <div className="trade-compose-header-meta">
           <span>{metaLabel}</span>
-          <a
-            className="trade-compose-header-link"
-            href={escrowContractUrl}
-            target="_blank"
-            rel="noreferrer"
-            title={`Open ${escrowContractTitleLabel}`}
-          >
-            {escrowContractLabel}
-          </a>
+          <AppTooltip text={`Open ${escrowContractTitleLabel}`}>
+            <a
+              className="trade-compose-header-link"
+              href={escrowContractUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {escrowContractLabel}
+            </a>
+          </AppTooltip>
         </div>
       </div> : null}
 
@@ -918,16 +926,17 @@ export default function TradeComposerPanel({
               <div className="trade-compose-token-meta">
                 <span>{offerCustomMetaLabel}</span>
                 {offerVerifyUrl ? (
-                  <a
-                    className="trade-compose-icon-link"
-                    href={offerVerifyUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={explorerLabel}
-                    title={explorerLabel}
-                  >
-                    Explorer
-                  </a>
+                  <AppTooltip text={explorerLabel}>
+                    <a
+                      className="trade-compose-icon-link"
+                      href={offerVerifyUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={explorerLabel}
+                    >
+                      Explorer
+                    </a>
+                  </AppTooltip>
                 ) : null}
               </div>
             </>
@@ -971,16 +980,15 @@ export default function TradeComposerPanel({
           ) : null}
         </section>
 
-        {pairTokensLocked || showDirectionControl ? null : <button
+        {pairTokensLocked || showDirectionControl ? null : <AppTooltip text="Swap trade sides"><button
           type="button"
           className="trade-compose-swap-indicator"
           onClick={() => onSwapSides?.()}
           disabled={swapDisabled}
           aria-label="Swap sell and buy sides"
-          title="Swap trade sides"
         >
           <TradeSwapIcon />
-        </button>}
+        </button></AppTooltip>}
 
         <section className="trade-compose-section trade-compose-section-buy" aria-label="Asset you buy">
           <div className="trade-compose-section-header">
@@ -1031,16 +1039,17 @@ export default function TradeComposerPanel({
               <div className="trade-compose-token-meta">
                 <span>{requestCustomMetaLabel}</span>
                 {requestVerifyUrl ? (
-                  <a
-                    className="trade-compose-icon-link"
-                    href={requestVerifyUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={explorerLabel}
-                    title={explorerLabel}
-                  >
-                    Explorer
-                  </a>
+                  <AppTooltip text={explorerLabel}>
+                    <a
+                      className="trade-compose-icon-link"
+                      href={requestVerifyUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={explorerLabel}
+                    >
+                      Explorer
+                    </a>
+                  </AppTooltip>
                 ) : null}
               </div>
             </>
@@ -1099,16 +1108,17 @@ export default function TradeComposerPanel({
               </div>
               <p className="trade-compose-privacy-help">{privateLiquidityHelpText}</p>
               {showHiddenLiquidityToggle && (!privateTokenAmounts || canHidePrivateLiquidity && !hidePrivateLiquidity) ? <div className="trade-compose-privacy-toggle" role="group" aria-label="Trade budget">
-                <button
-                  type="button"
-                  className={hidePrivateLiquidity ? 'active' : undefined}
-                  onClick={() => onHidePrivateLiquidityChange?.(true)}
-                  aria-pressed={hidePrivateLiquidity}
-                  disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
-                  title={canHidePrivateLiquidity ? (tradeVisibility === 'public' ? 'Publish only the ratio; keep amounts and fills private' : 'Keep the trade budget private') : hiddenLiquidityUnavailableMessage}
-                >
-                  Hide budget
-                </button>
+                <AppTooltip text={canHidePrivateLiquidity ? (tradeVisibility === 'public' ? 'Publish only the ratio; keep amounts and fills private' : 'Keep the trade budget private') : hiddenLiquidityUnavailableMessage}>
+                  <button
+                    type="button"
+                    className={hidePrivateLiquidity ? 'active' : undefined}
+                    onClick={() => onHidePrivateLiquidityChange?.(true)}
+                    aria-pressed={hidePrivateLiquidity}
+                    disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
+                  >
+                    Hide budget
+                  </button>
+                </AppTooltip>
                 {!privateTokenAmounts ? <button
                   type="button"
                   className={!hidePrivateLiquidity ? 'active' : undefined}
@@ -1222,16 +1232,17 @@ export default function TradeComposerPanel({
                   {sendWhenReady && !canSend && !sending ? 'Will create when ready' : sendReadinessLabel}
                 </p>
               )}
-              <button
-                type="button"
-                className={sendButtonClassName}
-                onClick={handleSendClick}
-                disabled={sendButtonDisabled}
-                aria-disabled={sendButtonDisabled}
-                title={validationMessage || sendTitle}
-              >
-                {sending ? sendingLabel : sendLabel}
-              </button>
+              <AppTooltip text={validationMessage || sendTitle}>
+                <button
+                  type="button"
+                  className={sendButtonClassName}
+                  onClick={handleSendClick}
+                  disabled={sendButtonDisabled}
+                  aria-disabled={sendButtonDisabled}
+                >
+                  {sending ? sendingLabel : sendLabel}
+                </button>
+              </AppTooltip>
             </div>
           </div>
         </div>

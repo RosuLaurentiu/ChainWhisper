@@ -28,7 +28,7 @@ describe('TradingProductSwitch', () => {
     const clock=vi.spyOn(Date,'now').mockReturnValue(1_000_000);
     try{
       const markup=renderToStaticMarkup(createElement(TradingProductSwitch,{activeProduct:'dex',dexCandidate:STAGED_SHARED_HISTORY_DEX_CANDIDATE,onNavigate:()=>{},selectedPair:['BCN','HBR'],onSelectedPairChange:()=>{},priceDisplayInverted:false,onPriceDisplayInvertedChange:()=>{},marketReference:{status:'available',price:2,sampledAt:'1',checkedAt:'975',revision:'3'}}));
-      expect(markup).toContain('aria-label="Market check age"');expect(markup).toContain('title="Valid for 120s after the last check">25s ago');expect(markup).not.toContain('999s ago');
+      expect(markup).toContain('aria-label="Market check age"');expect(markup).toContain('aria-description="Valid for 120s after the last check">25s ago');expect(markup).not.toContain('999s ago');
     }finally{clock.mockRestore();}
   });
   it('uses the new deployment token labels and all six markets without a market-price substitute',()=>{
@@ -50,7 +50,7 @@ describe('TradingProductSwitch', () => {
       expect(markup).toContain(inverted ? '0.5 BCN/ORBT' : '2 ORBT/BCN');
       expect(markup).toContain('Rounded Pool reference · excludes Limits');
       expect(markup).toContain('COTI Testnet<span class="trading-market-change-detail"> · Live Pool reference</span>');
-      expect(markup).toContain('title="Expires after 120s">25s ago');
+      expect(markup).toContain('aria-description="Expires after 120s">25s ago');
       expect(markup).toContain('Market pair');
       expect(markup).not.toContain('Test token 0');
     } finally { clock.mockRestore(); }
@@ -117,7 +117,7 @@ describe('TradingProductSwitch', () => {
     expect(markup).toContain(inverted?'0.5 BCN/ORBT':'2 ORBT/BCN');
     expect(markup).toContain('Last Pool price');expect(markup).toContain('Recorded ');
     expect(markup).not.toContain('Live Pool reference');expect(markup).not.toContain('Price unavailable');
-    // A recent record shows its age, like the live state does. An old record shows its date. The exact time stays in the title.
+    // A recent record shows its age, like the live state does. An old record shows its date. The exact time stays in the hint.
     const clock=vi.spyOn(Date,'now').mockReturnValue(1_000_000_000);
     try{
       const recorded=(sampledAt:string)=>renderToStaticMarkup(createElement(TradingProductSwitch,{
@@ -126,7 +126,7 @@ describe('TradingProductSwitch', () => {
       expect(recorded('999955')).toContain('>Recorded 45s ago<');expect(recorded('999400')).toContain('>Recorded 10m ago<');
       expect(recorded('996401')).toContain('>Recorded 59m ago<');
       const old=recorded('996400');expect(old).toMatch(/>Recorded \d{1,2} \w{3} \d{4}, \d{2}:\d{2}</);expect(old).not.toMatch(/Recorded \d+[sm] ago/);
-      expect(recorded('999955')).toMatch(/title="\d{1,2} \w{3} \d{4}, \d{2}:\d{2} · Last recorded public Pool price\. Current market price is not verified\."/);
+      expect(recorded('999955')).toMatch(/aria-description="\d{1,2} \w{3} \d{4}, \d{2}:\d{2} · Last recorded public Pool price\. Current market price is not verified\."/);
     }finally{clock.mockRestore();}
   });
   it('presents DEX and P2P as one local trading choice', () => {

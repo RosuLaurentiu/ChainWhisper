@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { ChevronDown, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw, Wallet, X } from 'lucide-react';
 import { resolveWalletStatusTone, type WalletStatusTone } from '../../../lib/walletSession';
 import { moveFocusWithin } from '../../../shared/components/a11y';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type WalletHeaderPanelProps = {
   action?: ReactNode;
@@ -136,26 +137,27 @@ export default function WalletHeaderPanel({
       <div className="p2p-wallet-status">
         <div className={hasStatusText ? 'p2p-wallet-identity' : 'p2p-wallet-identity no-status'}>
           <div className={primaryAddon ? 'p2p-wallet-primary-wrap has-addon' : 'p2p-wallet-primary-wrap'}>
-            <button
-              type="button"
-              className={primaryButtonClassName}
-              onClick={onPrimaryAction}
-              disabled={primaryDisabled}
-              title={primaryButtonTitle}
-              aria-label={primaryButtonTitle ?? primaryButtonLabel}
-              aria-busy={busy}
-            >
-              {busy ? (
-                <LoaderCircle
-                  className="p2p-wallet-primary-spinner"
-                  size={15}
-                  strokeWidth={2.25}
-                  aria-hidden="true"
-                />
-              ) : null}
-              <span>{primaryButtonLabel}</span>
-              {primaryMetaLabel ? <small aria-live="polite">{primaryMetaLabel}</small> : null}
-            </button>
+            <AppTooltip text={primaryButtonTitle}>
+              <button
+                type="button"
+                className={primaryButtonClassName}
+                onClick={onPrimaryAction}
+                disabled={primaryDisabled}
+                aria-label={primaryButtonTitle ?? primaryButtonLabel}
+                aria-busy={busy}
+              >
+                {busy ? (
+                  <LoaderCircle
+                    className="p2p-wallet-primary-spinner"
+                    size={15}
+                    strokeWidth={2.25}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                <span>{primaryButtonLabel}</span>
+                {primaryMetaLabel ? <small aria-live="polite">{primaryMetaLabel}</small> : null}
+              </button>
+            </AppTooltip>
             {primaryAddon ? <div className="p2p-wallet-primary-addon">{primaryAddon}</div> : null}
           </div>
           {hasStatusText ? (
@@ -168,16 +170,17 @@ export default function WalletHeaderPanel({
               {statusLabel ? (
                 <div className="p2p-wallet-status-row">
                   {hasStatusAction && !connected ? (
-                    <button
-                      type="button"
-                      className="p2p-wallet-status-indicator p2p-wallet-status-button"
-                      onClick={onStatusAction}
-                      disabled={statusActionDisabled}
-                      title={statusActionTitle}
-                      aria-label={statusActionTitle ?? statusActionLabel ?? statusLabel}
-                    >
-                      {statusIndicatorContent}
-                    </button>
+                    <AppTooltip text={statusActionTitle}>
+                      <button
+                        type="button"
+                        className="p2p-wallet-status-indicator p2p-wallet-status-button"
+                        onClick={onStatusAction}
+                        disabled={statusActionDisabled}
+                        aria-label={statusActionTitle ?? statusActionLabel ?? statusLabel}
+                      >
+                        {statusIndicatorContent}
+                      </button>
+                    </AppTooltip>
                   ) : (
                     <strong className="p2p-wallet-status-indicator">{statusIndicatorContent}</strong>
                   )}
@@ -187,17 +190,16 @@ export default function WalletHeaderPanel({
           ) : null}
         </div>
         {connected ? (
-          <button
+          <AppTooltip text={directPrivacyLabel}><button
             type="button"
             className={`p2p-wallet-privacy-direct p2p-wallet-privacy-${resolvedStatusTone}`}
             onClick={onStatusAction}
             disabled={!hasStatusAction || statusActionDisabled}
-            title={directPrivacyLabel}
             aria-label={directPrivacyLabel}
             aria-busy={busy && hasStatusAction}
           >
             <StatusActionIcon size={17} strokeWidth={2.25} aria-hidden="true" />
-          </button>
+          </button></AppTooltip>
         ) : null}
         {action ? <div className="p2p-wallet-status-actions">{action}</div> : null}
       </div>

@@ -12,6 +12,7 @@ import { currentDexPendingStorage, readCurrentDexPendingAttempt, currentDexOwner
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 import TradeActionConfirmModal from '../../trading/components/TradeActionConfirmModal';
 import useTradeActionConfirmationState from '../../trading/hooks/useTradeActionConfirmationState';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type Snapshot = Awaited<ReturnType<typeof readCurrentSharedDexTestTokens>>;
 type Token = Snapshot['tokens'][number];
@@ -223,7 +224,7 @@ export default function CurrentSharedTestTokenControls({ sharedWalletSession, di
           : funds && !allowed ? 'Check balances again.'
             : action === 'initial' ? 'Initial claim available' : 'Refill available';
       return <article className="dex-v2-beta-token-card" key={token.address}>
-        <header><strong>{token.symbol}</strong>{funds ? <span title={`${formatUnits(funds.balance, funds.decimals)} ${token.symbol}`}>{formatBalance(funds.balance, funds.decimals)}</span> : null}</header>
+        <header><strong>{token.symbol}</strong>{funds ? <AppTooltip text={`${formatUnits(funds.balance, funds.decimals)} ${token.symbol}`}><span>{formatBalance(funds.balance, funds.decimals)}</span></AppTooltip> : null}</header>
         <p className="dex-v2-beta-token-status" id={actionId} role="status">{actionStatus}</p>
         <button type="button" aria-describedby={`beta-token-setup ${actionId}`} disabled={held || availability !== 'ready'} onClick={() => { void claim(action, token.address); }}>{action === 'initial' ? 'Claim' : 'Refill'} {amount} {token.symbol}</button>
       </article>;

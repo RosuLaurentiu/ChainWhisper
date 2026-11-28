@@ -8,6 +8,7 @@ import {
 } from '../../../lib/appShared';
 import type { GroupInviteMenuView, GroupJoinCodeMode } from '../groupUiStore';
 import { closeDetailsOnEscape } from '../../../shared/components/a11y';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 type SharedGroupInviteToolProps = {
   processingGroupAction: boolean;
@@ -420,9 +421,11 @@ export function ActiveJoinCodeList({
             return (
               <li key={`active-join-code:${entry.groupId}:${entry.codeHash}`} className="group-active-code-item">
                 <div className="group-active-code-row">
-                  <div className="group-active-code-value" title={copyValue}>
-                    {copyValue}
-                  </div>
+                  <AppTooltip text={copyValue}>
+                    <div className="group-active-code-value">
+                      {copyValue}
+                    </div>
+                  </AppTooltip>
                   <button
                     type="button"
                     className={lastCopiedKey === copyKey ? 'contact group-generated-code-copy copied' : 'contact group-generated-code-copy'}

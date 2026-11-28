@@ -52,6 +52,7 @@ import {
   type TradeActionSide
 } from '../../../lib/tradePerspective';
 import { CurrentSwapJourneyTiming, currentSwapTimingVisible } from './currentSwapJourneyTiming';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 
 const trialChain = BigInt(STAGED_SHARED_HISTORY_DEX_CANDIDATE.chainId);
 export const parseCurrentSwapAmount = parseCurrentDexTokenAmount;
@@ -984,9 +985,11 @@ export function CurrentSwapWorkspace({
           {fullBalanceInput ? <button type="button" className="dex-v2-amount-max" aria-label="Use the full balance" disabled={inputsLocked} onClick={() => setMaximumInput(fullBalanceInput)}>Max</button> : null}
         </span> : null}
       </div>
-      <button className="dex-v2-current-direction" type="button" aria-label="Switch Buy and Sell" title="Switch Buy and Sell" disabled={inputsLocked} onClick={() => selectSide(displayedSide === 'buy' ? 'sell' : 'buy')}>
-        <ArrowDownUp size={18} aria-hidden="true" />
-      </button>
+      <AppTooltip text="Switch Buy and Sell">
+        <button className="dex-v2-current-direction" type="button" aria-label="Switch Buy and Sell" disabled={inputsLocked} onClick={() => selectSide(displayedSide === 'buy' ? 'sell' : 'buy')}>
+          <ArrowDownUp size={18} aria-hidden="true" />
+        </button>
+      </AppTooltip>
       <div className="dex-v2-quote-output">
         <span><strong>{quoteOutput?'Quoted receive':'Estimated receive'}</strong><small>{trialTokens[outputIndex]}</small></span>
         <output aria-label={quoteOutput?'Quoted net output':'Estimated output'}>{quoteOutput??(estimatedOutput?`≈ ${estimatedOutput}`:'—')}</output>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode, type Ref } from 'react';
 import AppFavicon from '../../assets/favicon.png';
 import { closeDetailsOnEscape } from '../../shared/components/a11y';
+import { AppTooltip } from '../../shared/ui/AppTooltip';
 
 type AppHeaderLink = {
   href: string;
@@ -81,94 +82,97 @@ export default function AppHeader({
     isMobileNav && shouldShowSoundToggle && !notificationControl;
   const mobileLinksMenuToggleControl =
     isMobileNav && hasMobileMenuContent ? (
-      <button
-        ref={mobileMenuButtonRef}
-        type="button"
-        className="header-icon-btn top-header-app-menu-toggle"
-        aria-expanded={mobileLinksOpen}
-        aria-controls="top-navigation-links-mobile"
-        onClick={onToggleMobileLinksOpen}
-        aria-label={mobileLinksOpen ? 'Close apps menu' : 'Open apps menu'}
-        title={mobileLinksOpen ? 'Close apps menu' : 'Open apps menu'}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          aria-hidden="true"
-          focusable="false"
-          xmlns="http://www.w3.org/2000/svg"
+      <AppTooltip text={mobileLinksOpen ? 'Close apps menu' : 'Open apps menu'}>
+        <button
+          ref={mobileMenuButtonRef}
+          type="button"
+          className="header-icon-btn top-header-app-menu-toggle"
+          aria-expanded={mobileLinksOpen}
+          aria-controls="top-navigation-links-mobile"
+          onClick={onToggleMobileLinksOpen}
+          aria-label={mobileLinksOpen ? 'Close apps menu' : 'Open apps menu'}
         >
-          <path
-            fill="currentColor"
-            d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Zm-8-8v2h2V6H6Zm10 0v2h2V6h-2ZM6 16v2h2v-2H6Zm10 0v2h2v-2h-2Z"
-          />
-        </svg>
-      </button>
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            aria-hidden="true"
+            focusable="false"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              fill="currentColor"
+              d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Zm-8-8v2h2V6H6Zm10 0v2h2V6h-2ZM6 16v2h2v-2H6Zm10 0v2h2v-2h-2Z"
+            />
+          </svg>
+        </button>
+      </AppTooltip>
     ) : null;
   const soundToggleControl = shouldShowSoundToggle ? (
-    <button
-      type="button"
-      className="sound-toggle-btn"
-      onClick={onToggleSound}
-      title={soundEnabled ? 'Disable sound' : 'Enable sound'}
-      aria-label={soundEnabled ? 'Disable notification sound' : 'Enable notification sound'}
-      aria-pressed={soundEnabled}
-    >
-      {soundEnabled ? (
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          aria-hidden="true"
-          focusable="false"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path
-            fill="currentColor"
-            d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h16v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
-          />
-        </svg>
-      ) : (
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          aria-hidden="true"
-          focusable="false"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path
-            fill="currentColor"
-            d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h9.17l3.7 3.7 1.41-1.41L7.41 4 6 5.41 16.59 16H18v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
-          />
-        </svg>
-      )}
-    </button>
+    <AppTooltip text={soundEnabled ? 'Disable sound' : 'Enable sound'}>
+      <button
+        type="button"
+        className="sound-toggle-btn"
+        onClick={onToggleSound}
+        aria-label={soundEnabled ? 'Disable notification sound' : 'Enable notification sound'}
+        aria-pressed={soundEnabled}
+      >
+        {soundEnabled ? (
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            aria-hidden="true"
+            focusable="false"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              fill="currentColor"
+              d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h16v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
+            />
+          </svg>
+        ) : (
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            aria-hidden="true"
+            focusable="false"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              fill="currentColor"
+              d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h9.17l3.7 3.7 1.41-1.41L7.41 4 6 5.41 16.59 16H18v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
+            />
+          </svg>
+        )}
+      </button>
+    </AppTooltip>
   ) : null;
   const standaloneSoundToggleControl = notificationControl ? null : soundToggleControl;
   const helpControl = onOpenHelp ? (
-    <button
-      type="button"
-      className="header-icon-btn top-header-help-btn"
-      onClick={onOpenHelp}
-      aria-label="Open App Help"
-      title="Open App Help"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="18"
-        height="18"
-        aria-hidden="true"
-        focusable="false"
-        xmlns="http://www.w3.org/2000/svg"
+    <AppTooltip text="Open App Help">
+      <button
+        type="button"
+        className="header-icon-btn top-header-help-btn"
+        onClick={onOpenHelp}
+        aria-label="Open App Help"
       >
-        <path
-          fill="currentColor"
-          d="M12 2.75A9.25 9.25 0 1 0 21.25 12 9.26 9.26 0 0 0 12 2.75Zm0 16.5A7.25 7.25 0 1 1 19.25 12 7.26 7.26 0 0 1 12 19.25Zm0-4.05a1.15 1.15 0 1 0 1.15 1.15A1.15 1.15 0 0 0 12 15.2Zm.1-8.05a3.28 3.28 0 0 0-3.27 2.65l1.96.39a1.29 1.29 0 0 1 1.31-1.04 1.22 1.22 0 0 1 1.3 1.18c0 .65-.34.95-1.08 1.45-.85.58-1.9 1.3-1.9 3v.25h2v-.25c0-.64.34-.94 1.03-1.42.87-.61 1.95-1.36 1.95-3.03a3.2 3.2 0 0 0-3.3-3.18Z"
-        />
-      </svg>
-    </button>
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          aria-hidden="true"
+          focusable="false"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            fill="currentColor"
+            d="M12 2.75A9.25 9.25 0 1 0 21.25 12 9.26 9.26 0 0 0 12 2.75Zm0 16.5A7.25 7.25 0 1 1 19.25 12 7.26 7.26 0 0 1 12 19.25Zm0-4.05a1.15 1.15 0 1 0 1.15 1.15A1.15 1.15 0 0 0 12 15.2Zm.1-8.05a3.28 3.28 0 0 0-3.27 2.65l1.96.39a1.29 1.29 0 0 1 1.31-1.04 1.22 1.22 0 0 1 1.3 1.18c0 .65-.34.95-1.08 1.45-.85.58-1.9 1.3-1.9 3v.25h2v-.25c0-.64.34-.94 1.03-1.42.87-.61 1.95-1.36 1.95-3.03a3.2 3.2 0 0 0-3.3-3.18Z"
+          />
+        </svg>
+      </button>
+    </AppTooltip>
   ) : null;
   const mobileHelpControl = isMobileNav ? helpControl : null;
   const desktopHelpControl = isMobileNav ? null : helpControl;

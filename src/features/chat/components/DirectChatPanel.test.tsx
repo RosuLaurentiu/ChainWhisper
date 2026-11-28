@@ -139,7 +139,7 @@ describe('DirectChatPanel submitted-send hold', () => {
     });
     const send = buttonWithClass(markup, 'chat-compose-send');
     expect(send).toContain('disabled=""');
-    expect(send).toContain(`title="${holdReason}"`);
+    expect(send).toContain(`aria-description="${holdReason}"`);
     expect(buttonWithClass(markup, 'chat-compose-attach chat-compose-attach-icon')).toContain('disabled=""');
     expect(buttonWithClass(markup, 'chat-tip-send')).toContain('disabled=""');
     expect(markup).toContain(`role="status">${holdReason}<`);
@@ -149,7 +149,8 @@ describe('DirectChatPanel submitted-send hold', () => {
     const markup = renderDirectHistory(false, [directV2Message, { ...submittedMessage, deliveryState: 'sent' }]);
     const send = buttonWithClass(markup, 'chat-compose-send');
     expect(send).not.toContain('disabled=""');
-    expect(send).toContain('title="Send message"');
+    expect(send).toContain('aria-label="Send message"');
+    expect(send).not.toContain('aria-description=');
     expect(markup).not.toContain(holdReason);
   });
 });

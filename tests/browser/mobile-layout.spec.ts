@@ -711,7 +711,7 @@ test.describe('mobile layout polish', () => {
     await expect(tokenDropdown.getByLabel('Search trade tokens')).toBeFocused();
     await expect(tokenState).toContainText(/Whitelisted|Native asset|Balance pending/);
     await expect(tokenState).not.toContainText(/Balance\s+(?:--|\d)/);
-    await expect(tokenState.locator('a[title="View token on explorer"]')).toBeVisible();
+    await expect(tokenState.getByRole('link')).toBeVisible();
     await expect(page.locator('.trade-compose-asset-field > .trade-compose-field-head .trade-compose-icon-link')).toHaveCount(0);
     await expect(tokenDropdown).not.toContainText(/Custom public|Custom private|Custom token|Custom .*CA/);
     await expect(tokenDropdown.locator('.trade-token-select-option-main strong').first()).toBeVisible();

@@ -1,48 +1,7 @@
-@layer ui-sdk, app-ui-reset;
-
 @import './local-fonts.css';
 
 /* Base: design tokens, element defaults, global states and keyframes used by several features.
    The import order in styles.css is part of the cascade: see APP/reports/css-by-feature-2026-11-27. */
-
-/* App wrappers in src/shared/ui put the class app-ui on each ui-sdk part (CW-161). This layer comes after the
-   ui-sdk layer and before the App rules, which have no layer. It returns every property that the App does not set
-   to the browser default, so the ui-sdk web.css look never shows on an App-styled part. */
-@layer app-ui-reset {
-  .app-ui {
-    all: revert;
-  }
-}
-
-/* ui-sdk web.css (cascade layer ui-sdk) also styles plain links, hr, code, kbd, focus rings and tap behaviour.
-   These zero-specificity rules keep the browser defaults for App elements that are not ui-sdk parts (CW-159). */
-:where(a:not([data-slot])) {
-  color: revert;
-  text-decoration: revert;
-  text-underline-offset: revert;
-}
-
-:where(a, summary):where(:not([data-slot]):focus-visible) {
-  outline: revert;
-  outline-offset: revert;
-}
-
-:where(a, button, input, select, textarea, label, summary):where(:not([data-slot])) {
-  touch-action: revert;
-  -webkit-tap-highlight-color: revert;
-}
-
-:where(hr, code, kbd):where(:not([data-slot])) {
-  align-self: revert;
-  height: revert;
-  margin: revert;
-  border: revert;
-  padding: revert;
-  border-radius: revert;
-  background: revert;
-  font-family: revert;
-  font-size: revert;
-}
 
 :root {
   color-scheme: dark;

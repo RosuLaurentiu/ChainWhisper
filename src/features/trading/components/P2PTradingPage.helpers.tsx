@@ -29,6 +29,7 @@ import type { TradeBalanceDisclosureV2Runtime } from '../../../lib/tradeBalanceD
 import type { ResolvedTradeToken, TradeTokenPresetKey } from '../../../lib/appHelpers';
 import type { TradeComposerModel } from '../../../lib/tradeComposer';
 import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
+import { AppTooltip } from '../../../shared/ui/AppTooltip';
 export { bytesEqual, mergeOnboardInfoByAddress, onboardInfoEqual } from '../../../lib/appShared';
 export const formatCompactTradeTimestamp = (timestamp?: number): string => {
   if (!timestamp || !Number.isFinite(timestamp)) {
@@ -643,19 +644,22 @@ export const renderCarbonPriceReference = (
     return null;
   }
   return options?.onToggle ? (
-    <button
-      type="button"
-      className="p2p-carbon-price-reference"
-      onClick={options.onToggle}
-      aria-pressed={options.pressed}
-      title={title}
-    >
-      {label}
-    </button>
+    <AppTooltip text={title}>
+      <button
+        type="button"
+        className="p2p-carbon-price-reference"
+        onClick={options.onToggle}
+        aria-pressed={options.pressed}
+      >
+        {label}
+      </button>
+    </AppTooltip>
   ) : (
-    <small className="p2p-carbon-price-reference" title={title}>
-      {label}
-    </small>
+    <AppTooltip text={title}>
+      <small className="p2p-carbon-price-reference">
+        {label}
+      </small>
+    </AppTooltip>
   );
 };
 
