@@ -2,6 +2,7 @@
 // Production preparation, brands, graph getters, issue codec, sender and SDK decryption run unchanged.
 // It mocks the current build 13 candidate (cheap-history, decision-034); old candidates are not selectable.
 import { createElement } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { AbiCoder, Interface, toBeHex } from '@coti-io/coti-ethers';
 import { decodeUint, decryptUint, decryptUint256, encodeKey, encrypt } from '@coti-io/coti-sdk-typescript';
@@ -118,6 +119,8 @@ const zero = toBeHex(0, 32), initialNumber = Number(c.attestationBlock.number) +
 // Build 13 async stages: 1 opened, 2 to 4 work, then READY, FUNDED, SETTLED and RELEASED. A Fast Quote is READY when it is issued.
 const { ready: READY, funded: FUNDED, settled: SETTLED, released: RELEASED } = c.protocol.stages;
 let head = initialNumber, stage = 0, deadline = 0n, context = zero, profile = 'fast-pool';
+// The private terms of the last Quote send, decrypted with the test key. Tests use them to prove what was signed.
+let quoteTerms: Record<string, string> | null = null;
 let operationTokens = [c.tokens[1][0], c.tokens[0][0]] as string[], fundedBlock = 0, operationMaximum = 20n;
 const keeper = `0x${'55'.repeat(20)}`, work = new Interface(['function advanceFixedWork(uint256 operationId)']);
 let active = true, gasLimit = 150_000_000n, nonce = 4, operationId = 0n;
@@ -168,6 +171,7 @@ const calls: string[] = [];
 let tokenAllowances = [1000n, 1000n, 1000n, 1000n], tokenClaimed = [false, false, false, false], badFundingCredit = false;
 let balanceReadFailure = false, balanceReadDelay = 0, privacyUnlocked = true;
 let wrongWalletResponseNonce = false;
+// Kept for the Control type of older callers; the wallet returns only a hash now, so this flag changes nothing.
 let missingWalletChainId = false;
 let delayedTransactionVisibility = false;
 const blockHash = (number: number) => toBeHex(BigInt(number), 32);
@@ -216,7 +220,7 @@ const send = async (method: string, params: unknown[]) => {
   const selector = params[method === 'eth_getStorageAt' ? 2 : 1] as { blockHash: string; requireCanonical: boolean };
   if (!selector?.requireCanonical || BigInt(selector.blockHash) > BigInt(head) ||
       BigInt(selector.blockHash) < BigInt(initialNumber)) throw new Error('Unpinned fixture RPC.');
-  if (method === 'eth_getCode') return graphDrift ? '0x6001' : String(params[0]).toLowerCase() === mountedOwner.toLowerCase() ? '0x' : codes[String(params[0]).toLowerCase()]??recipientCode;
+  if (method === 'eth_getCode') return String(params[0]).toLowerCase() === mountedOwner.toLowerCase() ? '0x' : graphDrift ? '0x6001' : codes[String(params[0]).toLowerCase()]??recipientCode;
   if (method === 'eth_getStorageAt') {
     if(([c.core,engine,nft] as string[]).includes(String(params[0]).toLowerCase()))return toBeHex(limitWords.get(`${String(params[0]).toLowerCase()}:${BigInt(params[1] as string)}`)??0n,32);
     if (String(params[0]).toLowerCase() !== at('ChainWhisperFixedEngineFactory')) throw new Error('Unexpected storage target.');
@@ -367,6 +371,10 @@ const newSigner = () => { const wallet = ({ address: owner, getUserOnboardInfo: 
       const terms = profile === 'cheap-async' ? parsed.args[0] : parsed.args;
       deadline = terms[3]; operationId = nextOperationId++; operationTokens = [String(terms[0]).toLowerCase(), String(terms[1]).toLowerCase()];
       operationMaximum = decryptUint256(terms[4].ciphertext, aes);
+      const rate = decryptUint256(terms[7].ciphertext, aes);
+      quoteTerms = { maximumInput: operationMaximum.toString(), minimumInput: decryptUint256(terms[5].ciphertext, aes).toString(),
+        minimumOutput: decryptUint256(terms[6].ciphertext, aes).toString(), rateNumerator: (rate >> 128n).toString(),
+        rateDenominator: (rate & ((1n << 128n) - 1n)).toString(), toleranceBps: String(terms[8]) };
       if (operationMaximum % 20n !== 0n) throw new Error('Fixture swaps use a maximum input that is a multiple of 20 raw units.');
       stage = profile === 'fast-pool' ? READY : 1; refundOnly = false; fundedBlock = 0;
       context = stage === READY ? toBeHex(operationId + 1000n, 32) : zero;
@@ -465,6 +473,8 @@ const render = () => root.render(createElement(DexPage, { priceDisplayInverted, 
   walletAddress: mountedOwner, chainId: 7082400, browserProvider,
   sessionOnboardInfo:onboard(),walletAesHealthByAddress:{},
   actions: {
+    // The App shows "Connect wallet" only when the session can connect one.
+    connectBrowserWallet: async () => { mountedOwner = owner; signer = newSigner(); render(); },
     getCurrentDexQuoteCapability: () => issueCurrentDexQuoteCapability({} as never),
     getCurrentDexReceiptCapability: () => issueCurrentDexReceiptCapability({} as never),
     getCurrentSharedDexTokenFundsCapability: async () => fundsCapability(),
@@ -483,7 +493,8 @@ const control = {
   seedLimit:(direction=true)=>{if(limitAmount!==0n)throw new Error('Limit fixture already funded');limitId=92n;limitAmount=300n;limitProceeds=7n;limitDirection=direction;limitTerms=[3n,10n,1n,7n,2n];initializeLimitAuthority();writeLimitSnapshot();},
   binding: () => {const captured=mountedOwner;const guard=()=>{assertCurrent();if(mountedOwner!==captured)throw new Error('Wallet or network changed');};return { signer, readProvider, ownerAddress: captured, chainId: 7082400n,
     assertCurrent: async () => guard(), assertSnapshotCurrent: guard };},
-  snapshot: () => ({ sends, calls, signingAttempts, inputSignatureRequests, operationId: operationId.toString(), stage,
+  snapshot: () => ({ sends, calls, signingAttempts, inputSignatureRequests, operationId: operationId.toString(), stage, quoteTerms,
+    allowances: tokenAllowances.map(String),
     limit:{id:limitId.toString(),unspent:limitAmount.toString(),proceeds:limitProceeds.toString(),closed:limitClosed,balances:limitBalances.map(String),status:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,2n)}`)??0n).toString(),coreLifecycle:(limitWords.get(`${c.core}:${currentLimitMappingSlot(24n,20n)+11n}`)??0n).toString(),engineLifecycle:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,9n)+11n}`)??0n).toString()},pending: pendingRecords()?.getItem(PENDING_KEY) ?? null }),
   // Changes the saved pending action through the production record storage and returns the record as it was.
   editPending: (patch: Record<string, unknown>) => {
@@ -557,7 +568,8 @@ const control = {
     for (const [hash, tx] of saved.txs) txs.set(hash, tx);
     for (const [hash, receipt] of saved.mined) mined.set(hash, receipt);
   },
-  remount: () => { signer = newSigner(); root.render(null); setTimeout(render, 0); },
+  // The unmount is committed before the new mount, so that no component state survives.
+  remount: () => { signer = newSigner(); flushSync(() => root.render(null)); render(); },
   forgedCopyRejected: async () => {
     const capability = await issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history' } as never);
     try { await capability.submitCurrentCheapQuote({} as never); return false; } catch { return true; }
