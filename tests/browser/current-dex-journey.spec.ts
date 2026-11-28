@@ -672,98 +672,184 @@ async function ready(page: Page, asyncMode = false) {
   return swap;
 }
 
-async function readLiquidityClaim(page:Page){
-  await page.locator('button:visible').filter({hasText:/^Positions$/}).first().click();
-  const positions=page.getByRole('region',{name:'Current liquidity NFT positions',exact:true});
-  await positions.getByLabel('Liquidity NFT ID',{exact:true}).fill('81');
-  await positions.getByRole('button',{name:'Read private claim',exact:true}).click();
-  await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('200 atoms');
+// Positions are under Manage, view "Positions". The App finds the owner's claims itself (no NFT ID entry):
+// claim 81 of the fixture owner holds 200 raw units of HBR, 100 of BCN and 200 shares, with a mined owner snapshot.
+const positionsRegion = (page: Page) => page.getByRole('region', { name: 'Current liquidity NFT positions', exact: true });
+const ownerClaim = (positions: Swap) => positions.getByLabel('Owner private liquidity claim');
+const positionStatus = (positions: Swap) => positions.locator('section.dex-owner-detail > p.dex-owner-progress[role=status]');
+async function openPositions(page: Page) {
+  await page.locator('button:visible').filter({ hasText: /^Manage$/ }).first().click();
+  await page.getByRole('navigation', { name: 'Manage views' }).getByRole('button', { name: 'Positions', exact: true }).click();
+  const positions = positionsRegion(page);
+  await expect(positions).toBeVisible();
   return positions;
 }
-for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test(`current liquidity NFT private read and protected Close at ${viewport.width}px`,async({page})=>{
+async function readLiquidityClaim(page:Page){
+  const positions=await openPositions(page);
+  await positions.getByRole('button',{name:'Open liquidity NFT 81',exact:true}).click();
+  await expect(positionStatus(positions)).toHaveText('Owner private claim verified at the canonical block.');
+  await expect(ownerClaim(positions)).toContainText('Private shares200');
+  expect((await control(page).snapshot()).sends).toHaveLength(0);
+  return positions;
+}
+// The owner actions are in closed sections; only one of them is open at a time.
+async function openSection(positions: Swap, name: string) {
+  const section = positions.locator('details').filter({ has: positions.page().locator(':scope > summary', { hasText: name }) }).first();
+  if (await section.getAttribute('open') === null) await section.locator(':scope > summary').click();
+  return section;
+}
+async function checkPosition(positions: Swap) {
+  await (await openSection(positions, 'Status and recovery')).getByRole('button', { name: 'Check position status', exact: true }).click();
+}
+// Minimum payouts are in the Withdraw section; Close uses the same two values.
+async function minimumPayouts(positions: Swap, hbr: string, bcn: string) {
+  const withdraw = await openSection(positions, 'Withdraw liquidity');
+  await openSection(withdraw, 'Minimum payouts');
+  await positions.getByLabel('HBR minimum payout', { exact: true }).fill(hbr);
+  await positions.getByLabel('BCN minimum payout', { exact: true }).fill(bcn);
+}
+async function reviewClose(page: Page, positions: Swap) {
+  await (await openSection(positions, 'Close position')).getByRole('button', { name: 'Close and withdraw all', exact: true }).click();
+  return page.getByRole('dialog', { name: 'Close liquidity claim', exact: true });
+}
+const closeMined = 'Close mined and payouts checked. Review the paid closed-claim snapshot to verify zero remaining shares and finish this attempt.';
+for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test(`current liquidity NFT private read and protected Close at ${viewport.width}px`,async({page},info)=>{
   await page.setViewportSize(viewport);const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   // All external requests are deliberately aborted in this offline fixture.
   // Ignore only that explicit browser network diagnostic, not application warnings.
   page.on('console',event=>{if(['error','warning'].includes(event.type())&&!event.text().includes('Failed to load resource: net::ERR_FAILED'))errors.push(event.text());});
   const positions=await readLiquidityClaim(page);
-  await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('Test token 1 entitlement200 atoms');
-  await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('Test token 0 entitlement100 atoms');
-  await positions.getByLabel('Owner private liquidity claim').screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/current-pool-claim-${viewport.width}.png`});
-  await expect(positions.getByRole('button',{name:'Withdraw selected shares',exact:true})).toBeEnabled();
-  await expect(positions.getByRole('button',{name:'Transfer liquidity NFT',exact:true})).toBeEnabled();
-  await positions.getByLabel('Test token 1 minimum payout',{exact:true}).fill('199');await positions.getByLabel('Test token 0 minimum payout',{exact:true}).fill('99');
-  await positions.getByRole('button',{name:'Close and withdraw all',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Close liquidity claim',exact:true});await expect(dialog).toBeVisible();
+  await expect(ownerClaim(positions)).toContainText('HBR entitlement0.0002');
+  await expect(ownerClaim(positions)).toContainText('BCN entitlement0.0001');
+  await ownerClaim(positions).screenshot({path:info.outputPath(`current-pool-claim-${viewport.width}.png`)});
+  await minimumPayouts(positions,'0.000199','0.000099');
+  await expect(positions.getByRole('button',{name:'Review private withdrawal preview',exact:true})).toBeEnabled();
+  await expect((await openSection(positions,'Transfer position')).getByRole('button',{name:'Transfer liquidity NFT',exact:true})).toBeEnabled();
+  const dialog=await reviewClose(page,positions);await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('HBR minimum payout0.000199');await expect(dialog).toContainText('BCN minimum payout0.000099');
   expect((await control(page).snapshot()).sends).toHaveLength(0);await dialog.getByRole('button',{name:'Continue',exact:true}).click();
-  await expect(positions.getByRole('status')).toContainText('submitted');await positions.getByRole('button',{name:'Check position status',exact:true}).click();
-  await expect(positions.getByRole('status')).toContainText('Private payouts verified: Test token 1 200 atoms; Test token 0 100 atoms.');
-  await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('Closed');
-  await expect(positions.getByRole('button',{name:'Close and withdraw all',exact:true})).toBeDisabled();
-  const result=await control(page).snapshot();expect(result.sends.map(row=>row.name)).toEqual(['managePoolPosition']);expect(result.sends[0].gasLimit).toBe('30000000');expect(result.pending).toBeNull();
+  // The App verifies the Close receipt and both payouts itself. A separate paid snapshot then proves zero remaining shares.
+  await expect(positionStatus(positions)).toHaveText(closeMined);
+  await expect(ownerClaim(positions)).toContainText('StatusClosed');await expect(ownerClaim(positions)).toContainText('Closed-claim snapshot pending');
+  await expect(ownerClaim(positions)).not.toContainText('paid out');
+  // Exact payouts: the wallet balances (BCN, HBR) rise by 100 and 200 raw units.
+  expect((await control(page).snapshot()).limit.balances.slice(0,2)).toEqual(['1100','1200']);
+  await positions.getByRole('button',{name:'Review closed-claim verification',exact:true}).click();
+  const verification=page.getByRole('dialog',{name:'Verify closed liquidity claim',exact:true});await expect(verification).toBeVisible();
+  expect((await control(page).snapshot()).sends).toHaveLength(1);await verification.getByRole('button',{name:'Continue',exact:true}).click();
+  await expect(positionStatus(positions)).toHaveText('Close complete: exact private payouts and zero remaining shares verified.');
+  await expect(ownerClaim(positions)).toContainText('Payout and zero remaining shares verified');
+  await expect(ownerClaim(positions)).toContainText('Private shares0');
+  await expect(ownerClaim(positions)).toContainText('HBR paid out0.0002');await expect(ownerClaim(positions)).toContainText('BCN paid out0.0001');
+  await expect((await openSection(positions,'Close position')).getByRole('button',{name:'Close and withdraw all',exact:true})).toBeDisabled();
+  await expect(positions.getByRole('button',{name:'Review closed-claim verification',exact:true})).toBeDisabled();
+  const result=await control(page).snapshot();expect(result.sends.map(row=>[row.name,row.gasLimit])).toEqual([['managePoolPosition','30000000'],['poolSnapshot','30000000']]);expect(result.pending).toBeNull();
+  expect(result.limit.balances.slice(0,2)).toEqual(['1100','1200']);
   expect(page.url()).toContain('/dex');await expect(page).toHaveTitle('Current DEX local fixture');await expect(page.locator('vite-error-overlay')).toHaveCount(0);
   expect(errors).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
-  await page.screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/current-pool-position-${viewport.width}.png`});
+  await page.screenshot({path:info.outputPath(`current-pool-position-${viewport.width}.png`)});
   await control(page).set({wallet:`0x${'33'.repeat(20)}`,revoked:true});
-  await expect(positions.getByLabel('Owner private liquidity claim')).toHaveCount(0);await expect(positions.getByRole('status')).not.toContainText('200 atoms');
+  await expect(ownerClaim(positions)).toHaveCount(0);await expect(positions).not.toContainText('0.0002');
 });
-for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test(`current liquidity NFT admitted withdrawal and EOA transfer roundtrip at ${viewport.width}px`,async({page})=>{
+for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test(`current liquidity NFT admitted withdrawal and EOA transfer roundtrip at ${viewport.width}px`,async({page},info)=>{
+  test.slow();
   await page.setViewportSize(viewport);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',e=>{if(['error','warning'].includes(e.type())&&!e.text().includes('Failed to load resource: net::ERR_FAILED'))errors.push(e.text());});
-  const positions=await readLiquidityClaim(page),recipient=`0x${'33'.repeat(20)}`;
-  await positions.getByLabel('Test token 1 minimum payout').fill('99');await positions.getByLabel('Test token 0 minimum payout').fill('49');
-  await positions.getByRole('button',{name:'Withdraw selected shares',exact:true}).click();let dialog=page.getByRole('dialog',{name:'Withdraw liquidity',exact:true});
+  const positions=await readLiquidityClaim(page),recipient=`0x${'33'.repeat(20)}`,submitted='Position action submitted. Check its authenticated result before another action.';
+  await minimumPayouts(positions,'0.000099','0.000049');
+  await expect(positions.getByLabel('Liquidity withdrawal percentage',{exact:true})).toHaveValue('50');
+  // A partial withdrawal has three owner transactions: a paid private preview, the withdrawal and the remaining-share snapshot.
+  await positions.getByRole('button',{name:'Review private withdrawal preview',exact:true}).click();let dialog=page.getByRole('dialog',{name:'Preview partial liquidity withdrawal',exact:true});
   await expect(dialog).toContainText('1/2');expect((await control(page).snapshot()).sends).toHaveLength(0);await dialog.getByRole('button',{name:'Continue',exact:true}).click();
-  await expect(positions.getByRole('status')).toContainText('submitted');await positions.getByRole('button',{name:'Check position status',exact:true}).click();
-  await expect(positions.getByRole('status')).toContainText('Test token 1 100 atoms; Test token 0 50 atoms');
-  await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('Private shares100');
-  const transfer=async(to:string)=>{await positions.getByLabel('Liquidity NFT recipient').fill(to);await positions.getByRole('button',{name:'Transfer liquidity NFT',exact:true}).click();
+  await expect(positionStatus(positions)).toHaveText('Private withdrawal preview submitted. Check its result before reviewing withdrawal.');await checkPosition(positions);
+  await expect(positionStatus(positions)).toHaveText('Private withdrawal preview verified. Review both payouts and minimums before withdrawal. No tokens have moved.');
+  const preview=positions.getByLabel('Private withdrawal preview',{exact:true});
+  await expect(preview).toContainText('HBR payout0.0001');await expect(preview).toContainText('BCN payout0.00005');await expect(preview).toContainText('Remaining private shares100');
+  expect((await control(page).snapshot()).limit.balances.slice(0,2)).toEqual(['1000','1000']);
+  await positions.getByRole('button',{name:'Withdraw previewed shares',exact:true}).click();dialog=page.getByRole('dialog',{name:'Withdraw liquidity',exact:true});
+  await expect(dialog).toContainText('1/2');await expect(dialog).toContainText('HBR minimum payout0.000099');expect((await control(page).snapshot()).sends).toHaveLength(1);await dialog.getByRole('button',{name:'Continue',exact:true}).click();
+  await expect(positionStatus(positions)).toHaveText(submitted);await checkPosition(positions);
+  await expect(positionStatus(positions)).toHaveText('Withdrawal mined and payouts checked. Review the paid remaining-share snapshot to finish verification.');
+  expect((await control(page).snapshot()).limit.balances.slice(0,2)).toEqual(['1050','1100']);
+  await positions.getByRole('button',{name:'Review private amount verification',exact:true}).click();dialog=page.getByRole('dialog',{name:'Refresh private liquidity claim',exact:true});
+  await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'Continue',exact:true}).click();
+  await expect(positionStatus(positions)).toHaveText('Withdrawal complete: exact private payouts and remaining shares verified.');
+  await expect(ownerClaim(positions)).toContainText('Private shares100');await expect(ownerClaim(positions)).toContainText('HBR entitlement0.0001');
+  const transfer=async(to:string)=>{await (await openSection(positions,'Transfer position')).getByLabel('Liquidity NFT recipient').fill(to);await positions.getByRole('button',{name:'Transfer liquidity NFT',exact:true}).click();
     const modal=page.getByRole('dialog',{name:'Transfer liquidity NFT',exact:true});await expect(modal).toContainText(to);await modal.getByRole('button',{name:'Continue',exact:true}).click();
-    await expect(positions.getByRole('status')).toContainText('submitted');await positions.getByRole('button',{name:'Check position status',exact:true}).click();await expect(positions.getByRole('status')).toContainText('Old owner private access is revoked');await expect(positions.getByLabel('Owner private liquidity claim')).toHaveCount(0);};
-  const activateResume=async(wallet:string)=>{await control(page).set({wallet});await positions.getByRole('button',{name:'Read private claim',exact:true}).click();
-    await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('Awaiting privacy activation');await expect(positions.getByRole('button',{name:'Withdraw selected shares',exact:true})).toBeDisabled();await expect(positions.getByLabel('Owner private liquidity claim')).not.toContainText('atoms');
+    await expect(positionStatus(positions)).toHaveText(submitted);await checkPosition(positions);await expect(positionStatus(positions)).toHaveText('Position transferred. The recipient must activate privacy, then resume.');await expect(ownerClaim(positions)).toHaveCount(0);};
+  const activateResume=async(wallet:string)=>{await control(page).set({wallet});await positions.getByRole('button',{name:'Open liquidity NFT 81',exact:true}).click();
+    await expect(positionStatus(positions)).toHaveText('Activate privacy to manage this received position.');
+    await expect(ownerClaim(positions)).toContainText('Awaiting privacy activation');await expect(ownerClaim(positions)).not.toContainText('entitlement');await expect(ownerClaim(positions)).not.toContainText('Private shares');
+    await expect((await openSection(positions,'Withdraw liquidity')).getByRole('button',{name:'Review private withdrawal preview',exact:true})).toBeDisabled();
     await positions.getByRole('button',{name:'Activate claim privacy',exact:true}).click();dialog=page.getByRole('dialog',{name:'Activate claim privacy',exact:true});await dialog.getByRole('button',{name:'Continue',exact:true}).click();
-    await expect(positions.getByRole('status')).toContainText('submitted');await positions.getByRole('button',{name:'Check position status',exact:true}).click();await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('Paused');
-    await expect(positions.getByRole('button',{name:'Withdraw selected shares',exact:true})).toBeDisabled();await positions.getByRole('button',{name:'Resume liquidity claim',exact:true}).click();
-    dialog=page.getByRole('dialog',{name:'Resume liquidity claim',exact:true});await dialog.getByRole('button',{name:'Continue',exact:true}).click();await expect(positions.getByRole('status')).toContainText('submitted');await positions.getByRole('button',{name:'Check position status',exact:true}).click();await expect(positions.getByLabel('Owner private liquidity claim')).toContainText('Active');};
+    await expect(positionStatus(positions)).toHaveText(submitted);await checkPosition(positions);await expect(positionStatus(positions)).toHaveText('Privacy activated. Resume to make this position active.');await expect(ownerClaim(positions)).toContainText('StatusPaused');
+    await expect((await openSection(positions,'Withdraw liquidity')).getByRole('button',{name:'Review private withdrawal preview',exact:true})).toBeDisabled();await positions.getByRole('button',{name:'Resume liquidity claim',exact:true}).click();
+    dialog=page.getByRole('dialog',{name:'Resume liquidity claim',exact:true});await dialog.getByRole('button',{name:'Continue',exact:true}).click();await expect(positionStatus(positions)).toHaveText(submitted);await checkPosition(positions);
+    await expect(positionStatus(positions)).toHaveText('Position resumed.');await expect(ownerClaim(positions)).toContainText('StatusActive');await expect(ownerClaim(positions)).toContainText('Private shares100');};
   await transfer(recipient);await activateResume(recipient);await transfer(`0x${'22'.repeat(20)}`);await activateResume(`0x${'22'.repeat(20)}`);
-  expect((await control(page).snapshot()).sends.map(x=>x.gasLimit)).toEqual(['100000000','10000000','30000000','30000000','10000000','30000000','30000000']);expect((await control(page).snapshot()).pending).toBeNull();
+  // Preview and withdrawal use the 100M cap, the snapshot and each lifecycle action 30M, each NFT transfer 10M.
+  expect((await control(page).snapshot()).sends.map(x=>[x.name,x.gasLimit])).toEqual([['managePoolPosition','100000000'],['managePoolPosition','100000000'],['poolSnapshot','30000000'],
+    ['safeTransferFrom','10000000'],['managePoolPosition','30000000'],['managePoolPosition','30000000'],['safeTransferFrom','10000000'],['managePoolPosition','30000000'],['managePoolPosition','30000000']]);
+  expect((await control(page).snapshot()).pending).toBeNull();expect((await control(page).snapshot()).limit.balances.slice(0,2)).toEqual(['1050','1100']);
   await expect(page).toHaveTitle('Current DEX local fixture');expect(page.url()).toContain('/dex');await expect(page.locator('vite-error-overlay')).toHaveCount(0);expect(errors).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/current-pool-admitted-${viewport.width}.png`});
+  await page.screenshot({path:info.outputPath(`current-pool-admitted-${viewport.width}.png`)});
 });
 for(const fault of ['contract','code-review','stale','cancel','pending','reload']as const)test(`current liquidity NFT transfer ${fault} remains fail closed`,async({page})=>{
-  const positions=await readLiquidityClaim(page);await positions.getByLabel('Liquidity NFT recipient').fill(`0x${'33'.repeat(20)}`);
+  const positions=await readLiquidityClaim(page);await (await openSection(positions,'Transfer position')).getByLabel('Liquidity NFT recipient').fill(`0x${'33'.repeat(20)}`);
   if(fault==='contract')await control(page).set({recipientCode:'0x6001'});
   await positions.getByRole('button',{name:'Transfer liquidity NFT',exact:true}).click();
-  if(fault==='contract'){await expect(positions.getByRole('status')).toContainText('Only EOA');expect((await control(page).snapshot()).sends).toHaveLength(0);return;}
+  if(fault==='contract'){await expect(positionStatus(positions)).toContainText('Only EOA');expect((await control(page).snapshot()).sends).toHaveLength(0);await expect(page.getByRole('dialog')).toHaveCount(0);return;}
   const modal=page.getByRole('dialog',{name:'Transfer liquidity NFT',exact:true});await expect(modal).toBeVisible();
   if(fault==='code-review')await control(page).set({recipientCode:'0x6001'});if(fault==='stale')await control(page).set({claimContextDrift:true});if(fault==='pending')await control(page).set({interrupted:true});
   await modal.getByRole('button',{name:fault==='cancel'?'Cancel':'Continue',exact:true}).click();
-  if(['code-review','stale','cancel'].includes(fault)){expect((await control(page).snapshot()).sends).toHaveLength(0);return;}
-  await expect(positions.getByRole('status')).toContainText(fault==='pending'?'interrupted':'submitted');
-  if(fault==='reload'){const ledger=await page.evaluate(()=>(window as unknown as {__currentJourney:Control}).__currentJourney.exportChain());await page.reload();await page.evaluate(raw=>(window as unknown as {__currentJourney:Control}).__currentJourney.restoreChain(raw),ledger);await page.locator('button:visible').filter({hasText:/^Positions$/}).first().click();}
-  const current=page.getByRole('region',{name:'Current liquidity NFT positions',exact:true});await current.getByRole('button',{name:'Check position status',exact:true}).click();
-  await expect(current.getByRole('status')).toContainText(fault==='pending'?'Do not resend':'No private payout is confirmed');await expect(current.getByLabel('Owner private liquidity claim')).toHaveCount(fault==='pending'?1:0);
+  if(['code-review','stale','cancel'].includes(fault)){
+    // The recipient code and the claim state are read again after the review; a change stops before the wallet request.
+    await expect(positionStatus(positions)).toContainText(fault==='code-review'?'Only EOA':fault==='stale'?'Pool ownership dependencies changed before signing.':'Position action cancelled.');
+    const state=await control(page).snapshot();expect(state.sends).toHaveLength(0);expect(state.signingAttempts).toBe(0);expect(state.pending).toBeNull();return;}
+  await expect(positionStatus(positions)).toContainText(fault==='pending'?'interrupted':'Position action submitted');
+  if(fault==='reload'){await reloadWithChain(page,await exportChain(page));await openPositions(page);}
+  const current=positionsRegion(page);await checkPosition(current);
+  // After a reload the mined transfer is public metadata only: no private result returns and the old owner claim is gone.
+  await expect(positionStatus(current)).toContainText(fault==='pending'?'Do not resend':'No private payout is confirmed');await expect(ownerClaim(current)).toHaveCount(fault==='pending'?1:0);
+  const state=await control(page).snapshot();expect(state.sends).toHaveLength(fault==='pending'?0:1);expect(state.signingAttempts).toBe(1);
+  if(fault==='pending')expect(state.pending).not.toBeNull();else expect(state.pending).toBeNull();
 });
 for(const fault of ['owner','cancel','minimum','debit','pending','reload']as const)test(`current liquidity NFT ${fault} fails without false private payout`,async({page})=>{
+  if(fault==='reload')await page.clock.install();
   const positions=await readLiquidityClaim(page);
   if(fault==='owner'){
-    await control(page).set({wallet:`0x${'33'.repeat(20)}`,revoked:true});await expect(positions.getByLabel('Owner private liquidity claim')).toHaveCount(0);
-    await expect(positions.getByRole('button',{name:'Close and withdraw all',exact:true})).toBeDisabled();return;
+    await control(page).set({wallet:`0x${'33'.repeat(20)}`,revoked:true});await expect(ownerClaim(positions)).toHaveCount(0);
+    // With no owner claim the App shows no Close action.
+    await expect(positions.getByRole('button',{name:'Close and withdraw all',exact:true})).toHaveCount(0);expect((await control(page).snapshot()).sends).toHaveLength(0);return;
   }
-  if(fault==='minimum')await positions.getByLabel('Test token 1 minimum payout').fill('201');
-  if(fault==='debit')await control(page).set({badPoolDebit:true});if(fault==='pending')await control(page).set({interrupted:true});
-  await positions.getByRole('button',{name:'Close and withdraw all',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Close liquidity claim',exact:true});
-  if(fault==='cancel'){await dialog.getByRole('button',{name:'Cancel',exact:true}).click();expect((await control(page).snapshot()).sends).toHaveLength(0);return;}
+  if(fault==='minimum'){
+    // 201 raw units of HBR is more than the entitlement: the App rejects the Close before the review and before any signature.
+    await minimumPayouts(positions,'0.000201','0');await (await openSection(positions,'Close position')).getByRole('button',{name:'Close and withdraw all',exact:true}).click();
+    await expect(positionStatus(positions)).toHaveText('Prepared close minimum exceeds the current owner entitlement.');await expect(page.getByRole('dialog')).toHaveCount(0);
+    const state=await control(page).snapshot();expect(state.sends).toHaveLength(0);expect(state.inputSignatureRequests).toBe(0);return;
+  }
+  if(fault==='debit')await control(page).set({badPoolDebit:true});if(fault==='pending')await control(page).set({interrupted:true});if(fault==='reload')await control(page).set({hideNewReceipts:true});
+  const dialog=await reviewClose(page,positions);await expect(dialog).toBeVisible();
+  if(fault==='cancel'){await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(positionStatus(positions)).toHaveText('Position action cancelled.');expect((await control(page).snapshot()).sends).toHaveLength(0);return;}
   await dialog.getByRole('button',{name:'Continue',exact:true}).click();
-  await expect(positions.getByRole('status')).toContainText(fault==='minimum'?'minimum payout rejected':fault==='pending'?'interrupted':'submitted');
-  if(fault==='reload'){
-    const ledger=await page.evaluate(()=>(window as unknown as{__currentJourney:Control}).__currentJourney.exportChain());await page.reload();
-    await page.evaluate(raw=>(window as unknown as{__currentJourney:Control}).__currentJourney.restoreChain(raw),ledger);
-    await page.locator('button:visible').filter({hasText:/^Positions$/}).first().click();
+  if(fault==='debit'){
+    // A payout event that differs from the entitlement is a known accounting failure: the saved record stays and blocks all actions.
+    await expect(positionStatus(positions)).toHaveText('Prepared management token event amounts changed.');await checkPosition(positions);
+    await expect(positionStatus(positions)).toContainText('Private accounting needs manual reconciliation');
+    await expect(positions.getByRole('button',{name:'Review closed-claim verification',exact:true})).toBeDisabled();
+  }else if(fault==='pending'){
+    await expect(positionStatus(positions)).toContainText('interrupted');await checkPosition(positions);await expect(positionStatus(positions)).toContainText('Do not resend');
+  }else{
+    // With no receipt the App waits 60 s, then keeps the Close pending.
+    await expect(positionStatus(positions)).toHaveText('Checking the submitted position transaction and private result. No new request is being sent.');await passReceiptWait(page);
+    await expect(positionStatus(positions)).toHaveText('Close confirmation is pending. Check position status.');
+    await reloadWithChain(page,await exportChain(page));await openPositions(page);await checkPosition(positionsRegion(page));
+    await expect(positionStatus(positionsRegion(page))).toHaveText('Position closed. The original private payout has not been independently verified in this session.');
   }
-  const current=page.getByRole('region',{name:'Current liquidity NFT positions',exact:true});
-  await current.getByRole('button',{name:'Check position status',exact:true}).click();await expect(current.getByRole('status')).not.toContainText('Private payouts verified');
-  if(fault==='pending')await expect(current.getByRole('status')).toContainText('Do not resend');
-  if(fault==='reload')await expect(current.getByRole('status')).toContainText('No private payout is confirmed');
+  const current=positionsRegion(page);
+  await expect(current).not.toContainText('Close complete');await expect(current).not.toContainText('paid out');await expect(current).not.toContainText('Payout and zero remaining shares verified');
+  const state=await control(page).snapshot();expect(state.sends).toHaveLength(fault==='pending'?0:1);expect(state.signingAttempts).toBe(1);
+  if(fault==='reload')expect(state.pending).toBeNull();else expect(state.pending).not.toBeNull();
 });
 
 // Returns with the private trade review open and no Accept sent.
