@@ -1,3 +1,4 @@
+import { ChevronRight, Smartphone, Wallet } from 'lucide-react';
 import { useMemo, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import WalletHeaderPanel from '../components/WalletHeaderPanel';
 import {
@@ -173,6 +174,11 @@ export default function useChatWalletHeaderControl({
       : readCursorCloudStatus === 'authorization-required'
         ? 'Resume cross-device read status'
         : 'Enable cross-device read status';
+  const cipherTradeMenuLabel = cipherTradeWalletConnectActive
+    ? 'CipherTrade Mobile ready'
+    : cipherTradeWalletConnectConfigured
+      ? 'Connect CipherTrade Mobile'
+      : 'CipherTrade Mobile setup needed';
   const chatWalletHeaderControl = (
     <WalletHeaderPanel
       busy={busy}
@@ -293,15 +299,24 @@ export default function useChatWalletHeaderControl({
             Disconnect
           </button>
         </> : <>
-          <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">
-            <span>Wallet</span>
+          {/* The same panel, heading and rows as the connected wallet utilities menu (CW-167). */}
+          <div className="wallet-utility-menu wallet-connect-menu">
+            <header className="wallet-utility-heading">
+              <strong>Connect a wallet</strong>
+              <span className="wallet-utility-heading-idle"><i aria-hidden="true" />Not connected</span>
+            </header>
             {orderedWallets.map((option) => {
               const active = connected && currentInjectedWalletOption?.id === option.id;
+              const label = active
+                ? ownerAesReady && !privacyNeedsRepair
+                  ? `${option.label} ready`
+                  : `Unlock ${option.label} privacy`
+                : `Connect ${option.label}`;
               return (
                 <button
                   key={option.id}
                   type="button"
-                  className={active ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                  className="wallet-utility-row"
                   onClick={() => {
                     setChatWalletMenuOpen(false);
                     if (!active || !ownerAesReady || privacyNeedsRepair) {
@@ -310,12 +325,11 @@ export default function useChatWalletHeaderControl({
                   }}
                   disabled={busy}
                   role="menuitem"
+                  aria-label={label}
                 >
-                  {active
-                    ? ownerAesReady && !privacyNeedsRepair
-                      ? `${option.label} ready`
-                      : `Unlock ${option.label} privacy`
-                    : `Connect ${option.label}`}
+                  <Wallet size={17} aria-hidden="true" />
+                  <span><strong>{label}</strong><small>Browser wallet</small></span>
+                  <ChevronRight size={16} aria-hidden="true" />
                 </button>
               );
             })}
@@ -326,32 +340,40 @@ export default function useChatWalletHeaderControl({
               }>
               <button
                 type="button"
-                className={cipherTradeWalletConnectActive ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                className="wallet-utility-row"
                 onClick={() => {
                   setChatWalletMenuOpen(false);
                   connectWallet(CIPHERTRADE_WALLETCONNECT_WALLET_ID);
                 }}
                 disabled={busy || !cipherTradeWalletConnectConfigured || cipherTradeWalletConnectActive}
                 role="menuitem"
+                aria-label={cipherTradeMenuLabel}
               >
-                {cipherTradeWalletConnectActive
-                  ? 'CipherTrade Mobile ready'
-                  : cipherTradeWalletConnectConfigured
-                    ? 'Connect CipherTrade Mobile'
-                    : 'CipherTrade Mobile setup needed'}
+                <Smartphone size={17} aria-hidden="true" />
+                <span>
+                  <strong>{cipherTradeMenuLabel}</strong>
+                  <small>{cipherTradeWalletConnectConfigured ? 'WalletConnect QR code' : 'WalletConnect is not set up'}</small>
+                </span>
+                <ChevronRight size={16} aria-hidden="true" />
               </button>
             </AppTooltip>
             {orderedWallets.length === 0 ? (
               <button
                 type="button"
-                className="p2p-wallet-action"
+                className="wallet-utility-row"
                 onClick={() => {
                   if (showMobileOpen) window.location.href = buildMetaMaskMobileDeepLink();
                 }}
                 disabled={!showMobileOpen}
                 role="menuitem"
+                aria-label={showMobileOpen ? 'Open MetaMask Mobile' : 'MetaMask or CipherTrade not detected'}
               >
-                {showMobileOpen ? 'Open MetaMask Mobile' : 'MetaMask or CipherTrade not detected'}
+                <Wallet size={17} aria-hidden="true" />
+                <span>
+                  <strong>{showMobileOpen ? 'Open MetaMask Mobile' : 'MetaMask or CipherTrade not detected'}</strong>
+                  <small>{showMobileOpen ? 'Opens this page in the MetaMask app' : 'Install a wallet, then reload this page'}</small>
+                </span>
+                <ChevronRight size={16} aria-hidden="true" />
               </button>
             ) : null}
           </div>

@@ -1671,6 +1671,77 @@
   border-radius: 50%;
   background: #2bd19b;
 }
+/* Disconnected wallet menu (CW-167): the heading shows a neutral state and a line divides the connect options. */
+.wallet-utility-heading span.wallet-utility-heading-idle { color: #a49db5; }
+.wallet-utility-heading span.wallet-utility-heading-idle i { background: #6f6a80; }
+.wallet-connect-menu > .wallet-utility-row + .wallet-utility-row { border-top: 1px solid var(--approved-border-soft); }
+.wallet-connect-menu > .wallet-utility-row:disabled { cursor: not-allowed; opacity: 0.55; }
+/* Disconnected wallet header (CW-167): one joined group with an icon-only menu button, as when connected. */
+.wallet-header-panel-disconnected .p2p-wallet-menu-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* The 44px size matches the connected group. The repeated classes outrank the later shared button rules. */
+@media (min-width: 920.02px) {
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-disconnected.p2p-wallet-panel {
+    height: 46px;
+    display: inline-flex;
+    align-items: stretch;
+    gap: 0;
+    overflow: visible;
+    border: 1px solid var(--approved-border);
+    border-radius: 10px;
+    background: rgba(9, 11, 19, 0.96);
+    padding: 0;
+  }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-disconnected.p2p-wallet-panel :is(.p2p-wallet-status, .p2p-wallet-identity, .p2p-wallet-primary-wrap) {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 0;
+    padding: 0;
+  }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-disconnected.p2p-wallet-panel .p2p-wallet-identity {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-disconnected.p2p-wallet-panel button.wallet-primary-action.wallet-primary-action {
+    height: 44px;
+    min-height: 44px;
+    margin: 0;
+    border: 0;
+    border-radius: 9px 0 0 9px;
+    background: transparent;
+    box-shadow: none;
+  }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-disconnected.p2p-wallet-panel .p2p-wallet-menu-wrap {
+    width: 44px;
+    min-width: 44px;
+    flex: 0 0 44px;
+    height: 44px;
+    margin: 0;
+  }
+  :root body .app-shell-wallet .top-header-actions .wallet-header-panel-disconnected.p2p-wallet-panel button.p2p-wallet-menu-trigger.p2p-wallet-menu-trigger.p2p-wallet-menu-trigger.p2p-wallet-menu-trigger {
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    margin: 0;
+    border: 0;
+    border-left: 1px solid var(--approved-border-soft);
+    border-radius: 0 9px 9px 0;
+    background: transparent;
+    padding: 0;
+  }
+}
 .wallet-utility-section { border-bottom: 1px solid var(--approved-border-soft); }
 .wallet-utility-row {
   width: 100%;

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
-import { ChevronDown, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw, Wallet, X } from 'lucide-react';
+import { ChevronDown, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw, X } from 'lucide-react';
 import { resolveWalletStatusTone, type WalletStatusTone } from '../../../lib/walletSession';
 import { moveFocusWithin } from '../../../shared/components/a11y';
 import { AppTooltip } from '../../../shared/ui/AppTooltip';
@@ -216,11 +216,7 @@ export default function WalletHeaderPanel({
           aria-controls={menuOpen ? menuId : undefined}
           aria-label={menuOpen ? `Close ${menuLabel} menu` : `Open ${menuLabel} menu`}
         >
-          {connected ? (
-            <ChevronDown className="p2p-wallet-menu-icon" size={18} strokeWidth={2.25} aria-hidden="true" />
-          ) : (
-            <Wallet className="p2p-wallet-menu-icon" size={18} strokeWidth={2} aria-hidden="true" />
-          )}
+          <ChevronDown className="p2p-wallet-menu-icon" size={18} strokeWidth={2.25} aria-hidden="true" />
           <span className="p2p-wallet-menu-label">{connected ? 'More' : menuLabel}</span>
           {connected && menuBadgeCount > 0 ? (
             <span className="p2p-wallet-menu-badge" aria-hidden="true">{Math.min(menuBadgeCount, 99)}</span>
