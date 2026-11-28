@@ -48,6 +48,16 @@ test.beforeEach(async ({ page },info) => {
     }
     await route.fulfill({ response, body: source });
   });
+  // Scoped reads (Limit inventory and fill history) accept only the admitted shared HTTP provider. This seam sends
+  // them to the fixture chain when the capability holds the fixture provider. The production method and
+  // parameter checks before this point stay active.
+  await page.route('**/src/lib/appShared/core.ts', async route => {
+    const response = await route.fetch();
+    const source = await response.text(), marker = 'if (!admittedCotiHttpProviders.has(';
+    expect(source.split(marker)).toHaveLength(2);
+    await route.fulfill({ response, body: source.replace(marker,
+      `if (provider === window.__currentJourney?.binding().readProvider) return provider.send(method, [...params]);\n  ${marker}`) });
+  });
   await page.route('**/dex', route => route.fulfill({ contentType: 'text/html', body:
     '<html><head><title>Current DEX local fixture</title><link rel="stylesheet" href="/src/styles.css"></head><body><div id="root" class="app-shell app-shell-wallet app-shell-dex-v2"></div><script type="module" src="/tests/browser/current-dex-journey.fixture.ts"></script></body></html>' }));
   await page.goto('/dex');
@@ -430,87 +440,136 @@ test('current-token funding known wrong private credit remains blocked, never me
   expect((await control(page).snapshot()).pending).not.toBeNull(); expect((await control(page).snapshot()).sends).toHaveLength(1);
 });
 
+// Limit creation is under Trade, type "Limit"; the owner's orders are under Manage, view "Orders".
+// The default side is "Buy BCN": the order offers HBR, token 0 of the Pool order. 0.0003 is 300 raw units.
+const limitRegion=(page:Page)=>page.getByRole('region',{name:'Create limit order',exact:true});
+const ordersRegion=(page:Page)=>page.getByRole('region',{name:'Manage limit orders',exact:true});
 async function limitForm(page:Page){
-  await page.locator('button:visible').filter({hasText:/^Strategies$/}).first().click();
-  await page.getByRole('tab',{name:'Limit',exact:true}).click();
-  const form=page.getByRole('region',{name:'Current private plain Limit creation',exact:true});
-  await expect(form).toBeVisible();await form.getByLabel('Limit offered budget').fill('300');await form.getByLabel('Limit exact price').fill('0.3');await form.getByLabel('Limit maker minimum').fill('1');return form;
+  await page.locator('button:visible').filter({hasText:/^Trade$/}).first().click();
+  await page.getByRole('button',{name:'Limit',exact:true}).first().click();
+  const form=limitRegion(page);
+  await expect(form).toBeVisible();await form.getByLabel('Limit offered budget').fill('0.0003');await form.getByLabel('Limit exact price').fill('0.3');
+  await openSection(form,'Advanced order settings');await form.getByLabel('Limit maker minimum').fill('0.000001');return form;
 }
-for(const [direction,viewport]of [['1',{width:1440,height:1000}],['0',{width:390,height:844}]]as const)test(`current plain Limit exact two-phase creation at ${viewport.width}px`,async({page})=>{
+async function checkLimit(region:Swap){await (await openSection(region,'Status and recovery')).getByRole('button',{name:'Check Limit status',exact:true}).click();}
+for(const [side,viewport]of [['Buy BCN',{width:1440,height:1000}],['Sell BCN',{width:390,height:844}]]as const)test(`current plain Limit exact two-phase creation at ${viewport.width}px`,async({page},info)=>{
   await page.setViewportSize(viewport);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',e=>{if(['error','warning'].includes(e.type())&&!e.text().includes('Failed to load resource: net::ERR_FAILED'))errors.push(e.text());});
-  const form=await limitForm(page);await form.getByLabel('Limit offered token').selectOption(direction);
-  await form.getByRole('button',{name:'Review and create Limit',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Create private plain Limit',exact:true});
-  await expect(dialog).toContainText(direction==='1'?'Test token 1 per Test token 0':'Test token 0 per Test token 1');await expect(dialog).toContainText('3/10');expect((await control(page).snapshot()).sends).toHaveLength(0);
-  await dialog.getByRole('button',{name:'Continue',exact:true}).click();await expect(form.getByRole('status')).toContainText('creation submitted');
-  await form.getByRole('button',{name:'Check Limit status',exact:true}).click();await expect(form).toContainText('Minted NFT 92');await expect(form).not.toContainText('Verified plain Limit NFT');
+  const form=await limitForm(page);await form.getByRole('button',{name:side,exact:true}).click();
+  await form.getByRole('button',{name:'Review order',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Create private plain Limit',exact:true});
+  await expect(dialog).toContainText(side==='Buy BCN'?'You sellHBR':'You sellBCN');await expect(dialog).toContainText('Offered budget0.0003');await expect(dialog).toContainText(side==='Buy BCN'?'Price (HBR/BCN)3/10':'Price (HBR/BCN)3/10');
+  await expect(dialog).toContainText(`Maker minimum (${side==='Buy BCN'?'HBR':'BCN'})0.000001`);expect((await control(page).snapshot()).sends).toHaveLength(0);
+  await dialog.getByRole('button',{name:'Continue',exact:true}).click();await expect(form).toContainText('Limit creation submitted. Check its canonical result before another request.');
+  await checkLimit(form);await expect(form).toContainText('Minted NFT 82. Private terms verification is pending.');await expect(form).not.toContainText('Verified plain Limit NFT');
   await form.getByRole('button',{name:'Refresh private Limit result',exact:true}).click();const snapshot=page.getByRole('dialog',{name:'Refresh private Limit result',exact:true});await expect(snapshot).toBeVisible();expect((await control(page).snapshot()).sends).toHaveLength(1);
-  await snapshot.getByRole('button',{name:'Continue',exact:true}).click();await expect(form.getByRole('status')).toContainText('snapshot submitted');await form.getByRole('button',{name:'Check Limit status',exact:true}).click();await expect(form).toContainText('Verified plain Limit NFT 92');
-  expect((await control(page).snapshot()).sends.map(x=>[x.name,x.gasLimit])).toEqual([['createPrivateOrder','30000000'],['privateOrderSnapshot','10000000']]);
+  await snapshot.getByRole('button',{name:'Continue',exact:true}).click();await expect(form).toContainText('Owner snapshot submitted. Check its private result.');await checkLimit(form);await expect(form).toContainText('Verified plain Limit NFT 82');
+  await expect(form).toContainText('Limit NFT 82 private offered inventory, price, maker minimum and direction verified.');
+  const result=await control(page).snapshot();
+  expect(result.sends.map(x=>[x.name,x.gasLimit])).toEqual([['createPrivateOrder','30000000'],['privateOrderSnapshot','10000000']]);expect(result.pending).toBeNull();
+  // Exact debit: only the offered token (BCN, HBR order of the balances) falls by 300 raw units.
+  expect(result.limit).toMatchObject({id:'82',unspent:'300',proceeds:'0',closed:false});expect(result.limit.balances.slice(0,2)).toEqual(side==='Buy BCN'?['1000','700']:['700','1000']);
   expect(await page.title()).toBe('Current DEX local fixture');expect(page.url()).toContain('/dex');expect(await page.locator('vite-error-overlay').count()).toBe(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(errors).toEqual([]);
-  await page.screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/current-limit-${viewport.width}.png`});
+  await page.screenshot({path:info.outputPath(`current-limit-${viewport.width}.png`)});
   await control(page).set({wallet:`0x${'33'.repeat(20)}`});await expect(form).not.toContainText('Verified plain Limit NFT');
 });
 for(const fault of ['mutation','cancel','denied','debit','snapshot','reload']as const)test(`current plain Limit ${fault} does not invent private creation success`,async({page})=>{
-  const form=await limitForm(page);await form.getByRole('button',{name:'Review and create Limit',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Create private plain Limit',exact:true});await expect(dialog).toBeVisible();
+  const form=await limitForm(page);await form.getByRole('button',{name:'Review order',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Create private plain Limit',exact:true});await expect(dialog).toBeVisible();
   if(fault==='mutation')await control(page).set({wallet:`0x${'33'.repeat(20)}`});if(fault==='denied')await control(page).set({denySignature:true});if(fault==='debit')await control(page).set({badPoolDebit:true});
-  await dialog.getByRole('button',{name:fault==='cancel'?'Cancel':'Continue',exact:true}).click();
-  if(['mutation','cancel','denied'].includes(fault)){await expect.poll(async()=>(await control(page).snapshot()).sends.length).toBe(0);return;}
-  await expect(form.getByRole('status')).toContainText('creation submitted');
+  // A wallet change closes the review: no Continue is available and nothing is signed.
+  if(fault==='mutation')await expect(dialog).toHaveCount(0);else await dialog.getByRole('button',{name:fault==='cancel'?'Cancel':'Continue',exact:true}).click();
+  if(['mutation','cancel','denied'].includes(fault)){
+    if(fault==='denied')await expect(form).toContainText('The wallet request was rejected.');
+    await expect(page.getByRole('dialog')).toHaveCount(0);await expect.poll(async()=>(await control(page).snapshot()).sends.length).toBe(0);
+    await expect(form).not.toContainText('Minted NFT');expect((await control(page).snapshot()).pending).toBeNull();return;}
+  await expect(form).toContainText('Limit creation submitted. Check its canonical result before another request.');
   if(fault==='reload'){
-    const ledger=await page.evaluate(()=>(window as unknown as {__currentJourney:Control}).__currentJourney.exportChain());await page.reload();await page.evaluate(raw=>(window as unknown as {__currentJourney:Control}).__currentJourney.restoreChain(raw),ledger);
-    const restored=await limitForm(page);await restored.getByRole('button',{name:'Check Limit status',exact:true}).click();await expect(restored.getByRole('status')).toContainText('no authenticated private creation result');await expect(restored).not.toContainText('Minted NFT');return;
+    await reloadWithChain(page,await exportChain(page));
+    const restored=await limitForm(page);await checkLimit(restored);
+    // After a reload the mined creation is public metadata only: no private result returns in this session.
+    await expect(restored).toContainText('no authenticated private creation result');await expect(restored).not.toContainText('Minted NFT');await expect(restored).not.toContainText('Verified plain Limit NFT');
+    expect((await control(page).snapshot()).sends).toHaveLength(1);return;
   }
-  await form.getByRole('button',{name:'Check Limit status',exact:true}).click();
-  if(fault==='snapshot'){await control(page).set({badLimitTerms:true});await form.getByRole('button',{name:'Refresh private Limit result',exact:true}).click();await page.getByRole('dialog',{name:'Refresh private Limit result',exact:true}).getByRole('button',{name:'Continue',exact:true}).click();await expect(form.getByRole('status')).toContainText('snapshot submitted');await form.getByRole('button',{name:'Check Limit status',exact:true}).click();}
-  await expect(form).not.toContainText('Verified plain Limit NFT');await expect(form.getByRole('status')).toContainText(fault==='snapshot'?'private inventory, price':'creation debit differs');
+  await checkLimit(form);
+  if(fault==='snapshot'){await expect(form).toContainText('Minted NFT 82');await control(page).set({badLimitTerms:true});await form.getByRole('button',{name:'Refresh private Limit result',exact:true}).click();await page.getByRole('dialog',{name:'Refresh private Limit result',exact:true}).getByRole('button',{name:'Continue',exact:true}).click();await expect(form).toContainText('Owner snapshot submitted. Check its private result.');await checkLimit(form);}
+  await expect(form).toContainText(fault==='snapshot'?'Limit private inventory, price, minimum, direction or mode differs from review.':'Limit creation debit differs from offered budget.');
+  await expect(form).not.toContainText('Verified plain Limit NFT');expect((await control(page).snapshot()).sends).toHaveLength(fault==='snapshot'?2:1);
 });
 
+// The App finds the owner's Limit itself. The seeded Limit is NFT 82: 300 raw units unspent and 7 raw units of proceeds.
 async function ownedLimit(page:Page,direction=true){
   await page.evaluate(value=>(window as unknown as{__currentJourney:Control}).__currentJourney.seedLimit(value),direction);
-  const form=await limitForm(page);await form.getByLabel('Limit owner NFT ID').fill('92');return form;
+  return openOwnedLimit(page);
 }
+async function openOwnedLimit(page:Page){
+  await page.locator('button:visible').filter({hasText:/^Manage$/}).first().click();
+  const orders=ordersRegion(page);await orders.getByRole('button',{name:'Open Limit NFT 82',exact:true}).click();
+  await expect(orders.getByRole('button',{name:'Load private order',exact:true})).toBeEnabled();return orders;
+}
+const limitSubmitted='Limit owner action submitted. Check its exact canonical result before another request.';
+const limitRefreshed='Limit owner snapshot authenticated at its canonical receipt block.';
+const limitCleared='Limit owner action verified. Private amount authority is cleared. Refresh again.';
+// The refresh is "Load private order"; the App verifies its snapshot itself. Each other owner action needs a status check.
 async function ownerLimitAction(page:Page,button:string,title:string,verify=true){
-  const form=page.getByRole('region',{name:'Current private plain Limit creation',exact:true}),before=(await control(page).snapshot()).sends.length;
-  await form.getByRole('button',{name:button,exact:true}).click();const modal=page.getByRole('dialog',{name:title,exact:true});await expect(modal).toBeVisible();expect((await control(page).snapshot()).sends).toHaveLength(before);
-  await modal.getByRole('button',{name:'Continue',exact:true}).click();await expect(form.getByRole('status')).toContainText('owner action submitted');
-  if(verify){await form.getByRole('button',{name:'Check Limit status',exact:true}).click();await expect.poll(async()=>(await control(page).snapshot()).pending).toBeNull();}
-  return form;
+  const orders=ordersRegion(page),before=(await control(page).snapshot()).sends.length,refresh=button==='Load private order';
+  if(['Pause Limit','Resume Limit','Claim Limit proceeds'].includes(button))await openSection(orders,'More order controls');if(button==='Close Limit and return funds')await openSection(orders,'Close order');
+  await orders.getByRole('button',{name:button,exact:true}).click();const modal=page.getByRole('dialog',{name:title,exact:true});await expect(modal).toBeVisible();expect((await control(page).snapshot()).sends).toHaveLength(before);
+  await modal.getByRole('button',{name:'Continue',exact:true}).click();await expect(orders).toContainText(refresh?limitRefreshed:limitSubmitted);
+  if(verify&&!refresh){await checkLimit(orders);await expect.poll(async()=>(await control(page).snapshot()).pending).toBeNull();}
+  expect((await control(page).snapshot()).sends).toHaveLength(before+1);
+  return orders;
 }
-for(const [direction,width]of [[true,1440],[false,390]]as const)test(`Limit owner browser refresh Claim Pause Resume Close exact accounting at ${width}px`,async({page})=>{
+const refreshLimit=(page:Page)=>ownerLimitAction(page,'Load private order','Refresh private Limit');
+for(const [direction,width]of [[true,1440],[false,390]]as const)test(`Limit owner browser refresh Claim Pause Resume Close exact accounting at ${width}px`,async({page},info)=>{
+  test.slow();
   await page.setViewportSize({width,height:width===390?844:1000});const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',e=>{if(['error','warning'].includes(e.type())&&!e.text().includes('Failed to load resource: net::ERR_FAILED'))errors.push(e.text());});
-  await expect(page.getByRole('region',{name:'Private Swap',exact:true})).toBeVisible();await expect(page.locator('vite-error-overlay')).toHaveCount(0);await page.screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/limit-owner-resume-entry-${width}.png`});
-  const form=await ownedLimit(page,direction);await form.getByLabel('Limit owner NFT ID').scrollIntoViewIfNeeded();await expect(form.getByRole('button',{name:'Claim Limit proceeds',exact:true})).toBeDisabled();
-  await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await expect(form).toContainText(`Unspent 300 atoms of Test token ${direction?1:0}; proceeds 7 atoms of Test token ${direction?0:1}`);await expect(form.getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
-  await page.screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/limit-owner-resume-refresh-${width}.png`});
-  await ownerLimitAction(page,'Claim Limit proceeds','Claim Limit proceeds');await expect(form).not.toContainText('Unspent 300');await expect(form.getByRole('status')).toContainText('Private amount authority is cleared');await expect(form.getByRole('button',{name:'Close Limit and return funds',exact:true})).toBeDisabled();
-  await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await expect(form).toContainText('proceeds 0 atoms');
-  await ownerLimitAction(page,'Pause Limit','Pause plain Limit');await expect(form).not.toContainText('Unspent 300');await expect(form.getByRole('button',{name:'Claim Limit proceeds',exact:true})).toBeDisabled();
-  expect((await control(page).snapshot()).limit).toMatchObject({status:'1',coreLifecycle:'2',engineLifecycle:'2'});await expect(form.getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
-  await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await expect(form.getByRole('button',{name:'Pause Limit',exact:true})).toBeDisabled();await expect(form.getByRole('button',{name:'Resume Limit',exact:true})).toBeEnabled();
-  await page.screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/limit-owner-paused-resume-${width}.png`});
-  const beforeResume=(await control(page).snapshot()).limit;await ownerLimitAction(page,'Resume Limit','Resume plain Limit');await expect(form).not.toContainText('Unspent 300');await expect(form.getByRole('button',{name:'Pause Limit',exact:true})).toBeDisabled();await expect(form.getByRole('button',{name:'Claim Limit proceeds',exact:true})).toBeDisabled();await expect(form.getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
+  await expect(page.getByRole('region',{name:'Private Swap',exact:true})).toBeVisible();await expect(page.locator('vite-error-overlay')).toHaveCount(0);await page.screenshot({path:info.outputPath(`limit-owner-resume-entry-${width}.png`)});
+  const [offered,received]=direction?['HBR','BCN']:['BCN','HBR'],claim=width===390?'Claim Limit proceeds':'Claim proceeds';
+  const orders=await ownedLimit(page,direction);
+  // At 390 px the claim button is in "More order controls".
+  const claimButton=async()=>{if(width===390)await openSection(orders,'More order controls');return orders.getByRole('button',{name:claim,exact:true});};
+  // Before the private refresh the App shows no amounts and no owner actions.
+  await expect(orders).not.toContainText('Unspent');await expect(orders.getByRole('button',{name:claim,exact:true})).toHaveCount(0);
+  await refreshLimit(page);await expect(orders).toContainText(`Unspent ${offered}0.0003`);await expect(orders).toContainText(`Claimable ${received}0.000007`);
+  await expect((await openSection(orders,'More order controls')).getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
+  await page.screenshot({path:info.outputPath(`limit-owner-resume-refresh-${width}.png`)});
+  await ownerLimitAction(page,claim,'Claim Limit proceeds');await expect(orders).toContainText(limitCleared);await expect(orders).not.toContainText('Unspent');await expect((await openSection(orders,'Close order')).getByRole('button',{name:'Close Limit and return funds',exact:true})).toBeDisabled();
+  expect((await control(page).snapshot()).limit.balances.slice(0,2)).toEqual(direction?['1007','1000']:['1000','1007']);
+  await refreshLimit(page);await expect(orders).toContainText(`Claimable ${received}0.0`);await expect(orders).not.toContainText('0.000007');
+  await ownerLimitAction(page,'Pause Limit','Pause plain Limit');await expect(orders).toContainText(limitCleared);await expect(orders).not.toContainText('Unspent');await expect(await claimButton()).toBeDisabled();
+  expect((await control(page).snapshot()).limit).toMatchObject({status:'1',coreLifecycle:'2',engineLifecycle:'2'});await expect((await openSection(orders,'More order controls')).getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
+  await refreshLimit(page);const controls=await openSection(orders,'More order controls');await expect(controls.getByRole('button',{name:'Pause Limit',exact:true})).toBeDisabled();await expect(controls.getByRole('button',{name:'Resume Limit',exact:true})).toBeEnabled();
+  await page.screenshot({path:info.outputPath(`limit-owner-paused-resume-${width}.png`)});
+  const beforeResume=(await control(page).snapshot()).limit;await ownerLimitAction(page,'Resume Limit','Resume plain Limit');await expect(orders).toContainText(limitCleared);await expect(orders).not.toContainText('Unspent');
+  await expect((await openSection(orders,'More order controls')).getByRole('button',{name:'Pause Limit',exact:true})).toBeDisabled();await expect(await claimButton()).toBeDisabled();await expect((await openSection(orders,'More order controls')).getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
   expect((await control(page).snapshot()).limit).toEqual({...beforeResume,status:'0',coreLifecycle:'3',engineLifecycle:'3'});
-  await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await expect(form).toContainText('Unspent 300');await expect(form.getByRole('button',{name:'Pause Limit',exact:true})).toBeEnabled();await expect(form.getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
-  await ownerLimitAction(page,'Close Limit and return funds','Close plain Limit');await expect(form.getByRole('status')).toContainText('NFT burn and closed owner tombstone verified');await expect(form).toContainText('Unspent 0 atoms');await expect(form.getByRole('button',{name:'Close Limit and return funds',exact:true})).toBeDisabled();
-  const result=await control(page).snapshot();expect(result.limit).toEqual({id:'92',unspent:'0',proceeds:'0',closed:true,balances:direction?['1007','1300']:['1300','1007'],status:'0',coreLifecycle:'4',engineLifecycle:'4'});expect(result.sends.map(x=>[x.name,x.gasLimit])).toEqual([['privateOrderSnapshot','10000000'],['claimPrivateOrderProceeds','30000000'],['privateOrderSnapshot','10000000'],['managePrivateOrderStatus','10000000'],['privateOrderSnapshot','10000000'],['managePrivateOrderStatus','10000000'],['privateOrderSnapshot','10000000'],['closePrivateOrder','30000000']]);
-  expect(result.sends.filter(x=>x.name==='managePrivateOrderStatus').map(x=>[0,1,2].map(i=>BigInt(`0x${x.data.slice(10+i*64,10+(i+1)*64)}`).toString()))).toEqual([['92','1','0'],['92','2','1']]);
+  await refreshLimit(page);await expect(orders).toContainText(`Unspent ${offered}0.0003`);const resumed=await openSection(orders,'More order controls');await expect(resumed.getByRole('button',{name:'Pause Limit',exact:true})).toBeEnabled();await expect(resumed.getByRole('button',{name:'Resume Limit',exact:true})).toBeDisabled();
+  await ownerLimitAction(page,'Close Limit and return funds','Close plain Limit');await expect(orders).toContainText('Limit proceeds and unspent inventory verified; NFT burn and closed owner tombstone verified.');await expect(orders).toContainText(`Unspent ${offered}0.0`);
+  await expect(orders).toContainText('Closed Limit');await expect((await openSection(orders,'Close order')).getByRole('button',{name:'Close Limit and return funds',exact:true})).toBeDisabled();await expect(orders.getByRole('button',{name:'Load private order',exact:true})).toBeDisabled();
+  const result=await control(page).snapshot();expect(result.limit).toEqual({id:'82',unspent:'0',proceeds:'0',closed:true,balances:direction?['1007','1300','1000','1000']:['1300','1007','1000','1000'],status:'0',coreLifecycle:'4',engineLifecycle:'4'});expect(result.sends.map(x=>[x.name,x.gasLimit])).toEqual([['privateOrderSnapshot','10000000'],['claimPrivateOrderProceeds','30000000'],['privateOrderSnapshot','10000000'],['managePrivateOrderStatus','10000000'],['privateOrderSnapshot','10000000'],['managePrivateOrderStatus','10000000'],['privateOrderSnapshot','10000000'],['closePrivateOrder','30000000']]);
+  expect(result.sends.filter(x=>x.name==='managePrivateOrderStatus').map(x=>[0,1,2].map(i=>BigInt(`0x${x.data.slice(10+i*64,10+(i+1)*64)}`).toString()))).toEqual([['82','1','0'],['82','2','1']]);
   await expect(page).toHaveTitle('Current DEX local fixture');expect(page.url()).toContain('/dex');await expect(page.locator('vite-error-overlay')).toHaveCount(0);await expect(page.getByRole('dialog')).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(errors).toEqual([]);
-  await form.getByRole('status').scrollIntoViewIfNeeded();await expect(form.getByRole('status')).toBeVisible();await page.screenshot({path:`C:/Users/rosu_/.codex/visualizations/2026/09/27/01a0e512-ae27-7cb0-bce0-b46e778d5497/limit-owner-resumed-closed-${width}.png`});
+  await page.screenshot({path:info.outputPath(`limit-owner-resumed-closed-${width}.png`)});
 });
 test('Limit owner browser lost-session mined metadata permits a new explicit snapshot, not restored amounts',async({page})=>{
-  await ownedLimit(page);await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await ownerLimitAction(page,'Claim Limit proceeds','Claim Limit proceeds',false);
-  const ledger=await page.evaluate(()=>(window as unknown as{__currentJourney:Control}).__currentJourney.exportChain());await page.reload();await page.evaluate(raw=>(window as unknown as{__currentJourney:Control}).__currentJourney.restoreChain(raw),ledger);
-  const form=await limitForm(page);await form.getByRole('button',{name:'Check Limit status',exact:true}).click();await expect(form.getByRole('status')).toContainText('Private accounting was not restored');expect((await control(page).snapshot()).pending).toBeNull();await expect(form).not.toContainText('Unspent 300');
-  await form.getByLabel('Limit owner NFT ID').fill('92');await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await expect(form).toContainText('proceeds 0 atoms');expect((await control(page).snapshot()).sends.map(x=>x.name)).toEqual(['privateOrderSnapshot','claimPrivateOrderProceeds','privateOrderSnapshot']);
+  await ownedLimit(page);await refreshLimit(page);await ownerLimitAction(page,'Claim proceeds','Claim Limit proceeds',false);
+  await reloadWithChain(page,await exportChain(page));
+  await page.locator('button:visible').filter({hasText:/^Manage$/}).first().click();const orders=ordersRegion(page);await checkLimit(orders);
+  await expect(orders).toContainText('Private accounting was not restored');expect((await control(page).snapshot()).pending).toBeNull();await expect(orders).not.toContainText('Unspent');
+  await orders.getByRole('button',{name:'Open Limit NFT 82',exact:true}).click();await refreshLimit(page);await expect(orders).toContainText('Claimable BCN0.0');await expect(orders).not.toContainText('0.000007');
+  expect((await control(page).snapshot()).sends.map(x=>x.name)).toEqual(['privateOrderSnapshot','claimPrivateOrderProceeds','privateOrderSnapshot']);
 });
 for(const fault of ['owner','selection','session']as const)test(`Limit owner browser ${fault} change revokes private amount authority`,async({page})=>{
-  const form=await ownedLimit(page);await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await expect(form).toContainText('Unspent 300');
-  if(fault==='selection')await form.getByLabel('Limit owner NFT ID').fill('93');else if(fault==='owner')await control(page).set({wallet:`0x${'33'.repeat(20)}`});else{await page.evaluate(()=>(window as unknown as{__currentJourney:Control}).__currentJourney.remount());await limitForm(page);}
-  await expect(form).not.toContainText('Unspent 300');await expect(form.getByRole('button',{name:'Claim Limit proceeds',exact:true})).toBeDisabled();expect((await control(page).snapshot()).sends).toHaveLength(1);
+  const orders=await ownedLimit(page);await refreshLimit(page);await expect(orders).toContainText('Unspent HBR0.0003');
+  if(fault==='selection'){await openSection(orders,'Find an order by ID');await orders.getByLabel('Limit owner NFT ID').fill('83');}
+  else if(fault==='owner')await control(page).set({wallet:`0x${'33'.repeat(20)}`});
+  else{await remount(page);await page.locator('button:visible').filter({hasText:/^Manage$/}).first().click();}
+  const current=ordersRegion(page);
+  await expect(current).not.toContainText('Unspent');await expect(current).not.toContainText('0.0003');await expect(current.getByRole('button',{name:'Claim proceeds',exact:true})).toHaveCount(0);expect((await control(page).snapshot()).sends).toHaveLength(1);
 });
 test('Limit owner browser known private payout failure keeps pending and all funding disabled',async({page})=>{
-  const form=await ownedLimit(page);await ownerLimitAction(page,'Refresh private owned Limit','Refresh private Limit');await control(page).set({badLimitPayout:true});await ownerLimitAction(page,'Claim Limit proceeds','Claim Limit proceeds',false);
-  await form.getByRole('button',{name:'Check Limit status',exact:true}).click();await expect(form.getByRole('status')).toContainText('payout differs');await expect(form).not.toContainText('Unspent 300');expect((await control(page).snapshot()).pending).not.toBeNull();await expect(form.getByRole('button',{name:'Refresh private owned Limit',exact:true})).toBeDisabled();await expect(form.getByRole('button',{name:'Review and create Limit',exact:true})).toBeDisabled();expect((await control(page).snapshot()).sends).toHaveLength(2);
+  const orders=await ownedLimit(page);await refreshLimit(page);await control(page).set({badLimitPayout:true});await ownerLimitAction(page,'Claim proceeds','Claim Limit proceeds',false);
+  await checkLimit(orders);await expect(orders).toContainText('payout differs');await expect(orders).not.toContainText('Unspent');expect((await control(page).snapshot()).pending).not.toBeNull();await expect(orders.getByRole('button',{name:'Load private order',exact:true})).toBeDisabled();
+  await page.locator('button:visible').filter({hasText:/^Trade$/}).first().click();await page.getByRole('button',{name:'Limit',exact:true}).first().click();
+  await expect(limitRegion(page).getByRole('button',{name:'Review order',exact:true})).toBeDisabled();expect((await control(page).snapshot()).sends).toHaveLength(2);
 });
 
 for (const [mode, viewport] of [['initialize', { width: 1440, height: 1000 }], ['add', { width: 390, height: 844 }]] as const) {

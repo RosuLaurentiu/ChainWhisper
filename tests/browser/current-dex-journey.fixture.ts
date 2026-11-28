@@ -8,14 +8,13 @@ import { AbiCoder, Interface, keccak256, toBeHex } from '@coti-io/coti-ethers';
 import { decodeUint, decryptUint, decryptUint256, encodeKey, encrypt } from '@coti-io/coti-sdk-typescript';
 import DexPage from '../../src/features/dex/components/DexV2Page';
 import { STAGED_SHARED_HISTORY_DEX_CANDIDATE as c, currentCheapDexQuoteProtocol } from '../../src/lib/dexV2Deployment';
-const CURRENT_CHEAP_POOL_TOKENS = [c.tokens[1], c.tokens[0]] as const;
 import { CURRENT_POOL_FUNDING_ABI, PREPARED_POOL_FUNDING_ABI } from '../../src/lib/currentDexPoolFunding';
 import { issueCurrentDexPoolFundingCapability } from '../../src/features/wallet/currentDexPoolFundingCapability';
 import { issueCurrentDexPoolPositionCapability } from '../../src/features/wallet/currentDexPoolPositionCapability';
 import { CURRENT_POOL_POSITION_ABI, currentPoolPositionAbi, currentPoolNftAbi, currentPoolSnapshotAbi } from '../../src/lib/currentDexPoolPosition';
 import { POOL_EXIT_PREVIEW_ABI, computePoolExitPreviewContext } from '../../src/lib/currentDexPoolExitPreview';
 import { issueCurrentDexLimitCapability } from '../../src/features/wallet/currentDexLimitCapability';
-import { currentLimitAbi,currentLimitTokens,currentLimitMappingSlot,currentLimitAddressSlot,CURRENT_LIMIT_LAYOUT } from '../../src/lib/currentDexLimit';
+import { currentLimitAbi,packedLimitAbi,currentLimitTokens,currentLimitMappingSlot } from '../../src/lib/currentDexLimit';
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, CURRENT_CHEAP_DEX_OPERATION_ABI, CURRENT_DEX_RECEIPT_ABI,
   CURRENT_FAST_DEX_RECEIPT_ABI } from '../../src/lib/currentDexOperation';
 import { CURRENT_DEX_ACCEPT_ABI, CURRENT_SLIPPAGE_DEX_ACCEPT_ABI } from '../../src/lib/currentDexQuoteReview';
@@ -204,20 +203,23 @@ let waitReceipt = false;
 let nextOperationId = 101n;
 let revertNext = false, quoteAmountDrift = false, belowMinimumFill = false;
 let poolMarket = '', poolMode = 0n, poolContext = zero, poolAmounts: bigint[] = [], poolPositionId = 81n, badPoolDebit = false;
-let claimStatus=1n,claimRevision=1n,claimOwnership=1n,claimLifecycle=1n,claimOwner=owner,recipientCode='0x',claimContext=toBeHex(999n,32);
-let claimValues=[200n,100n,200n,400n,0n,0n,0n,0n,0n,1n];
-let limitId=91n,limitDirection=true,limitAmount=0n,limitTerms:bigint[]=[],limitWords=new Map<string,bigint>(),badLimitTerms=false;
+let recipientCode='0x';
+// Plain Limit model on the same storage: one Limit of the default market, source 24 in directory slot 0.
+// The Limit NFT takes the next position ID after the allocated claims.
+let limitId=0n,limitDirection=true,limitAmount=0n,limitTerms:bigint[]=[],badLimitTerms=false;
 let limitProceeds=0n,limitClosed=false,limitBalances=[1000n,1000n,1000n,1000n],badLimitPayout=false;
-const putLimit=(address:string,index:bigint,value:bigint)=>limitWords.set(`${address}:${index}`,value);
+const limitEngine=defaultPair.engine,LIMIT_SOURCE=24n;
+const putLimit=(address:string,index:bigint,value:bigint)=>putWord(address,index,value);
+const limitWord=(address:string,index:bigint)=>wordAt(address,index)??0n;
 const writeLimitSnapshot=()=>[limitAmount,limitProceeds,...limitTerms.slice(0,3),limitAmount,limitDirection?1n:0n,0n].forEach((value,i)=>{
-  const words=wide(value+(badLimitTerms&&i===2?1n:0n)),base=currentLimitMappingSlot(limitId,30n)+BigInt(i*4+2);putLimit(engine,base,words[0]);putLimit(engine,base+1n,words[1]);
+  const words=wide(value+(badLimitTerms&&i===2?1n:0n)),base=currentLimitMappingSlot(limitId,30n)+BigInt(i*4+2);putLimit(limitEngine,base,words[0]);putLimit(limitEngine,base+1n,words[1]);
 });
 const initializeLimitAuthority=()=>{
-  // Independent frozen-state producer: no verifier write-set is consulted.
-  putLimit(c.core,currentLimitMappingSlot(limitId,19n),24n);putLimit(engine,currentLimitMappingSlot(limitId,4n),24n);
-  for(const [address,root]of [[c.core,20n],[engine,9n]]as const)[1n,0n,1n,limitId,24n,1n,1n,40n,41n,1n,1n,1n].forEach((v,i)=>putLimit(address,currentLimitMappingSlot(24n,root)+BigInt(i),v));
-  putLimit(engine,currentLimitMappingSlot(0n,5n),24n);putLimit(engine,currentLimitMappingSlot(0n,6n),1n);putLimit(engine,3n,1n);
-  putLimit(nft,currentLimitMappingSlot(limitId,2n),BigInt(owner));putLimit(nft,currentLimitAddressSlot(owner,3n),1n);
+  limitId=wordAt(c.core,11n)!+1n;putWord(c.core,11n,limitId);putWord(c.core,slotOf(limitId,18n),BigInt(defaultPair.marketId));
+  putLimit(c.core,currentLimitMappingSlot(limitId,19n),LIMIT_SOURCE);putLimit(limitEngine,currentLimitMappingSlot(limitId,4n),LIMIT_SOURCE);
+  for(const [address,root]of [[c.core,20n],[limitEngine,9n]]as const)[1n,0n,1n,limitId,LIMIT_SOURCE,1n,1n,40n,41n,1n,1n,1n].forEach((v,i)=>putLimit(address,currentLimitMappingSlot(LIMIT_SOURCE,root)+BigInt(i),v));
+  putLimit(limitEngine,currentLimitMappingSlot(0n,5n),LIMIT_SOURCE);putLimit(limitEngine,currentLimitMappingSlot(0n,6n),1n);putLimit(limitEngine,3n,1n);putLimit(limitEngine,currentLimitMappingSlot(LIMIT_SOURCE,2n),0n);
+  setNftOwner(limitId,mountedOwner||owner);
 };
 // Private receipt amounts: maximum input, actual input, refund, gross output, fee and net output.
 // The base case is a maximum input of 20 raw units; a larger maximum input scales each amount.
@@ -248,11 +250,11 @@ const balanceCipher = (index: number) => {
   if (saved?.value === limitBalances[index]) return saved.words;
   const words = wide(limitBalances[index]); balanceCiphers.set(index, { value: limitBalances[index], words }); return words;
 };
-// One storage read at a pinned block: token balance words, the versioned model, then the earlier Limit words.
+// One storage read at a pinned block: the token balance words, then the versioned model.
 const readWord = (address: string, slot: bigint, block: number) => {
   const target = address.toLowerCase(), index = c.tokens.findIndex(([token]) => token === target);
   if (index >= 0 && mountedOwner) { const offset = slot - slotOf(mountedOwner, 4n, 'address'); if (offset >= 0n && offset < 4n) return [1n, 1n, ...balanceCipher(index)][Number(offset)]; }
-  return wordAt(target, slot, block) ?? limitWords.get(`${target}:${slot}`) ?? 0n;
+  return wordAt(target, slot, block) ?? 0n;
 };
 let balanceReadFailure = false, balanceReadDelay = 0, privacyUnlocked = true;
 let wrongWalletResponseNonce = false;
@@ -299,6 +301,14 @@ const send = async (method: string, params: unknown[]) => {
         blockNumber: quantity(receipt.blockNumber as number), blockHash: receipt.blockHash, removed: false })) } : null;
   }
   if (method === 'eth_getBalance') return '0xde0b6b3a7640000';
+  if (method === 'eth_getLogs') {
+    // Raw log reads (Limit fill history) use the same mined logs as the provider reads.
+    const filter = params[0] as { address?: string; fromBlock?: string; toBlock?: string; blockHash?: string; topics?: Array<string | null> };
+    const pinned = filter.blockHash ? BigInt(filter.blockHash) : null;
+    return (await readProvider.getLogs({ address: filter.address, fromBlock: pinned ?? BigInt(filter.fromBlock ?? '0x0'), toBlock: pinned ?? (filter.toBlock && filter.toBlock !== 'latest' ? BigInt(filter.toBlock) : BigInt(latestHead())), topics: filter.topics }))
+      .map(log => ({ address: log.address, topics: log.topics, data: log.data, blockNumber: quantity(log.blockNumber), blockHash: log.blockHash,
+        transactionHash: log.transactionHash, transactionIndex: '0x0', logIndex: quantity(log.index), removed: false }));
+  }
   if (method === 'eth_getBlockByNumber') {
     const number = params[0] === 'latest' ? latestHead() : Number(BigInt(params[0] as string));
     if (BigInt(number) === vaultDeployment.blockNumber) return { number: quantity(number), hash: vaultDeployment.blockHash, timestamp: '0x1', gasLimit: quantity(gasLimit),
@@ -325,8 +335,8 @@ const send = async (method: string, params: unknown[]) => {
     if(target===nft&&call.data.startsWith(currentPoolNftAbi.getFunction('ownerOf')!.selector)) {
       const id=currentPoolNftAbi.decodeFunctionData('ownerOf',call.data)[0],pinned=Number(BigInt(selector.blockHash));
       if(claimPlain.has(id.toString())){if(BigInt(nftOwnerOf(id,pinned))===0n)throw new Error('Position NFT burned');return currentPoolNftAbi.encodeFunctionResult('ownerOf',[nftOwnerOf(id,pinned)]);}
-      if(id===limitId&&limitClosed)throw new Error('Position NFT burned');
-      return currentPoolNftAbi.encodeFunctionResult('ownerOf',[owner]);
+      if(id!==limitId||limitClosed)throw new Error('Position NFT burned or not minted');
+      return currentPoolNftAbi.encodeFunctionResult('ownerOf',[nftOwnerOf(id,pinned)]);
     }
     if (target === nft) {
       const read = currentPoolNftAbi.parseTransaction({ data: call.data }), pinned = Number(BigInt(selector.blockHash));
@@ -372,7 +382,7 @@ const send = async (method: string, params: unknown[]) => {
     calls.push(name);
     if(name==='poolPublicState') {
       const id=parsed.args[0] as bigint,pinned=Number(BigInt(selector.blockHash));
-      if(!claimPlain.has(id.toString()))throw new Error('Unknown fixture claim');
+      if(!claimPlain.has(id.toString()))return abi.encodeFunctionResult(name,[[0n,0n,0n,0n,0n,0n,0n,0n,zero]]);
       return abi.encodeFunctionResult(name,[[claimWord(id,0,pinned),0n,0n,0n,...[4,5,6,7].map(i=>claimWord(id,i,pinned)),toBeHex(publicContext(id,pinned),32)]]);
     }
     if (['fastPoolQuotePublic', 'cheapAsyncPublic', 'principalReceipt', 'fastPoolPrincipalReceipt'].includes(name)) {
@@ -397,7 +407,7 @@ const newSigner = () => { const wallet = ({ address: owner, getAddress: async ()
   getNonce: async () => nonce,
   sendTransaction: async (request: { data: string; nonce: number; gasLimit: bigint;to?:string }) => {
     assertCurrent();
-    const parsed = opening.parseTransaction({ data: request.data }) ?? accepts.parseTransaction({ data: request.data }) ?? pools.parseTransaction({ data: request.data }) ?? currentPoolPositionAbi.parseTransaction({data:request.data}) ?? currentPoolNftAbi.parseTransaction({data:request.data}) ?? currentLimitAbi.parseTransaction({data:request.data}) ?? token.parseTransaction({ data: request.data }) ?? currentTokenFundingAbi.parseTransaction({ data: request.data });
+    const parsed = opening.parseTransaction({ data: request.data }) ?? accepts.parseTransaction({ data: request.data }) ?? pools.parseTransaction({ data: request.data }) ?? currentPoolPositionAbi.parseTransaction({data:request.data}) ?? currentPoolNftAbi.parseTransaction({data:request.data}) ?? packedLimitAbi.parseTransaction({data:request.data}) ?? token.parseTransaction({ data: request.data }) ?? currentTokenFundingAbi.parseTransaction({ data: request.data });
     if (!parsed) throw new Error('Unknown fixture transaction.');
     const name = parsed.name, quote = name.startsWith('quote'), poolPreview = name === 'previewPoolFunding', poolFund = name === 'createPoolPosition',poolManage=name==='managePoolPosition',poolSnapshot=name==='poolSnapshot',poolTransfer=name==='safeTransferFrom',limitCreate=name==='createPrivateOrder',limitSnapshot=name==='privateOrderSnapshot',limitClaim=name==='claimPrivateOrderProceeds',limitClose=name==='closePrivateOrder',limitManage=name==='managePrivateOrderStatus';
     const limitPayouts:bigint[]=[], swapLogs: Array<{ address: string; topics: string[]; data: string }> = [];
@@ -418,23 +428,29 @@ const newSigner = () => { const wallet = ({ address: owner, getAddress: async ()
         if (name === 'approve' && value !== 0n && tokenAllowances[tokenIndex] !== 0n) throw new Error('Approve needs a zero allowance.');
         tokenAllowances[tokenIndex] = name === 'approve' ? value : tokenAllowances[tokenIndex] + value; }
     } else if(status===1&&limitCreate){
-      limitId++;limitAmount=decryptUint256(parsed.args[0].ciphertext,aes);limitDirection=decryptUint(parsed.args[1].ciphertext,aes)===1n;
-      if(decryptUint(parsed.args[2].ciphertext,aes)!==0n)throw new Error('Only plain Limit mode is admitted');
-      limitTerms=parsed.args[3].map((x:{ciphertext:bigint})=>decryptUint(x.ciphertext,aes));
-      limitWords=new Map();const put=(address:string,index:bigint,value:bigint)=>limitWords.set(`${address}:${index}`,value),l=CURRENT_LIMIT_LAYOUT;
-      put(c.core,currentLimitMappingSlot(limitId,l.coreMapping),24n);put(engine,currentLimitMappingSlot(limitId,l.engineMapping),24n);
-      for(const [address,root]of [[c.core,l.coreSources],[engine,l.engineSources]]as const)[1n,0n,1n,limitId,24n,1n,1n,40n,41n,1n,1n,1n].forEach((v,i)=>put(address,currentLimitMappingSlot(24n,root)+BigInt(i),v));
+      // Packed build 13 inputs: the market, the budget and three pairs (price, minimum and witness, witness and direction).
+      if(String(parsed.args[0]).toLowerCase()!==defaultPair.marketId||limitAmount!==0n&&!limitClosed)throw new Error('Fixture Limit supports one open Limit of the default market');
+      const terms=parsed.args[2].map((x:{ciphertext:{ciphertextHigh:bigint;ciphertextLow:bigint}})=>decryptUint256(x.ciphertext,aes));
+      limitAmount=decryptUint256(parsed.args[1].ciphertext,aes);limitDirection=(terms[2]&1n)===1n;
+      limitTerms=[terms[0]>>128n,terms[0]&mask128,terms[1]>>128n,terms[1]&mask128,terms[2]>>128n];
+      const offered=c.tokens.findIndex(([address])=>address===defaultPair.tokens[limitDirection?0:1]);
+      if(limitBalances[offered]<limitAmount||tokenAllowances[offered]<limitAmount)throw new Error('Limit budget exceeds a balance or allowance');
+      limitBalances[offered]-=limitAmount;tokenAllowances[offered]-=limitAmount;
       limitProceeds=0n;limitClosed=false;initializeLimitAuthority();
     }else if(status===1&&limitSnapshot){
       if(parsed.args[0]!==limitId)throw new Error('Snapshot ID differs from minted Limit');
       writeLimitSnapshot();
     }else if(status===1&&(limitClaim||limitClose||limitManage)){
       if(parsed.args[0]!==limitId||limitClosed||from!==owner)throw new Error('Wrong Limit owner or ID');
-      if(limitManage){const life=limitWords.get(`${engine}:${currentLimitMappingSlot(24n,9n)+11n}`)!,statusIndex=currentLimitMappingSlot(24n,2n),currentStatus=limitWords.get(`${engine}:${statusIndex}`)??0n;
-        if(parsed.args[1]!==life||!(parsed.args[2]===0n&&currentStatus===0n||parsed.args[2]===1n&&currentStatus===1n))throw new Error('Wrong Limit lifecycle or Pause/Resume status');putLimit(engine,statusIndex,parsed.args[2]===0n?1n:0n);}
-      if(limitManage||limitClose)for(const [address,root]of [[c.core,20n],[engine,9n]]as const){const index=currentLimitMappingSlot(24n,root)+11n;putLimit(address,index,limitWords.get(`${address}:${index}`)!+1n);}
-      if(limitClaim||limitClose){c.tokens.forEach((_,i)=>{const payout=i===(limitDirection?1:0)?(limitClose?limitAmount:0n):limitProceeds;limitPayouts.push(payout);limitBalances[i]+=payout;});limitProceeds=0n;putLimit(c.core,currentLimitMappingSlot(24n,20n)+15n,999n);putLimit(engine,currentLimitMappingSlot(24n,9n)+18n,999n);}
-      if(limitClose){limitClosed=true;limitAmount=0n;for(const [address,root]of [[c.core,20n],[engine,9n]]as const)putLimit(address,currentLimitMappingSlot(24n,root),257n);putLimit(engine,currentLimitMappingSlot(limitId,0n),BigInt(owner));putLimit(engine,currentLimitMappingSlot(0n,5n),0n);putLimit(engine,3n,0n);putLimit(nft,currentLimitMappingSlot(limitId,2n),0n);putLimit(nft,currentLimitMappingSlot(limitId,4n),0n);putLimit(nft,currentLimitAddressSlot(owner,3n),0n);writeLimitSnapshot();}
+      const lifecycle=(address:string,root:bigint)=>currentLimitMappingSlot(LIMIT_SOURCE,root)+11n,statusIndex=currentLimitMappingSlot(LIMIT_SOURCE,2n);
+      if(limitManage){const life=limitWord(limitEngine,lifecycle(limitEngine,9n)),currentStatus=limitWord(limitEngine,statusIndex);
+        if(parsed.args[1]!==life||!(parsed.args[2]===0n&&currentStatus===0n||parsed.args[2]===1n&&currentStatus===1n))throw new Error('Wrong Limit lifecycle or Pause/Resume status');putLimit(limitEngine,statusIndex,parsed.args[2]===0n?1n:0n);}
+      if(limitManage||limitClose)for(const [address,root]of [[c.core,20n],[limitEngine,9n]]as const)putLimit(address,lifecycle(address,root),limitWord(address,lifecycle(address,root))+1n);
+      // The offered token returns the unspent budget at Close; the other token pays the proceeds.
+      if(limitClaim||limitClose){defaultPair.tokens.forEach((address,i)=>{const payout=i===(limitDirection?0:1)?(limitClose?limitAmount:0n):limitProceeds;limitPayouts.push(payout);limitBalances[c.tokens.findIndex(([token])=>token===address)]+=payout;});limitProceeds=0n;
+        putLimit(c.core,currentLimitMappingSlot(LIMIT_SOURCE,20n)+15n,newContext());putLimit(limitEngine,currentLimitMappingSlot(LIMIT_SOURCE,9n)+18n,newContext());}
+      if(limitClose){limitClosed=true;limitAmount=0n;for(const [address,root]of [[c.core,20n],[limitEngine,9n]]as const)putLimit(address,currentLimitMappingSlot(LIMIT_SOURCE,root),257n);
+        putLimit(limitEngine,currentLimitMappingSlot(limitId,0n),BigInt(owner));putLimit(limitEngine,currentLimitMappingSlot(0n,5n),0n);putLimit(limitEngine,3n,0n);setNftOwner(limitId,toBeHex(0n,20));writeLimitSnapshot();}
     }else if (status === 1 && poolPreview) {
       // Packed build 13 inputs: the spread class, two budgets and five pairs (price, price witness, spread, spread witness, tolerance).
       if (parsed.args[1] !== 0n) throw new Error('Fixture Pool preview supports a new position only.');
@@ -547,11 +563,11 @@ const newSigner = () => { const wallet = ({ address: owner, getAddress: async ()
     const limitLogs=status===1&&limitCreate?[
       {address:c.core,...currentLimitAbi.encodeEventLog(currentLimitAbi.getEvent('FixedPositionCreated')!,[limitId])},
       {address:nft,...mint.encodeEventLog(mint.getEvent('Transfer')!,[toBeHex(0n,20),owner,limitId])},
-      ...currentLimitTokens(limitDirection).map((address,i)=>({address,...debit.encodeEventLog(debit.getEvent('Transfer')!,[owner,c.core,wide((i?0n:limitAmount)+(badPoolDebit?1n:0n)),wide(999n)])}))
+      ...currentLimitTokens(limitDirection,c,defaultPair.tokens).map((address,i)=>({address,...debit.encodeEventLog(debit.getEvent('Transfer')!,[owner,c.core,wide((i?0n:limitAmount)+(badPoolDebit?1n:0n)),wide(999n)])}))
     ]:status===1&&(limitClaim||limitClose)?[
       {address:c.core,...currentLimitAbi.encodeEventLog(currentLimitAbi.getEvent(limitClaim?'FixedProceedsClaimed':'FixedPositionClosed')!,[limitId])},
       ...(limitClose?[{address:nft,...mint.encodeEventLog(mint.getEvent('Transfer')!,[owner,toBeHex(0n,20),limitId])}]:[]),
-      ...c.tokens.map(([address],i)=>({address,...debit.encodeEventLog(debit.getEvent('Transfer')!,[c.core,owner,wide(999n),wide(limitPayouts[i]+(badLimitPayout?1n:0n))])}))
+      ...defaultPair.tokens.map((address,i)=>({address,...debit.encodeEventLog(debit.getEvent('Transfer')!,[c.core,owner,wide(999n),wide(limitPayouts[i]+(badLimitPayout?1n:0n))])}))
     ]:[];
     const tx = { ...request, gasPrice: FIXED_GAS_PRICE, hash, chainId: 7082400n, from, to: target, value: 0n, blockNumber: head, blockHash: minedHash };
     const fundingLogs = status !== 1 ? [] : faucet ? [
@@ -620,7 +636,8 @@ const render = () => root.render(createElement(DexPage, { priceDisplayInverted, 
     getCurrentSharedDexTokenFundsCapability: async () => fundsCapability(),
     getCurrentDexPoolFundingCapability: () => issueCurrentDexPoolFundingCapability({ candidate: 'cheap-history' } as never),
     getCurrentDexPoolPositionCapability: () => issueCurrentDexPoolPositionCapability({ candidate: 'cheap-history' } as never),
-    getCurrentDexLimitCapability: () => issueCurrentDexLimitCapability({ candidate: 'cheap-history' } as never),
+    // The App selects the Limit market pair; the session passes it to the capability, as the App shell does.
+    getCurrentDexLimitCapability: (_chain?: bigint, options?: { selectedPair?: readonly [string, string] }) => issueCurrentDexLimitCapability({ candidate: 'cheap-history', selectedPair: options?.selectedPair } as never),
     getCurrentDexSubmissionCapability: () => issueCurrentDexSubmissionCapability({ admission: null, candidate: 'cheap-history', sessionOnboardInfo: onboard() } as never)
   }
 } as never }));
@@ -630,12 +647,12 @@ const pendingRecords = () => currentDexPendingStorage({ chainId: c.chainId, grap
 const control = {
   runtimeHashes,
   seedFunding: () => { limitBalances = [0n, 0n, 0n, 0n]; tokenAllowances = [0n, 0n, 0n, 0n]; tokenClaimed = [false, false, false, false]; },
-  seedLimit:(direction=true)=>{if(limitAmount!==0n)throw new Error('Limit fixture already funded');limitId=92n;limitAmount=300n;limitProceeds=7n;limitDirection=direction;limitTerms=[3n,10n,1n,7n,2n];initializeLimitAuthority();writeLimitSnapshot();},
+  seedLimit:(direction=true)=>{if(limitAmount!==0n)throw new Error('Limit fixture already funded');writeBlock=latestHead();limitAmount=300n;limitProceeds=7n;limitDirection=direction;limitTerms=[3n,10n,1n,7n,2n];initializeLimitAuthority();writeLimitSnapshot();},
   binding: () => {const captured=mountedOwner;const guard=()=>{assertCurrent();if(mountedOwner!==captured)throw new Error('Wallet or network changed');};return { signer, readProvider, ownerAddress: captured, chainId: 7082400n,
     assertCurrent: async () => guard(), assertSnapshotCurrent: guard };},
   snapshot: () => ({ sends, calls, signingAttempts, inputSignatureRequests, operationId: operationId.toString(), stage, quoteTerms,
     allowances: tokenAllowances.map(String),
-    limit:{id:limitId.toString(),unspent:limitAmount.toString(),proceeds:limitProceeds.toString(),closed:limitClosed,balances:limitBalances.map(String),status:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,2n)}`)??0n).toString(),coreLifecycle:(limitWords.get(`${c.core}:${currentLimitMappingSlot(24n,20n)+11n}`)??0n).toString(),engineLifecycle:(limitWords.get(`${engine}:${currentLimitMappingSlot(24n,9n)+11n}`)??0n).toString()},pending: pendingRecords()?.getItem(PENDING_KEY) ?? null }),
+    limit:{id:limitId.toString(),unspent:limitAmount.toString(),proceeds:limitProceeds.toString(),closed:limitClosed,balances:limitBalances.map(String),status:limitWord(limitEngine,currentLimitMappingSlot(LIMIT_SOURCE,2n)).toString(),coreLifecycle:limitWord(c.core,currentLimitMappingSlot(LIMIT_SOURCE,20n)+11n).toString(),engineLifecycle:limitWord(limitEngine,currentLimitMappingSlot(LIMIT_SOURCE,9n)+11n).toString()},pending: pendingRecords()?.getItem(PENDING_KEY) ?? null }),
   // Changes the saved pending action through the production record storage and returns the record as it was.
   editPending: (patch: Record<string, unknown>) => {
     const saved = JSON.parse(pendingRecords()!.getItem(PENDING_KEY)!);
@@ -693,14 +710,14 @@ const control = {
   },
   // Only the fake chain ledger survives an actual page reload; no prepared/issued app objects or signer are transferred.
   exportChain: () => JSON.stringify({ blockTimes: [...blockTimes], blockTransactions: [...blockTransactions], head, stage, deadline, context, profile, nonce, operationId, nextOperationId, operationTokens, fundedBlock, refundOnly, operationMaximum,
-    sends, signingAttempts, tokenAllowances, tokenClaimed, claimStatus,claimRevision,claimOwnership,claimLifecycle,claimOwner,claimContext,claimValues,poolPositionId,limitId,limitDirection,limitAmount,limitTerms,limitProceeds,limitClosed,limitBalances,limitWords:[...limitWords], storage: [...storage], accountWrites: [...accountWrites], claimPlain: [...claimPlain], exitPreview, writeBlock, contextSequence, poolMarket, poolContext, poolAmounts, txs: [...txs], mined: [...mined] }, (_key, value) =>
+    sends, signingAttempts, tokenAllowances, tokenClaimed, poolPositionId,limitId,limitDirection,limitAmount,limitTerms,limitProceeds,limitClosed,limitBalances,limitModel: true, storage: [...storage], accountWrites: [...accountWrites], claimPlain: [...claimPlain], exitPreview, writeBlock, contextSequence, poolMarket, poolContext, poolAmounts, txs: [...txs], mined: [...mined] }, (_key, value) =>
     typeof value === 'bigint' ? { __testBigInt: value.toString() } : value),
   restoreChain: (raw: string) => {
     const saved = JSON.parse(raw, (_key, value) => value?.__testBigInt !== undefined ? BigInt(value.__testBigInt) : value);
     ({ head, stage, deadline, context, profile, nonce, operationId, nextOperationId, signingAttempts } = saved);
     if (saved.operationTokens) ({ operationTokens, fundedBlock, refundOnly, operationMaximum } = saved);
-    if(saved.claimValues)({claimStatus,claimRevision,claimOwnership,claimLifecycle,claimOwner,claimContext,claimValues,poolPositionId}=saved);
-    if(saved.limitWords){({limitId,limitDirection,limitAmount,limitTerms}=saved);({limitProceeds,limitClosed,limitBalances}=saved);limitWords=new Map(saved.limitWords);}
+    if(saved.poolPositionId!==undefined)({poolPositionId}=saved);
+    if(saved.limitModel){({limitId,limitDirection,limitAmount,limitTerms}=saved);({limitProceeds,limitClosed,limitBalances}=saved);}
     if (saved.tokenAllowances) ({ tokenAllowances, tokenClaimed } = saved);
     if (saved.storage) { storage = new Map(saved.storage); accountWrites = new Map(saved.accountWrites); claimPlain = new Map(saved.claimPlain);
       ({ writeBlock, contextSequence, poolMarket, poolContext, poolAmounts, exitPreview } = saved); }
