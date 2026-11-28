@@ -434,7 +434,7 @@ test('current-token funding known wrong private credit remains blocked, never me
   await expect(current.getByRole('button', { name: 'Claim 10,000.0 HBR', exact: true })).toBeDisabled();
   // The swap is also held: Get Quote checks the saved funding action first and stops before any signature.
   const swap = await quote(page);
-  await expect(status(swap)).toHaveText('Reconcile the pending or active owner record before normal use.');
+  await expect(status(swap)).toContainText('Known beta funding verification failure');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect((await control(page).snapshot()).inputSignatureRequests).toBe(0);
   expect((await control(page).snapshot()).pending).not.toBeNull(); expect((await control(page).snapshot()).sends).toHaveLength(1);
@@ -986,8 +986,7 @@ test('async mined Accept stays pending CW00503 known hash and blocked verificati
   await page.screenshot({ path: info.outputPath('cw00503-known-hash-blocked.png') });
 });
 
-// App finding (CW-112): build 13 checks the private Quote against the protections before it opens the review, so a Quote below the minimum fill shows "Private verification failed" and never this read-only "Quote cannot be accepted" review.
-for (const width of [1440, 390]) test.fixme(`shows a read-only review when the private Quote misses minimum fill at ${width}px`, async ({ page }, info) => {
+for (const width of [1440, 390]) test(`shows a read-only review when the private Quote misses minimum fill at ${width}px`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
   const swap = await ready(page);
   await control(page).set({ belowMinimumFill: true });
@@ -1016,9 +1015,11 @@ test('async rejected Quote offers Cancel and confirms release at stage 8', async
   const swap = await ready(page, true);
   await control(page).set({ belowMinimumFill: true });
   await reviewButton(swap).click();
-  // The App reports the rejected Quote as a failed private check (see the finding at the read-only review test);
-  // it opens no review and sends nothing.
-  await expect(status(swap)).toHaveText('Private verification failed: Current-mode private receipt violates the protected intent.');
+  // CW-170: the App shows the rejected Quote as a read-only review with no Accept, and sends nothing.
+  const rejected = page.getByRole('dialog', { name: 'Quote cannot be accepted', exact: true });
+  await expect(rejected).toContainText('Below your minimum fill');
+  await expect(rejected.getByRole('button', { name: 'Accept quote', exact: true })).toHaveCount(0);
+  await rejected.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect((await control(page).snapshot()).signingAttempts).toBe(1);
   await expect(swap.getByRole('button', { name: 'Cancel swap', exact: true })).toBeEnabled();
@@ -1147,8 +1148,7 @@ test.describe('completion', () => {
     await expect(swap.getByRole('button', { name: 'New Quote', exact: true })).toBeEnabled();
     await expect(swap.getByText(/^Paid /)).toHaveCount(0);
   });
-  // App finding (CW-112): after an expired Fast Quote, New Quote and then Get Quote stop with "Reconcile the active owner swap before another Quote."; only a second Check current state closes the expired Quote in the owner record.
-  test.fixme('expired Fast Quote permits a new unfunded Fast Quote', async ({ page }) => {
+  test('expired Fast Quote permits a new unfunded Fast Quote', async ({ page }) => {
     const swap = await expireDuringReview(page);
     await swap.getByRole('button', { name: 'New Quote', exact: true }).click();
     await ready(page);
@@ -1227,15 +1227,22 @@ test.describe('completion', () => {
     await expect(swap.getByText(/^Paid /)).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });
-  // App finding (CW-112): after a reverted Accept the App shows READY and Review and Accept, but the second Accept stops with "Owner beta swap scope, phase or prior reservation changed." and Cancel quote stops with "Fast Quote has funding, an Accept reservation or unresolved accounting."; the Quote stays until it expires.
-  test.fixme('canonical status-0 Accept offers a safe retry from READY', async ({ page }) => {
+  // CW-170: the owner record holds one Accept for each Quote. After a reverted Accept the App says so, sends
+  // nothing more for this Quote, and closes the Quote at expiry so that a new Quote can start.
+  test('canonical status-0 Accept blocks a second Accept and permits a new Quote after expiry', async ({ page }) => {
+    await page.clock.install();
     const swap = await revertedAccept(page);
     await reviewButton(swap).click();
-    const retry = reviewDialog(page);
-    await expect(retry).toBeVisible();
-    await retry.getByRole('button', { name: 'Accept quote', exact: true }).click();
-    await expect(status(swap)).toHaveText('Settlement confirmed by the private receipt.');
-    expect((await control(page).snapshot()).signingAttempts).toBe(3);
+    await expect(status(swap)).toHaveText('The Accept for this Quote failed on chain and moved no funds. This Quote cannot be accepted again. When it expires, use Check current state, then New Quote.');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect((await control(page).snapshot()).signingAttempts).toBe(2);
+    await page.clock.fastForward(901_000);
+    await checkState(swap);
+    await expect(status(swap)).toHaveText('Fast Quote expired. Quote did not fund the swap; create a new Quote.');
+    await swap.getByRole('button', { name: 'New Quote', exact: true }).click();
+    await ready(page);
+    await expect(operationFacts(swap)).toContainText('Operation102');
+    expect((await control(page).snapshot()).sends.map(row => row.name)).toEqual(['quoteFastPool', 'acceptFastPool', 'quoteFastPool']);
   });
 
   // The current App restores an open Quote of the same owner and privacy session after a reload (the old App
@@ -1494,9 +1501,10 @@ for (const width of [1440, 390]) test(`guided reloaded confirmed approval reache
   await reloadWithChain(page, await exportChain(page));
   const current = await quoteInputs(page);
   const funding = fundingPanel(page);
-  // Get Quote stops at the saved approval before any signature; the state check verifies it.
+  // CW-170: Get Quote verifies the saved approval before any signature. A failed balance read stops it there.
+  await control(page).set({ balanceReadFailure: true });
   await current.getByRole('button', { name: 'Get Quote', exact: true }).click();
-  await expect(status(current)).toHaveText('Reconcile the pending or active owner record before normal use.');
+  await expect(status(current)).toContainText('Test balance read unavailable');
   await expect(current.getByRole('button', { name: 'Check funding and continue', exact: true })).toBeVisible();
   await expect(current.getByLabel('Maximum input', { exact: true })).toBeDisabled();
   await control(page).set({ balanceReadFailure: true });
@@ -1566,8 +1574,7 @@ test('guided funding retry waits for an actual receipt without Quote or duplicat
   expect((await control(page).snapshot()).signingAttempts).toBe(before.signingAttempts + 1);
 });
 
-// App finding (CW-112): with a pending or mined swap approval, "Check funding and continue" always stops with "Reconcile the pending or active owner record before normal use."; only Check current state verifies the approval.
-test.fixme('guided Check funding and continue verifies the mined approval and continues to the Quote', async ({ page }) => {
+test('guided Check funding and continue verifies the mined approval and continues to the Quote', async ({ page }) => {
   await page.clock.install();
   await page.evaluate(() => (window as unknown as { __currentJourney: Control }).__currentJourney.seedFunding());
   await control(page).set({ balances: ['100', '100'], receiptAvailable: false });
@@ -1608,8 +1615,9 @@ test('guided wrong faucet credit locks Quote and remains blocked after reload', 
   await claimTokens(page, panel);
   await expect(fundingStatus(panel)).toHaveText('Beta funding private accounting, allowance or policy differs.');
   expect(JSON.parse((await control(page).snapshot()).pending!)).toMatchObject({ phase: 'token-faucet', verificationBlocked: true });
+  // CW-170: Get Quote checks the saved funding action itself and reports the same hold as the state check.
   const swap = await quote(page);
-  await expect(status(swap)).toHaveText('Reconcile the pending or active owner record before normal use.');
+  await expect(status(swap)).toContainText('Known beta funding verification failure');
   await checkState(swap);
   await expect(status(swap)).toContainText('Known beta funding verification failure');
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -1617,7 +1625,7 @@ test('guided wrong faucet credit locks Quote and remains blocked after reload', 
   await reloadWithChain(page, await exportChain(page));
   const current = await quoteInputs(page);
   await current.getByRole('button', { name: 'Get Quote', exact: true }).click();
-  await expect(status(current)).toHaveText('Reconcile the pending or active owner record before normal use.');
+  await expect(status(current)).toContainText('Known beta funding verification failure');
   await checkState(current);
   await expect(status(current)).toContainText('Known beta funding verification failure');
   await expect(current.getByLabel('Maximum input', { exact: true })).toBeDisabled();

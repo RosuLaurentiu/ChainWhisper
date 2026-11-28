@@ -14,6 +14,7 @@ import type { issueCurrentDexQuoteCapability } from '../features/wallet/currentD
 import { currentDexRestoredPlan, assertCurrentDexQuoteNotRestored } from '../features/wallet/currentDexQuoteCapability';
 import { CURRENT_CHEAP_DEX_QUOTE_ABI, CURRENT_SLIPPAGE_DEX_QUOTE_ABI, decodeCurrentCheapDexOperation, type CurrentCheapDexProfile } from './currentDexOperation';
 import { CURRENT_DEX_ACCEPT_ABI, CURRENT_SLIPPAGE_DEX_ACCEPT_ABI } from './currentDexQuoteReview';
+export const CURRENT_DEX_REVERTED_ACCEPT_MESSAGE = 'The Accept for this Quote failed on chain and moved no funds. This Quote cannot be accepted again. When it expires, use Check current state, then New Quote.';
 export class CurrentDexPrivateReceiptError extends Error {
   constructor(message: string) {
     super(`Private verification failed: ${message}`);
@@ -663,7 +664,7 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
   });
   const checkReceiptIntent = (receipt: CurrentCheapReceipt, issued: CurrentCheapDexIssuedQuote,
     prepared: CurrentCheapDexPreparedQuote, origin: { number: bigint; hash: string }, released: boolean,
-    expectedContext = issued.operation.contextHash) => {
+    expectedContext = issued.operation.contextHash, reviewOnly = false) => {
     if (receipt.operation.profile !== issued.intent.profile || receipt.chainId !== chainId || receipt.operationId !== issued.operationId ||
         !sameAddress(receipt.principal, owner) || !sameAddress(receipt.core, core) || receipt.runtimeHash !== runtime ||
         receipt.releaseId !== c.releaseId || receipt.operation.contextHash !== expectedContext ||
@@ -676,17 +677,19 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
         (released && (receipt.operation.stage !== stages.released || a.filled)) ||
         (!a.filled ? a.actualInput !== 0n || a.refund !== i.maximumInput ||
           a.grossOutput !== 0n || a.fee !== 0n || a.netOutput !== 0n
-        : a.actualInput <= 0n || a.actualInput < i.minimumInput || a.netOutput <= 0n ||
-          a.netOutput < i.minimumOutput || a.netOutput * i.rateDenominator < a.actualInput * i.rateNumerator)) {
+        // CW-170: a READY Quote that misses the owner's protections is not a verification failure. The review
+        // step shows it as a read-only review with no Accept; the strict check runs again before any signing.
+        : a.actualInput <= 0n || a.netOutput <= 0n || !(reviewOnly && receipt.kind === 'quote') && (a.actualInput < i.minimumInput ||
+          a.netOutput < i.minimumOutput || a.netOutput * i.rateDenominator < a.actualInput * i.rateNumerator))) {
       throw new Error('Current-mode private receipt violates the protected intent.');
     }
   };
   const verifyReceipt = async (issued: CurrentCheapDexIssuedQuote, prepared: CurrentCheapDexPreparedQuote,
-    origin: { number: bigint; hash: string }, released = false, expectedContext = issued.operation.contextHash, originalQuote?: CurrentCheapReceipt) => {
+    origin: { number: bigint; hash: string }, released = false, expectedContext = issued.operation.contextHash, originalQuote?: CurrentCheapReceipt, reviewOnly = false) => {
     try {
     const receipt = originalQuote ?? await readReceipt(issued, origin);
     await transport.assertCurrent();
-    checkReceiptIntent(receipt, issued, prepared, origin, released, expectedContext);
+    checkReceiptIntent(receipt, issued, prepared, origin, released, expectedContext, reviewOnly);
     if(originalQuote&&(!['quote','pending'].includes(receipt.kind)||![stages.ready,stages.funded].includes(receipt.operation.stage??0)))throw new Error('Original Quote receipt is not a canonical READY or funded snapshot.');
     const a = receipt.amounts, i = prepared.intent;
     if (i.quoteProtocol === 'quote-slippage' && a.filled && receipt.kind !== 'quote' && !originalQuote) {
@@ -1022,9 +1025,12 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       if(BigInt(currentNativeSwapCheckpoint(signer).windowStart??budget.start)>=CURRENT_APP_PARTIAL_REFUND_TRIAL.approvedAt)closedTrialScopes.add(scope);
     }
     // Fast funds only in Accept; a still-ready expired Quote with no Accept reservation cannot hold tokens.
+    // CW-170: the same holds when each Accept of this Quote has a confirmed status-0 receipt (rechecked above):
+    // a reverted Accept moved nothing. Without this, a reverted Accept kept the owner record open with no exit.
     if(current.intent.profile==='fast-pool'&&current.operation.ready&&current.operation.phase==='expired-unrecovered'&&
         current.block.timestamp>=current.intent.deadline&&head.timestamp>=current.intent.deadline&&
-        !budget.charges.some(row=>row.scope===scope&&row.phase==='accept')){
+        budget.charges.filter(row=>row.scope===scope&&row.phase==='accept').length===checked.filter(row=>row.scope===scope&&row.phase==='accept').length&&
+        checked.filter(row=>row.scope===scope&&row.phase==='accept').every(row=>row.receipt.status===0)){
       completeCurrentNativeSwapScope(signer,scope);
       renewCurrentNativeSwapClosedWindow(signer,owner,c,scope,now());
       await persistBudget();closedTrialScopes.add(scope);
@@ -1354,17 +1360,23 @@ const createCheapDexSubmissionAdapter = ({ signer, ownerAddress, chainId, transp
       if(issued.intent.profile==='fast-pool'&&isCurrentDexBrowserSigner(signer,c.graph,owner)&&hasCurrentNativeSigningBudget(signer)&&
           currentNativeSwapCheckpoint(signer).activeSwap!==`quote:${keccak256(preparedQuote.data)}`)
         throw new Error('This Fast Quote is no longer active in the App. Request a new Quote.');
+      // CW-170: the owner record holds one Accept for each Quote. After a reverted Accept, say so before the review.
+      if(issued.intent.profile==='fast-pool'&&isCurrentDexBrowserSigner(signer,c.graph,owner)&&hasCurrentNativeSigningBudget(signer)&&
+          currentNativeSwapCheckpoint(signer).charges.some(row=>row.scope===`quote:${keccak256(preparedQuote.data)}`&&row.phase==='accept'&&row.hash!==null)&&
+          !reservations.accept.has(`${chainId}:${owner}:fast-pool:${issued.operationId}:${issued.operation.contextHash}`.toLowerCase()))
+        throw new Error(CURRENT_DEX_REVERTED_ACCEPT_MESSAGE);
       const ready = await refreshReady(issued, preparedQuote);
       if (usesCurrentSwapAccounting(c)) assertCurrentNativeSwapIntent(preparedQuote, now(), false, true, signer);
       const key = `${chainId}:${owner}:${ready.intent.profile}:${ready.operationId}:${ready.operation.contextHash}`.toLowerCase();
       if (reservations.accept.has(key)) throw new Error('Current-mode Accept was already submitted. Recover it instead.');
       reservations.accept.add(key); let signing = false;
       try {
-        const quoted = cheapProtocol ? await verifyReceipt(ready, preparedQuote, ready.originBlock) : undefined;
+        const quoted = cheapProtocol ? await verifyReceipt(ready, preparedQuote, ready.originBlock, false, ready.operation.contextHash, undefined, true) : undefined;
         const prepared = await reviewAcceptance(ready, confirm, quoted);
         await transport.assertCurrent();
         if (!prepared) { reservations.accept.delete(key); return null; }
         if (quoted) {
+          checkReceiptIntent(quoted, ready, preparedQuote, ready.originBlock, false);
           if (quoted.kind !== 'quote' || !quoted.amounts.filled || quoted.amounts.actualInput <= 0n || quoted.amounts.netOutput <= 0n) {
             if (usesCurrentNativeSwapChecks(c) && ready.intent.profile === 'fast-pool' && quoted.kind === 'quote' && !quoted.amounts.filled) {
               completeCurrentNativeSwapScope(signer, `quote:${keccak256(preparedQuote.data)}`); await persistBudget();

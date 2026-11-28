@@ -629,6 +629,17 @@ export function CurrentSwapWorkspace({
       if (currentWallet.current !== capturedWallet.current) throw new Error('Wallet changed during the operation check.');
       setIssued(current);
       if (current.operation.phase === 'expired-unrecovered') {
+        // CW-170: an expired Fast Quote with no Accept holds no funds. Close it in the owner record in this
+        // same check, so that New Quote does not stop at admission. The restore step applies its own proof.
+        if (activeIssued.intent.profile === 'fast-pool' && activeSender?.readCurrentCheapRestoreHint()) {
+          await restoreCurrentTrialQuote(sharedWalletSession!.actions!.getCurrentDexQuoteCapability!, activeSender,
+            { owner: currentWallet.current.address!, inputToken: current.intent.inputToken, outputToken: current.intent.outputToken },
+            () => {
+              if (currentWallet.current !== capturedWallet.current || reviewScope.current !== currentReviewScope) {
+                throw new Error('Wallet, pair, candidate or privacy session changed during the operation check.');
+              }
+            });
+        }
         setStage('expired'); setMessage(activeIssued.intent.profile === 'fast-pool'
           ? 'Fast Quote expired. Quote did not fund the swap; create a new Quote.'
           : current.operation.stage === currentCheapDexStages(current.intent.candidate).funded
@@ -672,17 +683,20 @@ export function CurrentSwapWorkspace({
       const { numerator, denominator } = rate;
       setStage('preparing'); setMessage('Checking current test contracts.');
       const saved = readCurrentDexPendingAttempt(currentDexPendingStorage(currentDexRecordScope(candidate, sharedWalletSession?.walletAddress)));
+      // CW-170: verify a saved funding action before the contract check. That check admits only an idle owner
+      // record, so it stopped "Check funding and continue" while the approval was still saved.
+      if (fundingRecovery || saved?.phase === 'token-faucet' || saved?.phase === 'token-approve') {
+        setFundingRecovery(true); setMessage('Checking the existing funding action. No new approval is being sent.');
+        const value = await checkFunding(submission ?? await getSubmission());
+        if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during input funding.');
+        if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during input funding.');
+        setFundingPending(null); sharedFundingPending.current = null; setFundingRecovery(false);
+        if ('fundingOutcome' in value && value.fundingOutcome === 'reverted') throw new Error('Funding reverted. Private state is unchanged.');
+      }
       const { sender } = await verifyCurrentTrialCandidate(sharedWalletSession!.actions!.getCurrentDexSubmissionCapability!, attemptWallet.address!, candidateKey);
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during the contract check.');
       if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during the contract check.');
       setSubmission(sender); setVerifiedScope(currentReviewScope);
-      if (fundingRecovery || saved?.phase === 'token-faucet' || saved?.phase === 'token-approve') {
-        setFundingRecovery(true); setMessage('Checking the existing funding action. No new approval is being sent.');
-        const value = await checkFunding(sender);
-        if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during input funding.');
-        setFundingPending(null); sharedFundingPending.current = null; setFundingRecovery(false);
-        if ('fundingOutcome' in value && value.fundingOutcome === 'reverted') throw new Error('Funding reverted. Private state is unchanged.');
-      }
       const outstanding = await sender.recoverPendingCurrentCheapAttempt();
       if (currentWallet.current !== attemptWallet) throw new Error('Wallet changed during the pending-action check.');
       if (reviewScope.current !== currentReviewScope) throw new Error('Swap candidate, pair or privacy session changed during the pending-action check.');
