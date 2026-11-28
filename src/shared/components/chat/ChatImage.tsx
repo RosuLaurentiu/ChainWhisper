@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, memo, useRef } from 'react';
+import { useEffect, useState, useCallback, memo } from 'react';
 import {
   parseImageTag,
   fetchAndDecryptToUrl,
@@ -7,7 +7,7 @@ import {
   isPastChatImageRetentionWindow
 } from '../../../lib/imagePull';
 import type { ParsedImageTag } from '../../../lib/imagePull';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import AppDialog from '../../ui/AppDialog';
 
 type Props = { tag: string; parsed?: ParsedImageTag; messageTimestamp?: number };
 type LoadImageUrl = (signal: AbortSignal) => Promise<string>;
@@ -91,7 +91,6 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   const [expired, setExpired] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
-  const lightboxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -149,7 +148,6 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
 
   const openLightbox = useCallback(() => setLightboxOpen(true), []);
   const closeLightbox = useCallback(() => setLightboxOpen(false), []);
-  useModalA11y({ dialogRef: lightboxRef, isOpen: lightboxOpen, onClose: closeLightbox });
 
   if (expired) return <div className="chat-image-expired">This image expired after 24 hours.</div>;
   if (error) {
@@ -180,29 +178,24 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
       >
         <img src={url} alt="Image" className="chat-image" />
       </button>
-      {lightboxOpen ? (
-        <div
-          ref={lightboxRef}
-          className="image-lightbox-backdrop"
-          onClick={closeLightbox}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Image preview"
-          tabIndex={-1}
-        >
-          <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className="image-lightbox-close"
-              onClick={closeLightbox}
-              aria-label="Close image preview"
-            >
-              Close
-            </button>
-            <img src={url} alt="Image enlarged" />
-          </div>
+      <AppDialog
+        open={lightboxOpen}
+        onClose={closeLightbox}
+        surfaceClassName="image-lightbox-backdrop"
+        label="Image preview"
+      >
+        <div className="image-lightbox-content">
+          <button
+            type="button"
+            className="image-lightbox-close"
+            onClick={closeLightbox}
+            aria-label="Close image preview"
+          >
+            Close
+          </button>
+          <img src={url} alt="Image enlarged" />
         </div>
-      ) : null}
+      </AppDialog>
     </>
   );
 }

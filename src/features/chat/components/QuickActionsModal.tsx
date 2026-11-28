@@ -1,7 +1,7 @@
-import { useRef, type FormEvent } from 'react';
+import type { FormEvent } from 'react';
 import { GROUP_PRIVATE_TITLE_LABEL } from '../../../lib/appShared';
 import { moveFocusWithin } from '../../../shared/components/a11y';
-import { useModalA11y } from '../../../shared/hooks/useModalA11y';
+import AppDialog from '../../../shared/ui/AppDialog';
 import { useChatUiStore } from '../chatUiStore';
 
 type QuickActionsModalProps = {
@@ -45,26 +45,12 @@ export default function QuickActionsModal({
   onJoinGroupWithCode,
   error
 }: QuickActionsModalProps) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
   const quickActionTab = useChatUiStore((state) => state.quickActionTab);
   const setQuickActionTab = useChatUiStore((state) => state.setQuickActionTab);
-  useModalA11y({ dialogRef, isOpen, onClose });
-
-  if (!isOpen) {
-    return null;
-  }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        ref={dialogRef}
-        className="modal-card quick-actions-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="quick-actions-title"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+    <AppDialog open={isOpen} onClose={onClose} surfaceClassName="modal-backdrop" labelledBy="quick-actions-title">
+      <div className="modal-card quick-actions-modal">
         <h3 id="quick-actions-title">New</h3>
         <div
           className="quick-actions-tabs"
@@ -217,6 +203,6 @@ export default function QuickActionsModal({
           </button>
         </div>
       </div>
-    </div>
+    </AppDialog>
   );
 }

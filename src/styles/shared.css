@@ -22,6 +22,30 @@
   letter-spacing: -0.02em;
 }
 
+/* Full-screen layer of AppDialog (CW-160). ui-sdk shows it in the browser top layer as a popover. These values
+   remove the popover and ui-sdk web.css defaults, so the layer class that follows (modal-backdrop,
+   image-lightbox-backdrop) gives the same look as before. Keep this rule before those classes. */
+.app-dialog-surface {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  outline-style: none;
+  touch-action: auto;
+  -webkit-tap-highlight-color: inherit;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  gap: normal;
+  flex-direction: row;
+  overflow: visible;
+  overscroll-behavior: auto;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

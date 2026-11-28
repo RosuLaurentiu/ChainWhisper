@@ -1,5 +1,5 @@
-import { useRef, type ReactNode } from 'react';
-import { useModalA11y } from '../../../shared/hooks/useModalA11y';
+import type { ReactNode } from 'react';
+import AppDialog from '../../../shared/ui/AppDialog';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 
 type TradeActionConfirmModalProps = {
@@ -15,26 +15,23 @@ export default function TradeActionConfirmModal({
   onCancel,
   onConfirm
 }: TradeActionConfirmModalProps) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const isOpen = Boolean(confirmation);
-  useModalA11y({ dialogRef, isOpen, onClose: onCancel });
-
   if (!confirmation) {
-    return null;
+    return (
+      <AppDialog open={false} onClose={onCancel} surfaceClassName="modal-backdrop">
+        {null}
+      </AppDialog>
+    );
   }
 
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div
-        ref={dialogRef}
-        className="modal-card trade-action-confirm-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="trade-action-confirm-title"
-        aria-describedby={confirmation.message ? 'trade-action-confirm-message' : undefined}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+    <AppDialog
+      open
+      onClose={onCancel}
+      surfaceClassName="modal-backdrop"
+      labelledBy="trade-action-confirm-title"
+      describedBy={confirmation.message ? 'trade-action-confirm-message' : undefined}
+    >
+      <div className="modal-card trade-action-confirm-modal">
         <div className="trade-action-confirm-content">
           <header className="trade-action-confirm-heading">
             <h3 id="trade-action-confirm-title">{confirmation.title}</h3>
@@ -89,6 +86,6 @@ export default function TradeActionConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </AppDialog>
   );
 }

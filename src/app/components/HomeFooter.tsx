@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useState } from 'react';
 import { ExternalLink, X } from 'lucide-react';
-import { useModalA11y } from '../../shared/hooks/useModalA11y';
+import AppDialog from '../../shared/ui/AppDialog';
 
 type LegalDocumentKey = 'privacy' | 'terms';
 
@@ -139,43 +138,32 @@ type HomeLegalDialogProps = {
 };
 
 function HomeLegalDialog({ activeDocument, onClose }: HomeLegalDialogProps) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const isOpen = activeDocument !== null;
-
-  useModalA11y({ dialogRef, isOpen, onClose });
-
-  useEffect(() => {
-    if (!isOpen) {
-      return undefined;
-    }
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isOpen]);
-
-  if (!activeDocument || typeof document === 'undefined') {
+  if (typeof document === 'undefined') {
     return null;
+  }
+
+  if (!activeDocument) {
+    return (
+      <AppDialog open={false} onClose={onClose} surfaceClassName="modal-backdrop home-legal-backdrop" container={document.body}>
+        {null}
+      </AppDialog>
+    );
   }
 
   const legalDocument = LEGAL_DOCUMENTS[activeDocument];
   const titleId = `home-${activeDocument}-title`;
   const summaryId = `home-${activeDocument}-summary`;
 
-  return createPortal(
-    <div className="modal-backdrop home-legal-backdrop" onClick={onClose}>
-      <div
-        ref={dialogRef}
-        className="modal-card home-legal-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={summaryId}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+  return (
+    <AppDialog
+      open
+      onClose={onClose}
+      surfaceClassName="modal-backdrop home-legal-backdrop"
+      labelledBy={titleId}
+      describedBy={summaryId}
+      container={document.body}
+    >
+      <div className="modal-card home-legal-dialog">
         <header className="home-legal-dialog-head">
           <div>
             <p className="home-legal-dialog-kicker">ChainWhisper web app</p>
@@ -224,8 +212,7 @@ function HomeLegalDialog({ activeDocument, onClose }: HomeLegalDialogProps) {
           </button>
         </div>
       </div>
-    </div>,
-    document.body
+    </AppDialog>
   );
 }
 
