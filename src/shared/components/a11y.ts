@@ -67,3 +67,11 @@ export const closeDetailsOnEscape = (event: KeyboardEvent<HTMLDetailsElement>) =
   event.currentTarget.open = false;
   event.currentTarget.querySelector('summary')?.focus();
 };
+
+/**
+ * Builds an `aria-describedby` value from the ids of the elements that describe a control, for example a help
+ * text and a shown error. Values that are not set are left out. A control with a shown error must name the
+ * error here, so that a screen reader reads the error with the control.
+ */
+export const describedByIds = (...ids: Array<string | false | null | undefined>) =>
+  ids.filter((id): id is string => Boolean(id)).join(' ') || undefined;

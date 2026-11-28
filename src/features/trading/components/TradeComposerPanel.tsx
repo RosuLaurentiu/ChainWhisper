@@ -16,6 +16,7 @@ import {
 import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { TradePricingField } from '../../../lib/tradePricing';
+import { describedByIds } from '../../../shared/components/a11y';
 import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 
 export type TradeComposerTokenOption = {
@@ -281,6 +282,7 @@ export function TradeTokenSelect({
   excludedValues = [],
   disabled,
   invalid,
+  describedBy,
   balanceLabel,
   verifyUrl
 }: {
@@ -290,6 +292,8 @@ export function TradeTokenSelect({
   excludedValues?: string[];
   disabled?: boolean;
   invalid?: boolean;
+  /** Id of the shown error for this field. */
+  describedBy?: string;
   balanceLabel?: string;
   verifyUrl?: string;
 }) {
@@ -355,6 +359,7 @@ export function TradeTokenSelect({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-describedby={describedBy}
       >
         <span className="trade-token-select-trigger-copy">
           <strong>{selectedDisplay.symbol}</strong>
@@ -567,6 +572,7 @@ export default function TradeComposerPanel({
 }: TradeComposerPanelProps) {
   const priceInputId = useId();
   const termsHelpId = `${priceInputId}-terms-help`;
+  const errorId = (field: string) => `${priceInputId}-${field}-error`;
   const showOfferCustomToken = offerTokenSelection.startsWith('custom');
   const showRequestCustomToken = requestTokenSelection.startsWith('custom');
   const selectedOfferDisplay = parseTokenLabel(offerTokenOptions.find((option) => option.value === offerTokenSelection));
@@ -755,7 +761,7 @@ export default function TradeComposerPanel({
         inputMode="decimal"
         value={displayedPriceInput}
         aria-invalid={priceError ? 'true' : 'false'}
-        aria-describedby={pairTokensLocked ? termsHelpId : undefined}
+        aria-describedby={describedByIds(pairTokensLocked && termsHelpId, priceError && errorId('price'))}
         onChange={(event) => {
           if (showInvertedPriceDisplay && onPriceReverseInputChange) {
             onPriceReverseInputChange(event.target.value);
@@ -766,7 +772,7 @@ export default function TradeComposerPanel({
         placeholder={pricePlaceholder}
         disabled={sending}
       />
-      {priceError ? <p className="trade-compose-field-error" role="alert">{priceError}</p> : null}
+      {priceError ? <p id={errorId('price')} className="trade-compose-field-error" role="alert">{priceError}</p> : null}
     </div>
   ) : null;
 
@@ -885,6 +891,7 @@ export default function TradeComposerPanel({
               excludedValues={[requestTokenSelection]}
               disabled={sending}
               invalid={showOfferAssetError}
+              describedBy={showOfferAssetError ? errorId('offer-asset') : undefined}
               balanceLabel={offerBalanceSummaryLabel}
               verifyUrl={!showOfferCustomToken ? offerVerifyUrl : undefined}
             />
@@ -905,6 +912,7 @@ export default function TradeComposerPanel({
                   placeholder="Custom token contract address"
                   disabled={sending}
                   aria-invalid={showOfferAssetError ? 'true' : 'false'}
+                  aria-describedby={showOfferAssetError ? errorId('offer-asset') : undefined}
                 />
               </label>
               <div className="trade-compose-token-meta">
@@ -924,7 +932,7 @@ export default function TradeComposerPanel({
               </div>
             </>
           ) : null}
-          {showOfferAssetError ? <p className="trade-compose-field-error">{offerAssetError}</p> : null}
+          {showOfferAssetError ? <p id={errorId('offer-asset')} className="trade-compose-field-error">{offerAssetError}</p> : null}
           <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-amount-field', 'baseAmount')}>
               <span className="trade-compose-field-head">
                 <span className="trade-compose-field-label">{offerAmountLabel}</span>
@@ -940,7 +948,7 @@ export default function TradeComposerPanel({
                 inputMode="decimal"
                 value={offerAmountInput}
                 aria-label={`${offerAmountLabel} ${selectedOfferDisplay.symbol}`}
-                aria-describedby={pairTokensLocked ? termsHelpId : undefined}
+                aria-describedby={describedByIds(pairTokensLocked && termsHelpId, showOfferAmountError && errorId('offer-amount'))}
                 onChange={(event) => {
                   markTouched('offerAmount');
                   onOfferAmountInputChange(event.target.value);
@@ -953,7 +961,7 @@ export default function TradeComposerPanel({
               {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedOfferDisplay.symbol}</strong>{shownKindLabel(selectedOfferDisplay.kindLabel) ? <small>{selectedOfferDisplay.kindLabel}</small> : null}</span> : null}
             </div>
           </label>
-          {showOfferAmountError ? <p className="trade-compose-field-error">{offerAmountError}</p> : null}
+          {showOfferAmountError ? <p id={errorId('offer-amount')} className="trade-compose-field-error">{offerAmountError}</p> : null}
           {pricePlacement === 'sell-side' ? (
             <div className="trade-compose-inline-price">
               {priceField}
@@ -996,6 +1004,7 @@ export default function TradeComposerPanel({
               excludedValues={[offerTokenSelection]}
               disabled={sending}
               invalid={showRequestAssetError}
+              describedBy={showRequestAssetError ? errorId('request-asset') : undefined}
               balanceLabel={requestBalanceSummaryLabel}
               verifyUrl={!showRequestCustomToken ? requestVerifyUrl : undefined}
             />
@@ -1016,6 +1025,7 @@ export default function TradeComposerPanel({
                   placeholder="Custom token contract address"
                   disabled={sending}
                   aria-invalid={showRequestAssetError ? 'true' : 'false'}
+                  aria-describedby={showRequestAssetError ? errorId('request-asset') : undefined}
                 />
               </label>
               <div className="trade-compose-token-meta">
@@ -1035,7 +1045,7 @@ export default function TradeComposerPanel({
               </div>
             </>
           ) : null}
-          {showRequestAssetError ? <p className="trade-compose-field-error">{requestAssetError}</p> : null}
+          {showRequestAssetError ? <p id={errorId('request-asset')} className="trade-compose-field-error">{requestAssetError}</p> : null}
           <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-amount-field', 'quoteAmount')}>
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">{requestAmountLabel}</span>
@@ -1051,7 +1061,7 @@ export default function TradeComposerPanel({
                 inputMode="decimal"
                 value={requestAmountInput}
                 aria-label={`${requestAmountLabel} ${selectedRequestDisplay.symbol}`}
-                aria-describedby={pairTokensLocked ? termsHelpId : undefined}
+                aria-describedby={describedByIds(pairTokensLocked && termsHelpId, showRequestAmountError && errorId('request-amount'))}
                 onChange={(event) => {
                   markTouched('requestAmount');
                   onRequestAmountInputChange(event.target.value);
@@ -1064,7 +1074,7 @@ export default function TradeComposerPanel({
               {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedRequestDisplay.symbol}</strong>{shownKindLabel(selectedRequestDisplay.kindLabel) ? <small>{selectedRequestDisplay.kindLabel}</small> : null}</span> : null}
             </div>
           </label>
-          {showRequestAmountError ? <p className="trade-compose-field-error">{requestAmountError}</p> : null}
+          {showRequestAmountError ? <p id={errorId('request-amount')} className="trade-compose-field-error">{requestAmountError}</p> : null}
           {previewInReceivePanel ? renderTradePreview('trade-compose-preview trade-compose-inline-preview') : null}
         </section>
       </div>
@@ -1154,6 +1164,7 @@ export default function TradeComposerPanel({
                   placeholder={expiresNever ? 'Open' : 'Hours'}
                   disabled={sending || expiresNever}
                   aria-invalid={showExpiryError ? 'true' : 'false'}
+                  aria-describedby={showExpiryError ? errorId('expiry') : undefined}
                   aria-label="Expiry in hours"
                 />
                 {onExpiresNeverChange ? (
@@ -1225,7 +1236,7 @@ export default function TradeComposerPanel({
           </div>
         </div>
       </div>
-      {showExpiryError ? <p className="trade-compose-field-error">{expiryError}</p> : null}
+      {showExpiryError ? <p id={errorId('expiry')} className="trade-compose-field-error">{expiryError}</p> : null}
 
       {generalError && !generalErrorDuplicatesReadiness ? <p className="trade-compose-validation">{generalError}</p> : null}
     </div>

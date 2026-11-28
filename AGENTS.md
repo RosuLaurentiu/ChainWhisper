@@ -96,6 +96,11 @@ are historical evidence, not current compatibility requirements.
   ui-sdk parts directly. Compare computed styles before and after a conversion.
   A wrapper puts the class `app-ui` on each part; the `app-ui-reset` layer in
   base.css then removes the ui-sdk default look (CW-162).
+- Forms (CW-163): existing forms keep native inputs, wrapping labels and their
+  `aria-label` names; browser specs use those names. Link each shown field error
+  to its control with `describedByIds` from `src/shared/components/a11y.ts`.
+  ui-sdk Field needs one container and one label part for each field, so use it
+  for a new form only, not to rewrite a current one.
 - Route ownership is in src/shell/routing.ts. Keep same-App navigation and
   harmless aliases. An old contract link may show unsupported; never reinterpret
   its ID as an order on the current contract.
