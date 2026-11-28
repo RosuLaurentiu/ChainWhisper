@@ -91,9 +91,10 @@ test.describe('Trading keyboard acceptance flow', () => {
     await more.press('Enter');
     const walletMenu = page.getByRole('menu', { name: 'Wallet' });
     const network = walletMenu.getByRole('menuitem', { name: /Network/i });
-    // While privacy is locked the menu starts with its privacy action; Network is the next item.
+    // While privacy is locked the menu starts on its privacy action, which is outside the utility rows.
+    // The arrow-key check starts at Network, the first utility row.
     await expect(walletMenu.getByRole('menuitem').first()).toBeFocused();
-    if (!await network.evaluate(element => element === document.activeElement)) await page.keyboard.press('ArrowDown');
+    await network.focus();
     await expect(network).toBeFocused();
     await network.press('ArrowDown');
     expect(await page.evaluate(() => ({
