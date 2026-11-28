@@ -189,7 +189,7 @@ const MobileTokenMenu = ({
   onSelectWisp?: () => void;
   wispSelected: boolean;
   placement: 'summary' | 'inline';
-  menuRef?: RefObject<HTMLDivElement>;
+  menuRef?: RefObject<HTMLDivElement | null>;
   disabled?: boolean;
 }) => (
   <div

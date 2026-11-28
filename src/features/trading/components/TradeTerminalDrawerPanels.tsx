@@ -10,7 +10,7 @@ import {
 import { moveFocusWithin } from '../../../shared/components/a11y';
 
 type TradeTerminalOpenPanelProps = {
-  inputRef: RefObject<HTMLInputElement>;
+  inputRef: RefObject<HTMLInputElement | null>;
   tradeLinkInput: string;
   onTradeLinkInputChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;

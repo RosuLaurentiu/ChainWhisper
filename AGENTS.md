@@ -87,6 +87,13 @@ are historical evidence, not current compatibility requirements.
   active client until its reload adopts the new build. Copy only missing files
   from that verified build; reject a same-name hash mismatch. Keep the new HTML
   and manifests unchanged. This retains UI files, not old-contract readers.
+- ui-sdk (CW-159): before you use `@ui-sdk/react`, follow the ui-sdk skill in
+  `.agents/skills/ui-sdk` and read `node_modules/@ui-sdk/react/docs/llms.txt`.
+  To build a new component, also search `node_modules/@ui-sdk/react/docs/core.md`
+  by heading and read `rendering.md` next to it. Style each part with the App
+  tokens; the default `web.css` look must not replace the approved design.
+  Feature code uses the wrappers in `src/shared/ui` (CW-160) and does not import
+  ui-sdk parts directly. Compare computed styles before and after a conversion.
 - Route ownership is in src/shell/routing.ts. Keep same-App navigation and
   harmless aliases. An old contract link may show unsupported; never reinterpret
   its ID as an order on the current contract.

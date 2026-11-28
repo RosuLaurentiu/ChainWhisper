@@ -39,7 +39,7 @@ const readVisibleAnchor = (container: HTMLDivElement, ids: string[]) => {
 
 type UseVirtualizedPrependScrollAnchorOptions<TMessage extends MessageAnchorItem> = {
   messages: TMessage[];
-  scrollElementRef: RefObject<HTMLDivElement>;
+  scrollElementRef: RefObject<HTMLDivElement | null>;
   threadKey: string;
   totalSize: number;
 };

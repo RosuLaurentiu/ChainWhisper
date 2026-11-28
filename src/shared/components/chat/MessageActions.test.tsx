@@ -11,6 +11,10 @@ vi.mock('react', async (original) => ({
   useRef: () => ({ current: null })
 }));
 
+type PickerElement = ReactElement<{
+  role?: string; children?: unknown; disabled?: boolean; title?: string; 'aria-label'?: string; onClick: () => void;
+}>;
+
 const message = { id: 'message' } as ChatMessage;
 
 function reactionButtons(sendingReaction = false) {
@@ -21,10 +25,10 @@ function reactionButtons(sendingReaction = false) {
     reactionDisclosure: 'Reactions are public on-chain.',
     onToggleReactionPicker: vi.fn(), onSendReaction, onReplyToMessage: vi.fn()
   });
-  const children = tree.props.children as ReactElement[];
+  const children = tree.props.children as PickerElement[];
   const picker = children.find((child) => child?.props?.role === 'dialog')!;
   const buttons = (picker.props.children as unknown[]).flat().filter(
-    (child): child is ReactElement => Boolean(child && typeof child === 'object' && (child as ReactElement).type === 'button')
+    (child): child is PickerElement => Boolean(child && typeof child === 'object' && (child as PickerElement).type === 'button')
   );
   return { buttons, onSendReaction };
 }

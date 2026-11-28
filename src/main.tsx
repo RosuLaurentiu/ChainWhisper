@@ -10,6 +10,7 @@ import {
   stripStaleTradeSearchParams,
   type AppPage
 } from './shell/routing';
+import '@ui-sdk/core/web.css';
 import './styles.css';
 
 const App = lazy(() => import('./App'));
