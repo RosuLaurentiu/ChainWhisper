@@ -9,7 +9,7 @@ test('keeps the full application out of the initial Home module graph', async ({
   expect(requestedPaths).not.toContain('/src/App.tsx');
 
   await page.getByRole('button', { name: 'Open Trading', exact: true }).first().click();
-  await expect(page).toHaveURL(/\/otc\/desk$/);
+  await expect(page).toHaveURL(/\/dex$/);
   await expect.poll(() => requestedPaths.includes('/src/App.tsx')).toBe(true);
   await expect(page.getByRole('navigation', { name: 'Trading product' })).toBeVisible();
 });
@@ -22,6 +22,6 @@ test('keeps the lightweight Home shell contained on mobile', async ({ page }) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.getByRole('button', { name: 'Open Trading', exact: true }).first().click();
-  await expect(page).toHaveURL(/\/otc\/desk$/);
+  await expect(page).toHaveURL(/\/dex$/);
   await expect(page.getByRole('navigation', { name: 'Trading product' })).toBeVisible();
 });

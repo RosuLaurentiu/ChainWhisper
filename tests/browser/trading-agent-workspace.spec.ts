@@ -86,11 +86,10 @@ test.describe('shared Trading Agent workspace', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/dex/agent');
 
-    await expect(page.getByText('DEX preview', { exact: true })).toBeVisible();
+    await expect(page.getByText('DEX trade actions are not available in the agent yet.', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Pay and send/i })).toHaveCount(0);
-    const dexActions = page.locator('.p2p-agent-quick-action-grid button');
-    await expect(dexActions.first()).toBeDisabled();
-    await expect(page.getByText(/DEX preparation actions are preview-only/i)).toBeVisible();
+    // The Agent shows no DEX quick action while DEX actions are unavailable.
+    await expect(page.locator('.p2p-agent-quick-action-grid button')).toHaveCount(0);
   });
 
   test('keeps current swap modes and protections usable without enabling unverified signing', async ({ page }) => {
@@ -102,21 +101,24 @@ test.describe('shared Trading Agent workspace', () => {
       await page.goto('/dex');
       await expect(page).toHaveURL(/\/dex$/);
       expect(await page.title()).not.toBe('');
-      await expect(page.getByRole('heading', { name: 'Buy Test token 0', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Buy BCN', exact: true })).toBeVisible();
       const swap = page.getByRole('region', { name: 'Private Swap', exact: true });
       await expect(page.getByText('Testnet ready', { exact: true })).toHaveCount(0);
       await expect(page.locator('vite-error-overlay')).toHaveCount(0);
       await expect(swap.getByRole('button', { name: 'Fast', exact: true })).toHaveAttribute('aria-pressed', 'true');
       await swap.locator('.dex-v2-current-advanced > summary').click();
-      await expect(swap.getByText(/It does not scan Limit orders/)).toBeVisible();
+      await swap.locator('.dex-v2-extra-settings > summary').click();
+      await expect(swap.getByText('Pools only', { exact: true })).toBeVisible();
       await swap.getByLabel('Minimum input fill', { exact: true }).fill('123');
       await expect(swap.getByLabel('Minimum input fill', { exact: true })).toHaveValue('123');
       await swap.getByRole('button', { name: 'Multi-source', exact: true }).click();
       await expect(swap.getByRole('button', { name: 'Multi-source', exact: true })).toHaveAttribute('aria-pressed', 'true');
-      await expect(swap.getByText(/Multi-source uses bounded Pool and Limit liquidity/)).toBeVisible();
+      await expect(swap.getByText('Pools + Limits · async', { exact: true })).toBeVisible();
       await swap.getByLabel('Price limit', { exact: true }).fill('0.75');
       await expect(swap.getByLabel('Price limit', { exact: true })).toHaveValue('0.75');
-      await expect(swap.getByRole('button', { name: 'Get Quote', exact: true })).toBeDisabled();
+      // Without a wallet the swap action is Connect wallet; no Quote action is shown.
+      await expect(swap.getByRole('button', { name: 'Get Quote', exact: true })).toHaveCount(0);
+      await expect(swap.getByRole('button', { name: 'Connect wallet', exact: true })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
       await page.screenshot({ path: `${process.env.TEMP}/chainwhisper-current-swap-${width}.png`, fullPage: true });
     }
@@ -162,6 +164,7 @@ test.describe('shared Trading Agent workspace', () => {
     await expect(quote).toBeEnabled();
     await fixture.getByLabel('Maximum input', { exact: true }).fill('1');
     await fixture.locator('.dex-v2-current-advanced > summary').click();
+    await fixture.locator('.dex-v2-extra-settings > summary').click();
     await fixture.getByLabel('Price limit', { exact: true }).fill('1');
     await quote.click();
     const counts = () => page.evaluate(() => (window as unknown as { readTrialCounts: () => { checks: number; quoteCalls: number } }).readTrialCounts());

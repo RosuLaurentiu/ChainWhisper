@@ -63,7 +63,7 @@ const installMockSnapOwnerWallet = async (page: Page) => {
         if (method === 'net_version') return String(Number.parseInt(chainId, 16));
         if (method === 'wallet_requestPermissions') return [{ parentCapability: 'eth_accounts', caveats: [] }];
         if (method === 'wallet_switchEthereumChain' || method === 'wallet_addEthereumChain') return null;
-        if (method === 'wallet_getSnaps') return { [snapId]: { id: snapId } };
+        if (method === 'wallet_getSnaps') return { [snapId]: { id: snapId, version: '1.0.54' } };
         if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
         if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return true;
         if (method === 'wallet_invokeSnap' && params?.request?.method === 'get-aes-key') return 'mobile-emulated-aes';

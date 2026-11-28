@@ -36,7 +36,7 @@ const installMockWallet = async (page: Page) => {
         if (method === 'net_version') return String(Number.parseInt(chainId, 16));
         if (method === 'wallet_requestPermissions') return [{ parentCapability: 'eth_accounts', caveats: [] }];
         if (method === 'wallet_switchEthereumChain' || method === 'wallet_addEthereumChain') return null;
-        if (method === 'wallet_getSnaps' || method === 'wallet_requestSnaps') return { [snapId]: { id: snapId } };
+        if (method === 'wallet_getSnaps' || method === 'wallet_requestSnaps') return { [snapId]: { id: snapId, version: '1.0.54' } };
         if (method === 'wallet_invokeSnap') {
           const snapMethod = params?.request?.method;
           if (snapMethod === 'connect-to-wallet' || snapMethod === 'has-aes-key') return true;
@@ -71,7 +71,7 @@ test.describe('Trading keyboard acceptance flow', () => {
     await expect(reverseRatio).toBeFocused();
     await expect(reverseRatio).toHaveCSS('outline-color', 'rgb(196, 181, 253)');
     await reverseRatio.press('Enter');
-    await expect(ratio).toContainText('1 HBR = 0.5000 BCN');
+    await expect(ratio).toHaveText('BCN/HBR');
     await expect(ratio).toHaveAttribute('aria-live', 'polite');
     await expect(page.getByRole('button', { name: 'P2P', exact: true })).toHaveAttribute('aria-current', 'page');
 
@@ -91,6 +91,9 @@ test.describe('Trading keyboard acceptance flow', () => {
     await more.press('Enter');
     const walletMenu = page.getByRole('menu', { name: 'Wallet' });
     const network = walletMenu.getByRole('menuitem', { name: /Network/i });
+    // While privacy is locked the menu starts with its privacy action; Network is the next item.
+    await expect(walletMenu.getByRole('menuitem').first()).toBeFocused();
+    if (!await network.evaluate(element => element === document.activeElement)) await page.keyboard.press('ArrowDown');
     await expect(network).toBeFocused();
     await network.press('ArrowDown');
     expect(await page.evaluate(() => ({

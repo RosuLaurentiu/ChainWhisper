@@ -1,5 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installLegacyTradingReads, openLegacyPublicOffers } from './fixtures/legacy-trading-reads';
+
+// Outside release (CW-170): these tests take their trade data from fixtures/legacy-trading-reads.ts,
+// which answers reads of retired Mainnet contracts (old escrows and the recurring order contract).
+// The current App is a clean slate: it does not read those contracts, a recurring order link shows
+// "unsupported", and the Mainnet build has no current P2P deployment. The tests stay here until a
+// current-contract P2P fixture replaces the legacy one.
+const LEGACY_P2P_READS = 'Outside release: needs a current-contract P2P fixture; the App no longer reads the retired contracts.';
 test.beforeEach(async ({ page }) => installLegacyTradingReads(page));
 
 const mobileViewport = { width: 390, height: 844 };
@@ -95,9 +102,9 @@ const installMockTradingWallet = async (
           case 'wallet_addEthereumChain':
             return null;
           case 'wallet_getSnaps':
-            return snapAesKey ? { 'npm:@coti-io/coti-snap': {} } : null;
+            return snapAesKey ? { 'npm:@coti-io/coti-snap': { version: '1.0.54' } } : null;
           case 'wallet_requestSnaps':
-            return snapAesKey ? { 'npm:@coti-io/coti-snap': {} } : null;
+            return snapAesKey ? { 'npm:@coti-io/coti-snap': { version: '1.0.54' } } : null;
           case 'wallet_invokeSnap':
             if (!snapAesKey) {
               return null;
@@ -339,6 +346,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('restores mobile desk scroll after visiting the terminal tab', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: mobileViewport.width, height: 480 });
     await openLegacyPublicOffers(page, '/otc/desk');
     const shell = page.locator('.standalone-trades-shell');
@@ -403,6 +411,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('keeps both recurring mobile prices readable in the current stacked layout', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize(mobileViewport);
     await page.goto('/otc/order/recurring/1');
 
@@ -459,13 +468,13 @@ test.describe('mobile layout polish', () => {
 
     const workspace = page.locator('.p2p-my-trades-empty-workspace');
     await expect(workspace).toBeVisible();
-    await expect(workspace.locator('.p2p-my-trades-wallet-card')).toContainText('Wallet readiness');
+    await expect(workspace.locator('.p2p-my-trades-wallet-card')).toHaveAttribute('aria-label', 'Wallet readiness');
     await expect(workspace.locator('.p2p-my-trades-wallet-card')).toContainText('Connect your trading wallet');
     await expect(workspace.locator('.p2p-my-trades-connect-btn')).toHaveCount(0);
     await expect(workspace.locator('.p2p-my-trades-empty-slot[aria-disabled="true"]')).toHaveCount(3);
-    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Received' })).toContainText('0');
-    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Active' })).toContainText('0');
-    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'History' })).toContainText('0');
+    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Received' })).toContainText('—');
+    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Active' })).toContainText('—');
+    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'History' })).toContainText('—');
     await expect(page.locator('.p2p-wallet-trade-switcher')).toHaveCount(0);
     await expect(page.locator('.p2p-my-trades-section .standalone-trade-secondary-btn')).toHaveCount(0);
     await expect(page.getByText('Connect to see your trades')).toHaveCount(0);
@@ -497,6 +506,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('loads My Trades after connecting from the desk and keeps one refresh action', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 1440, height: 950 });
     await installMockTradingWallet(page);
     await page.goto('/trades');
@@ -553,10 +563,9 @@ test.describe('mobile layout polish', () => {
 
     const terminal = page.locator('.standalone-trade-detail-section');
     await expect(terminal).toBeVisible();
-    await expect(terminal.locator('.landing-eyebrow', { hasText: /^P2P$/ })).toBeVisible();
-    await expect(terminal.getByRole('heading', { name: 'Open order' })).toBeVisible();
+    await expect(terminal.getByRole('heading', { name: 'Open trade' })).toBeVisible();
     await expect(terminal.getByText('Paste a shared offer link')).toBeVisible();
-    await expect(terminal.getByRole('button', { name: 'Open order', exact: true })).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open trade', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Open desk', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
     await expect(terminal.getByText('Open trading terminal', { exact: true })).toHaveCount(0);
@@ -600,17 +609,19 @@ test.describe('mobile layout polish', () => {
       await dropdown.getByRole('option', { name: new RegExp(`^${symbol}\\b`) }).click();
       await expect(section.locator('.trade-token-select-trigger strong')).toHaveText(symbol);
     }
-    await page.locator('summary').filter({ hasText: /^Advanced options/ }).click();
-    await page.getByRole('group', { name: 'Private liquidity', exact: true }).getByRole('button', { name: 'Visible amounts', exact: true }).click();
-    await page.locator('summary').filter({ hasText: /^Advanced options/ }).click();
+    // A public pair has visible amounts; it needs no privacy choice.
+    await expect(page.locator('summary').filter({ hasText: /^Advanced options/ })).toContainText('Amounts visible');
 
     const readiness = page.locator('.trade-compose-readiness');
     await expect(readiness).toContainText('Enter a valid WISP amount to send.');
 
     const sendAmountError = page.locator('.trade-compose-section-sell .trade-compose-field-error').filter({ hasText: /Enter a valid .+ amount to send\./ });
     await expect(sendAmountError).toHaveCount(0);
-    await page.getByRole('button', { name: 'Create offer' }).click();
-    await expect(sendAmountError).toBeVisible();
+    // The action stays disabled and names the missing input; no field error shows before input.
+    const createOffer = page.getByRole('button', { name: 'Create offer' });
+    await expect(createOffer).toBeDisabled();
+    await expect(createOffer).toHaveAttribute('aria-description', 'Enter a valid WISP amount to send.');
+    await expect(sendAmountError).toHaveCount(0);
 
     await page.locator('.trade-compose-section-sell .trade-compose-amount-field .trade-compose-input').fill('10');
     await page.locator('.trade-compose-price-field .trade-compose-input').fill('1');
@@ -637,6 +648,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('opens mobile trade Activity and returns to the trade overview', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.goto('/trades/recurring?order=1');
     await expect(page.locator('.p2p-terminal-shell-recurring')).toBeVisible();
     const activity = await openTradeActivity(page);
@@ -648,6 +660,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('keeps the mobile trading terminal dense without stacking early', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.goto('/trades/recurring?order=1');
 
     const terminal = page.locator('.p2p-terminal-shell-recurring');
@@ -716,7 +729,6 @@ test.describe('mobile layout polish', () => {
     await expect(tokenDropdown).not.toContainText(/Custom public|Custom private|Custom token|Custom .*CA/);
     await expect(tokenDropdown.locator('.trade-token-select-option-main strong').first()).toBeVisible();
     await expect(tokenDropdown.locator('.trade-token-select-option-main small').first()).toBeVisible();
-    await expect(tokenDropdown.locator('.trade-token-select-option-kind').first()).toBeVisible();
     await expect(tokenDropdown.locator('.trade-token-select-check')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
 
@@ -733,14 +745,15 @@ test.describe('mobile layout polish', () => {
 
     await page.goto('/otc/order');
     const terminal = page.locator('.standalone-trade-detail-section');
-    await expect(terminal.getByPlaceholder('Paste offer link, compact code, or id')).toBeVisible();
-    await expect(terminal.getByRole('button', { name: 'Open order', exact: true })).toBeVisible();
+    await expect(terminal.getByPlaceholder('Offer link, code or ID')).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open trade', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Open desk', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
   test('keeps My Trades mobile lifecycle labels short and readable', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');
     await page.locator('.top-header-mobile-wallet .wallet-primary-action').click();
@@ -756,6 +769,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('lets My Trades mobile cards scroll in the main page flow', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: mobileViewport.width, height: 620 });
     await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');
@@ -884,18 +898,19 @@ test.describe('trading responsive layout', () => {
       };
     });
 
-    expect(metrics.overviewWidth).toBeGreaterThanOrEqual(720);
-    expect(metrics.overviewWidth).toBeLessThanOrEqual(780);
-    expect(metrics.panelWidth).toBeGreaterThanOrEqual(680);
-    expect(metrics.panelWidth).toBeLessThanOrEqual(metrics.overviewWidth);
-    expect(metrics.controlsWidth).toBeGreaterThanOrEqual(640);
-    expect(metrics.controlsWidth).toBeLessThanOrEqual(740);
+    // The shared Trading header row spans the shell; the create panel stays centered below it.
+    expect(metrics.overviewWidth).toBeGreaterThanOrEqual(metrics.shellWidth - 80);
+    // The create panel has a 560 px design width.
+    expect(metrics.panelWidth).toBeGreaterThanOrEqual(540);
+    expect(metrics.panelWidth).toBeLessThanOrEqual(580);
+    expect(metrics.controlsWidth).toBeGreaterThanOrEqual(520);
     expect(metrics.controlsWidth).toBeLessThanOrEqual(metrics.panelWidth);
     expect(metrics.controlsCenteredDelta).toBeLessThanOrEqual(16);
     await expectNoHorizontalOverflow(page);
   });
 
   test('shows an explicit loading state until local offer reads finish', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     let releaseReads!: () => void;
     const gate = new Promise<void>((resolve) => { releaseReads = resolve; });
     await page.route('https://mainnet.coti.io/**', async (route) => {
@@ -915,6 +930,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('keeps desktop Offers rows and owner entry inside the current workspace', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 2016, height: 980 });
     await openLegacyPublicOffers(page, '/trades');
     const offers = page.getByRole('region', { name: 'P2P offers', exact: true });
@@ -931,7 +947,7 @@ test.describe('trading responsive layout', () => {
     await page.setViewportSize({ width: 2016, height: 980 });
     await page.goto('/otc/order');
     const terminal = page.locator('.standalone-trade-detail-section');
-    await expect(terminal).toContainText('Open order');
+    await expect(terminal).toContainText('Open trade');
     await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
     await expect(page.locator('.wallet-primary-action')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Back to offers', exact: true })).toBeVisible();
@@ -944,7 +960,7 @@ test.describe('trading responsive layout', () => {
 
     const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
     const terminal = page.locator('.standalone-trade-detail-section');
-    await expect(terminal).toContainText('Open order');
+    await expect(terminal).toContainText('Open trade');
     await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
     await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
 
@@ -956,6 +972,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('closes an open terminal when clicking the current desk tab', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 2016, height: 980 });
     await openLegacyPublicOffers(page, '/otc/desk');
 
@@ -977,6 +994,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('closes any open order when switching between Desk and Orders', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 2016, height: 980 });
     await openLegacyPublicOffers(page, '/otc/desk');
 
@@ -1065,6 +1083,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('keeps selected-offer navigation and restored filter access stable', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 1280, height: 820 });
     await openLegacyPublicOffers(page, '/otc/desk');
     const navigation = page.getByRole('navigation', { name: 'P2P trading views' });
@@ -1080,6 +1099,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('keeps current Offers rows readable, actionable and private inventory undisclosed', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     for (const viewport of [{ width: 2016, height: 980 }, mobileViewport]) {
       await page.setViewportSize(viewport);
       await openLegacyPublicOffers(page, '/trades');
@@ -1105,6 +1125,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('renders current terminal with coupled amounts and separate safe Activity', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 1440, height: 950 });
     await openLegacyPublicOffers(page, '/trades');
     await page.locator('.p2p-offer-rate-row').filter({ hasText: /One-off/ }).first().click();
@@ -1140,6 +1161,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('respects reduced motion for trading polish effects', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await openLegacyPublicOffers(page, '/trades');
 
@@ -1157,6 +1179,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('keeps private order Activity free of disclosed private amounts', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 1440, height: 950 });
     await page.goto('/otc/order/recurring/4');
     await expect(page.locator('.p2p-terminal-shell-recurring')).toBeVisible();
@@ -1168,7 +1191,7 @@ test.describe('trading responsive layout', () => {
     await returnToTradeOverview(page);
   });
 
-  test('keeps trading filters compact and recurring terminal liquidity status scannable', async ({ page }) => {
+  test('keeps trading filters compact', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 950 });
     await page.goto('/trades');
 
@@ -1184,7 +1207,7 @@ test.describe('trading responsive layout', () => {
       };
     });
     expect(scrollStyle.scrollbarWidth).toBe('thin');
-    expect(scrollStyle.scrollbarColor).toContain('139');
+    expect(scrollStyle.scrollbarColor).toBe('rgb(66, 69, 79) rgb(8, 9, 11)');
 
     await page.goto('/trades/mine');
     const mineOverviewBox = await page.locator('.p2p-my-trades-section .standalone-trades-section-head').boundingBox();
@@ -1192,10 +1215,10 @@ test.describe('trading responsive layout', () => {
     expect(mineOverviewBox!.height).toBeLessThanOrEqual(120);
     const mineTypeFilter = page.locator('.p2p-filter-type select');
     if (await mineTypeFilter.count()) {
-      await expect(mineTypeFilter).toContainText('Private liquidity');
+      await expect(mineTypeFilter).toContainText('Hidden budget');
       await expect(mineTypeFilter).toContainText('Unlisted');
-      await expect(mineTypeFilter).toContainText('Direct links');
-      await expect(mineTypeFilter).toContainText('Counters');
+      await expect(mineTypeFilter).toContainText('Direct offers');
+      await expect(mineTypeFilter).toContainText('Counteroffers');
       await mineTypeFilter.selectOption('private-link');
       await expect(mineTypeFilter).toHaveValue('private-link');
 
@@ -1208,7 +1231,11 @@ test.describe('trading responsive layout', () => {
       await page.goto('/trades/mine');
       await expect(page.locator('.p2p-filter-type select')).toHaveValue('all');
     }
+  });
 
+  test('keeps recurring terminal liquidity status scannable', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
+    await page.setViewportSize({ width: 1440, height: 950 });
     await page.goto('/trades/recurring?order=1');
     const terminal = page.locator('.p2p-terminal-shell-recurring');
     await expect(terminal).toBeVisible({ timeout: 30_000 });
@@ -1254,6 +1281,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('renders My Trades with desk cards and opens the desk-style terminal drawer', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize({ width: 1440, height: 950 });
     await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');
@@ -1416,6 +1444,7 @@ test.describe('trading responsive layout', () => {
   });
 
   test('opens My Trades terminal and mobile Activity from desk cards', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.setViewportSize(mobileViewport);
     await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');

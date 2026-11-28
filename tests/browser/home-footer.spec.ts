@@ -40,7 +40,7 @@ test.describe('Home footer', () => {
     await expect(privacyDialog).toBeVisible();
     await expect(privacyDialog).toContainText('Supabase Storage');
     await expect(privacyDialog).toContainText('OpenAI');
-    await expect(privacyDialog).toContainText('Last updated August 1, 2026');
+    await expect(privacyDialog).toContainText('Last updated November 8, 2026');
 
     await page.keyboard.press('Escape');
     await expect(privacyDialog).toHaveCount(0);

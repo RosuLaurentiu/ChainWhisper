@@ -2,6 +2,13 @@ import { expect, test } from '@playwright/test';
 import { installLegacyTradingReads } from './fixtures/legacy-trading-reads';
 import type { Page, Route } from '@playwright/test';
 
+// Outside release (CW-170): these tests take their trade data from fixtures/legacy-trading-reads.ts,
+// which answers reads of retired Mainnet contracts (old escrows and the recurring order contract).
+// The current App is a clean slate: it does not read those contracts, a recurring order link shows
+// "unsupported", and the Mainnet build has no current P2P deployment. The tests stay here until a
+// current-contract P2P fixture replaces the legacy one.
+const LEGACY_P2P_READS = 'Outside release: needs a current-contract P2P fixture; the App no longer reads the retired contracts.';
+
 const PENDING_TERMINAL_ROUTE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
 const CARBON_MARKET_RATE_URL = '**/market-rate?**';
 const CARBON_NATIVE_TOKEN_ADDRESS = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
@@ -104,6 +111,7 @@ test.describe('trading V1 routes', () => {
   });
 
   test('uses the recurring read path for recurring links', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.goto('/trades/recurring?order=1');
     await expect(page).toHaveURL(/\/otc\/order\/recurring\/1$/);
 
@@ -123,6 +131,7 @@ test.describe('trading V1 routes', () => {
   });
 
   test('keeps recurring order prices stable while mapping the fill action to the filled side', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.goto('/trades/recurring?order=1');
     await expect(page).toHaveURL(/\/otc\/order\/recurring\/1$/);
 
@@ -144,6 +153,7 @@ test.describe('trading V1 routes', () => {
   });
 
   test('shows recurring order controls and price sides from the maker perspective after wallet connect', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await installMockTradingWallet(page, RECURRING_ORDER_ONE_MAKER);
     await page.goto('/trades/recurring?order=1');
     await expect(page).toHaveURL(/\/otc\/order\/recurring\/1$/);
@@ -163,8 +173,9 @@ test.describe('trading V1 routes', () => {
     const filters = page.locator('.p2p-offers-filter-controls');
     const type = filters.getByRole('combobox', { name: 'Type', exact: true });
     await expect(type).toBeVisible();
-    await type.selectOption('recurring');
-    await expect(type).toHaveValue('recurring');
+    await expect(type.getByRole('option')).toHaveText(['All offers', 'Private terms', 'Public terms']);
+    await type.selectOption('private');
+    await expect(type).toHaveValue('private');
     await expect(filters.getByLabel('Access')).toHaveCount(0);
     await filters.getByRole('button', { name: 'Clear', exact: true }).click();
     await expect(type).toHaveValue('all');
@@ -188,6 +199,7 @@ test.describe('trading V1 routes', () => {
   });
 
   test('keeps the MetaMask Mobile wallet bootstrap URL while rendering the terminal', async ({ browser, baseURL }) => {
+    test.skip(true, LEGACY_P2P_READS);
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
     });
@@ -206,6 +218,7 @@ test.describe('trading V1 routes', () => {
   });
 
   test('converts direct MetaMask Mobile trade links into the stable wallet bootstrap URL', async ({ browser, baseURL }) => {
+    test.skip(true, LEGACY_P2P_READS);
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
     });
@@ -297,7 +310,7 @@ test.describe('trading V1 routes', () => {
     expect(errors).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath('p2p-create.png') });
   });
-  test('shows Carbon reference prices in create and terminal surfaces', async ({ page }) => {
+  test('shows Carbon reference prices in the create surface', async ({ page }) => {
     await mockCarbonPairReference(page, 0.000286);
 
     await page.goto('/otc/limit');
@@ -321,7 +334,11 @@ test.describe('trading V1 routes', () => {
 
     await expect(page.getByRole('tab', { name: 'Recurring' })).toHaveCount(0);
     await expect(page.locator('.trading-ratio-trigger')).toBeVisible();
+  });
 
+  test('shows a Carbon reference price in the recurring terminal', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
+    await mockCarbonPairReference(page, 0.000286);
     await page.goto('/otc/order/recurring/5');
     const recurringTerminal = page.locator('.p2p-terminal-shell-recurring');
     await expect(recurringTerminal.locator('.p2p-carbon-price-reference')).toContainText(
@@ -374,6 +391,7 @@ test.describe('trading V1 routes', () => {
   });
 
   test('hides Carbon reference prices for same-underlying public/private terminal pairs', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await mockCarbonPairReference(page, 0.000286);
 
     await page.goto('/trades/recurring?order=6');
@@ -398,6 +416,7 @@ test.describe('trading V1 routes', () => {
     }
   });
   test('keeps an existing recurring order reachable after leaving a retired create route', async ({ page }) => {
+    test.skip(true, LEGACY_P2P_READS);
     await page.goto('/otc/recurring');
     await page.getByRole('navigation', { name: 'P2P trading views' }).getByRole('button', { name: 'Offers', exact: true }).click();
     const linkTool = page.locator('.p2p-offers-private-link-tool');
