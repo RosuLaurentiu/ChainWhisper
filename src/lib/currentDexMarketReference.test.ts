@@ -334,7 +334,7 @@ describe('Core-backed public market reference', () => {
     expect(currentDexMarketReference({ status: 'reference', snapshot: { ...snapshot } }, ['HBR', 'BCN'], now).status).toBe('unavailable');
     expect(currentDexMarketReference({ status: 'reference', snapshot }, ['HBR', 'BCN'], now + 121n).status).toBe('last-known');
     // The last recorded price names its pair, so a display cannot show it for a different pair.
-    expect(currentDexMarketReference({ status: 'reference', snapshot }, ['HBR', 'BCN'], now + 121n)).toMatchObject({ status: 'last-known', price: 2, pair: ['HBR', 'BCN'] });
+    expect(currentDexMarketReference({ status: 'reference', snapshot }, ['HBR', 'BCN'], now + 121n)).toMatchObject({ status: 'last-known', price: 2, pair: ['HBR', 'BCN'], checkedAt: snapshot.currentObservation!.checkedAt });
     expect(currentDexMarketReference({ status: 'reference', snapshot }, ['BCN', 'HBR'], now + 121n)).toMatchObject({ status: 'last-known', price: 0.5, pair: ['BCN', 'HBR'] });
   });
 

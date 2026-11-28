@@ -1760,7 +1760,7 @@ button:not(:disabled):active,
 :root body .app-shell .trading-market-change strong { color: var(--text-secondary); }
 :root body .app-shell .trading-market-change[data-price-state="stale"] strong,
 :root body .app-shell .trading-market-change[data-price-state="unavailable"] strong { color: #f6c466; }
-:root body .app-shell .trading-market-change[data-price-state="available"] strong { color: #55d6af; }
+:root body .app-shell .trading-market-change:is([data-price-state="available"], [data-price-state="updating"]) strong { color: #55d6af; }
 :root body .app-shell .trading-market-token-details { margin-top: 12px; border-top: 1px solid var(--border-subtle); }
 :root body .app-shell .trading-market-token-details > summary { min-height: 40px; padding-block: 10px; display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; color: var(--text-secondary); font-size: .8125rem; font-weight: 600; }
 /* CW-097. Market bar: owner decision 2026-11-18 removes the line right of the live price block. The DEX / P2P
