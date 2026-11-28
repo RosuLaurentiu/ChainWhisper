@@ -2,6 +2,7 @@ import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
 import type { OnboardInfo } from '@coti-io/coti-ethers';
 import { ArrowLeft, WalletCards } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 import {
   COTI_NETWORK,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -3172,10 +3173,10 @@ export default function P2PTradingPage({
             onOpenDesk={() => navigateToTradePath(buildCurrentTradeSurfacePath('public'))}
           />}
           {terminalHasTradeContent && (route.view === 'mine' || !routeHasUnsupportedContract) ? (
-            <div className="p2p-terminal-view-tabs" role="tablist" aria-label="Trade terminal view">
-              <button type="button" role="tab" aria-selected={terminalPanelTab === 'overview'} className={terminalPanelTab === 'overview' ? 'active' : undefined} onClick={() => setTerminalPanelTab('overview')}>Overview</button>
-              <button type="button" role="tab" aria-selected={terminalPanelTab === 'activity'} className={terminalPanelTab === 'activity' ? 'active' : undefined} onClick={() => setTerminalPanelTab('activity')}>Activity</button>
-            </div>
+            <AppTabList className="p2p-terminal-view-tabs" label="Trade terminal view" value={terminalPanelTab} onChange={setTerminalPanelTab}>
+              <AppTab value="overview">Overview</AppTab>
+              <AppTab value="activity">Activity</AppTab>
+            </AppTabList>
           ) : null}
           {!terminalShowsOpenPanel && terminalPanelTrade && (route.view === 'mine' || !routeHasUnsupportedContract) ? (
             <div className="p2p-terminal-view-panel" role="tabpanel" aria-label={terminalPanelTab === 'overview' ? 'Trade overview' : 'Trade activity'}>

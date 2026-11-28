@@ -1,3 +1,4 @@
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 import {
   encodeGroupInviteCode,
   formatMessageTimestamp,
@@ -310,26 +311,19 @@ export function GroupInviteMenu({
       <div className="group-invite-menu-panel">
         {canManageActiveGroupJoinCodes ? (
           <>
-            <div className="group-invite-menu-switch" role="tablist" aria-label="Group invite options">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={groupInviteMenuView === 'invite'}
-                className={groupInviteMenuView === 'invite' ? 'group-invite-menu-switch-btn active' : 'group-invite-menu-switch-btn'}
-                onClick={() => onGroupInviteMenuViewChange('invite')}
-              >
+            <AppTabList
+              className="group-invite-menu-switch"
+              label="Group invite options"
+              value={groupInviteMenuView}
+              onChange={onGroupInviteMenuViewChange}
+            >
+              <AppTab value="invite" className="group-invite-menu-switch-btn">
                 Invite
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={groupInviteMenuView === 'code'}
-                className={groupInviteMenuView === 'code' ? 'group-invite-menu-switch-btn active' : 'group-invite-menu-switch-btn'}
-                onClick={() => onGroupInviteMenuViewChange('code')}
-              >
+              </AppTab>
+              <AppTab value="code" className="group-invite-menu-switch-btn">
                 Invite code
-              </button>
-            </div>
+              </AppTab>
+            </AppTabList>
             {groupInviteMenuView === 'invite' ? (
               <GroupInviteMembersPanel
                 canInviteToActiveGroup={canInviteToActiveGroup}

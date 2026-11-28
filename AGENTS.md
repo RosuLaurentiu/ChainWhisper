@@ -94,6 +94,8 @@ are historical evidence, not current compatibility requirements.
   tokens; the default `web.css` look must not replace the approved design.
   Feature code uses the wrappers in `src/shared/ui` (CW-160) and does not import
   ui-sdk parts directly. Compare computed styles before and after a conversion.
+  A wrapper puts the class `app-ui` on each part; the `app-ui-reset` layer in
+  base.css then removes the ui-sdk default look (CW-162).
 - Route ownership is in src/shell/routing.ts. Keep same-App navigation and
   harmless aliases. An old contract link may show unsupported; never reinterpret
   its ID as an order on the current contract.

@@ -1,5 +1,4 @@
-import type { KeyboardEventHandler } from 'react';
-import { moveFocusWithin } from '../../../shared/components/a11y';
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 import type { TradeEntryMode, TradeSwapVenue } from '../hooks/useP2PTradeRoute';
 
 type DeskNavigationPath = '/otc' | '/otc/agent' | '/otc/desk' | '/otc/limit' | '/otc/orders';
@@ -141,46 +140,20 @@ export function TradeEntryModeTabs({
   onOpenTradeEntryMode
 }: TradeEntryModeTabsProps) {
   const visibleModes = createOnly ? createEntryModes : tradeEntryModes;
-  const handleModeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (
-      !moveFocusWithin(event, {
-        orientation: 'horizontal',
-        selector: '[role="tab"]:not(:disabled)'
-      })
-    ) {
-      return;
-    }
-
-    const nextMode = (
-      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
-    )?.dataset.tradeMode as TradeEntryMode | undefined;
-    if (nextMode && nextMode !== activeTradeMode) {
-      onOpenTradeEntryMode(nextMode);
-    }
-  };
 
   return (
-    <div
-      className="p2p-trade-mode-tabs"
-      role="tablist"
-      aria-label="Trade mode"
-      onKeyDown={handleModeKeyDown}
-    >
+    <AppTabList className="p2p-trade-mode-tabs" label="Trade mode" value={activeTradeMode} onChange={onOpenTradeEntryMode}>
       {visibleModes.map(([mode, label]) => (
-        <button
+        <AppTab
           key={mode}
-          type="button"
-          className={activeTradeMode === mode ? 'active' : undefined}
-          onClick={() => onOpenTradeEntryMode(mode)}
-          role="tab"
-          aria-selected={activeTradeMode === mode}
-          tabIndex={activeTradeMode === mode ? 0 : -1}
+          value={mode}
           data-trade-mode={mode}
+          onClick={activeTradeMode === mode ? () => onOpenTradeEntryMode(mode) : undefined}
         >
           {label}
-        </button>
+        </AppTab>
       ))}
-    </div>
+    </AppTabList>
   );
 }
 
@@ -195,35 +168,18 @@ const swapVenues = [
 ] as const;
 
 export function TradeSwapVenueTabs({ activeVenue, onChange }: TradeSwapVenueTabsProps) {
-  const handleKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (!moveFocusWithin(event, { orientation: 'horizontal', selector: '[role="tab"]' })) return;
-    const venue = (
-      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
-    )?.dataset.swapVenue as TradeSwapVenue | undefined;
-    if (venue && venue !== activeVenue) onChange(venue);
-  };
-
   return (
-    <div
-      className="p2p-swap-side-switch p2p-swap-venue-switch"
-      role="tablist"
-      aria-label="Swap venue"
-      onKeyDown={handleKeyDown}
-    >
+    <AppTabList className="p2p-swap-side-switch p2p-swap-venue-switch" label="Swap venue" value={activeVenue} onChange={onChange}>
       {swapVenues.map(([venue, label]) => (
-        <button
+        <AppTab
           key={venue}
-          type="button"
-          className={activeVenue === venue ? 'active' : undefined}
-          onClick={() => onChange(venue)}
-          role="tab"
-          aria-selected={activeVenue === venue}
-          tabIndex={activeVenue === venue ? 0 : -1}
+          value={venue}
           data-swap-venue={venue}
+          onClick={activeVenue === venue ? () => onChange(venue) : undefined}
         >
           {label}
-        </button>
+        </AppTab>
       ))}
-    </div>
+    </AppTabList>
   );
 }

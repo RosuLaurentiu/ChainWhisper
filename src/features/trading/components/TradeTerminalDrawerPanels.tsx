@@ -1,4 +1,4 @@
-import type { FormEvent, KeyboardEventHandler, RefObject } from 'react';
+import type { FormEvent, RefObject } from 'react';
 import {
   formatTradeContractIdLabel
 } from '../../../lib/p2pTradeView';
@@ -7,7 +7,7 @@ import {
   SHARE_LABEL,
   renderP2PEmptyState
 } from './P2PTradingPage.helpers';
-import { moveFocusWithin } from '../../../shared/components/a11y';
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 
 type TradeTerminalOpenPanelProps = {
   inputRef: RefObject<HTMLInputElement | null>;
@@ -63,13 +63,6 @@ export function TradeTerminalOpenPanel({
   tradeDirectionEnabled,
   onTradeDirectionChange
 }: TradeTerminalOpenPanelProps) {
-  const handleDirectionKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (!moveFocusWithin(event, { orientation: 'horizontal', selector: '[role="tab"]:not(:disabled)' })) return;
-    const direction = (event.currentTarget.ownerDocument.activeElement as HTMLElement | null)?.dataset
-      .tradeDirection as 'buy' | 'sell' | undefined;
-    if (direction && tradeDirectionEnabled?.[direction]) onTradeDirectionChange?.(direction);
-  };
-
   return (
     <div className="p2p-terminal-open-panel">
       <div className="p2p-terminal-open-copy">
@@ -79,28 +72,23 @@ export function TradeTerminalOpenPanel({
             : 'Use an offer link, code or ID.'}</p>
       </div>
       {persistentOffers && tradeDirection && tradeDirectionEnabled ? (
-        <div
+        <AppTabList
           className="p2p-swap-side-switch p2p-terminal-direction-switch"
-          role="tablist"
-          aria-label="Trade direction"
-          onKeyDown={handleDirectionKeyDown}
+          label="Trade direction"
+          value={tradeDirection}
+          onChange={(direction) => onTradeDirectionChange?.(direction)}
         >
           {(['buy', 'sell'] as const).map((direction) => (
-            <button
+            <AppTab
               key={direction}
-              type="button"
-              className={tradeDirection === direction ? 'active' : undefined}
-              role="tab"
-              aria-selected={tradeDirection === direction}
-              tabIndex={tradeDirection === direction ? 0 : -1}
+              value={direction}
               data-trade-direction={direction}
               disabled={!tradeDirectionEnabled[direction]}
-              onClick={() => onTradeDirectionChange?.(direction)}
             >
               {direction === 'buy' ? 'Buy' : 'Sell'}
-            </button>
+            </AppTab>
           ))}
-        </div>
+        </AppTabList>
       ) : null}
       <form className="p2p-link-open-form p2p-action-open-form p2p-drawer-open-form" onSubmit={onSubmit}>
         <input

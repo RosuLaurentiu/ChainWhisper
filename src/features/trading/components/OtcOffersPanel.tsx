@@ -1,5 +1,5 @@
 import { ChartNoAxesCombined, ChevronDown, ChevronRight, Link2, LockKeyhole, SlidersHorizontal } from 'lucide-react';
-import { useRef, type KeyboardEventHandler } from 'react';
+import { useRef } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { TradeTokenPresetKey } from '../../../lib/appHelpers';
@@ -13,7 +13,7 @@ import {
   formatOtcSwapQuoteAmount,
   resolveVisibleOtcSwapPriceRatioDisplay
 } from '../../../lib/otcSwapUi';
-import { moveFocusWithin } from '../../../shared/components/a11y';
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 import type { TradeComposerTokenOption } from './TradeComposerPanel';
 import OtcOfferMarketChart from './OtcOfferMarketChart';
 import { isP2PWalletRequiredMessage } from '../p2pWalletNotice';
@@ -123,12 +123,7 @@ export default function OtcOffersPanel({
       });
     });
   };
-  const handleActionModeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (!moveFocusWithin(event, { orientation: 'horizontal', selector: '[role="tab"]:not(:disabled)' })) return;
-    const nextDisplayedMode = (
-      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
-    )?.dataset.swapMode as TradeActionSide | undefined;
-    if (!nextDisplayedMode) return;
+  const selectDisplayedActionMode = (nextDisplayedMode: TradeActionSide) => {
     const nextMode = resolveCanonicalTradeActionSide(nextDisplayedMode, priceDisplayInverted);
     if (linkedActionModes[nextMode] && nextMode !== actionMode) onActionModeChange(nextMode);
   };
@@ -176,28 +171,23 @@ export default function OtcOffersPanel({
         <h1 className="p2p-sr-only">Offers</h1>
         {marketLabel && marketLabel !== '--' ? <span className="p2p-sr-only">{marketLabel}</span> : null}
 
-        <div className="p2p-swap-side-switch p2p-offers-mobile-direction" role="tablist" aria-label="Trade direction" onKeyDown={handleActionModeKeyDown}>
-            {(['buy', 'sell'] as const).map((mode) => {
-              const canonicalMode = resolveCanonicalTradeActionSide(mode, priceDisplayInverted);
-              const enabled = linkedActionModes[canonicalMode];
-              const selected = displayedActionMode === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  className={selected ? 'active' : undefined}
-                  onClick={() => enabled && onActionModeChange(canonicalMode)}
-                  role="tab"
-                  aria-selected={selected}
-                  tabIndex={selected ? 0 : -1}
-                  data-swap-mode={mode}
-                  disabled={!enabled}
-                >
-                  {mode === 'buy' ? 'Buy' : 'Sell'}
-                </button>
-              );
-            })}
-        </div>
+        <AppTabList
+          className="p2p-swap-side-switch p2p-offers-mobile-direction"
+          label="Trade direction"
+          value={displayedActionMode}
+          onChange={selectDisplayedActionMode}
+        >
+          {(['buy', 'sell'] as const).map((mode) => (
+            <AppTab
+              key={mode}
+              value={mode}
+              data-swap-mode={mode}
+              disabled={!linkedActionModes[resolveCanonicalTradeActionSide(mode, priceDisplayInverted)]}
+            >
+              {mode === 'buy' ? 'Buy' : 'Sell'}
+            </AppTab>
+          ))}
+        </AppTabList>
 
         <div className={`p2p-offers-filter-tool${filtersOpen ? ' open' : ''}${filtersActive ? ' active' : ''}`}>
           <button

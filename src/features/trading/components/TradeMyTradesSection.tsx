@@ -1,7 +1,7 @@
 import { SlidersHorizontal } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
-import { moveFocusWithin } from '../../../shared/components/a11y';
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 import PrivacyLockedNotice from '../../../shared/components/PrivacyLockedNotice';
 import {
   MY_TRADES_EMPTY_PREVIEW_GROUPS,
@@ -195,21 +195,9 @@ export default function TradeMyTradesSection({
       ) : null}
     </div>
   );
-  const handleGroupKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (
-      !moveFocusWithin(event, {
-        orientation: 'horizontal',
-        selector: '[role="tab"]:not(:disabled)'
-      })
-    ) {
-      return;
-    }
-
-    const nextGroupId = (
-      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
-    )?.dataset.tradeGroup;
-    if (nextGroupId === 'active') showActive();
-    if (nextGroupId === 'history' && historyGroup) onSelectGroup(historyGroup.id);
+  const selectLifecycleView = (nextView: 'active' | 'history') => {
+    if (nextView === 'active') showActive();
+    if (nextView === 'history' && historyGroup) onSelectGroup(historyGroup.id);
   };
 
   const renderTradeGroup = (group: MyTradeGroupOption) => {
@@ -393,39 +381,30 @@ export default function TradeMyTradesSection({
               </button>
             </div>
           </div>
-          <div
+          <AppTabList
             className="p2p-wallet-trade-switcher p2p-management-lifecycle"
-            role="tablist"
-            aria-label="Trade lifecycle"
-            onKeyDown={handleGroupKeyDown}
+            label="Trade lifecycle"
+            value={lifecycleView}
+            onChange={selectLifecycleView}
           >
-            <button
-              type="button"
-              className={lifecycleView === 'active' ? 'active' : undefined}
-              onClick={showActive}
-              role="tab"
-              aria-selected={lifecycleView === 'active'}
-              tabIndex={lifecycleView === 'active' ? 0 : -1}
+            <AppTab
+              value="active"
+              onClick={lifecycleView === 'active' ? showActive : undefined}
               data-trade-group="active"
               aria-label={`Active: ${totalsUnavailable ? 'unavailable' : activeCount}`}
             >
               <span className="p2p-wallet-trade-tab-text"><span>Active</span><small>Open and actionable</small></span>
               <strong className="p2p-wallet-trade-count">{displayCount(activeCount)}</strong>
-            </button>
-            <button
-              type="button"
-              className={lifecycleView === 'history' ? 'active' : undefined}
-              onClick={() => historyGroup && onSelectGroup(historyGroup.id)}
-              role="tab"
-              aria-selected={lifecycleView === 'history'}
-              tabIndex={lifecycleView === 'history' ? 0 : -1}
+            </AppTab>
+            <AppTab
+              value="history"
               data-trade-group="history"
               aria-label={`History: ${totalsUnavailable ? 'unavailable' : (historyGroup?.count ?? 0) + additionalHistoryCount}`}
             >
               <span className="p2p-wallet-trade-tab-text"><span>History</span><small>{renderAdditionalTrades ? 'Trade activity' : 'Completed and closed'}</small></span>
               <strong className="p2p-wallet-trade-count">{displayCount((historyGroup?.count ?? 0) + additionalHistoryCount)}</strong>
-            </button>
-          </div>
+            </AppTab>
+          </AppTabList>
           {lifecycleView === 'active' ? (
             <div className="p2p-management-quick-filters" role="group" aria-label="Active trade filters">
               <button type="button" className={activeFilter === 'all' ? 'active' : undefined} aria-pressed={activeFilter === 'all'} onClick={() => setActiveFilter('all')}>All <strong>{displayCount(activeCount)}</strong></button>

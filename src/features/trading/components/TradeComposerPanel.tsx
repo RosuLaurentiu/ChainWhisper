@@ -3,7 +3,6 @@ import {
   useId,
   useRef,
   useState,
-  type KeyboardEventHandler,
   type ReactNode
 } from 'react';
 import { flushSync } from 'react-dom';
@@ -17,7 +16,7 @@ import {
 import { CURRENT_P2P_BINDING } from '../../../lib/currentP2PBinding';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { TradePricingField } from '../../../lib/tradePricing';
-import { moveFocusWithin } from '../../../shared/components/a11y';
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 
 export type TradeComposerTokenOption = {
   value: string;
@@ -320,23 +319,6 @@ export function TradeTokenSelect({
     });
     onChange(option.value);
   };
-  const handleScopeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (
-      !moveFocusWithin(event, {
-        orientation: 'horizontal',
-        selector: '[role="tab"]:not(:disabled)'
-      })
-    ) {
-      return;
-    }
-
-    const nextScope = (
-      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
-    )?.dataset.tokenScope as TradeTokenScope | undefined;
-    if (nextScope && nextScope !== activeScope) {
-      setActiveScope(nextScope);
-    }
-  };
 
   useEffect(() => {
     if (!open) return;
@@ -404,35 +386,14 @@ export function TradeTokenSelect({
               placeholder={`Search ${activeScope} tokens`}
               aria-label="Search trade tokens"
             />
-            <div
-              className="trade-token-select-tabs"
-              role="tablist"
-              aria-label="Token type"
-              onKeyDown={handleScopeKeyDown}
-            >
-              <button
-                type="button"
-                className={activeScope === 'public' ? 'active' : undefined}
-                onClick={() => setActiveScope('public')}
-                role="tab"
-                aria-selected={activeScope === 'public'}
-                tabIndex={activeScope === 'public' ? 0 : -1}
-                data-token-scope="public"
-              >
+            <AppTabList className="trade-token-select-tabs" label="Token type" value={activeScope} onChange={setActiveScope}>
+              <AppTab value="public" data-token-scope="public">
                 Public <span>{publicCount}</span>
-              </button>
-              <button
-                type="button"
-                className={activeScope === 'private' ? 'active' : undefined}
-                onClick={() => setActiveScope('private')}
-                role="tab"
-                aria-selected={activeScope === 'private'}
-                tabIndex={activeScope === 'private' ? 0 : -1}
-                data-token-scope="private"
-              >
+              </AppTab>
+              <AppTab value="private" data-token-scope="private">
                 Private <span>{privateCount}</span>
-              </button>
-            </div>
+              </AppTab>
+            </AppTabList>
           </div>
           <ul className="trade-token-select-list" role="listbox">
             {filteredOptions.length > 0 ? (
@@ -869,23 +830,17 @@ export default function TradeComposerPanel({
       {showDirectionControl ? (
         <div className="trade-compose-direction-control">
           <span>Trade direction</span>
-          <div role="tablist" aria-label={`Buy or sell ${displayedTradeBaseSymbol}`}>
+          <AppTabList
+            label={`Buy or sell ${displayedTradeBaseSymbol}`}
+            value={displayedTradeSide}
+            onChange={() => onSwapSides?.()}
+          >
             {(['buy', 'sell'] as const).map((side) => (
-              <button
-                key={side}
-                type="button"
-                role="tab"
-                aria-selected={displayedTradeSide === side}
-                className={displayedTradeSide === side ? `active ${side}` : side}
-                disabled={swapDisabled}
-                onClick={() => {
-                  if (displayedTradeSide !== side) onSwapSides?.();
-                }}
-              >
+              <AppTab key={side} value={side} className={side} activeClassName="active" disabled={swapDisabled}>
                 {side === 'buy' ? 'Buy' : 'Sell'} {displayedTradeBaseSymbol}
-              </button>
+              </AppTab>
             ))}
-          </div>
+          </AppTabList>
         </div>
       ) : null}
 

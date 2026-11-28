@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react';
 import { GROUP_PRIVATE_TITLE_LABEL } from '../../../lib/appShared';
-import { moveFocusWithin } from '../../../shared/components/a11y';
 import AppDialog from '../../../shared/ui/AppDialog';
+import { AppTab, AppTabList } from '../../../shared/ui/AppTabs';
 import { useChatUiStore } from '../chatUiStore';
 
 type QuickActionsModalProps = {
@@ -52,56 +52,17 @@ export default function QuickActionsModal({
     <AppDialog open={isOpen} onClose={onClose} surfaceClassName="modal-backdrop" labelledBy="quick-actions-title">
       <div className="modal-card quick-actions-modal">
         <h3 id="quick-actions-title">New</h3>
-        <div
-          className="quick-actions-tabs"
-          role="tablist"
-          aria-label="Quick actions"
-          onKeyDown={(event) => {
-            if (!moveFocusWithin(event, { orientation: 'horizontal', selector: '[role="tab"]' })) {
-              return;
-            }
-            window.requestAnimationFrame(() => {
-              (document.activeElement as HTMLButtonElement | null)?.click();
-            });
-          }}
-        >
-          <button
-            id="quick-actions-contact-tab"
-            type="button"
-            role="tab"
-            aria-selected={quickActionTab === 'contact'}
-            aria-controls="quick-actions-contact-panel"
-            tabIndex={quickActionTab === 'contact' ? 0 : -1}
-            className={quickActionTab === 'contact' ? 'active' : undefined}
-            onClick={() => setQuickActionTab('contact')}
-          >
+        <AppTabList className="quick-actions-tabs" label="Quick actions" value={quickActionTab} onChange={setQuickActionTab}>
+          <AppTab id="quick-actions-contact-tab" value="contact">
             Add contact
-          </button>
-          <button
-            id="quick-actions-create-tab"
-            type="button"
-            role="tab"
-            aria-selected={quickActionTab === 'create-group'}
-            aria-controls="quick-actions-create-panel"
-            tabIndex={quickActionTab === 'create-group' ? 0 : -1}
-            className={quickActionTab === 'create-group' ? 'active' : undefined}
-            onClick={() => setQuickActionTab('create-group')}
-          >
+          </AppTab>
+          <AppTab id="quick-actions-create-tab" value="create-group">
             Create
-          </button>
-          <button
-            id="quick-actions-join-tab"
-            type="button"
-            role="tab"
-            aria-selected={quickActionTab === 'join-group'}
-            aria-controls="quick-actions-join-panel"
-            tabIndex={quickActionTab === 'join-group' ? 0 : -1}
-            className={quickActionTab === 'join-group' ? 'active' : undefined}
-            onClick={() => setQuickActionTab('join-group')}
-          >
+          </AppTab>
+          <AppTab id="quick-actions-join-tab" value="join-group">
             Join
-          </button>
-        </div>
+          </AppTab>
+        </AppTabList>
 
         {quickActionTab === 'contact' ? (
           <form
